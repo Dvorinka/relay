@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <title>Relay mark, small-size cut</title>
+  <rect x="54" y="50" width="36" height="156" fill="#101318"/>
+  <path d="M90 68 h46 a38 38 0 0 1 0 76 h-32" fill="none" stroke="#101318" stroke-width="36"/>
+  <path d="M104 146 L170 206" fill="none" stroke="#101318" stroke-width="36" stroke-linecap="round"/>
+  <circle cx="130" cy="106" r="18" fill="#101318"/>
+</svg>

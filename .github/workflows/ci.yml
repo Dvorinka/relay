@@ -1,0 +1,67 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: true
+      - run: go vet ./...
+      - uses: golangci/golangci-lint-action@v7
+        with:
+          version: latest
+      - run: go build ./...
+      - run: go test ./...
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit -p apps/web
+      - run: npm run lint --prefix apps/web --if-present
+      - run: npm test --prefix apps/web --if-present
+      - run: npm run build --prefix apps/web
+
+  openapi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npx --yes @redocly/cli lint api/openapi.yaml
+      # Regenerate and fail if the committed client drifted from the spec.
+      - run: |
+          npx --yes openapi-typescript api/openapi.yaml -o /tmp/schema.ts
+          test ! -d packages/api-client/src/generated || \
+            diff -u packages/api-client/src/generated/schema.ts /tmp/schema.ts
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose config --quiet
+      - run: docker build -f deploy/Dockerfile -t relay:ci .
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          severity: CRITICAL,HIGH
+          exit-code: "1"

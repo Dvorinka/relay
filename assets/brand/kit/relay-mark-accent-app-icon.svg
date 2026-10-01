@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256"><title>Relay logo</title><rect width="256" height="256" rx="57.6" fill="#101318"/><g transform="translate(12.06 -2.18) scale(1.017)" fill="#ffffff">
+  
+  <rect x="54" y="50" width="36" height="156" fill="#ffffff"/>
+  <path d="M90 68 h46 a38 38 0 0 1 0 76 h-32" fill="none" stroke="#ffffff" stroke-width="36"/>
+  <path d="M104 146 L170 206" fill="none" stroke="#ffffff" stroke-width="36" stroke-linecap="round"/>
+  <circle cx="130" cy="106" r="18" fill="#ffffff"/>
+</g></svg>

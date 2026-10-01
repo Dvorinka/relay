@@ -1,0 +1,72 @@
+openapi: 3.1.0
+info:
+  title: Relay API
+  version: 0.0.0
+  description: >
+    Relay - open-source agent communication & project hub.
+    This document is the single source of truth for the HTTP contract;
+    the TypeScript client in packages/api-client is generated from it.
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+servers:
+  - url: http://localhost:8080
+    description: local dev
+tags:
+  - name: auth
+  - name: workspaces
+  - name: projects
+  - name: conversations
+  - name: messages
+  - name: attachments
+  - name: issues
+  - name: github
+  - name: agents
+  - name: search
+  - name: notifications
+paths:
+  /api/health:
+    get:
+      operationId: health
+      summary: Liveness/readiness probe
+      security: []
+      responses:
+        "200":
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [ok] }
+                  version: { type: string }
+
+  # NOTE: Full endpoint surface is defined in
+  # docs/superpowers/specs/2026-10-01-relay-design.md and lands phase by phase.
+  # This seed exists so codegen, CI diff-checks, and routing conventions are
+  # exercised from the first commit.
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: relay_session
+    mcpBearer:
+      type: http
+      scheme: bearer
+      description: Agent MCP token (rly_...), evaluated on the /mcp endpoint only.
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+security:
+  - sessionCookie: []
