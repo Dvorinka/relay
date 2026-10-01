@@ -52,12 +52,12 @@ Global rules applied to every phase:
 
 ## Phase 2 - Projects + conversations
 
-- [ ] `internal/projects`: CRUD, key-prefix validation, members
-- [ ] `internal/conversations` + `internal/messages`: one `project`
+- [x] `internal/projects`: CRUD, key-prefix validation, members
+- [x] `internal/conversations` + `internal/messages`: one `project`
       conversation per project; messages with markdown body, user/agent
       author pair, `message_reads`
-- [ ] `GET /api/projects/:id/overview` (counts + recent activity stub)
-- [ ] Web: app shell (top bar, project rail), project pages
+- [x] `GET /api/projects/:id/overview` (counts + recent activity stub)
+- [x] Web: app shell (top bar, project rail), project pages
       (Overview/Issues/Conversation/Activity tabs - only Conversation live),
       composer with markdown, message list, timestamps, own-read tracking
 - **Accept:** two users in a project exchange messages; read markers update;

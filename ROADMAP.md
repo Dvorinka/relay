@@ -16,7 +16,7 @@ goose + sqlc wired, OpenAPI skeleton, health endpoint, brand kit, docs.
 - Workspaces, members, roles (owner/admin/member)
 - First-run owner bootstrap
 
-## Phase 2 - Projects & conversations ☐
+## Phase 2 - Projects & conversations ☑
 
 - Project CRUD, icons/colors, members
 - Persistent project conversation: messages, Markdown, code blocks,

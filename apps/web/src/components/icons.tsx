@@ -53,6 +53,22 @@ export function InboxIcon(props: IconProps): JSX.Element {
   );
 }
 
+export function PlusIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      class={props.class}
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      aria-hidden="true"
+    >
+      <path d="M8 3v10M3 8h10" />
+    </svg>
+  );
+}
+
 export function SettingsIcon(props: IconProps): JSX.Element {
   return (
     <svg

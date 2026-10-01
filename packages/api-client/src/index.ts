@@ -11,6 +11,12 @@ export type WorkspaceWithRole = components["schemas"]["WorkspaceWithRole"];
 export type WorkspaceMember = components["schemas"]["WorkspaceMember"];
 export type LoginRequest = components["schemas"]["LoginRequest"];
 export type RegisterRequest = components["schemas"]["RegisterRequest"];
+export type Project = components["schemas"]["Project"];
+export type CreateProjectRequest = components["schemas"]["CreateProjectRequest"];
+export type ProjectOverview = components["schemas"]["ProjectOverview"];
+export type Conversation = components["schemas"]["Conversation"];
+export type Message = components["schemas"]["Message"];
+export type MessageAuthor = components["schemas"]["MessageAuthor"];
 
 export type Health =
   paths["/api/health"]["get"]["responses"]["200"]["content"]["application/json"];
@@ -93,6 +99,39 @@ export function createClient(baseUrl: string) {
       input: { email: string; role?: WorkspaceRole },
     ) =>
       post<WorkspaceMember>(`/api/workspaces/${workspaceId}/invite`, input),
+
+    // Projects
+    listProjects: () => request<{ projects: Project[] }>("/api/projects"),
+    createProject: (input: CreateProjectRequest) =>
+      post<Project>("/api/projects", input),
+    getProject: (projectId: string) =>
+      request<Project>(`/api/projects/${projectId}`),
+    projectOverview: (projectId: string) =>
+      request<ProjectOverview>(`/api/projects/${projectId}/overview`),
+    projectConversation: (projectId: string) =>
+      request<Conversation>(`/api/projects/${projectId}/conversation`),
+
+    // Conversations
+    listMessages: (
+      conversationId: string,
+      opts?: { limit?: number; before?: string },
+    ) => {
+      const query = new URLSearchParams();
+      if (opts?.limit !== undefined) {
+        query.set("limit", String(opts.limit));
+      }
+      if (opts?.before) {
+        query.set("before", opts.before);
+      }
+      const qs = query.toString();
+      return request<{ messages: Message[]; has_more: boolean }>(
+        `/api/conversations/${conversationId}/messages${qs ? `?${qs}` : ""}`,
+      );
+    },
+    postMessage: (conversationId: string, body: string) =>
+      post<Message>(`/api/conversations/${conversationId}/messages`, { body }),
+    markMessageRead: (messageId: string) =>
+      post<void>(`/api/messages/${messageId}/read`),
   };
 }
 
