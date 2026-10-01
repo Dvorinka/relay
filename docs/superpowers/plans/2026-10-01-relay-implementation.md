@@ -24,15 +24,15 @@ Global rules applied to every phase:
 - [x] Repo hygiene: LICENSE, README, CONTRIBUTING, CoC, SECURITY,
       ARCHITECTURE, ROADMAP, .env.example, .gitignore, .editorconfig
 - [x] Brand kit (assets/brand), GitHub plumbing (.github/*)
-- [ ] `go.mod`, `cmd/relay/main.go`: config load, zap logger, Gin router,
+- [x] `go.mod`, `cmd/relay/main.go`: config load, zap logger, Gin router,
       graceful shutdown, `/api/health`
-- [ ] `db/migrations/0001_core.sql`: users, sessions, workspaces,
+- [x] `db/migrations/0001_core.sql`: users, sessions, workspaces,
       workspace_members
-- [ ] `sqlc.yaml` + first generated queries
-- [ ] `apps/web`: Vite + SolidJS + TS strict + Tailwind + Ark UI scaffold,
+- [x] `sqlc.yaml` + first generated queries
+- [x] `apps/web`: Vite + SolidJS + TS strict + Tailwind + Ark UI scaffold,
       route shell, theme tokens (ink/paper/signal)
-- [ ] `packages/api-client` generation wired into `just api`
-- [ ] CI green on the skeleton
+- [x] `packages/api-client` generation wired into `just api`
+- [ ] CI green on the skeleton (first run happens on the phase-0 PR)
 - **Accept:** `docker compose up -d` -> `curl :8080/api/health` -> `{"status":"ok"}`;
   `just dev` shows a themed empty shell at :5173
 

@@ -1,0 +1,15 @@
+{
+  "name": "@relay/api-client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "generate": "openapi-typescript ../../api/openapi.yaml -o src/generated/schema.ts"
+  },
+  "devDependencies": {
+    "openapi-typescript": "7.13.0"
+  }
+}

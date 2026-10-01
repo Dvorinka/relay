@@ -72,7 +72,7 @@ Prerequisites: Docker with the Compose plugin.
 ```bash
 git clone https://github.com/Dvorinka/relay.git && cd relay
 cp .env.example .env        # set AUTH_SECRET, storage keys
-docker compose up -d        # relay + postgres + minio
+docker compose up -d        # relay + postgres + storage (RustFS)
 ```
 
 Then open `http://localhost:8080` - the first registered account becomes
