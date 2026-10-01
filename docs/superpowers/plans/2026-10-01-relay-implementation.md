@@ -32,20 +32,20 @@ Global rules applied to every phase:
 - [x] `apps/web`: Vite + SolidJS + TS strict + Tailwind + Ark UI scaffold,
       route shell, theme tokens (ink/paper/signal)
 - [x] `packages/api-client` generation wired into `just api`
-- [ ] CI green on the skeleton (first run happens on the phase-0 PR)
+- [x] CI green on the skeleton (first run happens on the phase-0 PR)
 - **Accept:** `docker compose up -d` -> `curl :8080/api/health` -> `{"status":"ok"}`;
   `just dev` shows a themed empty shell at :5173
 
 ## Phase 1 - Auth + workspaces
 
-- [ ] `internal/auth`: argon2id hash/verify, session issue/rotate/revoke,
+- [x] `internal/auth`: argon2id hash/verify, session issue/rotate/revoke,
       cookie middleware, fixed-window rate limiter (Postgres counters)
-- [ ] Endpoints: register, login, logout, forgot/reset (log-mailer),
+- [x] Endpoints: register, login, logout, forgot/reset (log-mailer),
       change password, `GET /api/auth/session`
-- [ ] `internal/workspaces`: CRUD, member list, invite-by-add (user must
+- [x] `internal/workspaces`: CRUD, member list, invite-by-add (user must
       exist; no email invites in v1), role check middleware
-- [ ] First registered user auto-creates a personal workspace (owner)
-- [ ] Web: auth pages (login/register/reset), session store, route guards,
+- [x] First registered user auto-creates a personal workspace (owner)
+- [x] Web: auth pages (login/register/reset), session store, route guards,
       workspace settings (members)
 - **Accept:** register -> login -> protected route OK; logout kills session;
   wrong-password hits the rate limit; reset flow works via logged mail

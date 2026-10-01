@@ -1,6 +1,7 @@
 import { A } from "@solidjs/router";
-import { createResource, createSignal, For, type ParentProps } from "solid-js";
+import { createResource, createSignal, For, Show, type ParentProps } from "solid-js";
 import { api } from "../lib/api";
+import { useSession } from "../stores/session";
 import { InboxIcon, SettingsIcon } from "./icons";
 
 const navClass =
@@ -40,10 +41,20 @@ function HealthStatus() {
 }
 
 export function Rail() {
+  const session = useSession();
   const [projects] = createSignal<string[]>([]);
+  const workspaceName = () => session.workspaces()[0]?.name;
 
   return (
     <aside class="flex w-56 shrink-0 flex-col border-r border-border">
+      <Show when={workspaceName()}>
+        {(name) => (
+          <div class="border-b border-border px-4 py-2.5">
+            <p class="truncate text-[13px] font-medium">{name()}</p>
+          </div>
+        )}
+      </Show>
+
       <nav class="flex flex-col gap-0.5 p-2">
         <NavItem href="/inbox">
           <InboxIcon class="h-3.5 w-3.5" />
@@ -67,10 +78,10 @@ export function Rail() {
 
       <div class="mt-auto flex flex-col gap-0.5 border-t border-border p-2">
         <HealthStatus />
-        <button type="button" class={`${navClass} w-full text-left`}>
+        <NavItem href="/settings">
           <SettingsIcon class="h-3.5 w-3.5" />
           Settings
-        </button>
+        </NavItem>
       </div>
     </aside>
   );

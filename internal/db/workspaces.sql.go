@@ -50,6 +50,24 @@ func (q *Queries) CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams
 	return i, err
 }
 
+const getWorkspaceByID = `-- name: GetWorkspaceByID :one
+select id, name, slug, created_at
+from workspaces
+where id = $1
+`
+
+func (q *Queries) GetWorkspaceByID(ctx context.Context, id pgtype.UUID) (Workspace, error) {
+	row := q.db.QueryRow(ctx, getWorkspaceByID, id)
+	var i Workspace
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Slug,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getWorkspaceRole = `-- name: GetWorkspaceRole :one
 select role
 from workspace_members
@@ -68,8 +86,52 @@ func (q *Queries) GetWorkspaceRole(ctx context.Context, arg GetWorkspaceRolePara
 	return role, err
 }
 
+const listWorkspaceMembers = `-- name: ListWorkspaceMembers :many
+select u.id, u.email, u.name, u.avatar_key, u.created_at, wm.role
+from workspace_members wm
+join users u on u.id = wm.user_id
+where wm.workspace_id = $1
+order by wm.created_at
+`
+
+type ListWorkspaceMembersRow struct {
+	ID        pgtype.UUID        `json:"id"`
+	Email     string             `json:"email"`
+	Name      string             `json:"name"`
+	AvatarKey pgtype.Text        `json:"avatar_key"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	Role      string             `json:"role"`
+}
+
+func (q *Queries) ListWorkspaceMembers(ctx context.Context, workspaceID pgtype.UUID) ([]ListWorkspaceMembersRow, error) {
+	rows, err := q.db.Query(ctx, listWorkspaceMembers, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListWorkspaceMembersRow{}
+	for rows.Next() {
+		var i ListWorkspaceMembersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.Name,
+			&i.AvatarKey,
+			&i.CreatedAt,
+			&i.Role,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWorkspacesForUser = `-- name: ListWorkspacesForUser :many
-select w.id, w.name, w.slug, wm.role
+select w.id, w.name, w.slug, w.created_at, wm.role
 from workspaces w
 join workspace_members wm on wm.workspace_id = w.id
 where wm.user_id = $1
@@ -77,10 +139,11 @@ order by w.name
 `
 
 type ListWorkspacesForUserRow struct {
-	ID   pgtype.UUID `json:"id"`
-	Name string      `json:"name"`
-	Slug string      `json:"slug"`
-	Role string      `json:"role"`
+	ID        pgtype.UUID        `json:"id"`
+	Name      string             `json:"name"`
+	Slug      string             `json:"slug"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	Role      string             `json:"role"`
 }
 
 func (q *Queries) ListWorkspacesForUser(ctx context.Context, userID pgtype.UUID) ([]ListWorkspacesForUserRow, error) {
@@ -96,6 +159,7 @@ func (q *Queries) ListWorkspacesForUser(ctx context.Context, userID pgtype.UUID)
 			&i.ID,
 			&i.Name,
 			&i.Slug,
+			&i.CreatedAt,
 			&i.Role,
 		); err != nil {
 			return nil, err
@@ -106,4 +170,15 @@ func (q *Queries) ListWorkspacesForUser(ctx context.Context, userID pgtype.UUID)
 		return nil, err
 	}
 	return items, nil
+}
+
+const workspaceSlugExists = `-- name: WorkspaceSlugExists :one
+select exists(select 1 from workspaces where slug = $1) as exists
+`
+
+func (q *Queries) WorkspaceSlugExists(ctx context.Context, slug string) (bool, error) {
+	row := q.db.QueryRow(ctx, workspaceSlugExists, slug)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }

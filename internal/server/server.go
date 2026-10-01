@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Dvorinka/relay/internal/auth"
 	"github.com/Dvorinka/relay/internal/config"
+	"github.com/Dvorinka/relay/internal/workspaces"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
@@ -18,6 +20,9 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(gin.Recovery(), accessLog(log))
+
+	authSvc := auth.NewService(cfg, log, pool, auth.NewLogMailer(log))
+	wsSvc := workspaces.NewService(log, pool)
 
 	api := r.Group("/api")
 	api.GET("/health", func(c *gin.Context) {
@@ -29,6 +34,10 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 		}
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "version": version})
 	})
+
+	authSvc.RegisterRoutes(api)
+	priv := api.Group("", authSvc.RequireAuth)
+	wsSvc.RegisterRoutes(priv)
 
 	mountStatic(r, cfg.StaticDir)
 	return r

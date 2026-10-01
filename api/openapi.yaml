@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Relay API
-  version: 0.0.0
+  version: 0.1.0
   description: >
     Relay - open-source agent communication & project hub.
     This document is the single source of truth for the HTTP contract;
@@ -15,15 +15,6 @@ servers:
 tags:
   - name: auth
   - name: workspaces
-  - name: projects
-  - name: conversations
-  - name: messages
-  - name: attachments
-  - name: issues
-  - name: github
-  - name: agents
-  - name: search
-  - name: notifications
 paths:
   /api/health:
     get:
@@ -42,10 +33,221 @@ paths:
                   status: { type: string, enum: [ok] }
                   version: { type: string }
 
-  # NOTE: Full endpoint surface is defined in
-  # docs/superpowers/specs/2026-10-01-relay-design.md and lands phase by phase.
-  # This seed exists so codegen, CI diff-checks, and routing conventions are
-  # exercised from the first commit.
+  /api/auth/register:
+    post:
+      operationId: register
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterRequest" }
+      responses:
+        "201":
+          description: Registered; session cookie set
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthSession" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: Logged in; session cookie set
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthSession" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      responses:
+        "204": { description: Logged out; session cookie cleared }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/auth/session:
+    get:
+      operationId: session
+      tags: [auth]
+      summary: Current session - user plus workspaces
+      responses:
+        "200":
+          description: Active session
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthSession" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/auth/password/forgot:
+    post:
+      operationId: forgotPassword
+      tags: [auth]
+      security: []
+      summary: Request a password reset token (always 204; never leaks whether the email exists)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "204": { description: If the email exists, a reset link was sent }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/auth/password/reset:
+    post:
+      operationId: resetPassword
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password]
+              properties:
+                token: { type: string }
+                password: { type: string, minLength: 10 }
+      responses:
+        "204": { description: Password changed; all sessions revoked }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/auth/password/change:
+    post:
+      operationId: changePassword
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password: { type: string }
+                new_password: { type: string, minLength: 10 }
+      responses:
+        "204": { description: Password changed; other sessions revoked }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/workspaces:
+    get:
+      operationId: listWorkspaces
+      tags: [workspaces]
+      responses:
+        "200":
+          description: Workspaces the current user belongs to
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [workspaces]
+                properties:
+                  workspaces:
+                    type: array
+                    items: { $ref: "#/components/schemas/WorkspaceWithRole" }
+    post:
+      operationId: createWorkspace
+      tags: [workspaces]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 80 }
+                slug: { type: string, pattern: "^[a-z0-9-]{2,40}$" }
+      responses:
+        "201":
+          description: Created; caller becomes owner
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Workspace" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/workspaces/{workspaceId}:
+    get:
+      operationId: getWorkspace
+      tags: [workspaces]
+      parameters: [ { $ref: "#/components/parameters/WorkspaceId" } ]
+      responses:
+        "200":
+          description: Workspace detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Workspace" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/workspaces/{workspaceId}/members:
+    get:
+      operationId: listWorkspaceMembers
+      tags: [workspaces]
+      parameters: [ { $ref: "#/components/parameters/WorkspaceId" } ]
+      responses:
+        "200":
+          description: Member list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [members]
+                properties:
+                  members:
+                    type: array
+                    items: { $ref: "#/components/schemas/WorkspaceMember" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/workspaces/{workspaceId}/invite:
+    post:
+      operationId: inviteToWorkspace
+      tags: [workspaces]
+      summary: Add an existing user by email (v1 - no email invites yet)
+      parameters: [ { $ref: "#/components/parameters/WorkspaceId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+                role: { $ref: "#/components/schemas/WorkspaceRole" }
+      responses:
+        "201":
+          description: Member added
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceMember" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
 components:
   securitySchemes:
@@ -57,6 +259,43 @@ components:
       type: http
       scheme: bearer
       description: Agent MCP token (rly_...), evaluated on the /mcp endpoint only.
+  parameters:
+    WorkspaceId:
+      name: workspaceId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    BadRequest:
+      description: Invalid input
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Not authenticated
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Authenticated but not allowed
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: Conflicts with existing state
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RateLimited:
+      description: Too many requests
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
   schemas:
     Error:
       type: object
@@ -68,5 +307,67 @@ components:
           properties:
             code: { type: string }
             message: { type: string }
+
+    User:
+      type: object
+      required: [id, email, name]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        name: { type: string }
+        avatar_url: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    RegisterRequest:
+      type: object
+      required: [email, password, name]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 10 }
+        name: { type: string, minLength: 1, maxLength: 80 }
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+
+    AuthSession:
+      type: object
+      required: [user, workspaces]
+      properties:
+        user: { $ref: "#/components/schemas/User" }
+        workspaces:
+          type: array
+          items: { $ref: "#/components/schemas/WorkspaceWithRole" }
+
+    Workspace:
+      type: object
+      required: [id, name, slug, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+        created_at: { type: string, format: date-time }
+
+    WorkspaceWithRole:
+      allOf:
+        - $ref: "#/components/schemas/Workspace"
+        - type: object
+          required: [role]
+          properties:
+            role: { $ref: "#/components/schemas/WorkspaceRole" }
+
+    WorkspaceRole:
+      type: string
+      enum: [owner, admin, member]
+
+    WorkspaceMember:
+      type: object
+      required: [user, role]
+      properties:
+        user: { $ref: "#/components/schemas/User" }
+        role: { $ref: "#/components/schemas/WorkspaceRole" }
 security:
   - sessionCookie: []

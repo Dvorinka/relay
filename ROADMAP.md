@@ -5,12 +5,12 @@ phases only need the API contract, not finished UI.
 
 Legend: ☐ not started · ◐ in progress · ☑ done
 
-## Phase 0 - Foundation ☐
+## Phase 0 - Foundation ☑
 
 Repo scaffold, CI, `docker compose up` running relay + postgres + storage (RustFS),
 goose + sqlc wired, OpenAPI skeleton, health endpoint, brand kit, docs.
 
-## Phase 1 - Identity & workspaces ☐
+## Phase 1 - Identity & workspaces ☑
 
 - Email+password auth (argon2id, session cookies, reset flow, rate limits)
 - Workspaces, members, roles (owner/admin/member)
