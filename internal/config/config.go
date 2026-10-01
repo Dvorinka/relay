@@ -12,14 +12,15 @@ import (
 )
 
 type Config struct {
-	DatabaseURL    string
-	ListenAddr     string
-	PublicURL      string
-	StaticDir      string
-	LogLevel       string
-	AuthSecret     string
-	SkipMigrations bool
-	InsecureDev    bool
+	DatabaseURL      string
+	ListenAddr       string
+	PublicURL        string
+	StaticDir        string
+	LogLevel         string
+	AuthSecret       string
+	SessionTTLHours  int
+	SkipMigrations   bool
+	InsecureDev      bool
 }
 
 func Load() (Config, error) {
@@ -30,6 +31,7 @@ func Load() (Config, error) {
 		StaticDir:      getEnv("RELAY_STATIC_DIR", "public"),
 		LogLevel:       getEnv("LOG_LEVEL", "info"),
 		AuthSecret:     os.Getenv("AUTH_SECRET"),
+		SessionTTLHours: getInt("AUTH_SESSION_TTL_HOURS", 720), // 30 days
 		SkipMigrations: getBool("RELAY_SKIP_MIGRATIONS"),
 		InsecureDev:    getBool("AUTH_INSECURE_DEV"),
 	}
@@ -71,6 +73,14 @@ func getEnv(key, fallback string) string {
 
 func getBool(key string) bool {
 	v, _ := strconv.ParseBool(os.Getenv(key))
+	return v
+}
+
+func getInt(key string, fallback int) int {
+	v, err := strconv.Atoi(os.Getenv(key))
+	if err != nil {
+		return fallback
+	}
 	return v
 }
 

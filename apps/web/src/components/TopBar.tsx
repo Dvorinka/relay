@@ -1,6 +1,76 @@
-import { Avatar } from "@ark-ui/solid";
-import { A } from "@solidjs/router";
+import { Avatar, Menu } from "@ark-ui/solid";
+import { A, useNavigate } from "@solidjs/router";
+import { Portal } from "solid-js/web";
+import { useSession } from "../stores/session";
 import { RelayMark, SearchIcon } from "./icons";
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  const letters = parts
+    .slice(0, 2)
+    .map((p) => p[0]?.toUpperCase() ?? "")
+    .join("");
+  return letters || "?";
+}
+
+function AccountMenu() {
+  const session = useSession();
+  const navigate = useNavigate();
+
+  async function signOut() {
+    await session.logout();
+    navigate("/login");
+  }
+
+  return (
+    <Menu.Root positioning={{ placement: "bottom-end" }}>
+      <Menu.Trigger
+        class="rounded-full outline-none transition-opacity hover:opacity-80"
+        aria-label="Account menu"
+      >
+        <Avatar.Root class="flex h-7 w-7 items-center justify-center rounded-full border border-border bg-surface">
+          <Avatar.Fallback class="text-[11px] font-medium text-muted">
+            {initials(session.user()?.name ?? "")}
+          </Avatar.Fallback>
+          <Avatar.Image
+            src={session.user()?.avatar_url ?? undefined}
+            alt=""
+            class="h-full w-full rounded-full object-cover"
+          />
+        </Avatar.Root>
+      </Menu.Trigger>
+      <Portal>
+        <Menu.Positioner>
+          <Menu.Content class="min-w-40 rounded-md border border-border bg-surface p-1 shadow-sm outline-none">
+            <div class="px-2 py-1.5">
+              <p class="truncate text-[13px] font-medium">
+                {session.user()?.name}
+              </p>
+              <p class="truncate text-[11px] text-muted">
+                {session.user()?.email}
+              </p>
+            </div>
+            <Menu.Separator class="my-1 border-t border-border" />
+            <Menu.Item
+              value="settings"
+              onSelect={() => navigate("/settings")}
+              class="cursor-default rounded-sm px-2 py-1.5 text-[13px] outline-none data-[highlighted]:bg-hover"
+            >
+              Settings
+            </Menu.Item>
+            <Menu.Item
+              value="sign-out"
+              onSelect={() => void signOut()}
+              class="cursor-default rounded-sm px-2 py-1.5 text-[13px] outline-none data-[highlighted]:bg-hover"
+            >
+              Sign out
+            </Menu.Item>
+          </Menu.Content>
+        </Menu.Positioner>
+      </Portal>
+    </Menu.Root>
+  );
+}
 
 export function TopBar() {
   return (
@@ -23,11 +93,7 @@ export function TopBar() {
         </kbd>
       </button>
 
-      <Avatar.Root class="flex h-7 w-7 items-center justify-center rounded-full border border-border bg-surface">
-        <Avatar.Fallback class="text-[11px] font-medium text-muted">
-          R
-        </Avatar.Fallback>
-      </Avatar.Root>
+      <AccountMenu />
     </header>
   );
 }

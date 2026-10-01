@@ -13,6 +13,7 @@ coverage.out
 node_modules/
 apps/*/node_modules/
 apps/*/dist/
+.playwright-mcp/
 apps/*/.output/
 *.tsbuildinfo
 
