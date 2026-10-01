@@ -1,0 +1,23 @@
+{
+  "name": "relay",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "npm@11.19.1",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "apps/web",
+    "packages/api-client"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @relay/web",
+    "build": "npm run build --workspace @relay/web",
+    "test": "npm test --workspace @relay/web --if-present",
+    "api": "openapi-typescript api/openapi.yaml -o packages/api-client/src/generated/schema.ts"
+  },
+  "devDependencies": {
+    "openapi-typescript": "7.13.0"
+  }
+}

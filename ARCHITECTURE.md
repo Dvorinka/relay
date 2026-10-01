@@ -125,7 +125,7 @@ GitHub → Relay mirroring; Relay → GitHub writes are post-MVP.
 
 ## Storage
 
-`minio-go` against `STORAGE_ENDPOINT` (MinIO, S3, R3, anything S3-shaped).
+`minio-go` against `STORAGE_ENDPOINT` (RustFS dev default, MinIO, S3, R2, anything S3-shaped).
 Uploads stream through `POST /api/attachments` (sniffed MIME, size cap,
 random key); downloads use short-lived presigned GET URLs so the API never
 proxies large bodies.

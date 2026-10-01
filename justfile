@@ -22,7 +22,7 @@ sqlc:
 
 # regenerate the TS client after editing api/openapi.yaml
 api:
-    openapi-typescript api/openapi.yaml -o packages/api-client/src/generated/schema.ts
+    npm run api
 
 # all tests (go + web)
 test:

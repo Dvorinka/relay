@@ -7,7 +7,7 @@ Legend: ☐ not started · ◐ in progress · ☑ done
 
 ## Phase 0 - Foundation ☐
 
-Repo scaffold, CI, `docker compose up` running relay + postgres + minio,
+Repo scaffold, CI, `docker compose up` running relay + postgres + storage (RustFS),
 goose + sqlc wired, OpenAPI skeleton, health endpoint, brand kit, docs.
 
 ## Phase 1 - Identity & workspaces ☐

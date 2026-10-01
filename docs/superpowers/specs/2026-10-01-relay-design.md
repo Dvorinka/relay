@@ -294,7 +294,7 @@ business logic in clients.
 
 ## 13. Deployment
 
-- `docker compose up -d`: relay + postgres + minio (+ minio-init bucket job).
+- `docker compose up -d`: relay + postgres + storage (RustFS) + storage-init bucket job.
 - `deploy/Dockerfile`: multi-stage (node web build -> go build -> alpine
   runtime, non-root user).
 - Reverse proxy (TLS) left to the user: Traefik/Nginx/Caddy examples in
@@ -304,7 +304,7 @@ business logic in clients.
 
 ## 14. Testing & acceptance
 
-- Go: unit tests in-domain; integration tests use compose Postgres+MinIO.
+- Go: unit tests in-domain; integration tests use compose Postgres+RustFS.
 - Contract: CI regenerates the TS client and diffs it against the commit.
 - Canonical E2E (PRD section 45): register -> workspace -> project ->
   connect repo (mocked GitHub in CI) -> issue -> message with image ->
