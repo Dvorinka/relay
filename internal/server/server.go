@@ -3,15 +3,18 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/Dvorinka/relay/internal/attachments"
 	"github.com/Dvorinka/relay/internal/auth"
 	"github.com/Dvorinka/relay/internal/config"
 	"github.com/Dvorinka/relay/internal/conversations"
 	"github.com/Dvorinka/relay/internal/projects"
+	"github.com/Dvorinka/relay/internal/storage"
 	"github.com/Dvorinka/relay/internal/workspaces"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -23,10 +26,25 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	r := gin.New()
 	r.Use(gin.Recovery(), accessLog(log))
 
+	store, err := storage.New(cfg.StorageEndpoint, cfg.StoragePublicEndpoint, cfg.StorageRegion,
+		cfg.StorageAccessKey, cfg.StorageSecretKey, cfg.StorageBucket, cfg.StoragePresignTTL)
+	if err != nil {
+		// attachments degrade to 503 rather than taking the API down
+		log.Error("storage init failed; attachments disabled", zap.Error(err))
+	}
+	if store != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := store.EnsureBucket(ctx); err != nil {
+			log.Error("storage bucket check failed", zap.Error(err))
+		}
+		cancel()
+	}
+
 	authSvc := auth.NewService(cfg, log, pool, auth.NewLogMailer(log))
 	wsSvc := workspaces.NewService(log, pool)
 	projSvc := projects.NewService(log, pool)
 	convSvc := conversations.NewService(log, pool)
+	attSvc := attachments.NewService(log, pool, store, cfg)
 
 	api := r.Group("/api")
 	api.GET("/health", func(c *gin.Context) {
@@ -44,6 +62,7 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	wsSvc.RegisterRoutes(priv)
 	projSvc.RegisterRoutes(priv)
 	convSvc.RegisterRoutes(priv)
+	attSvc.RegisterRoutes(priv)
 
 	mountStatic(r, cfg.StaticDir)
 	return r

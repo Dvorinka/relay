@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/Dvorinka/relay/internal/attachments"
 	"github.com/Dvorinka/relay/internal/auth"
 	"github.com/Dvorinka/relay/internal/db"
 	"github.com/Dvorinka/relay/internal/httpx"
@@ -131,12 +132,17 @@ func (s *Service) handleListMessages(c *gin.Context) {
 	}
 	hasMore := len(rows) > limit
 	rows = rows[:min(len(rows), limit)]
+	ids := make([]pgtype.UUID, 0, len(rows))
+	for _, m := range rows {
+		ids = append(ids, m.ID)
+	}
+	atts := s.attachmentsFor(c, ids)
 	msgs := make([]gin.H, 0, len(rows))
 	// newest-first page -> reverse for chronological order
 	for i := len(rows) - 1; i >= 0; i-- {
 		m := rows[i]
 		msgs = append(msgs, MessageJSON(m.ID, m.ConversationID, m.Body, m.CreatedAt, m.EditedAt,
-			m.AuthorUserID, m.AuthorAgentID, m.AuthorName, m.AuthorAvatar))
+			m.AuthorUserID, m.AuthorAgentID, m.AuthorName, m.AuthorAvatar, atts[m.ID.String()]))
 	}
 	c.JSON(http.StatusOK, gin.H{"messages": msgs, "has_more": hasMore})
 }
@@ -144,7 +150,8 @@ func (s *Service) handleListMessages(c *gin.Context) {
 func (s *Service) handlePostMessage(c *gin.Context) {
 	conv := c.MustGet(ctxConversation).(db.Conversation)
 	var req struct {
-		Body string `json:"body" binding:"required"`
+		Body          string   `json:"body" binding:"required"`
+		AttachmentIDs []string `json:"attachment_ids"`
 	}
 	if !httpx.BindJSON(c, &req) {
 		return
@@ -152,6 +159,23 @@ func (s *Service) handlePostMessage(c *gin.Context) {
 	if len(req.Body) == 0 || len(req.Body) > 20000 {
 		httpx.Error(c, http.StatusBadRequest, "bad_request", "body must be 1-20000 characters")
 		return
+	}
+	if len(req.AttachmentIDs) > 20 {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "at most 20 attachments per message")
+		return
+	}
+	ids, bad := parseUUIDs(req.AttachmentIDs)
+	if bad {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "invalid attachment id")
+		return
+	}
+	if len(ids) > 0 {
+		n, err := s.q.CountUsableAttachmentsInProject(c.Request.Context(),
+			db.CountUsableAttachmentsInProjectParams{ProjectID: conv.ProjectID, Ids: ids})
+		if err != nil || int(n) != len(ids) {
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "unknown or pending attachment id")
+			return
+		}
 	}
 	user := auth.CurrentUser(c)
 	id, err := s.q.CreateMessage(c.Request.Context(), db.CreateMessageParams{
@@ -161,6 +185,13 @@ func (s *Service) handlePostMessage(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
+	for i, aid := range ids {
+		if err := s.q.LinkMessageAttachment(c.Request.Context(), db.LinkMessageAttachmentParams{
+			MessageID: id, AttachmentID: aid, Position: int32(i),
+		}); err != nil {
+			s.log.Error("link attachment failed", zap.Error(err))
+		}
+	}
 	m, err := s.q.GetMessageByID(c.Request.Context(), id)
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
@@ -168,8 +199,9 @@ func (s *Service) handlePostMessage(c *gin.Context) {
 	}
 	// send == read
 	_ = s.q.MarkMessageRead(c.Request.Context(), db.MarkMessageReadParams{MessageID: m.ID, UserID: user.ID})
+	atts := s.attachmentsFor(c, []pgtype.UUID{m.ID})
 	c.JSON(http.StatusCreated, MessageJSON(m.ID, m.ConversationID, m.Body, m.CreatedAt, m.EditedAt,
-		m.AuthorUserID, m.AuthorAgentID, m.AuthorName, m.AuthorAvatar))
+		m.AuthorUserID, m.AuthorAgentID, m.AuthorName, m.AuthorAvatar, atts[m.ID.String()]))
 }
 
 func (s *Service) handleMarkRead(c *gin.Context) {
@@ -193,6 +225,39 @@ func (s *Service) handleMarkRead(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// attachmentsFor batches attachment rows for a page of messages, keyed by
+// message id. Missing/failed lookups degrade to empty lists.
+func (s *Service) attachmentsFor(c *gin.Context, ids []pgtype.UUID) map[string][]gin.H {
+	out := make(map[string][]gin.H, len(ids))
+	if len(ids) == 0 {
+		return out
+	}
+	rows, err := s.q.ListAttachmentsForMessages(c.Request.Context(), ids)
+	if err != nil {
+		return out
+	}
+	for _, r := range rows {
+		mid := r.MessageID.String()
+		out[mid] = append(out[mid], attachments.JSON(db.Attachment{
+			ID: r.ID, ProjectID: r.ProjectID, Filename: r.Filename,
+			ContentType: r.ContentType, SizeBytes: r.SizeBytes, CreatedAt: r.CreatedAt,
+		}))
+	}
+	return out
+}
+
+func parseUUIDs(raw []string) ([]pgtype.UUID, bool) {
+	ids := make([]pgtype.UUID, 0, len(raw))
+	for _, s := range raw {
+		var u pgtype.UUID
+		if err := u.Scan(s); err != nil {
+			return nil, true
+		}
+		ids = append(ids, u)
+	}
+	return ids, false
+}
+
 // --- wire shapes ---
 
 func conversationJSON(conv db.Conversation) gin.H {
@@ -211,7 +276,7 @@ func conversationJSON(conv db.Conversation) gin.H {
 // MessageJSON renders one message for the API. Author is a user/agent pair;
 // exactly one side is set (DB check constraint).
 func MessageJSON(id, convID pgtype.UUID, body string, createdAt, editedAt pgtype.Timestamptz,
-	authorUserID, authorAgentID pgtype.UUID, authorName, authorAvatar pgtype.Text) gin.H {
+	authorUserID, authorAgentID pgtype.UUID, authorName, authorAvatar pgtype.Text, atts []gin.H) gin.H {
 	kind := "user"
 	authorID := authorUserID
 	if authorAgentID.Valid {
@@ -234,8 +299,16 @@ func MessageJSON(id, convID pgtype.UUID, body string, createdAt, editedAt pgtype
 			"kind": kind, "id": authorID.String(),
 			"name": authorName.String, "avatar_url": avatar,
 		},
-		"body":       body,
-		"created_at": createdAt.Time.Format("2006-01-02T15:04:05Z07:00"),
-		"edited_at":  edited,
+		"body":        body,
+		"attachments": nonEmpty(atts),
+		"created_at":  createdAt.Time.Format("2006-01-02T15:04:05Z07:00"),
+		"edited_at":   edited,
 	}
+}
+
+func nonEmpty(l []gin.H) []gin.H {
+	if l == nil {
+		return []gin.H{}
+	}
+	return l
 }

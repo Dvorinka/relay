@@ -17,6 +17,7 @@ export type ProjectOverview = components["schemas"]["ProjectOverview"];
 export type Conversation = components["schemas"]["Conversation"];
 export type Message = components["schemas"]["Message"];
 export type MessageAuthor = components["schemas"]["MessageAuthor"];
+export type Attachment = components["schemas"]["Attachment"];
 
 export type Health =
   paths["/api/health"]["get"]["responses"]["200"]["content"]["application/json"];
@@ -128,10 +129,32 @@ export function createClient(baseUrl: string) {
         `/api/conversations/${conversationId}/messages${qs ? `?${qs}` : ""}`,
       );
     },
-    postMessage: (conversationId: string, body: string) =>
-      post<Message>(`/api/conversations/${conversationId}/messages`, { body }),
+    postMessage: (
+      conversationId: string,
+      body: string,
+      attachmentIds?: string[],
+    ) =>
+      post<Message>(`/api/conversations/${conversationId}/messages`, {
+        body,
+        attachment_ids: attachmentIds,
+      }),
     markMessageRead: (messageId: string) =>
       post<void>(`/api/messages/${messageId}/read`),
+
+    // Attachments
+    uploadAttachment: (projectId: string, file: File) => {
+      const form = new FormData();
+      form.set("file", file);
+      // No Content-Type header: fetch sets the multipart boundary itself.
+      return request<Attachment>(`/api/projects/${projectId}/attachments`, {
+        method: "POST",
+        body: form,
+      });
+    },
+    // Redirect endpoint; use the returned path directly as img src / link
+    // href — the session cookie rides along on the 302.
+    attachmentURL: (projectId: string, attachmentId: string) =>
+      `${baseUrl}/api/projects/${projectId}/attachments/${attachmentId}/url`,
   };
 }
 

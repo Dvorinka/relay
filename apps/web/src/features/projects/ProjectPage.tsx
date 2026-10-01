@@ -101,7 +101,7 @@ function ConversationTab(props: { projectId: string }) {
         </div>
       }
     >
-      {(c) => <Conversation conversationId={c.id} />}
+      {(c) => <Conversation conversationId={c.id} projectId={props.projectId} />}
     </Show>
   );
 }

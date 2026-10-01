@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveKey, initials, messagePreview } from "./text";
+import { deriveKey, formatBytes, initials, messagePreview } from "./text";
 
 describe("initials", () => {
   it("takes the first two word letters uppercased", () => {
@@ -26,6 +26,16 @@ describe("deriveKey", () => {
     expect(deriveKey("q")).toBe("QX");
     expect(deriveKey("a b c d e f g")).toBe("ABCDEF");
     expect(deriveKey("")).toBe("");
+  });
+});
+
+describe("formatBytes", () => {
+  it("formats bytes, kibibytes, and mebibytes", () => {
+    expect(formatBytes(0)).toBe("0 B");
+    expect(formatBytes(512)).toBe("512 B");
+    expect(formatBytes(1024)).toBe("1 KiB");
+    expect(formatBytes(1536)).toBe("1.5 KiB");
+    expect(formatBytes(25 * 1024 * 1024)).toBe("25 MiB");
   });
 });
 
