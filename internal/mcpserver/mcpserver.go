@@ -374,12 +374,7 @@ func (s *Service) getMessages(ctx context.Context, req mcp.CallToolRequest) (*mc
 	}
 	out := make([]gin.H, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, messageJSON(db.GetMessageFullRow{
-			ID: r.ID, ConversationID: r.ConversationID, Body: r.Body,
-			CreatedAt: r.CreatedAt, EditedAt: r.EditedAt,
-			AuthorUserID: r.AuthorUserID, AuthorAgentID: r.AuthorAgentID,
-			AuthorName: r.AuthorName, AuthorAvatar: r.AuthorAvatar,
-		}))
+		out = append(out, messageJSON(db.GetMessageFullRow(r)))
 	}
 	return jsonResult(out)
 }
