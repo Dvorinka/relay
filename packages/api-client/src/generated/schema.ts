@@ -1885,7 +1885,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Missing */
+            /** @description Missing, revoked, or expired token */
             401: {
                 headers: {
                     [name: string]: unknown;
