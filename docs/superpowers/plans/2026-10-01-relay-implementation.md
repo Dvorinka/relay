@@ -76,16 +76,16 @@ Global rules applied to every phase:
 
 ## Phase 4 - Issues
 
-- [ ] `internal/issues`: `project_counters` keying (`MYB-142`), statuses
+- [x] `internal/issues`: `project_counters` keying (`MYB-142`), statuses
       (backlog/todo/in_progress/review/done/cancelled), priorities, labels,
       assignee, comments, `issue_activity`
-- [ ] Conversation<->issue: `POST /api/issues/:id/from-message/:messageId`
+- [x] Conversation<->issue: `POST /api/messages/:id/issue`
       copies body + attachment refs; issue detail links back to thread
-- [ ] Web: issue list (filters: all/mine/open/in-progress/done/github),
+- [x] Web: issue list (filters: all/mine/open/in-progress/done/github),
       detail page, `C` create dialog, `Cmd+K` stub routes to create,
       arrow-key nav
 - **Accept:** create MYB-1..N without collisions under concurrent POSTs;
-  message -> issue carries the screenshot; activity feed renders
+  message -> issue carries the screenshot; activity feed renders - verified live
 
 ## Phase 5 - Agents + MCP
 

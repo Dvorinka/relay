@@ -12,11 +12,13 @@ import { messagePreview } from "../../lib/text";
 import { timeAgo } from "../../lib/time";
 import { useProjects } from "../../stores/projects";
 import { Conversation } from "../conversations/Conversation";
+import { IssueList } from "../issues/IssueList";
 
-type Tab = "overview" | "conversation";
+type Tab = "overview" | "issues" | "conversation";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "overview", label: "Overview" },
+  { id: "issues", label: "Issues" },
   { id: "conversation", label: "Conversation" },
 ];
 
@@ -78,31 +80,6 @@ function Overview(props: { overview: ProjectOverview }) {
         </ul>
       </div>
     </div>
-  );
-}
-
-function ConversationTab(props: { projectId: string }) {
-  const [conversation] = createResource(
-    () => props.projectId,
-    (id) => api.projectConversation(id),
-  );
-  return (
-    <Show
-      when={conversation()}
-      keyed
-      fallback={
-        <div class="flex min-h-0 flex-1 items-center justify-center">
-          <Show
-            when={conversation.state === "errored"}
-            fallback={<Spinner />}
-          >
-            <p class="text-[13px] text-muted">Could not load conversation</p>
-          </Show>
-        </div>
-      }
-    >
-      {(c) => <Conversation conversationId={c.id} projectId={props.projectId} />}
-    </Show>
   );
 }
 
@@ -193,8 +170,11 @@ export default function ProjectPage() {
           {(o) => <Overview overview={o()} />}
         </Show>
       </Show>
+      <Show when={tab() === "issues" ? project() : undefined} keyed>
+        {(p) => <IssueList project={p} />}
+      </Show>
       <Show when={tab() === "conversation"}>
-        <ConversationTab projectId={params.projectId} />
+        <Conversation projectId={params.projectId} />
       </Show>
     </div>
   );

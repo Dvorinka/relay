@@ -260,6 +260,11 @@ func parseUUIDs(raw []string) ([]pgtype.UUID, bool) {
 
 // --- wire shapes ---
 
+// ConversationJSON renders a conversation for the API.
+func ConversationJSON(conv db.Conversation) gin.H {
+	return conversationJSON(conv)
+}
+
 func conversationJSON(conv db.Conversation) gin.H {
 	var issueID *string
 	if conv.IssueID.Valid {

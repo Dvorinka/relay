@@ -1,9 +1,11 @@
-import { Avatar } from "@ark-ui/solid";
+import { Avatar, Dialog } from "@ark-ui/solid";
 import {
   ApiClientError,
   type Attachment,
+  type Conversation as ApiConversation,
   type Message,
 } from "@relay/api-client";
+import { useNavigate } from "@solidjs/router";
 import {
   createEffect,
   createResource,
@@ -12,11 +14,23 @@ import {
   onCleanup,
   Show,
 } from "solid-js";
-import { FileIcon, PaperclipIcon, XIcon } from "../../components/icons";
-import { FormError, primaryButtonClass, Spinner } from "../../components/ui";
+import { Portal } from "solid-js/web";
+import {
+  FileIcon,
+  IssueIcon,
+  PaperclipIcon,
+  XIcon,
+} from "../../components/icons";
+import {
+  FormError,
+  inputClass,
+  primaryButtonClass,
+  Spinner,
+  SubmitButton,
+} from "../../components/ui";
 import { api } from "../../lib/api";
 import { Markdown } from "../../lib/markdown";
-import { formatBytes, initials } from "../../lib/text";
+import { formatBytes, initials, messagePreview } from "../../lib/text";
 import { timeAgo } from "../../lib/time";
 
 const PAGE_SIZE = 50;
@@ -121,10 +135,101 @@ function PendingChip(props: {
   );
 }
 
+function ConvertToIssueDialog(props: {
+  projectId: string;
+  message: Message;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const navigate = useNavigate();
+  const [title, setTitle] = createSignal("");
+  const [pending, setPending] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+
+  createEffect(() => {
+    if (props.open) {
+      // Prefill from the message body, stripped of markdown.
+      setTitle(messagePreview(props.message.body).slice(0, 60));
+      setError(null);
+    }
+  });
+
+  async function submit(e: SubmitEvent) {
+    e.preventDefault();
+    if (pending()) {
+      return;
+    }
+    setPending(true);
+    setError(null);
+    try {
+      const t = title().trim();
+      const issue = await api.createIssueFromMessage(
+        props.message.id,
+        t === "" ? undefined : t,
+      );
+      props.onOpenChange(false);
+      navigate(`/p/${props.projectId}/i/${issue.id}`);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Could not create issue",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <Dialog.Root
+      open={props.open}
+      onOpenChange={(d) => props.onOpenChange(d.open)}
+    >
+      <Portal>
+        <Dialog.Backdrop class="fixed inset-0 z-40 bg-black/40" />
+        <Dialog.Positioner class="fixed inset-0 z-40 flex items-start justify-center p-4 pt-[15vh]">
+          <Dialog.Content class="w-full max-w-md rounded-md border border-border bg-surface p-4 shadow-lg outline-none">
+            <Dialog.Title class="text-[14px] font-semibold">
+              Convert to issue
+            </Dialog.Title>
+            <Dialog.Description class="mt-1 text-[13px] text-muted">
+              Creates an issue in this project and copies the message into its
+              thread.
+            </Dialog.Description>
+            <form onSubmit={submit} class="mt-3 flex flex-col gap-3">
+              <input
+                ref={(el) => requestAnimationFrame(() => el.focus())}
+                type="text"
+                value={title()}
+                onInput={(e) => setTitle(e.currentTarget.value)}
+                placeholder="Issue title"
+                aria-label="Issue title"
+                maxlength={200}
+                class={inputClass}
+              />
+              <FormError message={error()} />
+              <div class="flex justify-end gap-2">
+                <Dialog.CloseTrigger
+                  type="button"
+                  class="inline-flex h-8 items-center justify-center rounded-md px-3 text-[13px] text-muted transition-colors hover:bg-hover hover:text-fg"
+                >
+                  Cancel
+                </Dialog.CloseTrigger>
+                <SubmitButton pending={pending()}>
+                  {pending() ? "Creating..." : "Create issue"}
+                </SubmitButton>
+              </div>
+            </form>
+          </Dialog.Content>
+        </Dialog.Positioner>
+      </Portal>
+    </Dialog.Root>
+  );
+}
+
 function MessageRow(props: { projectId: string; message: Message }) {
   const m = () => props.message;
+  const [convertOpen, setConvertOpen] = createSignal(false);
   return (
-    <div class="flex gap-3 px-4 py-2">
+    <div class="group relative flex gap-3 px-4 py-2">
       <Avatar.Root class="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-surface">
         <Avatar.Fallback class="text-[11px] font-medium text-muted">
           {initials(m().author.name)}
@@ -161,11 +266,26 @@ function MessageRow(props: { projectId: string; message: Message }) {
           </div>
         </Show>
       </div>
+      <button
+        type="button"
+        onClick={() => setConvertOpen(true)}
+        title="Convert to issue"
+        aria-label="Convert message to issue"
+        class="absolute right-3 top-1.5 rounded p-1 text-muted opacity-0 transition-opacity hover:bg-hover hover:text-fg focus-visible:opacity-100 group-hover:opacity-100"
+      >
+        <IssueIcon class="h-3.5 w-3.5" />
+      </button>
+      <ConvertToIssueDialog
+        projectId={props.projectId}
+        message={m()}
+        open={convertOpen()}
+        onOpenChange={setConvertOpen}
+      />
     </div>
   );
 }
 
-export function Conversation(props: {
+function ConversationThread(props: {
   conversationId: string;
   projectId: string;
 }) {
@@ -521,5 +641,43 @@ export function Conversation(props: {
         />
       </div>
     </div>
+  );
+}
+
+/**
+ * Message list + composer for a conversation. Pass `conversation` when the
+ * caller already resolved it (e.g. an issue thread); otherwise the project's
+ * own conversation is fetched for `projectId`.
+ */
+export function Conversation(props: {
+  projectId: string;
+  conversation?: ApiConversation;
+}) {
+  const [resolved] = createResource(
+    () => props.conversation?.id ?? props.projectId,
+    () =>
+      props.conversation
+        ? Promise.resolve(props.conversation)
+        : api.projectConversation(props.projectId),
+  );
+  return (
+    <Show
+      when={resolved()}
+      keyed
+      fallback={
+        <div class="flex min-h-0 flex-1 items-center justify-center">
+          <Show when={resolved.state === "errored"} fallback={<Spinner />}>
+            <p class="text-[13px] text-muted">Could not load conversation</p>
+          </Show>
+        </div>
+      }
+    >
+      {(c) => (
+        <ConversationThread
+          conversationId={c.id}
+          projectId={props.projectId}
+        />
+      )}
+    </Show>
   );
 }

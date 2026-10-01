@@ -471,6 +471,205 @@ paths:
         "204": { description: Recorded }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /api/projects/{projectId}/issues:
+    get:
+      operationId: listIssues
+      summary: List issues in a project
+      tags: [issues]
+      parameters:
+        - { $ref: "#/components/parameters/ProjectId" }
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/IssueStatus" }
+        - name: assignee
+          in: query
+          description: User id, or "me"
+          schema: { type: string }
+        - name: label
+          in: query
+          description: Label id
+          schema: { type: string, format: uuid }
+        - name: q
+          in: query
+          description: Substring match on title
+          schema: { type: string }
+      responses:
+        "200":
+          description: Issue list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [issues]
+                properties:
+                  issues:
+                    type: array
+                    items: { $ref: "#/components/schemas/Issue" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: createIssue
+      summary: Create an issue (keyed PROJECT-N)
+      tags: [issues]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string, minLength: 1, maxLength: 200 }
+                description: { type: string, maxLength: 20000 }
+                status: { $ref: "#/components/schemas/IssueStatus" }
+                priority: { $ref: "#/components/schemas/IssuePriority" }
+                assignee_id: { type: string, format: uuid }
+                label_ids:
+                  type: array
+                  items: { type: string, format: uuid }
+                  maxItems: 20
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Issue" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/issues/{issueId}:
+    get:
+      operationId: getIssue
+      summary: Issue detail with labels, assignee and activity
+      tags: [issues]
+      parameters: [ { $ref: "#/components/parameters/IssueId" } ]
+      responses:
+        "200":
+          description: Issue detail
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [issue, activity]
+                properties:
+                  issue: { $ref: "#/components/schemas/Issue" }
+                  activity:
+                    type: array
+                    items: { $ref: "#/components/schemas/IssueActivity" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateIssue
+      summary: Update issue fields; changes are recorded in activity
+      tags: [issues]
+      parameters: [ { $ref: "#/components/parameters/IssueId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string, minLength: 1, maxLength: 200 }
+                description: { type: string, maxLength: 20000 }
+                status: { $ref: "#/components/schemas/IssueStatus" }
+                priority: { $ref: "#/components/schemas/IssuePriority" }
+                assignee_id: { type: ["string", "null"], format: uuid }
+                label_ids:
+                  type: array
+                  items: { type: string, format: uuid }
+                  maxItems: 20
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Issue" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/issues/{issueId}/conversation:
+    get:
+      operationId: getIssueConversation
+      summary: The issue's own conversation thread (auto-created)
+      tags: [issues]
+      parameters: [ { $ref: "#/components/parameters/IssueId" } ]
+      responses:
+        "200":
+          description: Issue conversation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Conversation" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/messages/{messageId}/issue:
+    post:
+      operationId: createIssueFromMessage
+      summary: Turn a message into an issue in its project
+      tags: [issues]
+      parameters: [ { $ref: "#/components/parameters/MessageId" } ]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "201":
+          description: Created; body and attachments are copied to the issue thread
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Issue" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/projects/{projectId}/labels:
+    get:
+      operationId: listLabels
+      summary: List a project's labels
+      tags: [issues]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      responses:
+        "200":
+          description: Label list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [labels]
+                properties:
+                  labels:
+                    type: array
+                    items: { $ref: "#/components/schemas/Label" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: createLabel
+      summary: Create a project label
+      tags: [issues]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, color]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 40 }
+                color: { type: string, pattern: "^#[0-9a-fA-F]{6}$" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Label" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
 components:
   securitySchemes:
     sessionCookie:
@@ -504,6 +703,11 @@ components:
       schema: { type: string, format: uuid }
     AttachmentId:
       name: attachmentId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    IssueId:
+      name: issueId
       in: path
       required: true
       schema: { type: string, format: uuid }
@@ -682,6 +886,60 @@ components:
           items: { $ref: "#/components/schemas/Attachment" }
         created_at: { type: string, format: date-time }
         edited_at: { type: ["string", "null"], format: date-time }
+
+    IssueStatus:
+      type: string
+      enum: [backlog, todo, in_progress, review, done, cancelled]
+
+    IssuePriority:
+      type: string
+      enum: [none, urgent, high, medium, low]
+
+    Label:
+      type: object
+      required: [id, project_id, name, color]
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        name: { type: string }
+        color: { type: string }
+
+    Issue:
+      type: object
+      required: [id, project_id, number, key, title, description, status, priority, labels, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        number: { type: integer }
+        key: { type: string, description: "PROJECTKEY-number, e.g. AT-1" }
+        title: { type: string }
+        description: { type: string }
+        status: { $ref: "#/components/schemas/IssueStatus" }
+        priority: { $ref: "#/components/schemas/IssuePriority" }
+        assignee:
+          anyOf:
+            - $ref: "#/components/schemas/MessageAuthor"
+            - type: "null"
+        labels:
+          type: array
+          items: { $ref: "#/components/schemas/Label" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    IssueActivity:
+      type: object
+      required: [id, kind, actor, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, description: "created | status_changed | field_changed | commented | from_message" }
+        actor:
+          anyOf:
+            - $ref: "#/components/schemas/MessageAuthor"
+            - type: "null"
+        payload:
+          type: object
+          additionalProperties: true
+        created_at: { type: string, format: date-time }
 
     ProjectOverview:
       type: object

@@ -18,6 +18,21 @@ export type Conversation = components["schemas"]["Conversation"];
 export type Message = components["schemas"]["Message"];
 export type MessageAuthor = components["schemas"]["MessageAuthor"];
 export type Attachment = components["schemas"]["Attachment"];
+export type Issue = components["schemas"]["Issue"];
+export type IssueStatus = components["schemas"]["IssueStatus"];
+export type IssuePriority = components["schemas"]["IssuePriority"];
+export type IssueActivity = components["schemas"]["IssueActivity"];
+export type Label = components["schemas"]["Label"];
+
+export type CreateIssueRequest = NonNullable<
+  paths["/api/projects/{projectId}/issues"]["post"]["requestBody"]
+>["content"]["application/json"];
+export type UpdateIssueRequest = NonNullable<
+  paths["/api/issues/{issueId}"]["patch"]["requestBody"]
+>["content"]["application/json"];
+export type IssueFilters = NonNullable<
+  paths["/api/projects/{projectId}/issues"]["get"]["parameters"]["query"]
+>;
 
 export type Health =
   paths["/api/health"]["get"]["responses"]["200"]["content"]["application/json"];
@@ -51,15 +66,23 @@ export function createClient(baseUrl: string) {
     return (await res.json()) as T;
   }
 
-  function post<T>(path: string, body?: unknown): Promise<T> {
+  function send<T>(method: string, path: string, body?: unknown): Promise<T> {
     return request<T>(path, {
-      method: "POST",
+      method,
       headers:
         body === undefined
           ? undefined
           : { "Content-Type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
+  }
+
+  function post<T>(path: string, body?: unknown): Promise<T> {
+    return send<T>("POST", path, body);
+  }
+
+  function patch<T>(path: string, body?: unknown): Promise<T> {
+    return send<T>("PATCH", path, body);
   }
 
   return {
@@ -140,6 +163,48 @@ export function createClient(baseUrl: string) {
       }),
     markMessageRead: (messageId: string) =>
       post<void>(`/api/messages/${messageId}/read`),
+
+    // Issues
+    listIssues: (projectId: string, filters?: IssueFilters) => {
+      const query = new URLSearchParams();
+      if (filters?.status !== undefined) {
+        query.set("status", filters.status);
+      }
+      if (filters?.assignee) {
+        query.set("assignee", filters.assignee);
+      }
+      if (filters?.label) {
+        query.set("label", filters.label);
+      }
+      if (filters?.q) {
+        query.set("q", filters.q);
+      }
+      const qs = query.toString();
+      return request<{ issues: Issue[] }>(
+        `/api/projects/${projectId}/issues${qs ? `?${qs}` : ""}`,
+      );
+    },
+    createIssue: (projectId: string, input: CreateIssueRequest) =>
+      post<Issue>(`/api/projects/${projectId}/issues`, input),
+    getIssue: (issueId: string) =>
+      request<{ issue: Issue; activity: IssueActivity[] }>(
+        `/api/issues/${issueId}`,
+      ),
+    updateIssue: (issueId: string, patchBody: UpdateIssueRequest) =>
+      patch<Issue>(`/api/issues/${issueId}`, patchBody),
+    getIssueConversation: (issueId: string) =>
+      request<Conversation>(`/api/issues/${issueId}/conversation`),
+    createIssueFromMessage: (messageId: string, title?: string) =>
+      post<Issue>(
+        `/api/messages/${messageId}/issue`,
+        title === undefined ? undefined : { title },
+      ),
+
+    // Labels
+    listLabels: (projectId: string) =>
+      request<{ labels: Label[] }>(`/api/projects/${projectId}/labels`),
+    createLabel: (projectId: string, input: { name: string; color: string }) =>
+      post<Label>(`/api/projects/${projectId}/labels`, input),
 
     // Attachments
     uploadAttachment: (projectId: string, file: File) => {
