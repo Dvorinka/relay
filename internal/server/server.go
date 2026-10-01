@@ -9,11 +9,14 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Dvorinka/relay/internal/agents"
 	"github.com/Dvorinka/relay/internal/attachments"
 	"github.com/Dvorinka/relay/internal/auth"
 	"github.com/Dvorinka/relay/internal/config"
 	"github.com/Dvorinka/relay/internal/conversations"
+	"github.com/Dvorinka/relay/internal/db"
 	"github.com/Dvorinka/relay/internal/issues"
+	"github.com/Dvorinka/relay/internal/mcpserver"
 	"github.com/Dvorinka/relay/internal/projects"
 	"github.com/Dvorinka/relay/internal/storage"
 	"github.com/Dvorinka/relay/internal/workspaces"
@@ -47,6 +50,8 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	convSvc := conversations.NewService(log, pool)
 	attSvc := attachments.NewService(log, pool, store, cfg)
 	issueSvc := issues.NewService(log, pool)
+	agentSvc := agents.NewService(log, pool)
+	mcpHandler := mcpserver.New(db.New(pool), store, log)
 
 	api := r.Group("/api")
 	api.GET("/health", func(c *gin.Context) {
@@ -66,6 +71,10 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	convSvc.RegisterRoutes(priv)
 	attSvc.RegisterRoutes(priv)
 	issueSvc.RegisterRoutes(priv)
+	agentSvc.RegisterRoutes(priv)
+
+	// external agents: bearer-token MCP, not session cookies
+	r.POST("/mcp", mcpHandler)
 
 	mountStatic(r, cfg.StaticDir)
 	return r

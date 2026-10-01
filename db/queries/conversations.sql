@@ -33,9 +33,11 @@ where p.id = $1 and wm.user_id = $2;
 -- newest-first page; $2 is an optional "older than message id" cursor
 select m.id, m.conversation_id, m.body, m.created_at, m.edited_at,
        m.author_user_id, m.author_agent_id,
-       u.name as author_name, u.avatar_key as author_avatar
+       coalesce(u.name, a.name, '') as author_name,
+       coalesce(u.avatar_key, a.avatar_key) as author_avatar
 from messages m
 left join users u on u.id = m.author_user_id
+left join agents a on a.id = m.author_agent_id
 where m.conversation_id = $1
   and m.deleted_at is null
   and (sqlc.narg(before)::uuid is null or
@@ -51,9 +53,11 @@ returning id;
 -- name: GetMessageByID :one
 select m.id, m.conversation_id, m.body, m.created_at, m.edited_at,
        m.author_user_id, m.author_agent_id,
-       u.name as author_name, u.avatar_key as author_avatar
+       coalesce(u.name, a.name, '') as author_name,
+       coalesce(u.avatar_key, a.avatar_key) as author_avatar
 from messages m
 left join users u on u.id = m.author_user_id
+left join agents a on a.id = m.author_agent_id
 where m.id = $1;
 
 -- name: GetMessageForUser :one
@@ -73,10 +77,12 @@ on conflict (message_id, user_id) where user_id is not null do nothing;
 -- name: RecentProjectMessages :many
 select m.id, m.conversation_id, m.body, m.created_at, m.edited_at,
        m.author_user_id, m.author_agent_id,
-       u.name as author_name, u.avatar_key as author_avatar
+       coalesce(u.name, a.name, '') as author_name,
+       coalesce(u.avatar_key, a.avatar_key) as author_avatar
 from messages m
 join conversations c on c.id = m.conversation_id
 left join users u on u.id = m.author_user_id
+left join agents a on a.id = m.author_agent_id
 where c.project_id = $1 and m.deleted_at is null
 order by m.created_at desc, m.id desc
 limit 10;

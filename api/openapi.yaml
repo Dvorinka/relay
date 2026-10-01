@@ -604,6 +604,203 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/workspaces/{workspaceId}/agents:
+    get:
+      operationId: listAgents
+      summary: List agents in a workspace
+      tags: [agents]
+      parameters: [ { $ref: "#/components/parameters/WorkspaceId" } ]
+      responses:
+        "200":
+          description: Agent list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [agents]
+                properties:
+                  agents:
+                    type: array
+                    items: { $ref: "#/components/schemas/Agent" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: createAgent
+      summary: Create an agent identity (owner/admin only)
+      tags: [agents]
+      parameters: [ { $ref: "#/components/parameters/WorkspaceId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 60 }
+                description: { type: string, maxLength: 500 }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Agent" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/agents/{agentId}:
+    get:
+      operationId: getAgent
+      summary: Agent detail with project grants
+      tags: [agents]
+      parameters: [ { $ref: "#/components/parameters/AgentId" } ]
+      responses:
+        "200":
+          description: Agent detail
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [agent, tokens]
+                properties:
+                  agent: { $ref: "#/components/schemas/Agent" }
+                  tokens:
+                    type: array
+                    items: { $ref: "#/components/schemas/McpTokenMeta" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateAgent
+      summary: Rename/redescribe an agent (owner/admin)
+      tags: [agents]
+      parameters: [ { $ref: "#/components/parameters/AgentId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, minLength: 1, maxLength: 60 }
+                description: { type: string, maxLength: 500 }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Agent" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: deleteAgent
+      summary: Delete an agent and revoke its tokens (owner/admin)
+      tags: [agents]
+      parameters: [ { $ref: "#/components/parameters/AgentId" } ]
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/agents/{agentId}/projects/{projectId}:
+    put:
+      operationId: grantAgentProject
+      summary: Grant an agent project access with scopes (owner/admin)
+      tags: [agents]
+      parameters:
+        - { $ref: "#/components/parameters/AgentId" }
+        - { $ref: "#/components/parameters/ProjectId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scopes]
+              properties:
+                scopes:
+                  type: array
+                  items: { $ref: "#/components/schemas/AgentScope" }
+                  minItems: 1
+      responses:
+        "200":
+          description: Granted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentGrant" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: revokeAgentProject
+      summary: Revoke an agent's project access (owner/admin)
+      tags: [agents]
+      parameters:
+        - { $ref: "#/components/parameters/AgentId" }
+        - { $ref: "#/components/parameters/ProjectId" }
+      responses:
+        "204": { description: Revoked }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/agents/{agentId}/tokens:
+    post:
+      operationId: mintAgentToken
+      summary: Mint an MCP token; the secret is returned once (owner/admin)
+      tags: [agents]
+      parameters: [ { $ref: "#/components/parameters/AgentId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 60 }
+                expires_days:
+                  type: integer
+                  minimum: 1
+                  maximum: 365
+      responses:
+        "201":
+          description: Minted; `token` is shown only in this response
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MintedToken" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/agents/{agentId}/tokens/{tokenId}:
+    delete:
+      operationId: revokeAgentToken
+      summary: Revoke an MCP token (owner/admin)
+      tags: [agents]
+      parameters:
+        - { $ref: "#/components/parameters/AgentId" }
+        - { $ref: "#/components/parameters/TokenId" }
+      responses:
+        "204": { description: Revoked }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /mcp:
+    post:
+      operationId: mcpEndpoint
+      summary: Streamable-HTTP MCP endpoint for external agents
+      description: >-
+        JSON-RPC MCP surface. Bearer auth with an `rly_` agent token;
+        every tool call resolves token -> agent -> project grant -> scope.
+      tags: [mcp]
+      security: [ { mcpBearer: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, description: "JSON-RPC envelope" }
+      responses:
+        "200": { description: JSON-RPC response }
+        "401": { description: "Missing, revoked, or expired token" }
+
   /api/messages/{messageId}/issue:
     post:
       operationId: createIssueFromMessage
@@ -708,6 +905,16 @@ components:
       schema: { type: string, format: uuid }
     IssueId:
       name: issueId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    AgentId:
+      name: agentId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    TokenId:
+      name: tokenId
       in: path
       required: true
       schema: { type: string, format: uuid }
@@ -940,6 +1147,63 @@ components:
           type: object
           additionalProperties: true
         created_at: { type: string, format: date-time }
+
+    AgentScope:
+      type: string
+      enum:
+        - project:read
+        - message:read
+        - message:write
+        - attachment:read
+        - issue:read
+        - issue:write
+
+    AgentGrant:
+      type: object
+      required: [project_id, project_key, project_name, scopes]
+      properties:
+        project_id: { type: string, format: uuid }
+        project_key: { type: string }
+        project_name: { type: string }
+        scopes:
+          type: array
+          items: { $ref: "#/components/schemas/AgentScope" }
+
+    Agent:
+      type: object
+      required: [id, workspace_id, name, slug, description, grants, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+        description: { type: string }
+        grants:
+          type: array
+          items: { $ref: "#/components/schemas/AgentGrant" }
+        last_seen_at:
+          type: ["string", "null"]
+          format: date-time
+          description: Last authenticated MCP call; null means never seen.
+        created_at: { type: string, format: date-time }
+
+    McpTokenMeta:
+      type: object
+      required: [id, name, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        last_used_at: { type: ["string", "null"], format: date-time }
+        expires_at: { type: ["string", "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+
+    MintedToken:
+      allOf:
+        - $ref: "#/components/schemas/McpTokenMeta"
+        - type: object
+          required: [token]
+          properties:
+            token: { type: string, description: "rly_... - shown once" }
 
     ProjectOverview:
       type: object

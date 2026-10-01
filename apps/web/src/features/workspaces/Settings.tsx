@@ -15,6 +15,7 @@ import {
 } from "../../components/ui";
 import { api } from "../../lib/api";
 import { useSession } from "../../stores/session";
+import AgentsSection from "../agents/AgentsSection";
 
 function errorMessage(err: unknown, fallback: string): string {
   return err instanceof ApiClientError
@@ -293,6 +294,14 @@ export default function Settings() {
           )}
         </Show>
       </Section>
+
+      <Show when={current()}>
+        {(ws) => (
+          <Section title="Agents">
+            <AgentsSection workspaceId={ws().id} canManage={canInvite()} />
+          </Section>
+        )}
+      </Show>
     </div>
   );
 }

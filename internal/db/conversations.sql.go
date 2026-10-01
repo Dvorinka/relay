@@ -99,9 +99,11 @@ func (q *Queries) GetConversationForUser(ctx context.Context, arg GetConversatio
 const getMessageByID = `-- name: GetMessageByID :one
 select m.id, m.conversation_id, m.body, m.created_at, m.edited_at,
        m.author_user_id, m.author_agent_id,
-       u.name as author_name, u.avatar_key as author_avatar
+       coalesce(u.name, a.name, '') as author_name,
+       coalesce(u.avatar_key, a.avatar_key) as author_avatar
 from messages m
 left join users u on u.id = m.author_user_id
+left join agents a on a.id = m.author_agent_id
 where m.id = $1
 `
 
@@ -113,7 +115,7 @@ type GetMessageByIDRow struct {
 	EditedAt       pgtype.Timestamptz `json:"edited_at"`
 	AuthorUserID   pgtype.UUID        `json:"author_user_id"`
 	AuthorAgentID  pgtype.UUID        `json:"author_agent_id"`
-	AuthorName     pgtype.Text        `json:"author_name"`
+	AuthorName     string             `json:"author_name"`
 	AuthorAvatar   pgtype.Text        `json:"author_avatar"`
 }
 
@@ -218,9 +220,11 @@ func (q *Queries) GetProjectForUser(ctx context.Context, arg GetProjectForUserPa
 const listMessages = `-- name: ListMessages :many
 select m.id, m.conversation_id, m.body, m.created_at, m.edited_at,
        m.author_user_id, m.author_agent_id,
-       u.name as author_name, u.avatar_key as author_avatar
+       coalesce(u.name, a.name, '') as author_name,
+       coalesce(u.avatar_key, a.avatar_key) as author_avatar
 from messages m
 left join users u on u.id = m.author_user_id
+left join agents a on a.id = m.author_agent_id
 where m.conversation_id = $1
   and m.deleted_at is null
   and ($2::uuid is null or
@@ -243,7 +247,7 @@ type ListMessagesRow struct {
 	EditedAt       pgtype.Timestamptz `json:"edited_at"`
 	AuthorUserID   pgtype.UUID        `json:"author_user_id"`
 	AuthorAgentID  pgtype.UUID        `json:"author_agent_id"`
-	AuthorName     pgtype.Text        `json:"author_name"`
+	AuthorName     string             `json:"author_name"`
 	AuthorAvatar   pgtype.Text        `json:"author_avatar"`
 }
 
@@ -297,10 +301,12 @@ func (q *Queries) MarkMessageRead(ctx context.Context, arg MarkMessageReadParams
 const recentProjectMessages = `-- name: RecentProjectMessages :many
 select m.id, m.conversation_id, m.body, m.created_at, m.edited_at,
        m.author_user_id, m.author_agent_id,
-       u.name as author_name, u.avatar_key as author_avatar
+       coalesce(u.name, a.name, '') as author_name,
+       coalesce(u.avatar_key, a.avatar_key) as author_avatar
 from messages m
 join conversations c on c.id = m.conversation_id
 left join users u on u.id = m.author_user_id
+left join agents a on a.id = m.author_agent_id
 where c.project_id = $1 and m.deleted_at is null
 order by m.created_at desc, m.id desc
 limit 10
@@ -314,7 +320,7 @@ type RecentProjectMessagesRow struct {
 	EditedAt       pgtype.Timestamptz `json:"edited_at"`
 	AuthorUserID   pgtype.UUID        `json:"author_user_id"`
 	AuthorAgentID  pgtype.UUID        `json:"author_agent_id"`
-	AuthorName     pgtype.Text        `json:"author_name"`
+	AuthorName     string             `json:"author_name"`
 	AuthorAvatar   pgtype.Text        `json:"author_avatar"`
 }
 
