@@ -1,7 +1,7 @@
 # Multi-stage build: web assets -> Go binary -> minimal runtime.
 
 # --- web build ---
-FROM node:22-alpine AS web
+FROM node:26-alpine AS web
 WORKDIR /src
 COPY apps/web/package.json apps/web/
 COPY packages/api-client/package.json packages/api-client/
