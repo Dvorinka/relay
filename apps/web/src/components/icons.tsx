@@ -104,6 +104,58 @@ export function FileIcon(props: IconProps): JSX.Element {
   );
 }
 
+export function ChevronDownIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      class={props.class}
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+    >
+      <path d="m4 6 4 4 4-4" />
+    </svg>
+  );
+}
+
+export function CheckIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      class={props.class}
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+    >
+      <path d="m3.5 8.5 3 3 6-7" />
+    </svg>
+  );
+}
+
+export function IssueIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      class={props.class}
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="8" cy="8" r="6" />
+      <path d="M5.75 8h4.5M8.75 6.5 10.25 8l-1.5 1.5" />
+    </svg>
+  );
+}
+
 export function XIcon(props: IconProps): JSX.Element {
   return (
     <svg

@@ -28,6 +28,44 @@ type Conversation struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type Issue struct {
+	ID          pgtype.UUID        `json:"id"`
+	ProjectID   pgtype.UUID        `json:"project_id"`
+	Number      int32              `json:"number"`
+	Title       string             `json:"title"`
+	Description string             `json:"description"`
+	Status      string             `json:"status"`
+	Priority    string             `json:"priority"`
+	AssigneeID  pgtype.UUID        `json:"assignee_id"`
+	AgentID     pgtype.UUID        `json:"agent_id"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type IssueActivity struct {
+	ID           pgtype.UUID        `json:"id"`
+	IssueID      pgtype.UUID        `json:"issue_id"`
+	ActorUserID  pgtype.UUID        `json:"actor_user_id"`
+	ActorAgentID pgtype.UUID        `json:"actor_agent_id"`
+	Kind         string             `json:"kind"`
+	Payload      []byte             `json:"payload"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+type IssueLabel struct {
+	ID        pgtype.UUID        `json:"id"`
+	ProjectID pgtype.UUID        `json:"project_id"`
+	Name      string             `json:"name"`
+	Color     string             `json:"color"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type IssueLabelLink struct {
+	IssueID pgtype.UUID `json:"issue_id"`
+	LabelID pgtype.UUID `json:"label_id"`
+}
+
 type Message struct {
 	ID             pgtype.UUID        `json:"id"`
 	ConversationID pgtype.UUID        `json:"conversation_id"`

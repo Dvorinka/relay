@@ -13,6 +13,7 @@ import (
 	"github.com/Dvorinka/relay/internal/auth"
 	"github.com/Dvorinka/relay/internal/config"
 	"github.com/Dvorinka/relay/internal/conversations"
+	"github.com/Dvorinka/relay/internal/issues"
 	"github.com/Dvorinka/relay/internal/projects"
 	"github.com/Dvorinka/relay/internal/storage"
 	"github.com/Dvorinka/relay/internal/workspaces"
@@ -45,6 +46,7 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	projSvc := projects.NewService(log, pool)
 	convSvc := conversations.NewService(log, pool)
 	attSvc := attachments.NewService(log, pool, store, cfg)
+	issueSvc := issues.NewService(log, pool)
 
 	api := r.Group("/api")
 	api.GET("/health", func(c *gin.Context) {
@@ -63,6 +65,7 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	projSvc.RegisterRoutes(priv)
 	convSvc.RegisterRoutes(priv)
 	attSvc.RegisterRoutes(priv)
+	issueSvc.RegisterRoutes(priv)
 
 	mountStatic(r, cfg.StaticDir)
 	return r
