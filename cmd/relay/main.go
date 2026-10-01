@@ -125,6 +125,6 @@ func fatal(log *zap.Logger, err error) {
 		log.Fatal("fatal", zap.Error(err))
 	}
 	// Logger not yet initialized; stderr + exit is the honest failure path.
-	os.Stderr.WriteString("fatal: " + err.Error() + "\n")
+	_, _ = os.Stderr.WriteString("fatal: " + err.Error() + "\n")
 	os.Exit(1)
 }
