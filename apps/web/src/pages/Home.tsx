@@ -23,7 +23,7 @@ export default function Home() {
             <For each={list()}>
               {(p) => (
                 <A
-                  href={`/p/${p.id}`}
+                  href={`/app/p/${p.id}`}
                   class="block rounded-md border border-border bg-surface p-4 transition-colors hover:bg-hover"
                 >
                   <div class="flex items-center gap-2">

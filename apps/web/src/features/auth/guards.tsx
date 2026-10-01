@@ -18,12 +18,12 @@ export function RequireAuth(props: ParentProps) {
   );
 }
 
-/** Inverse of RequireAuth: sends signed-in users back to /. */
+/** Inverse of RequireAuth: sends signed-in users back to /app. */
 export function RequireAnon(props: ParentProps) {
   const session = useSession();
   return (
     <Show when={!session.loading()} fallback={<FullPageSpinner />}>
-      <Show when={!session.user()} fallback={<Navigate href="/" />}>
+      <Show when={!session.user()} fallback={<Navigate href="/app" />}>
         {props.children}
       </Show>
     </Show>

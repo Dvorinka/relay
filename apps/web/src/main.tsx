@@ -1,6 +1,7 @@
 import { Route, Router } from "@solidjs/router";
 import { render } from "solid-js/web";
 import App from "./App";
+import Landing from "./features/landing/Landing";
 import ForgotPassword from "./features/auth/ForgotPassword";
 import Login from "./features/auth/Login";
 import Register from "./features/auth/Register";
@@ -21,7 +22,8 @@ render(
         <Route path="/register" component={Register} />
         <Route path="/forgot" component={ForgotPassword} />
         <Route path="/reset" component={ResetPassword} />
-        <Route path="/" component={App}>
+        <Route path="/" component={Landing} />
+        <Route path="/app" component={App}>
           <Route path="/" component={Home} />
           <Route path="/inbox" component={Inbox} />
           <Route path="/p/:projectId" component={ProjectPage} />

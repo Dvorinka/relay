@@ -44,7 +44,7 @@ function IssueRow(props: {
   return (
     <li>
       <A
-        href={`/p/${props.projectId}/i/${i().id}`}
+        href={`/app/p/${props.projectId}/i/${i().id}`}
         onMouseEnter={props.onHover}
         class={`flex items-center gap-3 px-3 py-2 text-[13px] transition-colors ${
           props.selected ? "bg-hover" : ""
@@ -178,7 +178,7 @@ export function IssueList(props: { project: Project }) {
     } else if (e.key === "Enter") {
       const issue = list[selIdx()];
       if (issue) {
-        navigate(`/p/${props.project.id}/i/${issue.id}`);
+        navigate(`/app/p/${props.project.id}/i/${issue.id}`);
       }
     } else if (e.key === "c") {
       e.preventDefault();

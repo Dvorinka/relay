@@ -168,7 +168,7 @@ function ConvertToIssueDialog(props: {
         t === "" ? undefined : t,
       );
       props.onOpenChange(false);
-      navigate(`/p/${props.projectId}/i/${issue.id}`);
+      navigate(`/app/p/${props.projectId}/i/${issue.id}`);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Could not create issue",

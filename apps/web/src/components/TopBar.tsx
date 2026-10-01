@@ -45,7 +45,7 @@ function AccountMenu() {
             <Menu.Separator class="my-1 border-t border-border" />
             <Menu.Item
               value="settings"
-              onSelect={() => navigate("/settings")}
+              onSelect={() => navigate("/app/settings")}
               class="cursor-default rounded-sm px-2 py-1.5 text-[13px] outline-none data-[highlighted]:bg-hover"
             >
               Settings
@@ -67,7 +67,7 @@ function AccountMenu() {
 export function TopBar() {
   return (
     <header class="flex h-12 shrink-0 items-center gap-3 border-b border-border px-4">
-      <A href="/" class="flex items-center gap-2">
+      <A href="/app" class="flex items-center gap-2">
         <RelayMark class="h-5 w-5" />
         <span class="text-[15px] font-semibold tracking-tight">relay</span>
       </A>

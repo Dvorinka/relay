@@ -195,7 +195,7 @@ export default function IssuePage() {
             <header class="shrink-0 px-6 pt-5">
               <div class="flex items-center gap-2 text-[13px] text-muted">
                 <A
-                  href={`/p/${params.projectId}`}
+                  href={`/app/p/${params.projectId}`}
                   class="transition-colors hover:text-fg"
                 >
                   {project()?.name ?? "Project"}

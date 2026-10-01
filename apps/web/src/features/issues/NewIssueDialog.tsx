@@ -53,7 +53,7 @@ export function NewIssueDialog(props: {
         ...(lids.length > 0 ? { label_ids: lids } : {}),
       });
       props.onOpenChange(false);
-      navigate(`/p/${props.project.id}/i/${issue.id}`);
+      navigate(`/app/p/${props.project.id}/i/${issue.id}`);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Could not create issue",
