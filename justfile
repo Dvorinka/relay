@@ -1,0 +1,45 @@
+# Relay task runner. `just --list` to see everything.
+
+# start dependencies + backend + frontend in dev mode
+dev:
+    docker compose up -d postgres minio minio-init
+    trap 'docker compose stop' INT; \
+    go run ./cmd/relay & \
+    npm run dev --prefix apps/web & \
+    wait
+
+# run database migrations
+migrate:
+    goose -dir db/migrations postgres "$DATABASE_URL" up
+
+# create a new migration: just migration add_issues
+migration name:
+    goose -dir db/migrations create {{name}} sql
+
+# regenerate sqlc code after editing db/queries
+sqlc:
+    sqlc generate
+
+# regenerate the TS client after editing api/openapi.yaml
+api:
+    openapi-typescript api/openapi.yaml -o packages/api-client/src/generated/schema.ts
+
+# all tests (go + web)
+test:
+    go test ./...
+    npm test --prefix apps/web --if-present
+
+# lint + typecheck, zero warnings expected
+check:
+    go vet ./...
+    golangci-lint run
+    npx tsc --noEmit -p apps/web
+
+# build everything
+build:
+    go build ./...
+    npm run build --prefix apps/web
+
+# build the production docker image
+image:
+    docker build -f deploy/Dockerfile -t relay:local .
