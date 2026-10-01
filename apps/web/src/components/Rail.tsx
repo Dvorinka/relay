@@ -52,7 +52,7 @@ function HealthStatus() {
 
 function ProjectRow(props: { project: Project }) {
   return (
-    <NavItem href={`/p/${props.project.id}`}>
+    <NavItem href={`/app/p/${props.project.id}`}>
       <span
         class="h-2 w-2 shrink-0 rounded-full"
         style={{
@@ -93,7 +93,7 @@ function NewProjectForm(props: { onDone: () => void }) {
         key: key().trim(),
       });
       props.onDone();
-      navigate(`/p/${project.id}`);
+      navigate(`/app/p/${project.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create project");
     } finally {
@@ -176,7 +176,7 @@ export function Rail() {
       </Show>
 
       <nav class="flex flex-col gap-0.5 p-2">
-        <NavItem href="/inbox">
+        <NavItem href="/app/inbox">
           <InboxIcon class="h-3.5 w-3.5" />
           Inbox
         </NavItem>
@@ -230,7 +230,7 @@ export function Rail() {
 
       <div class="mt-auto flex flex-col gap-0.5 border-t border-border p-2">
         <HealthStatus />
-        <NavItem href="/settings">
+        <NavItem href="/app/settings">
           <SettingsIcon class="h-3.5 w-3.5" />
           Settings
         </NavItem>

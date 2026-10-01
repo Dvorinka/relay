@@ -89,13 +89,13 @@ Global rules applied to every phase:
 
 ## Landing page (ships with Phase 5 PR or its own)
 
-- [ ] Public marketing page at `/`; app moves to `/app/*`, logged-in
-      visitors to `/` redirect to `/app`
-- [ ] Sections: hero (logo, tagline, core loop), features, MCP callout,
+- [x] Public marketing page at `/`; app moves to `/app/*`, logged-in
+      visitors to `/` redirect to `/app` - verified live both ways
+- [x] Sections: hero (logo, tagline, core loop), features, MCP callout,
       self-host snippet, footer (GitHub, docs, license)
-- [ ] Brand tokens only; dark/light aware; no tracking, no external fonts
+- [x] Brand tokens only; dark/light aware; no tracking, no external fonts
 - **Accept:** anonymous `/` renders the landing page; `/login` keeps
-      working; authenticated users land in the app
+      working; authenticated users land in the app - verified
 
 ## Phase 5 - Agents + MCP
 

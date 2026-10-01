@@ -36,7 +36,7 @@ goose + sqlc wired, OpenAPI skeleton, health endpoint, brand kit, docs.
 - Conversation ↔ issue loop (message → issue, issue → thread)
 - `issue_activity` powering issue timeline + project activity feed
 
-## Phase 4.5 - Landing page ☐
+## Phase 4.5 - Landing page ☑
 
 - Public landing at `/`; app moves under `/app`
 - Hero, feature grid, MCP callout, self-host quickstart, footer
