@@ -23,6 +23,11 @@ export type IssueStatus = components["schemas"]["IssueStatus"];
 export type IssuePriority = components["schemas"]["IssuePriority"];
 export type IssueActivity = components["schemas"]["IssueActivity"];
 export type Label = components["schemas"]["Label"];
+export type Agent = components["schemas"]["Agent"];
+export type AgentScope = components["schemas"]["AgentScope"];
+export type AgentGrant = components["schemas"]["AgentGrant"];
+export type McpTokenMeta = components["schemas"]["McpTokenMeta"];
+export type MintedToken = components["schemas"]["MintedToken"];
 
 export type CreateIssueRequest = NonNullable<
   paths["/api/projects/{projectId}/issues"]["post"]["requestBody"]
@@ -79,6 +84,10 @@ export function createClient(baseUrl: string) {
 
   function post<T>(path: string, body?: unknown): Promise<T> {
     return send<T>("POST", path, body);
+  }
+
+  function put<T>(path: string, body?: unknown): Promise<T> {
+    return send<T>("PUT", path, body);
   }
 
   function patch<T>(path: string, body?: unknown): Promise<T> {
@@ -205,6 +214,44 @@ export function createClient(baseUrl: string) {
       request<{ labels: Label[] }>(`/api/projects/${projectId}/labels`),
     createLabel: (projectId: string, input: { name: string; color: string }) =>
       post<Label>(`/api/projects/${projectId}/labels`, input),
+
+    // Agents
+    listAgents: (workspaceId: string) =>
+      request<{ agents: Agent[] }>(`/api/workspaces/${workspaceId}/agents`),
+    createAgent: (
+      workspaceId: string,
+      input: { name: string; slug?: string; description?: string },
+    ) => post<Agent>(`/api/workspaces/${workspaceId}/agents`, input),
+    getAgent: (agentId: string) =>
+      request<{ agent: Agent; tokens: McpTokenMeta[] }>(
+        `/api/agents/${agentId}`,
+      ),
+    updateAgent: (
+      agentId: string,
+      input: { name?: string; description?: string },
+    ) => patch<Agent>(`/api/agents/${agentId}`, input),
+    deleteAgent: (agentId: string) =>
+      request<void>(`/api/agents/${agentId}`, { method: "DELETE" }),
+    grantAgentProject: (
+      agentId: string,
+      projectId: string,
+      scopes: AgentScope[],
+    ) =>
+      put<AgentGrant>(`/api/agents/${agentId}/projects/${projectId}`, {
+        scopes,
+      }),
+    revokeAgentProject: (agentId: string, projectId: string) =>
+      request<void>(`/api/agents/${agentId}/projects/${projectId}`, {
+        method: "DELETE",
+      }),
+    mintAgentToken: (
+      agentId: string,
+      input: { name: string; expires_in_days?: number },
+    ) => post<MintedToken>(`/api/agents/${agentId}/tokens`, input),
+    revokeAgentToken: (agentId: string, tokenId: string) =>
+      request<void>(`/api/agents/${agentId}/tokens/${tokenId}`, {
+        method: "DELETE",
+      }),
 
     // Attachments
     uploadAttachment: (projectId: string, file: File) => {

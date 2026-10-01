@@ -281,7 +281,7 @@ func conversationJSON(conv db.Conversation) gin.H {
 // MessageJSON renders one message for the API. Author is a user/agent pair;
 // exactly one side is set (DB check constraint).
 func MessageJSON(id, convID pgtype.UUID, body string, createdAt, editedAt pgtype.Timestamptz,
-	authorUserID, authorAgentID pgtype.UUID, authorName, authorAvatar pgtype.Text, atts []gin.H) gin.H {
+	authorUserID, authorAgentID pgtype.UUID, authorName string, authorAvatar pgtype.Text, atts []gin.H) gin.H {
 	kind := "user"
 	authorID := authorUserID
 	if authorAgentID.Valid {
@@ -302,7 +302,7 @@ func MessageJSON(id, convID pgtype.UUID, body string, createdAt, editedAt pgtype
 		"id": id.String(), "conversation_id": convID.String(),
 		"author": gin.H{
 			"kind": kind, "id": authorID.String(),
-			"name": authorName.String, "avatar_url": avatar,
+			"name": authorName, "avatar_url": avatar,
 		},
 		"body":        body,
 		"attachments": nonEmpty(atts),

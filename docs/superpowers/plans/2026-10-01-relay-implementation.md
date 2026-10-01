@@ -87,20 +87,32 @@ Global rules applied to every phase:
 - **Accept:** create MYB-1..N without collisions under concurrent POSTs;
   message -> issue carries the screenshot; activity feed renders - verified live
 
+## Landing page (ships with Phase 5 PR or its own)
+
+- [ ] Public marketing page at `/`; app moves to `/app/*`, logged-in
+      visitors to `/` redirect to `/app`
+- [ ] Sections: hero (logo, tagline, core loop), features, MCP callout,
+      self-host snippet, footer (GitHub, docs, license)
+- [ ] Brand tokens only; dark/light aware; no tracking, no external fonts
+- **Accept:** anonymous `/` renders the landing page; `/login` keeps
+      working; authenticated users land in the app
+
 ## Phase 5 - Agents + MCP
 
-- [ ] `internal/agents`: identities, `agent_project_permissions`, scope set
-- [ ] `mcp_tokens`: mint (`rly_` + sha256 store, shown once), revoke,
-      `last_used_at` touch
-- [ ] `internal/mcp`: streamable HTTP server; token middleware ->
-      agent + project + scope; tools per spec section 7
-- [ ] Agent messages render with distinct identity; `last seen` from real
+- [x] `internal/agents`: identities, `agent_project_permissions`, scope set
+- [x] `mcp_tokens`: mint (`rly_` + sha256 store, shown once), revoke,
+      `last_used_at` touch - verified live (revoke kills mid-session)
+- [x] `internal/mcpserver`: streamable HTTP at POST /mcp via mcp-go; bearer
+      middleware -> agent + project + scope; 13 tools (projects, conversations,
+      messages, attachments, search, issues, send, mark-read)
+- [x] Agent messages render with distinct identity; `last seen` from real
       `mcp_tokens.last_used_at` only
-- [ ] Web: workspace agent settings (create agent, grant projects,
-      mint/revoke tokens)
-- **Accept:** an external MCP client with a scoped token lists only granted
-  projects, reads messages/attachments, posts a reply that appears in the UI;
-  a token for project A gets denied on project B (test asserts all tools)
+- [x] Web: settings Agents section (create agent, grant projects + scopes,
+      mint/revoke tokens, shown-once box) - verified live
+- **Accept:** verified live: scoped token lists only granted projects,
+  message/issue reads+writes on Alpha pass, all denied on Beta; revoked and
+  bogus tokens get JSON-RPC -32001; unit tests cover token mint format and
+  the per-token rate-limit window
 
 ## Phase 6 - GitHub
 
