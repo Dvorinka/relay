@@ -65,14 +65,14 @@ Global rules applied to every phase:
 
 ## Phase 3 - Attachments
 
-- [ ] `internal/storage`: minio-go client, presign helpers
-- [ ] `internal/attachments`: multipart upload (MIME sniff, 25 MiB cap,
+- [x] `internal/storage`: minio-go client, presign helpers
+- [x] `internal/attachments`: multipart upload (MIME sniff, 25 MiB cap,
       allowlist), `status: pending -> ready`, presigned GET endpoint
-- [ ] Message create accepts `attachment_ids`; `message_attachments` rows
-- [ ] Web: composer paste (Ctrl+V), drag&drop, picker, previews, remove,
+- [x] Message create accepts `attachment_ids`; `message_attachments` rows
+- [x] Web: composer paste (Ctrl+V), drag&drop, picker, previews, remove,
       inline image render, download
 - **Accept:** paste a screenshot -> send -> thumbnail renders; attachment URL
-  expires; oversized/invalid MIME rejected
+  expires; oversized/invalid MIME rejected - verified live against RustFS
 
 ## Phase 4 - Issues
 

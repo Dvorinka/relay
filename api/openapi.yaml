@@ -407,6 +407,10 @@ paths:
               required: [body]
               properties:
                 body: { type: string, minLength: 1, maxLength: 20000 }
+                attachment_ids:
+                  type: array
+                  items: { type: string, format: uuid }
+                  maxItems: 20
       responses:
         "201":
           description: Posted
@@ -415,6 +419,47 @@ paths:
               schema: { $ref: "#/components/schemas/Message" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/projects/{projectId}/attachments:
+    post:
+      operationId: uploadAttachment
+      summary: Upload a file attachment to a project
+      tags: [attachments]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "201":
+          description: Uploaded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Attachment" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "413": { description: File exceeds the upload size cap }
+
+  /api/projects/{projectId}/attachments/{attachmentId}/url:
+    get:
+      operationId: getAttachmentURL
+      summary: Redirect to a short-lived presigned download URL
+      tags: [attachments]
+      parameters:
+        - { $ref: "#/components/parameters/ProjectId" }
+        - { $ref: "#/components/parameters/AttachmentId" }
+      responses:
+        "302":
+          description: Redirect to the presigned object URL
+          headers:
+            Location: { schema: { type: string, format: uri } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /api/messages/{messageId}/read:
     post:
@@ -454,6 +499,11 @@ components:
       schema: { type: string, format: uuid }
     MessageId:
       name: messageId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    AttachmentId:
+      name: attachmentId
       in: path
       required: true
       schema: { type: string, format: uuid }
@@ -608,14 +658,28 @@ components:
         name: { type: string }
         avatar_url: { type: ["string", "null"] }
 
+    Attachment:
+      type: object
+      required: [id, project_id, filename, content_type, size_bytes, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        filename: { type: string }
+        content_type: { type: string }
+        size_bytes: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+
     Message:
       type: object
-      required: [id, conversation_id, author, body, created_at]
+      required: [id, conversation_id, author, body, attachments, created_at]
       properties:
         id: { type: string, format: uuid }
         conversation_id: { type: string, format: uuid }
         author: { $ref: "#/components/schemas/MessageAuthor" }
         body: { type: string, description: Markdown }
+        attachments:
+          type: array
+          items: { $ref: "#/components/schemas/Attachment" }
         created_at: { type: string, format: date-time }
         edited_at: { type: ["string", "null"], format: date-time }
 

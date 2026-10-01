@@ -33,6 +33,20 @@ export function deriveKey(name: string): string {
   return key.slice(0, 6);
 }
 
+/** Human-readable byte size, e.g. "512 B", "1.5 KiB", "24 MiB". */
+export function formatBytes(bytes: number): string {
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let value = Math.max(0, bytes);
+  let i = 0;
+  while (value >= 1024 && i < units.length - 1) {
+    value /= 1024;
+    i++;
+  }
+  const unit = units[i] ?? "B";
+  const rounded = i === 0 ? Math.round(value) : Math.round(value * 10) / 10;
+  return `${rounded} ${unit}`;
+}
+
 /** Strips markdown syntax for one-line previews. */
 export function messagePreview(body: string): string {
   return body

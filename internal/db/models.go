@@ -8,6 +8,18 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Attachment struct {
+	ID          pgtype.UUID        `json:"id"`
+	ProjectID   pgtype.UUID        `json:"project_id"`
+	UploaderID  pgtype.UUID        `json:"uploader_id"`
+	StorageKey  string             `json:"storage_key"`
+	Filename    string             `json:"filename"`
+	ContentType string             `json:"content_type"`
+	SizeBytes   int64              `json:"size_bytes"`
+	Status      string             `json:"status"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type Conversation struct {
 	ID        pgtype.UUID        `json:"id"`
 	ProjectID pgtype.UUID        `json:"project_id"`
@@ -25,6 +37,12 @@ type Message struct {
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	EditedAt       pgtype.Timestamptz `json:"edited_at"`
 	DeletedAt      pgtype.Timestamptz `json:"deleted_at"`
+}
+
+type MessageAttachment struct {
+	MessageID    pgtype.UUID `json:"message_id"`
+	AttachmentID pgtype.UUID `json:"attachment_id"`
+	Position     int32       `json:"position"`
 }
 
 type MessageRead struct {

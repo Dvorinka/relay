@@ -85,8 +85,8 @@ func projectJSON(p db.GetProjectByIDRow) gin.H {
 	return gin.H{
 		"id": p.ID.String(), "workspace_id": p.WorkspaceID.String(),
 		"key": p.Key, "name": p.Name, "description": p.Description,
-		"icon":  textOrNil(p.Icon),
-		"color": textOrNil(p.Color),
+		"icon":       textOrNil(p.Icon),
+		"color":      textOrNil(p.Color),
 		"created_at": p.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
 	}
 }
@@ -240,7 +240,7 @@ func (s *Service) handleOverview(c *gin.Context) {
 	msgs := make([]gin.H, 0, len(recent))
 	for _, m := range recent {
 		msgs = append(msgs, conversations.MessageJSON(m.ID, m.ConversationID, m.Body, m.CreatedAt, m.EditedAt,
-			m.AuthorUserID, m.AuthorAgentID, m.AuthorName, m.AuthorAvatar))
+			m.AuthorUserID, m.AuthorAgentID, m.AuthorName, m.AuthorAvatar, nil))
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"project": projectJSON(p),

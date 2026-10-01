@@ -62,7 +62,7 @@ func toSessionOut(c Credentials) sessionOut {
 	}
 	for _, w := range c.Workspaces {
 		out.Workspaces = append(out.Workspaces, workspaceOut{
-			ID:   w.ID.String(), Name: w.Name, Slug: w.Slug, Role: w.Role,
+			ID: w.ID.String(), Name: w.Name, Slug: w.Slug, Role: w.Role,
 		})
 	}
 	return out

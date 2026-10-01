@@ -7,6 +7,7 @@ services:
     environment:
       DATABASE_URL: postgres://relay:relay@postgres:5432/relay?sslmode=disable
       STORAGE_ENDPOINT: http://storage:9000
+      STORAGE_PUBLIC_ENDPOINT: http://localhost:9000
       STORAGE_ACCESS_KEY: relay-ak
       STORAGE_SECRET_KEY: relay-sk-secret
       STORAGE_BUCKET: relay

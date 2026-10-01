@@ -12,28 +12,46 @@ import (
 )
 
 type Config struct {
-	DatabaseURL      string
-	ListenAddr       string
-	PublicURL        string
-	StaticDir        string
-	LogLevel         string
-	AuthSecret       string
-	SessionTTLHours  int
-	SkipMigrations   bool
-	InsecureDev      bool
+	DatabaseURL     string
+	ListenAddr      string
+	PublicURL       string
+	StaticDir       string
+	LogLevel        string
+	AuthSecret      string
+	SessionTTLHours int
+	SkipMigrations  bool
+	InsecureDev     bool
+
+	StorageEndpoint       string
+	StoragePublicEndpoint string
+	StorageRegion         string
+	StorageAccessKey      string
+	StorageSecretKey      string
+	StorageBucket         string
+	StorageMaxUploadMiB   int64
+	StoragePresignTTL     int
 }
 
 func Load() (Config, error) {
 	cfg := Config{
-		DatabaseURL:    os.Getenv("DATABASE_URL"),
-		ListenAddr:     getEnv("RELAY_LISTEN_ADDR", ":8080"),
-		PublicURL:      getEnv("RELAY_PUBLIC_URL", "http://localhost:8080"),
-		StaticDir:      getEnv("RELAY_STATIC_DIR", "public"),
-		LogLevel:       getEnv("LOG_LEVEL", "info"),
-		AuthSecret:     os.Getenv("AUTH_SECRET"),
+		DatabaseURL:     os.Getenv("DATABASE_URL"),
+		ListenAddr:      getEnv("RELAY_LISTEN_ADDR", ":8080"),
+		PublicURL:       getEnv("RELAY_PUBLIC_URL", "http://localhost:8080"),
+		StaticDir:       getEnv("RELAY_STATIC_DIR", "public"),
+		LogLevel:        getEnv("LOG_LEVEL", "info"),
+		AuthSecret:      os.Getenv("AUTH_SECRET"),
 		SessionTTLHours: getInt("AUTH_SESSION_TTL_HOURS", 720), // 30 days
-		SkipMigrations: getBool("RELAY_SKIP_MIGRATIONS"),
-		InsecureDev:    getBool("AUTH_INSECURE_DEV"),
+		SkipMigrations:  getBool("RELAY_SKIP_MIGRATIONS"),
+		InsecureDev:     getBool("AUTH_INSECURE_DEV"),
+
+		StorageEndpoint:       os.Getenv("STORAGE_ENDPOINT"),
+		StoragePublicEndpoint: os.Getenv("STORAGE_PUBLIC_ENDPOINT"),
+		StorageRegion:         getEnv("STORAGE_REGION", "us-east-1"),
+		StorageAccessKey:      os.Getenv("STORAGE_ACCESS_KEY"),
+		StorageSecretKey:      os.Getenv("STORAGE_SECRET_KEY"),
+		StorageBucket:         getEnv("STORAGE_BUCKET", "relay"),
+		StorageMaxUploadMiB:   int64(getInt("STORAGE_MAX_UPLOAD_MIB", 25)),
+		StoragePresignTTL:     getInt("STORAGE_PRESIGN_TTL", 300),
 	}
 
 	var missing []string
