@@ -2,11 +2,9 @@
   <title>Relay horizontal lockup</title>
   <!-- EXPLORATION: wordmark is live text in the working file. Convert to
        outlines (Inter, 600, tracking -0.02em) before production/print use. -->
-  <g transform="translate(28 48) scale(0.625)">
-    <rect x="52" y="48" width="32" height="160" fill="#101318"/>
-    <path d="M84 64 h52 a40 40 0 0 1 0 80 h-36" fill="none" stroke="#101318" stroke-width="32"/>
-    <path d="M104 144 L176 208" fill="none" stroke="#101318" stroke-width="32" stroke-linecap="round"/>
-    <circle cx="134" cy="104" r="17" fill="#F2541B"/>
+  <g transform="translate(20 48) scale(0.625)">
+    <path d="M196 96 V82 A30 30 0 0 0 166 52 H82 A30 30 0 0 0 52 82 V166 A30 30 0 0 0 82 196 H166 A30 30 0 0 0 196 166 V160" fill="none" stroke="#101318" stroke-width="22" stroke-linecap="round"/>
+    <circle cx="196" cy="128" r="17" fill="#F2541B"/>
   </g>
-  <text x="196" y="168" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="116" font-weight="600" letter-spacing="-3" fill="#101318">relay</text>
+  <text x="206" y="168" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="116" font-weight="600" letter-spacing="-3" fill="#101318">relay</text>
 </svg>

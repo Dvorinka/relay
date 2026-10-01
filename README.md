@@ -1,184 +1,138 @@
 <p align="center">
-  <img src="assets/brand/relay-mark-accent.svg" width="72" alt="Relay logo">
+  <img src="assets/brand/relay-icon.svg" alt="Relay" width="120">
 </p>
 
 <h1 align="center">Relay</h1>
 
 <p align="center">
-  <strong>Your projects. Your agents. One place.</strong><br>
-  Open-source, self-hosted workspace for projects, GitHub issues,
-  conversations, screenshots, and external AI agents.
+  Open-source agent communication & project hub.<br>
+  Your projects. Your agents. One place.
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="ARCHITECTURE.md">Documentation</a> ·
+  <a href="https://github.com/Dvorinka/relay/releases">Releases</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
----
+<p align="center">
+  <a href="https://github.com/Dvorinka/relay/actions/workflows/ci.yml"><img src="https://github.com/Dvorinka/relay/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/Dvorinka/relay/releases"><img src="https://img.shields.io/github/v/release/Dvorinka/relay" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/Dvorinka/relay" alt="License"></a>
+</p>
 
-## Why Relay exists
+## What is Relay?
 
-Talking to coding agents today looks like this:
+Relay is a self-hosted workspace where humans and external AI agents share
+project context: conversations, issues, screenshots, and GitHub activity in
+one persistent place. Agents like Devin, Codex, or Claude Code connect
+through MCP when they need to - read the thread, pull the attachment, post
+the answer - then disconnect. No agent runtime, no hosted tier, no lock-in.
 
-```text
-Screenshot → Discord → find the message → copy/paste to the agent →
-explain the context → agent works → response lands somewhere else
-```
+The workflow it replaces - screenshot into Discord, copy-paste context into
+an agent, answer lost in another channel - collapses into one loop:
+paste into a project, agent reads it through MCP, agent replies in the same
+thread, thread becomes an issue, issue tracks GitHub state.
 
-With Relay:
+> Agents don't live in Relay. They communicate through it.
 
-```text
-Screenshot → paste into Relay → project/issue → agent reads it through
-MCP → agent works externally → agent replies in the same thread
-```
+## Features
 
-Everything stays in one persistent project context. GitHub remains the
-source of truth for code. Relay is the communication and coordination layer
-on top of it.
-
-> **Agents don't live in Relay. They communicate through it.**
-
-Relay is not an AI IDE and not an agent runtime. External agents (Devin,
-Codex, Claude Code, OpenCode, your own) connect through MCP whenever they
-want. You can leave a message or a screenshot today; an agent can pick it up
-tomorrow.
-
-## What it does
-
-- **Projects** - Linear-style project organization with overview, issues, conversations, and activity
-- **Conversations** - persistent per-project threads with Markdown, code, files, and paste-a-screenshot image support
-- **Issues** - fast issue tracker (`MYB-142` style keys, statuses, priorities, labels) with a conversation-to-issue loop
-- **GitHub** - link repositories via a GitHub App; issues, PRs, and activity mirror into Relay
-- **Agents** - first-class agent identities with scoped, revocable MCP tokens and per-project permissions
-- **MCP server** - agents list projects, read conversations and attachments, send replies, manage issues
-- **Search** - `Ctrl/Cmd+K` across projects, issues, messages, and GitHub items
-- **Notifications** - unread state, mentions, assignments, agent replies
-- **Web first** - desktop (Wails) and Android (Expo) clients consume the same API
+- **Projects** - Linear-style project organization: overview, issues, conversations, activity, members, settings.
+- **Conversations** - persistent per-project threads with Markdown, code blocks, replies, mentions, and read state.
+- **Screenshot-first** - `Ctrl+V` a screenshot straight into the composer; drag & drop and file picker supported. Attachments stay attached to their message.
+- **Issues** - fast issue tracker with `MYB-142` keys, statuses, priorities, labels, assignees, comments, and an activity timeline.
+- **Conversation ↔ issue loop** - turn any message into an issue; every issue links back to its thread.
+- **GitHub** - connect repositories through a GitHub App; issues, PRs, and commits mirror into the project with signature-verified webhooks.
+- **Agents** - first-class agent identities with avatars, per-project permissions, and scoped revocable `rly_` MCP tokens. "Last seen" is real MCP activity - never fabricated presence.
+- **MCP server** - streamable-HTTP endpoint exposing projects, conversations, messages, attachments, and issues as tools for external agents.
+- **Realtime** - SSE event stream for live messages, issue changes, and notifications.
+- **Search** - `Ctrl/Cmd+K` across projects, issues, messages, and GitHub items, backed by Postgres FTS.
+- **Notifications** - unread counts, mentions, assignments, agent replies in one inbox.
+- **Web first** - dark and light mode, keyboard-first, accessible. Desktop (Wails: Linux/macOS/Windows) and Android (Expo) clients consume the same API - see the [roadmap](ROADMAP.md).
 
 ## Architecture
 
-```text
-┌──────────────────────────────┐
-│            relay             │  single Go binary (Gin)
-│                              │
-│   REST API    SSE     MCP    │  /api/*   /api/events   /mcp
-│        \       |       /     │
-│     internal/{domains}       │  modular monolith
-│              |               │
-│      PostgreSQL (sqlc)       │  goose migrations
-│      S3-compatible storage   │  attachments (MinIO/S3/R2)
-└──────────────────────────────┘
-        ▲            ▲
-   web (SolidJS)   external agents (MCP)
-   desktop (Wails) mobile (Expo)
+```
+Browser ──▶ relay (Go + Gin) ──▶ PostgreSQL (sqlc + goose)
+   web           │             ──▶ S3-compatible object storage (MinIO/S3/R2)
+   desktop       ├── SSE /api/events
+   mobile        └── MCP /mcp ◀── external AI agents (Devin, Codex, ...)
 ```
 
-- **Backend**: Go + Gin, modular monolith in `internal/`, `zap` logging
-- **Frontend**: SolidJS + Vite + TypeScript strict + Tailwind + Ark UI
-- **API contract**: `api/openapi.yaml` is the source of truth; the TypeScript client is generated, never handwritten
-- **Database**: PostgreSQL, `sqlc` for typed queries, `goose` for versioned migrations
-- **Storage**: any S3-compatible backend (MinIO for self-hosting)
-- **Auth**: email + password, argon2id, opaque session cookies, rate limiting
-- **Desktop** (later): Wails v3 shell on the same web build - tray, global screenshot shortcut, deep links
-- **Mobile** (later): React Native + Expo, Android
+One binary serves REST, SSE, and MCP. Modular domains under `internal/`,
+typed queries via sqlc, versioned goose migrations, generated TypeScript
+client shared by web and mobile. Details in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-Full details: [ARCHITECTURE.md](ARCHITECTURE.md).
+## Quick Start
 
-## Quick start (self-hosted)
+Prerequisites: Docker with the Compose plugin.
 
 ```bash
-cp .env.example .env        # fill in secrets
+git clone https://github.com/Dvorinka/relay.git && cd relay
+cp .env.example .env        # set AUTH_SECRET, storage keys
 docker compose up -d        # relay + postgres + minio
 ```
 
-Open `http://localhost:8080`. The first registered user becomes the
-workspace owner.
+Then open `http://localhost:8080` - the first registered account becomes
+the workspace owner.
 
-## Local development
-
-Prerequisites: Go 1.24+, Node 20+, Docker (for Postgres + MinIO), `just`.
+For local development (Go 1.24+, Node 20+, `just`):
 
 ```bash
-just dev           # start deps + backend + frontend with hot reload
-just migrate       # run goose migrations
-just sqlc          # regenerate sqlc code after editing db/queries
-just api           # regenerate the TS client after editing api/openapi.yaml
-just test          # all tests
+just dev       # deps + backend + SolidJS frontend with hot reload
+just check     # vet + golangci-lint + tsc
+just test      # all tests
 ```
-
-Repository layout:
-
-```text
-apps/web/          SolidJS frontend
-apps/desktop/      Wails shell (phase 10)
-apps/mobile/       Expo app, Android (phase 11)
-cmd/relay/         Go entrypoint
-internal/          backend domains (auth, projects, issues, mcp, ...)
-packages/api-client/  generated OpenAPI client, shared by web + mobile
-api/openapi.yaml   API contract
-db/                migrations + sqlc queries
-deploy/            Dockerfile, compose, examples
-assets/brand/      logo kit and brand guide
-docs/              specs, plans, guides
-```
-
-## GitHub integration
-
-Relay connects through a **GitHub App** (manifest flow):
-
-1. Project settings → GitHub → *Create GitHub App* (manifest pre-fills permissions)
-2. Install the app on your repositories
-3. Issues, PRs, and activity mirror into the linked project; webhooks keep state fresh
-
-MVP syncs GitHub → Relay. Relay → GitHub write-back is on the
-[roadmap](ROADMAP.md).
-
-## MCP integration
-
-Create an agent in workspace settings, grant it projects, and copy its MCP
-token. Point your agent at:
-
-```text
-POST {RELAY_PUBLIC_URL}/mcp     (streamable HTTP transport)
-Authorization: Bearer rly_...
-```
-
-Tools: `list_projects`, `get_project`, `list_conversations`,
-`get_messages`, `get_message`, `get_attachment`, `search_messages`,
-`list_issues`, `get_issue`, `send_message`, `create_issue`,
-`update_issue`, `mark_message_read`.
-
-Tokens are scoped per project and per permission, and revocable. Relay only
-ever shows real agent metadata (last MCP activity, last read) - never
-fabricated presence.
 
 ## Configuration
 
-All configuration is environment variables - see [.env.example](.env.example)
-for the complete list with comments. Minimum set:
+All configuration lives in `.env` - see [.env.example](.env.example) for the
+annotated list: `DATABASE_URL`, `AUTH_SECRET`, `STORAGE_*` (MinIO, S3, R2),
+`GITHUB_APP_*`, and `RELAY_PUBLIC_URL`.
+
+## MCP integration
+
+Create an agent in workspace settings, grant it projects, mint a token, and
+point your agent at your deployment:
 
 ```text
-DATABASE_URL          postgres://relay:...@postgres:5432/relay
-RELAY_PUBLIC_URL      https://relay.example.com
-AUTH_SECRET           openssl rand -hex 32
-STORAGE_*             S3-compatible endpoint, keys, bucket
-GITHUB_APP_*          app credentials (phase 7)
+POST {RELAY_PUBLIC_URL}/mcp        # streamable HTTP transport
+Authorization: Bearer rly_...
 ```
 
-## Security
+Tools: `list_projects`, `get_project`, `list_conversations`, `get_messages`,
+`get_message`, `get_attachment`, `search_messages`, `list_issues`,
+`get_issue`, `send_message`, `create_issue`, `update_issue`,
+`mark_message_read`.
 
-Report vulnerabilities privately - see [SECURITY.md](SECURITY.md).
-Highlights: argon2id password hashing, scoped + revocable MCP tokens,
-per-project authorization checks, webhook signature verification, upload
-MIME/size validation, rate-limited auth endpoints, no secrets in logs.
+## Ecosystem
+
+- **[apps/web](apps/web)** - SolidJS + Vite + Tailwind + Ark UI frontend.
+- **[packages/api-client](packages/api-client)** - OpenAPI-generated TS client shared by all clients.
+- **[apps/desktop](apps/desktop)** - Wails shell for Linux/macOS/Windows: tray, global screenshot shortcut, deep links (phase 9).
+- **[apps/mobile](apps/mobile)** - React Native + Expo for Android: conversations, issues, push, deep links (phase 10).
+- **MCP server** - built into the `relay` binary at `/mcp`.
+
+## Documentation
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) - system design, data model, decisions
+- [ROADMAP.md](ROADMAP.md) - phases from foundation to v1.0
+- [docs/superpowers/specs/](docs/superpowers/specs/) - full design spec
+- [api/openapi.yaml](api/openapi.yaml) - API contract (source of truth)
+- [assets/brand/](assets/brand/) - logo kit and brand guide
 
 ## Contributing
 
-Relay is community-driven - see [CONTRIBUTING.md](CONTRIBUTING.md) and the
-[roadmap](ROADMAP.md). Good first contributions are tagged
-`good first issue` once the repository is public.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow. Relay
+is community-driven - self-hosting stays a first-class use case.
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for reporting vulnerabilities and the
+self-hosting hardening checklist.
 
 ## License
 
-[Apache License 2.0](LICENSE). Self-hosting is a first-class use case and
-always will be.
+[Apache-2.0](LICENSE)
