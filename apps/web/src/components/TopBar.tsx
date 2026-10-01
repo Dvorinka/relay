@@ -1,17 +1,9 @@
 import { Avatar, Menu } from "@ark-ui/solid";
 import { A, useNavigate } from "@solidjs/router";
 import { Portal } from "solid-js/web";
+import { initials } from "../lib/text";
 import { useSession } from "../stores/session";
 import { RelayMark, SearchIcon } from "./icons";
-
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  const letters = parts
-    .slice(0, 2)
-    .map((p) => p[0]?.toUpperCase() ?? "")
-    .join("");
-  return letters || "?";
-}
 
 function AccountMenu() {
   const session = useSession();

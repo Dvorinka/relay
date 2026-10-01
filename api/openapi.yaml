@@ -15,6 +15,8 @@ servers:
 tags:
   - name: auth
   - name: workspaces
+  - name: projects
+  - name: conversations
 paths:
   /api/health:
     get:
@@ -260,6 +262,170 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
 
+  /api/projects:
+    get:
+      operationId: listProjects
+      summary: Projects across the caller's workspaces
+      tags: [projects]
+      responses:
+        "200":
+          description: Project list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [projects]
+                properties:
+                  projects:
+                    type: array
+                    items: { $ref: "#/components/schemas/Project" }
+    post:
+      operationId: createProject
+      summary: Create a project in a workspace
+      tags: [projects]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateProjectRequest" }
+      responses:
+        "201":
+          description: Created; caller becomes a project member
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Project" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/projects/{projectId}:
+    get:
+      operationId: getProject
+      summary: Get a project
+      tags: [projects]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      responses:
+        "200":
+          description: Project detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Project" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateProject
+      summary: Update name/description/icon/color
+      tags: [projects]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, minLength: 1, maxLength: 80 }
+                description: { type: string, maxLength: 2000 }
+                icon: { type: ["string", "null"], maxLength: 40 }
+                color: { type: ["string", "null"], pattern: "^#[0-9a-fA-F]{6}$" }
+      responses:
+        "200":
+          description: Updated project
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Project" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/projects/{projectId}/overview:
+    get:
+      operationId: projectOverview
+      summary: Counts plus recent activity for the overview page
+      tags: [projects]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      responses:
+        "200":
+          description: Overview payload
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectOverview" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/projects/{projectId}/conversation:
+    get:
+      operationId: projectConversation
+      summary: The project's main conversation (created on first access)
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      responses:
+        "200":
+          description: Conversation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Conversation" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/conversations/{conversationId}/messages:
+    get:
+      operationId: listMessages
+      summary: Message history, newest last; cursor-paginated backwards
+      tags: [conversations]
+      parameters:
+        - { $ref: "#/components/parameters/ConversationId" }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 100 }
+        - name: before
+          in: query
+          description: Return messages older than this message id
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Page of messages
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [messages, has_more]
+                properties:
+                  messages:
+                    type: array
+                    items: { $ref: "#/components/schemas/Message" }
+                  has_more: { type: boolean }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: postMessage
+      summary: Send a markdown message as the current user
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/ConversationId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string, minLength: 1, maxLength: 20000 }
+      responses:
+        "201":
+          description: Posted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/messages/{messageId}/read:
+    post:
+      operationId: markMessageRead
+      summary: Record that the current user read this message
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/MessageId" } ]
+      responses:
+        "204": { description: Recorded }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
 components:
   securitySchemes:
     sessionCookie:
@@ -273,6 +439,21 @@ components:
   parameters:
     WorkspaceId:
       name: workspaceId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ProjectId:
+      name: projectId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ConversationId:
+      name: conversationId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    MessageId:
+      name: messageId
       in: path
       required: true
       schema: { type: string, format: uuid }
@@ -380,5 +561,78 @@ components:
       properties:
         user: { $ref: "#/components/schemas/User" }
         role: { $ref: "#/components/schemas/WorkspaceRole" }
+
+    Project:
+      type: object
+      required: [id, workspace_id, key, name, description, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        key: { type: string, pattern: "^[A-Z0-9]{2,6}$" }
+        name: { type: string }
+        description: { type: string }
+        icon: { type: ["string", "null"] }
+        color: { type: ["string", "null"], pattern: "^#[0-9a-fA-F]{6}$" }
+        created_at: { type: string, format: date-time }
+
+    CreateProjectRequest:
+      type: object
+      required: [workspace_id, key, name]
+      properties:
+        workspace_id: { type: string, format: uuid }
+        key:
+          type: string
+          pattern: "^[A-Z0-9]{2,6}$"
+          description: Issue-key prefix, e.g. MYB
+        name: { type: string, minLength: 1, maxLength: 80 }
+        description: { type: string, maxLength: 2000 }
+        icon: { type: ["string", "null"], maxLength: 40 }
+        color: { type: ["string", "null"], pattern: "^#[0-9a-fA-F]{6}$" }
+
+    Conversation:
+      type: object
+      required: [id, project_id, kind, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        kind: { type: string, enum: [project, issue] }
+        issue_id: { type: ["string", "null"], format: uuid }
+        created_at: { type: string, format: date-time }
+
+    MessageAuthor:
+      type: object
+      required: [kind, id, name]
+      properties:
+        kind: { type: string, enum: [user, agent] }
+        id: { type: string, format: uuid }
+        name: { type: string }
+        avatar_url: { type: ["string", "null"] }
+
+    Message:
+      type: object
+      required: [id, conversation_id, author, body, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        conversation_id: { type: string, format: uuid }
+        author: { $ref: "#/components/schemas/MessageAuthor" }
+        body: { type: string, description: Markdown }
+        created_at: { type: string, format: date-time }
+        edited_at: { type: ["string", "null"], format: date-time }
+
+    ProjectOverview:
+      type: object
+      required: [project, counts, recent_messages]
+      properties:
+        project: { $ref: "#/components/schemas/Project" }
+        counts:
+          type: object
+          required: [members, messages, conversations]
+          properties:
+            members: { type: integer }
+            messages: { type: integer }
+            conversations: { type: integer }
+        recent_messages:
+          type: array
+          items: { $ref: "#/components/schemas/Message" }
 security:
   - sessionCookie: []

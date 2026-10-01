@@ -6,10 +6,10 @@ import Login from "./features/auth/Login";
 import Register from "./features/auth/Register";
 import ResetPassword from "./features/auth/ResetPassword";
 import Settings from "./features/workspaces/Settings";
+import ProjectPage from "./features/projects/ProjectPage";
 import "./index.css";
 import Home from "./pages/Home";
 import Inbox from "./pages/Inbox";
-import Project from "./pages/Project";
 import { SessionProvider } from "./stores/session";
 
 render(
@@ -23,7 +23,7 @@ render(
         <Route path="/" component={App}>
           <Route path="/" component={Home} />
           <Route path="/inbox" component={Inbox} />
-          <Route path="/p/:projectId" component={Project} />
+          <Route path="/p/:projectId" component={ProjectPage} />
           <Route path="/settings" component={Settings} />
         </Route>
       </Router>

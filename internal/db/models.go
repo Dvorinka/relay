@@ -8,12 +8,62 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Conversation struct {
+	ID        pgtype.UUID        `json:"id"`
+	ProjectID pgtype.UUID        `json:"project_id"`
+	Kind      string             `json:"kind"`
+	IssueID   pgtype.UUID        `json:"issue_id"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type Message struct {
+	ID             pgtype.UUID        `json:"id"`
+	ConversationID pgtype.UUID        `json:"conversation_id"`
+	AuthorUserID   pgtype.UUID        `json:"author_user_id"`
+	AuthorAgentID  pgtype.UUID        `json:"author_agent_id"`
+	Body           string             `json:"body"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	EditedAt       pgtype.Timestamptz `json:"edited_at"`
+	DeletedAt      pgtype.Timestamptz `json:"deleted_at"`
+}
+
+type MessageRead struct {
+	MessageID pgtype.UUID        `json:"message_id"`
+	UserID    pgtype.UUID        `json:"user_id"`
+	AgentID   pgtype.UUID        `json:"agent_id"`
+	ReadAt    pgtype.Timestamptz `json:"read_at"`
+}
+
 type PasswordResetToken struct {
 	ID        pgtype.UUID        `json:"id"`
 	UserID    pgtype.UUID        `json:"user_id"`
 	TokenHash string             `json:"token_hash"`
 	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
 	UsedAt    pgtype.Timestamptz `json:"used_at"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type Project struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Key         string             `json:"key"`
+	Name        string             `json:"name"`
+	Description string             `json:"description"`
+	Icon        pgtype.Text        `json:"icon"`
+	Color       pgtype.Text        `json:"color"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ProjectCounter struct {
+	ProjectID       pgtype.UUID `json:"project_id"`
+	NextIssueNumber int32       `json:"next_issue_number"`
+}
+
+type ProjectMember struct {
+	ProjectID pgtype.UUID        `json:"project_id"`
+	UserID    pgtype.UUID        `json:"user_id"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 

@@ -10,6 +10,8 @@ import (
 
 	"github.com/Dvorinka/relay/internal/auth"
 	"github.com/Dvorinka/relay/internal/config"
+	"github.com/Dvorinka/relay/internal/conversations"
+	"github.com/Dvorinka/relay/internal/projects"
 	"github.com/Dvorinka/relay/internal/workspaces"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -23,6 +25,8 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 
 	authSvc := auth.NewService(cfg, log, pool, auth.NewLogMailer(log))
 	wsSvc := workspaces.NewService(log, pool)
+	projSvc := projects.NewService(log, pool)
+	convSvc := conversations.NewService(log, pool)
 
 	api := r.Group("/api")
 	api.GET("/health", func(c *gin.Context) {
@@ -38,6 +42,8 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	authSvc.RegisterRoutes(api)
 	priv := api.Group("", authSvc.RequireAuth)
 	wsSvc.RegisterRoutes(priv)
+	projSvc.RegisterRoutes(priv)
+	convSvc.RegisterRoutes(priv)
 
 	mountStatic(r, cfg.StaticDir)
 	return r
