@@ -30,6 +30,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** Register a new account */
         post: operations["register"];
         delete?: never;
         options?: never;
@@ -46,6 +47,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** Log in with email and password */
         post: operations["login"];
         delete?: never;
         options?: never;
@@ -62,6 +64,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** Log out and revoke the session */
         post: operations["logout"];
         delete?: never;
         options?: never;
@@ -112,6 +115,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** Set a new password from a reset token */
         post: operations["resetPassword"];
         delete?: never;
         options?: never;
@@ -128,6 +132,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** Change the current password */
         post: operations["changePassword"];
         delete?: never;
         options?: never;
@@ -142,8 +147,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** List workspaces for the current user */
         get: operations["listWorkspaces"];
         put?: never;
+        /** Create a workspace */
         post: operations["createWorkspace"];
         delete?: never;
         options?: never;
@@ -158,6 +165,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** Get a workspace by id */
         get: operations["getWorkspace"];
         put?: never;
         post?: never;
@@ -174,6 +182,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** List workspace members */
         get: operations["listWorkspaceMembers"];
         put?: never;
         post?: never;
@@ -192,7 +201,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Add an existing user by email (v1 - no email invites yet) */
+        /**
+         * Add an existing user to the workspace
+         * @description v1 adds an existing user directly; email invites come later.
+         */
         post: operations["inviteToWorkspace"];
         delete?: never;
         options?: never;
@@ -452,7 +464,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description If the email exists */
+            /** @description If the email exists, a reset link was sent */
             204: {
                 headers: {
                     [name: string]: unknown;

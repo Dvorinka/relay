@@ -36,6 +36,7 @@ paths:
   /api/auth/register:
     post:
       operationId: register
+      summary: Register a new account
       tags: [auth]
       security: []
       requestBody:
@@ -56,6 +57,7 @@ paths:
   /api/auth/login:
     post:
       operationId: login
+      summary: Log in with email and password
       tags: [auth]
       security: []
       requestBody:
@@ -76,6 +78,7 @@ paths:
   /api/auth/logout:
     post:
       operationId: logout
+      summary: Log out and revoke the session
       tags: [auth]
       responses:
         "204": { description: Logged out; session cookie cleared }
@@ -110,12 +113,14 @@ paths:
               properties:
                 email: { type: string, format: email }
       responses:
-        "204": { description: If the email exists, a reset link was sent }
+        "204":
+          description: "If the email exists, a reset link was sent"
         "429": { $ref: "#/components/responses/RateLimited" }
 
   /api/auth/password/reset:
     post:
       operationId: resetPassword
+      summary: Set a new password from a reset token
       tags: [auth]
       security: []
       requestBody:
@@ -136,6 +141,7 @@ paths:
   /api/auth/password/change:
     post:
       operationId: changePassword
+      summary: Change the current password
       tags: [auth]
       requestBody:
         required: true
@@ -155,6 +161,7 @@ paths:
   /api/workspaces:
     get:
       operationId: listWorkspaces
+      summary: List workspaces for the current user
       tags: [workspaces]
       responses:
         "200":
@@ -170,6 +177,7 @@ paths:
                     items: { $ref: "#/components/schemas/WorkspaceWithRole" }
     post:
       operationId: createWorkspace
+      summary: Create a workspace
       tags: [workspaces]
       requestBody:
         required: true
@@ -193,6 +201,7 @@ paths:
   /api/workspaces/{workspaceId}:
     get:
       operationId: getWorkspace
+      summary: Get a workspace by id
       tags: [workspaces]
       parameters: [ { $ref: "#/components/parameters/WorkspaceId" } ]
       responses:
@@ -207,6 +216,7 @@ paths:
   /api/workspaces/{workspaceId}/members:
     get:
       operationId: listWorkspaceMembers
+      summary: List workspace members
       tags: [workspaces]
       parameters: [ { $ref: "#/components/parameters/WorkspaceId" } ]
       responses:
@@ -226,8 +236,9 @@ paths:
   /api/workspaces/{workspaceId}/invite:
     post:
       operationId: inviteToWorkspace
+      summary: Add an existing user to the workspace
       tags: [workspaces]
-      summary: Add an existing user by email (v1 - no email invites yet)
+      description: v1 adds an existing user directly; email invites come later.
       parameters: [ { $ref: "#/components/parameters/WorkspaceId" } ]
       requestBody:
         required: true
@@ -315,7 +326,7 @@ components:
         id: { type: string, format: uuid }
         email: { type: string, format: email }
         name: { type: string }
-        avatar_url: { type: string, nullable: true }
+        avatar_url: { type: ["string", "null"] }
         created_at: { type: string, format: date-time }
 
     RegisterRequest:
