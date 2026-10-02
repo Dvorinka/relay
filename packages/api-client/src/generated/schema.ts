@@ -403,6 +403,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{projectId}/briefs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List visual briefs in this project */
+        get: operations["listBriefs"];
+        put?: never;
+        /** Create a visual brief */
+        post: operations["createBrief"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/brief-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Set the project's brief policy */
+        post: operations["setBriefPolicy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/briefs/{briefId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one brief with its scene */
+        get: operations["getBrief"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update a brief's title, summary, scene, or status */
+        patch: operations["updateBrief"];
+        trace?: never;
+    };
+    "/api/briefs/{briefId}/conversation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The brief's comment thread (creates it on first access) */
+        get: operations["briefConversation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{projectId}/github/files": {
         parameters: {
             query?: never;
@@ -481,6 +551,26 @@ export interface paths {
         };
         /** The project's main conversation (created on first access) */
         get: operations["projectConversation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/mentionables": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Everything the composer can @-mention in this project
+         * @description Workspace members, agents, issues (including GitHub-mirrored issues and PRs), and linked repos for owner/repo#N refs.
+         */
+        get: operations["mentionables"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1476,8 +1566,42 @@ export interface components {
             statuses?: components["schemas"]["StatusDef"][];
             /** @description Linked local folder on the server host */
             local_path?: string | null;
+            brief_policy?: components["schemas"]["BriefPolicy"];
             /** Format: date-time */
             created_at: string;
+        };
+        /**
+         * @description When agents should produce visual briefs. 'never' forbids them,
+         *     'on_request' creates only when asked, 'pre_merge' expects one before
+         *     merge-worthy reviews are approved.
+         * @enum {string}
+         */
+        BriefPolicy: "never" | "on_request" | "pre_merge";
+        Brief: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            project_id: string;
+            /** Format: uuid */
+            issue_id?: string | null;
+            /**
+             * Format: uuid
+             * @description Comment thread; messages via /conversations/{id}/messages
+             */
+            conversation_id?: string | null;
+            title: string;
+            summary: string;
+            /** @description Excalidraw-compatible scene JSON */
+            scene: {
+                [key: string]: unknown;
+            };
+            /** @enum {string} */
+            status: "open" | "resolved" | "archived";
+            author_name?: string;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
         };
         StatusDef: {
             id: string;
@@ -1574,6 +1698,8 @@ export interface components {
             author: components["schemas"]["MessageAuthor"];
             /** @description Markdown */
             body: string;
+            /** @description Structured entity references extracted from the body */
+            mentions?: components["schemas"]["MentionRef"][];
             parent?: components["schemas"]["MessageParent"] | null;
             attachments: components["schemas"]["Attachment"][];
             reactions: components["schemas"]["Reaction"][];
@@ -1583,6 +1709,20 @@ export interface components {
             edited_at?: string | null;
             /** @description True once at least one agent has read the message; edits are then rejected with 409 */
             agent_read: boolean;
+        };
+        MentionRef: {
+            /**
+             * @description user|agent|issue|gh|file — @user:, @agent:, KEY-N, owner/repo#N, @file:/@gh:
+             * @enum {string}
+             */
+            kind: "user" | "agent" | "issue" | "gh" | "file";
+            /** @description slug | KEY-1 | owner/repo#1 | path */
+            ref: string;
+            label: string;
+            /** @description resolved entity uuid when found */
+            id?: string;
+            url?: string;
+            found?: boolean;
         };
         /** @description Built-in lane id or a project's custom status id */
         IssueStatus: string;
@@ -1647,7 +1787,7 @@ export interface components {
             created_at: string;
         };
         /** @enum {string} */
-        AgentScope: "project:read" | "message:read" | "message:write" | "attachment:read" | "issue:read" | "issue:write" | "review:read" | "review:write";
+        AgentScope: "project:read" | "message:read" | "message:write" | "attachment:read" | "issue:read" | "issue:write" | "review:read" | "review:write" | "file:read" | "brief:read" | "brief:write";
         AgentGrant: {
             /** Format: uuid */
             project_id: string;
@@ -2654,6 +2794,181 @@ export interface operations {
             };
         };
     };
+    listBriefs: {
+        parameters: {
+            query?: {
+                issue_id?: string;
+            };
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Briefs */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        briefs?: components["schemas"]["Brief"][];
+                        policy?: components["schemas"]["BriefPolicy"];
+                    };
+                };
+            };
+        };
+    };
+    createBrief: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    title: string;
+                    summary?: string;
+                    /** Format: uuid */
+                    issue_id?: string;
+                    /** @description Excalidraw-compatible scene */
+                    scene?: {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Created brief */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Brief"];
+                };
+            };
+        };
+    };
+    setBriefPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    policy: components["schemas"]["BriefPolicy"];
+                };
+            };
+        };
+        responses: {
+            /** @description Policy set */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        policy?: components["schemas"]["BriefPolicy"];
+                    };
+                };
+            };
+        };
+    };
+    getBrief: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                briefId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Brief */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Brief"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateBrief: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                briefId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    title?: string;
+                    summary?: string;
+                    /** @enum {string} */
+                    status?: "open" | "resolved" | "archived";
+                    scene?: {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Updated brief */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Brief"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    briefConversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                briefId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Conversation id usable with /conversations/{id}/messages */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        id?: string;
+                    };
+                };
+            };
+        };
+    };
     repoFileTree: {
         parameters: {
             query: {
@@ -2825,6 +3140,56 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Conversation"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    mentionables: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Mentionable entities */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        users: {
+                            /** Format: uuid */
+                            id?: string;
+                            name?: string;
+                            avatar_url?: string | null;
+                        }[];
+                        agents: {
+                            /** Format: uuid */
+                            id?: string;
+                            name?: string;
+                            slug?: string;
+                            description?: string;
+                        }[];
+                        issues: {
+                            /** Format: uuid */
+                            id?: string;
+                            key?: string;
+                            title?: string;
+                            status?: string;
+                            /** @enum {string} */
+                            kind?: "issue" | "github_issue" | "pull_request";
+                            repo?: string;
+                            github_number?: number;
+                            url?: string;
+                        }[];
+                        repos: string[];
+                    };
                 };
             };
             403: components["responses"]["Forbidden"];

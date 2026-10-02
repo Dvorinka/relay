@@ -18,6 +18,22 @@ export type Conversation = components["schemas"]["Conversation"];
 export type Message = components["schemas"]["Message"];
 export type MessageAuthor = components["schemas"]["MessageAuthor"];
 export type MessageParent = components["schemas"]["MessageParent"];
+export type MentionRef = components["schemas"]["MentionRef"];
+export interface Mentionables {
+  users: { id: string; name: string; avatar_url?: string | null }[];
+  agents: { id: string; name: string; slug: string; description?: string }[];
+  issues: {
+    id: string;
+    key: string;
+    title: string;
+    status: string;
+    kind: "issue" | "github_issue" | "pull_request";
+    repo: string;
+    github_number: number;
+    url: string;
+  }[];
+  repos: string[];
+}
 export type Reaction = components["schemas"]["Reaction"];
 export type Attachment = components["schemas"]["Attachment"];
 export type Issue = components["schemas"]["Issue"];
@@ -40,6 +56,8 @@ export type PendingReviewItem = NonNullable<
 export type WebhookSubscription = components["schemas"]["WebhookSubscription"];
 export type StatusDef = components["schemas"]["StatusDef"];
 export type SavedFilter = components["schemas"]["SavedFilter"];
+export type Brief = components["schemas"]["Brief"];
+export type BriefPolicy = components["schemas"]["BriefPolicy"];
 export type Board = components["schemas"]["Board"];
 export type FileEntry = components["schemas"]["FileEntry"];
 export type WebhookDelivery = components["schemas"]["WebhookDelivery"];
@@ -257,6 +275,8 @@ export function createClient(baseUrl: string, token?: string) {
       request<ProjectOverview>(`/api/projects/${projectId}/overview`),
     projectConversation: (projectId: string) =>
       request<Conversation>(`/api/projects/${projectId}/conversation`),
+    mentionables: (projectId: string) =>
+      request<Mentionables>(`/api/projects/${projectId}/mentionables`),
 
     // Conversations
     listMessages: (
@@ -609,6 +629,38 @@ export function createClient(baseUrl: string, token?: string) {
       request<{ deleted: boolean }>(
         `/api/projects/${projectId}/boards/${boardId}`,
         { method: "DELETE" },
+      ),
+
+    // Visual briefs
+    listBriefs: (projectId: string, issueId?: string) =>
+      request<{ briefs: Brief[]; policy: BriefPolicy }>(
+        `/api/projects/${projectId}/briefs${issueId ? `?issue_id=${issueId}` : ""}`,
+      ),
+    createBrief: (
+      projectId: string,
+      input: {
+        title: string;
+        summary?: string;
+        issue_id?: string;
+        scene?: Record<string, unknown>;
+      },
+    ) => post<Brief>(`/api/projects/${projectId}/briefs`, input),
+    getBrief: (briefId: string) => request<Brief>(`/api/briefs/${briefId}`),
+    updateBrief: (
+      briefId: string,
+      input: {
+        title?: string;
+        summary?: string;
+        status?: "open" | "resolved" | "archived";
+        scene?: Record<string, unknown>;
+      },
+    ) => patch<Brief>(`/api/briefs/${briefId}`, input),
+    briefConversation: (briefId: string) =>
+      request<{ id: string }>(`/api/briefs/${briefId}/conversation`),
+    setBriefPolicy: (projectId: string, policy: BriefPolicy) =>
+      post<{ policy: BriefPolicy }>(
+        `/api/projects/${projectId}/brief-policy`,
+        { policy },
       ),
 
     // Linked-repo file browsing (file mentions)

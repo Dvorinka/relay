@@ -176,6 +176,25 @@ export function GitPullRequestIcon(props: IconProps): JSX.Element {
   );
 }
 
+export function BriefsIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      class={props.class}
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="1.5" y="2.5" width="9" height="7" rx="1.5" />
+      <path d="M6 9.5v3.5a1 1 0 0 0 1 1h6.5a1 1 0 0 0 1-1V8.5a1 1 0 0 0-1-1h-3" />
+      <path d="M4 6h4" />
+    </svg>
+  );
+}
+
 export function XIcon(props: IconProps): JSX.Element {
   return (
     <svg

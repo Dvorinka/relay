@@ -308,3 +308,33 @@ repos' open PRs; rail search filters this project inline.
 - **Mobile outbox**: messages and picked images queue in AsyncStorage when
   the server is unreachable; a successful poll drains them in order. Full
   local-mode remains a desktop/web feature by design.
+
+## Phase 19 — mentions, briefs, IndexedDB, CLI polish
+
+- **Structured mentions**: `messages.mentions` jsonb stores resolved
+  references (`user`, `agent`, `issue`, `gh`, `file`, `repo`). `@name`,
+  `@user:x`, `@agent:x`, `KEY-1`, `owner/repo#42`, `@file:p`, `@gh:r:p`
+  extract server-side on REST and MCP posts; unresolved refs persist with
+  `found:false`. `/api/projects/:id/mentionables` feeds the unified `@`/`#`
+  composer menu (users, agents, issues incl. mirrored GitHub items, files).
+- **Visual briefs**: `briefs` table + `kind='brief'` conversations.
+  Excalidraw-compatible scene JSON rendered as SVG in the app; comment
+  thread via the normal messages API. `projects.brief_policy`
+  (never|on_request|pre_merge) — read by agents through the
+  `get_brief_policy` MCP tool; `create_brief` is refused under `never`.
+  New `brief:read`/`brief:write` scopes, backfilled onto `issue:write`
+  grants.
+- **Local `gh` provider**: when no app is registered and `GITHUB_TOKEN` is
+  unset, Relay sources a PAT from `gh auth token` — same REST surface, zero
+  GitHub App setup for self-hosters.
+- **IndexedDB local mode**: the local adapter persists to IndexedDB — doc
+  state in `kv`, attachment/avatar bytes in `blobs`. Legacy localStorage
+  data migrates once; object URLs rehydrate on boot. Storage ceiling moves
+  from ~5 MB to available disk quota.
+- **CLI v2**: human-readable output by default, `--json` for machines,
+  full command surface (messages/read/say/react/msg-edit, issues, todos,
+  files, gh, reviews, briefs, attachments, shell completions), `--reply`,
+  ambiguous project/conversation id handling, `--file` for JSON payloads.
+- **Brand lock**: `#06b6d4` is the only accent; the Settings accent picker
+  is gone (`relay.accent` pref purged); favicon is the white mark on brand
+  black with a cyan dot, shared by web and landing.

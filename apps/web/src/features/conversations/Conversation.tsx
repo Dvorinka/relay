@@ -624,17 +624,26 @@ function ConversationThread(props: {
   const [dragging, setDragging] = createSignal(false);
   const [replyTo, setReplyTo] = createSignal<Message | null>(null);
 
-  // File mentions: @file:path (linked local folder) and
-  // @gh:owner/repo:path (linked GitHub repos). Trees load lazily on the
-  // first mention keystroke.
+  // Mentions: @ opens the unified menu (people, agents, issues, PRs, files),
+  // # jumps straight to issues. @file:/@gh: keep their prefixes for paths.
   const [repos] = createResource(
     () => props.projectId,
     async (id) => (await api.listProjectRepos(id)).repos,
   );
+  const [mentionables] = createResource(
+    () => props.projectId,
+    async (id) => {
+      try {
+        return await api.mentionables(id);
+      } catch {
+        return { users: [], agents: [], issues: [], repos: [] };
+      }
+    },
+  );
   const [localPaths, setLocalPaths] = createSignal<string[] | null>(null);
   const [ghPaths, setGhPaths] = createSignal<string[] | null>(null);
   const [mention, setMention] = createSignal<{
-    kind: "file" | "gh";
+    kind: "all" | "issue" | "file" | "gh";
     part: string;
     start: number;
   } | null>(null);
@@ -777,55 +786,139 @@ function ConversationThread(props: {
     }
   }
 
-  // Detects the mention token under the caret: "@file:<part>" or
-  // "@gh:<part>" — the trigger must be at start or after whitespace.
+  // Detects the mention token under the caret: "@<part>" (unified), "#<part>"
+  // (issues only), "@file:<part>", "@gh:<part>". Trigger must sit at the
+  // start of a word — emails and prose don't open the menu.
   function detectMention(text: string, caret: number) {
     const before = text.slice(0, caret);
-    const m = before.match(/@(?:file|gh):(\S*)$/);
+    const m = before.match(/(?:^|\s)([@#])([\w:./-]*)$/);
     if (!m) {
       setMention(null);
       return;
     }
-    const start = caret - m[0].length;
-    if (start > 0 && !/\s/.test(text[start - 1]!)) {
-      setMention(null);
-      return;
+    const start = caret - m[2]!.length - 1;
+    const part = m[2] ?? "";
+    let kind: "all" | "issue" | "file" | "gh" = "all";
+    if (m[1] === "#") {
+      kind = "issue";
+    } else if (part.startsWith("file:")) {
+      kind = "file";
+    } else if (part.startsWith("gh:")) {
+      kind = "gh";
     }
-    const kind = m[0].startsWith("@gh:") ? ("gh" as const) : ("file" as const);
-    setMention({ kind, part: m[1] ?? "", start });
+    setMention({
+      kind,
+      part: kind === "file" || kind === "gh" ? part.slice(part.indexOf(":") + 1) : part,
+      start,
+    });
     setMentionIdx(0);
     if (kind === "file") {
       void loadLocalPaths();
-    } else {
+    } else if (kind === "gh") {
       void loadGhPaths();
     }
   }
 
-  const mentionCandidates = () => {
+  interface MentionItem {
+    icon: "user" | "agent" | "issue" | "pr" | "file";
+    label: string;
+    sub?: string;
+    insert: string;
+  }
+
+  const mentionCandidates = (): MentionItem[] => {
     const m = mention();
     if (!m) return [];
-    const src = m.kind === "file" ? (localPaths() ?? []) : (ghPaths() ?? []);
     const needle = m.part.toLowerCase();
-    const hits = needle
-      ? src.filter((p) => p.toLowerCase().includes(needle))
-      : src;
-    return hits.slice(0, 8);
+    const fit = (...hay: (string | undefined)[]) =>
+      !needle || hay.some((h) => h?.toLowerCase().includes(needle));
+    if (m.kind === "file" || m.kind === "gh") {
+      const src = m.kind === "file" ? (localPaths() ?? []) : (ghPaths() ?? []);
+      return src
+        .filter((p) => fit(p))
+        .slice(0, 8)
+        .map((p) => ({
+          icon: "file" as const,
+          label: p.split("/").pop() ?? p,
+          sub: p,
+          insert: m.kind === "file" ? `@file:${p}` : `@gh:${p}`,
+        }));
+    }
+    const mm = mentionables();
+    if (!mm) return [];
+    const out: MentionItem[] = [];
+    if (m.kind === "all") {
+      for (const u of mm.users) {
+        if (fit(u.name)) {
+          out.push({
+            icon: "user",
+            label: u.name,
+            sub: "member",
+            insert: `@user:${u.name.toLowerCase().replace(/\s+/g, "-")}`,
+          });
+        }
+      }
+      for (const a of mm.agents) {
+        if (fit(a.name, a.slug)) {
+          out.push({
+            icon: "agent",
+            label: a.name,
+            sub: `agent · ${a.slug}`,
+            insert: `@agent:${a.slug}`,
+          });
+        }
+      }
+    }
+    for (const i of mm.issues) {
+      if (!fit(i.key, i.title)) continue;
+      if (i.kind === "pull_request") {
+        out.push({
+          icon: "pr",
+          label: `${i.repo}#${i.github_number}`,
+          sub: i.title,
+          insert: `${i.repo}#${i.github_number}`,
+        });
+      } else {
+        out.push({
+          icon: "issue",
+          label: i.key,
+          sub: i.title,
+          insert: i.key,
+        });
+      }
+    }
+    if (m.kind === "all") {
+      for (const r of mm.repos) {
+        if (fit(r)) {
+          out.push({
+            icon: "pr",
+            label: `${r}#…`,
+            sub: "GitHub issue or PR number",
+            insert: `${r}#`,
+          });
+        }
+      }
+    }
+    return out.slice(0, 8);
   };
 
-  function pickMention(item: string) {
+  function pickMention(item: MentionItem) {
     const m = mention();
     if (!m || !inputEl) return;
     const text = draft();
-    const token = m.kind === "file" ? `@file:${item}` : `@gh:${item}`;
-    const next = `${text.slice(0, m.start)}${token} ${text.slice(inputEl.selectionStart)}`;
+    const token = item.insert;
+    // repo# items leave the caret mid-token so the user types the number
+    const tail = token.endsWith("#") ? "" : " ";
+    const next = `${text.slice(0, m.start)}${token}${tail}${text.slice(inputEl.selectionStart)}`;
     setDraft(next);
     setMention(null);
     const el = inputEl;
     queueMicrotask(() => {
       el.focus();
-      const pos = m.start + token.length + 1;
+      const pos = m.start + token.length + tail.length;
       el.setSelectionRange(pos, pos);
       autogrow();
+      if (tail === "") detectMention(next, pos);
     });
   }
 
@@ -1102,27 +1195,42 @@ function ConversationThread(props: {
         <Show when={mention() && mentionCandidates().length > 0}>
           <div
             role="listbox"
-            aria-label="File suggestions"
+            aria-label="Mention suggestions"
             class="absolute bottom-full left-3 right-3 z-20 mb-1 max-h-64 overflow-y-auto rounded-lg border border-border bg-surface shadow-lg sm:left-4 sm:right-4"
           >
             <For each={mentionCandidates()}>
-              {(p, i) => (
+              {(item, i) => (
                 <button
                   type="button"
                   role="option"
                   aria-selected={i() === mentionIdx()}
                   onMouseDown={(e) => {
                     e.preventDefault();
-                    pickMention(p);
+                    pickMention(item);
                   }}
-                  class={`flex w-full items-center gap-2 px-3 py-1.5 text-left font-mono text-[12px] transition-colors ${
+                  class={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[12.5px] transition-colors ${
                     i() === mentionIdx()
                       ? "bg-hover text-fg"
                       : "text-muted"
                   }`}
                 >
-                  <FileIcon class="h-3.5 w-3.5 shrink-0 text-faint" />
-                  <span class="truncate">{p}</span>
+                  <span class="w-4 shrink-0 text-center text-[11px] text-faint">
+                    {item.icon === "user"
+                      ? "@"
+                      : item.icon === "agent"
+                        ? "◆"
+                        : item.icon === "pr"
+                          ? "⑃"
+                          : item.icon === "issue"
+                            ? "#"
+                            : "◻"}
+                  </span>
+                  <span class="truncate font-medium">{item.label}</span>
+                  <Show when={item.sub}>
+                    <span class="truncate text-[11px] text-faint">
+                      {item.sub}
+                    </span>
+                  </Show>
                 </button>
               )}
             </For>

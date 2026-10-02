@@ -16,6 +16,7 @@ import {
 } from "solid-js";
 import { Avatar } from "@ark-ui/solid";
 import {
+  BriefsIcon,
   GitPullRequestIcon,
   IssueIcon,
   SettingsIcon,
@@ -35,6 +36,7 @@ import { IssueList } from "../issues/IssueList";
 import { isClosed, statusDefs, StatusDot } from "../issues/meta";
 import { Reviews } from "../reviews/Reviews";
 import { WebhooksSection } from "../webhooks/Webhooks";
+import { BriefsPanel } from "../briefs/BriefsPanel";
 
 type View = "issues" | "pulls" | "reviews" | "development" | "settings";
 
@@ -559,6 +561,8 @@ export default function ProjectPage() {
     (id) => api.projectOverview(id),
   );
 
+  const [briefsOpen, setBriefsOpen] = createSignal(false);
+
   const project = (): Project | undefined =>
     overview()?.project ??
     projects.projects()?.find((p) => p.id === params.projectId);
@@ -629,6 +633,13 @@ export default function ProjectPage() {
             >
               <GitPullRequestIcon class="h-4 w-4" />
             </HeadButton>
+            <HeadButton
+              title="Visual briefs"
+              active={briefsOpen()}
+              onClick={() => setBriefsOpen(!briefsOpen())}
+            >
+              <BriefsIcon class="h-4 w-4" />
+            </HeadButton>
           </div>
         </header>
 
@@ -640,6 +651,12 @@ export default function ProjectPage() {
           <div class="hidden lg:block">
             <ContextRail project={p} onOpenView={openView} />
           </div>
+        )}
+      </Show>
+
+      <Show when={briefsOpen() && project()} keyed>
+        {(p) => (
+          <BriefsPanel project={p} onClose={() => setBriefsOpen(false)} />
         )}
       </Show>
 

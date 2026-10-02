@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"sort"
 	"strings"
 	"sync"
@@ -212,6 +213,16 @@ func (s *Service) githubClient(ctx context.Context) (*Client, error) {
 		s.mu.Unlock()
 		return c, nil
 	}
+	// Local-gh fallback: self-hosted/dev installs without an app use the
+	// operator's `gh auth token` as a PAT — same REST surface, zero setup.
+	if tok, err := ghCLIToken(ctx); err == nil && tok != "" {
+		c := NewPATClient(tok)
+		s.mu.Lock()
+		s.client = c
+		s.mu.Unlock()
+		s.log.Info("github auth via local gh CLI")
+		return c, nil
+	}
 	app, err := s.q.GetGitHubApp(ctx)
 	if err != nil {
 		return nil, errors.New("github app not registered")
@@ -231,6 +242,17 @@ func (s *Service) resetClient() {
 	s.mu.Lock()
 	s.client = nil
 	s.mu.Unlock()
+}
+
+// ghCLIToken shells out to the GitHub CLI for a token. Returns "" when gh is
+// absent or unauthenticated — callers treat that as "no provider".
+func ghCLIToken(ctx context.Context) (string, error) {
+	cmd := exec.CommandContext(ctx, "gh", "auth", "token")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // --- installations & repos ---
@@ -335,7 +357,10 @@ func (s *Service) handleLinkRepo(c *gin.Context) {
 		req.DefaultBranch = "main"
 	}
 	if req.InstallationID == 0 {
-		if s.cfg.GitHubToken == "" {
+		// Personal-token modes (GITHUB_TOKEN or local `gh`) have no real
+		// installation — a synthetic id-0 row groups their repo links.
+		cli, cerr := s.githubClient(c.Request.Context())
+		if cerr != nil || !cli.IsPAT() {
 			httpx.Error(c, http.StatusBadRequest, "bad_request", "unknown installation")
 			return
 		}

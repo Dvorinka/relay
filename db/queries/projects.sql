@@ -1,21 +1,21 @@
 -- name: CreateProject :one
 insert into projects (workspace_id, key, name, description, icon, color, created_by)
 values ($1, $2, $3, $4, $5, $6, $7)
-returning id, workspace_id, key, name, description, icon, color, statuses, local_path, created_at;
+returning id, workspace_id, key, name, description, icon, color, statuses, local_path, brief_policy, created_at;
 
 -- name: AddProjectMember :exec
 insert into project_members (project_id, user_id)
 values ($1, $2);
 
 -- name: ListProjectsForUser :many
-select p.id, p.workspace_id, p.key, p.name, p.description, p.icon, p.color, p.statuses, p.local_path, p.created_at
+select p.id, p.workspace_id, p.key, p.name, p.description, p.icon, p.color, p.statuses, p.local_path, p.brief_policy, p.created_at
 from projects p
 join workspace_members wm on wm.workspace_id = p.workspace_id
 where wm.user_id = $1
 order by p.name;
 
 -- name: GetProjectByID :one
-select id, workspace_id, key, name, description, icon, color, statuses, local_path, created_at
+select id, workspace_id, key, name, description, icon, color, statuses, local_path, brief_policy, created_at
 from projects
 where id = $1;
 
@@ -36,7 +36,7 @@ set name = coalesce(sqlc.narg(name), name),
     color = coalesce(sqlc.narg(color), color),
     updated_at = now()
 where id = sqlc.arg(id)
-returning id, workspace_id, key, name, description, icon, color, statuses, local_path, created_at;
+returning id, workspace_id, key, name, description, icon, color, statuses, local_path, brief_policy, created_at;
 
 -- name: ProjectCounts :one
 select
@@ -53,7 +53,7 @@ update projects set statuses = $2, updated_at = now() where id = $1;
 update projects set local_path = $2, updated_at = now() where id = $1;
 
 -- name: ProjectMeta :one
-select statuses, local_path from projects where id = $1;
+select statuses, local_path, brief_policy from projects where id = $1;
 
 -- name: CreateSavedFilter :one
 insert into saved_filters (project_id, user_id, name, filters)

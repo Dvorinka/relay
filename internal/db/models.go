@@ -93,12 +93,28 @@ type Board struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type Brief struct {
+	ID             pgtype.UUID        `json:"id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	IssueID        pgtype.UUID        `json:"issue_id"`
+	ConversationID pgtype.UUID        `json:"conversation_id"`
+	Title          string             `json:"title"`
+	Summary        string             `json:"summary"`
+	Scene          []byte             `json:"scene"`
+	Status         string             `json:"status"`
+	CreatedByUser  pgtype.UUID        `json:"created_by_user"`
+	CreatedByAgent pgtype.UUID        `json:"created_by_agent"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Conversation struct {
 	ID        pgtype.UUID        `json:"id"`
 	ProjectID pgtype.UUID        `json:"project_id"`
 	Kind      string             `json:"kind"`
 	IssueID   pgtype.UUID        `json:"issue_id"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	BriefID   pgtype.UUID        `json:"brief_id"`
 }
 
 type GithubApp struct {
@@ -194,6 +210,7 @@ type Message struct {
 	EditedAt       pgtype.Timestamptz `json:"edited_at"`
 	DeletedAt      pgtype.Timestamptz `json:"deleted_at"`
 	ParentID       pgtype.UUID        `json:"parent_id"`
+	Mentions       []byte             `json:"mentions"`
 }
 
 type MessageAttachment struct {
@@ -239,6 +256,7 @@ type Project struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 	Statuses    []byte             `json:"statuses"`
 	LocalPath   pgtype.Text        `json:"local_path"`
+	BriefPolicy string             `json:"brief_policy"`
 }
 
 type ProjectCounter struct {

@@ -31,6 +31,7 @@ import (
 	"github.com/Dvorinka/relay/internal/events"
 	"github.com/Dvorinka/relay/internal/github"
 	"github.com/Dvorinka/relay/internal/localfiles"
+	"github.com/Dvorinka/relay/internal/mentions"
 	"github.com/Dvorinka/relay/internal/push"
 	"github.com/Dvorinka/relay/internal/storage"
 )
@@ -215,8 +216,9 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 	), s.listConversations)
 
 	srv.AddTool(mcp.NewTool("get_messages",
-		mcp.WithDescription("List messages in a conversation (newest first)."),
-		mcp.WithString("conversation_id", mcp.Required()),
+		mcp.WithDescription("List messages in a conversation (newest first). Pass conversation_id, or project_id for the project's main thread."),
+		mcp.WithString("conversation_id"),
+		mcp.WithString("project_id", mcp.Description("Resolves the project's main conversation")),
 		mcp.WithNumber("limit", mcp.Description("Max messages, default 50, cap 200")),
 	), s.getMessages)
 
@@ -401,6 +403,50 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithString("review_id", mcp.Required()),
 		mcp.WithNumber("timeout_s", mcp.Description("Max wait, default 60, cap 300")),
 	), s.awaitReview)
+
+	// --- visual briefs ---
+	// Briefs are Excalidraw-compatible scenes explaining a change set.
+	// projects.brief_policy configures expectations: 'never' (agents must not
+	// create), 'on_request' (create only when asked), 'pre_merge' (expected
+	// before merge-worthy reviews).
+
+	srv.AddTool(mcp.NewTool("get_brief_policy",
+		mcp.WithDescription("Get the project's brief policy (never|on_request|pre_merge) — call before deciding whether to produce a visual brief."),
+		mcp.WithString("project_id", mcp.Required()),
+	), s.getBriefPolicy)
+
+	srv.AddTool(mcp.NewTool("list_briefs",
+		mcp.WithDescription("List visual briefs in a granted project, newest first."),
+		mcp.WithString("project_id", mcp.Required()),
+		mcp.WithString("issue_id", mcp.Description("Filter by linked Relay issue UUID")),
+	), s.listBriefs)
+
+	srv.AddTool(mcp.NewTool("get_brief",
+		mcp.WithDescription("Get one brief including its scene JSON and comment conversation id."),
+		mcp.WithString("brief_id", mcp.Required()),
+	), s.getBrief)
+
+	srv.AddTool(mcp.NewTool("create_brief",
+		mcp.WithDescription("Create a visual brief explaining a change. 'scene' is Excalidraw-compatible JSON "+
+			"({elements: [{type: rectangle|ellipse|diamond|arrow|line|text, x, y, width, height, text?, "+
+			"strokeColor?, backgroundColor?}], appState?: {...}}). The brief gets its own conversation "+
+			"(returned as conversation_id) — post walkthrough notes there with send_message and iterate on "+
+			"comments. Fails if the project's brief policy is 'never'."),
+		mcp.WithString("project_id", mcp.Required()),
+		mcp.WithString("title", mcp.Required(), mcp.Description("One-line title, <= 200 chars")),
+		mcp.WithString("summary", mcp.Description("Plain-language summary of what the diagram explains")),
+		mcp.WithString("issue_id", mcp.Description("Linked Relay issue UUID")),
+		mcp.WithString("scene", mcp.Description("Excalidraw scene as a JSON string")),
+	), s.createBrief)
+
+	srv.AddTool(mcp.NewTool("update_brief",
+		mcp.WithDescription("Update a brief's title, summary, status (open|resolved|archived), or scene after feedback."),
+		mcp.WithString("brief_id", mcp.Required()),
+		mcp.WithString("title"),
+		mcp.WithString("summary"),
+		mcp.WithString("status", mcp.Description("open|resolved|archived")),
+		mcp.WithString("scene", mcp.Description("Replacement Excalidraw scene JSON")),
+	), s.updateBrief)
 }
 
 func messageJSON(m db.GetMessageFullRow) gin.H {
@@ -427,10 +473,18 @@ func messageJSON(m db.GetMessageFullRow) gin.H {
 			"deleted": m.ParentDeleted.Bool,
 		}
 	}
+	var mrefs any
+	if len(m.Mentions) > 0 {
+		_ = json.Unmarshal(m.Mentions, &mrefs)
+	}
+	if mrefs == nil {
+		mrefs = []any{}
+	}
 	return gin.H{
 		"id":              m.ID,
 		"conversation_id": m.ConversationID,
 		"body":            m.Body,
+		"mentions":        mrefs,
 		"parent":          parent,
 		"created_at":      m.CreatedAt.Time,
 		"edited_at":       editedAt,
@@ -441,6 +495,59 @@ func messageJSON(m db.GetMessageFullRow) gin.H {
 			"avatar": avatar,
 		},
 	}
+}
+
+// resolveMentions binds extracted refs to rows. Same contract as the REST
+// path — agents see ids and URLs for what a message references.
+func (s *Service) resolveMentions(ctx context.Context, projectID pgtype.UUID, refs []mentions.Ref) []mentions.Ref {
+	if len(refs) == 0 {
+		return []mentions.Ref{}
+	}
+	wsID, _ := s.q.ProjectWorkspaceID(ctx, projectID)
+	for i := range refs {
+		r := &refs[i]
+		switch r.Kind {
+		case "user":
+			if u, err := s.q.UserByNameInWorkspace(ctx,
+				db.UserByNameInWorkspaceParams{WorkspaceID: wsID, Name: r.Ref}); err == nil {
+				r.ID = u.ID.String()
+				r.Label = u.Name
+				r.Found = true
+			}
+		case "agent":
+			if a, err := s.q.AgentBySlug(ctx,
+				db.AgentBySlugParams{WorkspaceID: wsID, Slug: r.Ref}); err == nil {
+				r.ID = a.ID.String()
+				r.Label = a.Name
+				r.Found = true
+			}
+		case "mention":
+			if a, err := s.q.AgentBySlug(ctx,
+				db.AgentBySlugParams{WorkspaceID: wsID, Slug: r.Ref}); err == nil {
+				r.Kind = "agent"
+				r.ID = a.ID.String()
+				r.Label = a.Name
+				r.Found = true
+			} else if u, err := s.q.UserByNameInWorkspace(ctx,
+				db.UserByNameInWorkspaceParams{WorkspaceID: wsID, Name: r.Ref}); err == nil {
+				r.Kind = "user"
+				r.ID = u.ID.String()
+				r.Label = u.Name
+				r.Found = true
+			}
+		case "issue":
+			if it, err := s.q.IssueByKeyInProject(ctx,
+				db.IssueByKeyInProjectParams{ProjectID: projectID, Key: r.Ref}); err == nil {
+				r.ID = it.ID.String()
+				r.Label = it.Key + " — " + it.Title
+				r.Found = true
+				if it.GithubUrl.Valid && it.GithubUrl.String != "" {
+					r.URL = it.GithubUrl.String
+				}
+			}
+		}
+	}
+	return refs
 }
 
 func authorKind(m db.GetMessageFullRow) string {
@@ -514,9 +621,35 @@ func (s *Service) listConversations(ctx context.Context, req mcp.CallToolRequest
 }
 
 func (s *Service) getMessages(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	cid, err := uuidArg(req, "conversation_id")
-	if err != nil {
-		return errResult(err)
+	var cid pgtype.UUID
+	if v := req.GetString("conversation_id", ""); v != "" {
+		var err error
+		cid, err = uuidArg(req, "conversation_id")
+		if err != nil {
+			return mcp.NewToolResultError("invalid conversation_id"), nil
+		}
+	} else if v := req.GetString("project_id", ""); v != "" {
+		pid, err := uuidArg(req, "project_id")
+		if err != nil {
+			return mcp.NewToolResultError("invalid project_id"), nil
+		}
+		conv, err := s.q.GetProjectConversation(ctx, pid)
+		if errors.Is(err, pgx.ErrNoRows) {
+			conv, err = s.q.CreateProjectConversation(ctx, pid)
+		}
+		if err != nil {
+			// Not a project — treat the id as a conversation (brief threads,
+			// issue threads) so `messages <uuid>` works on either.
+			if _, cerr := s.q.ResolveConversationProject(ctx, pid); cerr == nil {
+				cid = pid
+			} else {
+				return errResult(err)
+			}
+		} else {
+			cid = conv.ID
+		}
+	} else {
+		return mcp.NewToolResultError("conversation_id or project_id required"), nil
 	}
 	pid, err := s.q.ResolveConversationProject(ctx, cid)
 	if err != nil {
@@ -644,9 +777,10 @@ func (s *Service) listIssues(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	if err != nil {
 		return errResult(err)
 	}
+	pKey, _ := s.projectKey(ctx, pid)
 	out := make([]gin.H, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, issueJSON(issueFromRow(r), r.AssigneeName))
+		out = append(out, issueJSON(issueFromRow(r), r.AssigneeName, pKey))
 	}
 	return jsonResult(out)
 }
@@ -676,17 +810,27 @@ func (s *Service) getIssue(ctx context.Context, req mcp.CallToolRequest) (*mcp.C
 	if err != nil {
 		return errResult(err)
 	}
+	pKey, _ := s.projectKey(ctx, pid)
 	return jsonResult(issueJSON(db.Issue{
 		ID: r.ID, ProjectID: r.ProjectID, Number: r.Number, Title: r.Title,
 		Description: r.Description, Status: r.Status, Priority: r.Priority,
 		AssigneeID: r.AssigneeID, AgentID: r.AgentID, CreatedBy: r.CreatedBy,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-	}, r.AssigneeName))
+	}, r.AssigneeName, pKey))
 }
 
-func issueJSON(i db.Issue, assigneeName pgtype.Text) gin.H {
+func (s *Service) projectKey(ctx context.Context, pid pgtype.UUID) (string, error) {
+	p, err := s.q.GetProjectByID(ctx, pid)
+	if err != nil {
+		return "", err
+	}
+	return p.Key, nil
+}
+
+func issueJSON(i db.Issue, assigneeName pgtype.Text, projectKey string) gin.H {
 	return gin.H{
 		"id": i.ID, "project_id": i.ProjectID, "number": i.Number,
+		"key": projectKey + "-" + strconv.Itoa(int(i.Number)),
 		"title": i.Title, "description": i.Description,
 		"status": i.Status, "priority": i.Priority,
 		"assignee_id": i.AssigneeID, "assignee_name": assigneeName.String,
@@ -701,17 +845,24 @@ func (s *Service) sendMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 		if err := pid.Scan(v); err != nil || !pid.Valid {
 			return mcp.NewToolResultError("invalid project_id"), nil
 		}
-		if err := s.scope(ctx, pid, "message:write"); err != nil {
-			return errResult(err)
-		}
 		conv, err := s.q.GetProjectConversation(ctx, pid)
 		if errors.Is(err, pgx.ErrNoRows) {
 			conv, err = s.q.CreateProjectConversation(ctx, pid)
 		}
 		if err != nil {
+			// A conversation UUID lands here too (brief/issue threads).
+			if cres, cerr := s.q.ResolveConversationProject(ctx, pid); cerr == nil {
+				cid = pid
+				pid = cres
+			} else {
+				return errResult(err)
+			}
+		} else {
+			cid = conv.ID
+		}
+		if err := s.scope(ctx, pid, "message:write"); err != nil {
 			return errResult(err)
 		}
-		cid = conv.ID
 	} else {
 		var err error
 		cid, err = uuidArg(req, "conversation_id")
@@ -744,8 +895,10 @@ func (s *Service) sendMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError("reply_to is not a message in this conversation"), nil
 		}
 	}
+	mj, _ := json.Marshal(s.resolveMentions(ctx, pid, mentions.Extract(body)))
 	id, err := s.q.CreateAgentMessage(ctx, db.CreateAgentMessageParams{
 		ConversationID: cid, AgentID: agent(ctx).ID, Body: body, ParentID: parent,
+		Mentions: mj,
 	})
 	if err != nil {
 		return errResult(err)
@@ -796,8 +949,9 @@ func (s *Service) createIssue(ctx context.Context, req mcp.CallToolRequest) (*mc
 		return errResult(err)
 	}
 	s.recordActivity(ctx, i.ID, "created", gin.H{"title": title})
-	s.publishPID(pid, "issue.created", map[string]any{"issue": issueJSON(i, pgtype.Text{})})
-	return jsonResult(issueJSON(i, pgtype.Text{}))
+	pKey, _ := s.projectKey(ctx, pid)
+	s.publishPID(pid, "issue.created", map[string]any{"issue": issueJSON(i, pgtype.Text{}, pKey)})
+	return jsonResult(issueJSON(i, pgtype.Text{}, pKey))
 }
 
 func (s *Service) updateIssue(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -831,8 +985,9 @@ func (s *Service) updateIssue(ctx context.Context, req mcp.CallToolRequest) (*mc
 		return errResult(err)
 	}
 	s.recordActivity(ctx, iid, "updated", nil)
-	s.publishPID(pid, "issue.updated", map[string]any{"issue": issueJSON(i, pgtype.Text{})})
-	return jsonResult(issueJSON(i, pgtype.Text{}))
+	pKey, _ := s.projectKey(ctx, pid)
+	s.publishPID(pid, "issue.updated", map[string]any{"issue": issueJSON(i, pgtype.Text{}, pKey)})
+	return jsonResult(issueJSON(i, pgtype.Text{}, pKey))
 }
 
 // editMessage mirrors the REST rule: the author may edit only while no
@@ -1606,4 +1761,194 @@ func (s *Service) readProjectFile(ctx context.Context, req mcp.CallToolRequest) 
 		return mcp.NewToolResultError("binary file"), nil
 	}
 	return jsonResult(gin.H{"path": path, "content": string(data), "size": st.Size()})
+}
+
+// --- visual briefs ---
+
+func briefJSONMCP(b db.Brief, authorName, issueKey string) gin.H {
+	return gin.H{
+		"id":              b.ID, "project_id": b.ProjectID,
+		"issue_id": b.IssueID, "issue_key": issueKey,
+		"conversation_id": b.ConversationID,
+		"title":           b.Title, "summary": b.Summary,
+		"scene": json.RawMessage(b.Scene), "status": b.Status,
+		"author_name": authorName,
+		"created_at":  b.CreatedAt.Time, "updated_at": b.UpdatedAt.Time,
+	}
+}
+
+func (s *Service) briefPolicyFor(ctx context.Context, pid pgtype.UUID) string {
+	meta, err := s.q.ProjectMeta(ctx, pid)
+	if err != nil || meta.BriefPolicy == "" {
+		return "on_request"
+	}
+	return meta.BriefPolicy
+}
+
+func (s *Service) getBriefPolicy(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pid, err := uuidArg(req, "project_id")
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "project:read"); err != nil {
+		return errResult(err)
+	}
+	return jsonResult(gin.H{"policy": s.briefPolicyFor(ctx, pid)})
+}
+
+func (s *Service) listBriefs(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pid, err := uuidArg(req, "project_id")
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "brief:read"); err != nil {
+		return errResult(err)
+	}
+	var issueID pgtype.UUID
+	if v := req.GetString("issue_id", ""); v != "" {
+		if err := issueID.Scan(v); err != nil || !issueID.Valid {
+			return mcp.NewToolResultError("invalid issue_id"), nil
+		}
+	}
+	rows, err := s.q.ListBriefs(ctx, db.ListBriefsParams{ProjectID: pid, IssueID: issueID})
+	if err != nil {
+		return errResult(err)
+	}
+	out := make([]gin.H, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, briefJSONMCP(db.Brief{
+			ID: r.ID, ProjectID: r.ProjectID, IssueID: r.IssueID,
+			ConversationID: r.ConversationID, Title: r.Title, Summary: r.Summary,
+			Scene: r.Scene, Status: r.Status, CreatedByUser: r.CreatedByUser,
+			CreatedByAgent: r.CreatedByAgent, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		}, r.AuthorName, issueKey(r.IssueProjectKey, r.IssueNumber)))
+	}
+	return jsonResult(gin.H{"briefs": out, "policy": s.briefPolicyFor(ctx, pid)})
+}
+
+func (s *Service) getBrief(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	bid, err := uuidArg(req, "brief_id")
+	if err != nil {
+		return errResult(err)
+	}
+	b, err := s.q.GetBrief(ctx, bid)
+	if err != nil {
+		return mcp.NewToolResultError("brief not found"), nil
+	}
+	if err := s.scope(ctx, b.ProjectID, "brief:read"); err != nil {
+		return errResult(err)
+	}
+	return jsonResult(briefJSONMCP(db.Brief{
+		ID: b.ID, ProjectID: b.ProjectID, IssueID: b.IssueID,
+		ConversationID: b.ConversationID, Title: b.Title, Summary: b.Summary,
+		Scene: b.Scene, Status: b.Status, CreatedByUser: b.CreatedByUser,
+		CreatedByAgent: b.CreatedByAgent, CreatedAt: b.CreatedAt, UpdatedAt: b.UpdatedAt,
+	}, b.AuthorName, issueKey(b.IssueProjectKey, b.IssueNumber)))
+}
+
+func (s *Service) createBrief(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pid, err := uuidArg(req, "project_id")
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "brief:write"); err != nil {
+		return errResult(err)
+	}
+	if pol := s.briefPolicyFor(ctx, pid); pol == "never" {
+		return mcp.NewToolResultError("this project's brief policy is 'never' — do not create visual briefs here"), nil
+	}
+	title, err := req.RequireString("title")
+	if err != nil {
+		return errResult(err)
+	}
+	if t := strings.TrimSpace(title); t == "" || len(t) > 200 {
+		return mcp.NewToolResultError("title must be 1..200 chars"), nil
+	} else {
+		title = t
+	}
+	scene := []byte("{}")
+	if v := req.GetString("scene", ""); v != "" {
+		var probe any
+		if json.Unmarshal([]byte(v), &probe) != nil {
+			return mcp.NewToolResultError("scene must be a JSON string containing the Excalidraw scene"), nil
+		}
+		scene = []byte(v)
+	}
+	var issueID pgtype.UUID
+	if v := req.GetString("issue_id", ""); v != "" {
+		if err := issueID.Scan(v); err != nil || !issueID.Valid {
+			return mcp.NewToolResultError("invalid issue_id"), nil
+		}
+	}
+	agentID := agent(ctx).ID
+	b, err := s.q.CreateBrief(ctx, db.CreateBriefParams{
+		ProjectID: pid, IssueID: issueID, Title: title,
+		Summary: req.GetString("summary", ""), Scene: scene,
+		CreatedByAgent: agentID,
+	})
+	if err != nil {
+		return errResult(err)
+	}
+	conv, err := s.q.CreateBriefConversation(ctx, db.CreateBriefConversationParams{
+		ProjectID: pid, BriefID: b.ID,
+	})
+	if err == nil {
+		_ = s.q.BriefSetConversation(ctx, db.BriefSetConversationParams{
+			ConversationID: conv.ID, ID: b.ID,
+		})
+		b.ConversationID = conv.ID
+	}
+	return jsonResult(gin.H{
+		"brief":  briefJSONMCP(b, agent(ctx).Name, ""),
+		"policy": s.briefPolicyFor(ctx, pid),
+	})
+}
+
+func (s *Service) updateBrief(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	bid, err := uuidArg(req, "brief_id")
+	if err != nil {
+		return errResult(err)
+	}
+	b, err := s.q.GetBrief(ctx, bid)
+	if err != nil {
+		return mcp.NewToolResultError("brief not found"), nil
+	}
+	if err := s.scope(ctx, b.ProjectID, "brief:write"); err != nil {
+		return errResult(err)
+	}
+	var title, summary, status pgtype.Text
+	var scene []byte
+	if v := req.GetString("title", ""); v != "" {
+		title = pgtype.Text{String: strings.TrimSpace(v), Valid: true}
+	}
+	if v := req.GetString("summary", ""); v != "" {
+		summary = pgtype.Text{String: v, Valid: true}
+	}
+	if v := req.GetString("status", ""); v != "" {
+		if v != "open" && v != "resolved" && v != "archived" {
+			return mcp.NewToolResultError("status must be open|resolved|archived"), nil
+		}
+		status = pgtype.Text{String: v, Valid: true}
+	}
+	if v := req.GetString("scene", ""); v != "" {
+		var probe any
+		if json.Unmarshal([]byte(v), &probe) != nil {
+			return mcp.NewToolResultError("scene must be valid JSON"), nil
+		}
+		scene = []byte(v)
+	}
+	updated, err := s.q.UpdateBrief(ctx, db.UpdateBriefParams{
+		ID: bid, Title: title, Summary: summary, Status: status, Scene: scene,
+	})
+	if err != nil {
+		return errResult(err)
+	}
+	return jsonResult(briefJSONMCP(updated, b.AuthorName, issueKey(b.IssueProjectKey, b.IssueNumber)))
+}
+
+func issueKey(projectKey string, number pgtype.Int4) string {
+	if !number.Valid || projectKey == "" {
+		return ""
+	}
+	return projectKey + "-" + strconv.Itoa(int(number.Int32))
 }

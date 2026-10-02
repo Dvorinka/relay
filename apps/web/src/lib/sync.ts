@@ -3,7 +3,7 @@
 // issues in order. Server assigns fresh IDs — we keep old→new maps so reply
 // links stay intact.
 import { createClient } from "@relay/api-client";
-import { dumpLocal, markSynced } from "./local";
+import { dumpLocal, localReady, markSynced } from "./local";
 
 export interface SyncResult {
   projects: number;
@@ -12,7 +12,8 @@ export interface SyncResult {
   todos: number;
 }
 
-async function dataUrlToFile(att: {
+// att.url is a live object URL for the IDB blob — fetch resolves it.
+async function attachmentFile(att: {
   url: string;
   filename: string;
   content_type: string;
@@ -27,6 +28,7 @@ export async function syncToServer(
   password: string,
   onStep?: (label: string) => void,
 ): Promise<SyncResult> {
+  await localReady;
   const db = dumpLocal();
   const url = serverUrl.replace(/\/+$/, "");
 
@@ -87,7 +89,7 @@ export async function syncToServer(
         if (!local) continue;
         const up = await remote.uploadAttachment(
           created.id,
-          await dataUrlToFile(local),
+          await attachmentFile(local),
         );
         attIds.push(up.id);
       }

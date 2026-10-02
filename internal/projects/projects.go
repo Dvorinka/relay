@@ -97,11 +97,12 @@ func projectJSON(p db.GetProjectByIDRow) gin.H {
 	return gin.H{
 		"id": p.ID.String(), "workspace_id": p.WorkspaceID.String(),
 		"key": p.Key, "name": p.Name, "description": p.Description,
-		"icon":       textOrNil(p.Icon),
-		"color":      textOrNil(p.Color),
-		"statuses":   statuses.Parse(p.Statuses),
-		"local_path": textOrNil(p.LocalPath),
-		"created_at": p.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
+		"icon":         textOrNil(p.Icon),
+		"color":        textOrNil(p.Color),
+		"statuses":     statuses.Parse(p.Statuses),
+		"local_path":   textOrNil(p.LocalPath),
+		"brief_policy": p.BriefPolicy,
+		"created_at":   p.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
 	}
 }
 
@@ -126,9 +127,10 @@ func (s *Service) handleList(c *gin.Context) {
 			"id": r.ID.String(), "workspace_id": r.WorkspaceID.String(),
 			"key": r.Key, "name": r.Name, "description": r.Description,
 			"icon": textOrNil(r.Icon), "color": textOrNil(r.Color),
-			"statuses":   statuses.Parse(r.Statuses),
-			"local_path": textOrNil(r.LocalPath),
-			"created_at": r.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
+			"statuses":     statuses.Parse(r.Statuses),
+			"local_path":   textOrNil(r.LocalPath),
+			"brief_policy": r.BriefPolicy,
+			"created_at":   r.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"projects": out})

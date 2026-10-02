@@ -4,6 +4,7 @@
 package conversations
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/Dvorinka/relay/internal/db"
 	"github.com/Dvorinka/relay/internal/events"
 	"github.com/Dvorinka/relay/internal/httpx"
+	"github.com/Dvorinka/relay/internal/mentions"
 	"github.com/Dvorinka/relay/internal/push"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -39,6 +41,7 @@ func NewService(log *zap.Logger, pool *pgxpool.Pool) *Service {
 // in the containing workspace is enforced per route here.
 func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
 	g.GET("/projects/:id/conversation", s.projectMemberOnly, s.handleProjectConversation)
+	g.GET("/projects/:id/mentionables", s.projectMemberOnly, s.handleMentionables)
 	g.GET("/conversations/:id/messages", s.memberOnly, s.handleListMessages)
 	g.POST("/conversations/:id/messages", s.memberOnly, s.handlePostMessage)
 	g.PATCH("/messages/:id", s.handleEditMessage)
@@ -155,7 +158,7 @@ func (s *Service) handleListMessages(c *gin.Context) {
 		m := rows[i]
 		msgs = append(msgs, MessageJSON(MessageView{
 			ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
-			Body: m.Body, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+			Body: m.Body, Mentions: m.Mentions, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 			AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 			AuthorName: m.AuthorName, AuthorAvatar: m.AuthorAvatar,
 			ParentAuthorName: m.ParentAuthorName, ParentBody: m.ParentBody,
@@ -212,9 +215,11 @@ func (s *Service) handlePostMessage(c *gin.Context) {
 		}
 	}
 	user := auth.CurrentUser(c)
+	refs := s.resolveMentions(c, conv.ProjectID, mentions.Extract(req.Body))
+	mj, _ := json.Marshal(refs)
 	id, err := s.q.CreateMessage(c.Request.Context(), db.CreateMessageParams{
 		ConversationID: conv.ID, AuthorUserID: user.ID, Body: req.Body,
-		ParentID: parent,
+		ParentID: parent, Mentions: mj,
 	})
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
@@ -237,7 +242,7 @@ func (s *Service) handlePostMessage(c *gin.Context) {
 	atts := s.attachmentsFor(c, []pgtype.UUID{m.ID})
 	out := MessageJSON(MessageView{
 		ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
-		Body: m.Body, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+		Body: m.Body, Mentions: m.Mentions, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 		AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 		AuthorName: m.AuthorName, AuthorAvatar: m.AuthorAvatar,
 		ParentAuthorName: m.ParentAuthorName, ParentBody: m.ParentBody,
@@ -301,9 +306,17 @@ func (s *Service) handleEditMessage(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
+	// Mentions shift with the body — re-extract and persist.
+	refs := s.resolveMentions(c, s.convProjectID(c, m.ConversationID),
+		mentions.Extract(req.Body))
+	if mj, merr := json.Marshal(refs); merr == nil {
+		_ = s.q.UpdateMessageMentions(c.Request.Context(),
+			db.UpdateMessageMentionsParams{ID: id, Mentions: mj})
+		m.Mentions = mj
+	}
 	out := MessageJSON(MessageView{
 		ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
-		Body: m.Body, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+		Body: m.Body, Mentions: m.Mentions, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 		AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 		AuthorName: m.AuthorName, AuthorAvatar: m.AuthorAvatar,
 		ParentAuthorName: m.ParentAuthorName, ParentBody: m.ParentBody,
@@ -534,6 +547,7 @@ func conversationJSON(conv db.Conversation) gin.H {
 type MessageView struct {
 	ID, ConversationID, ParentID pgtype.UUID
 	Body                         string
+	Mentions                     []byte
 	CreatedAt, EditedAt          pgtype.Timestamptz
 	AuthorUserID, AuthorAgentID  pgtype.UUID
 	AuthorName                   string
@@ -583,6 +597,13 @@ func MessageJSON(v MessageView) gin.H {
 		}
 		parent = &p
 	}
+	var mrefs any
+	if len(v.Mentions) > 0 {
+		_ = json.Unmarshal(v.Mentions, &mrefs)
+	}
+	if mrefs == nil {
+		mrefs = []any{}
+	}
 	return gin.H{
 		"id": v.ID.String(), "conversation_id": v.ConversationID.String(),
 		"author": gin.H{
@@ -590,6 +611,7 @@ func MessageJSON(v MessageView) gin.H {
 			"name": v.AuthorName, "avatar_url": avatar,
 		},
 		"body":        v.Body,
+		"mentions":    mrefs,
 		"parent":      parent,
 		"attachments": nonEmpty(v.Attachments),
 		"reactions":   nonEmpty(v.Reactions),
@@ -604,4 +626,132 @@ func nonEmpty(l []gin.H) []gin.H {
 		return []gin.H{}
 	}
 	return l
+}
+
+func (s *Service) convProjectID(c *gin.Context, convID pgtype.UUID) pgtype.UUID {
+	pid, err := s.q.ResolveConversationProject(c.Request.Context(), convID)
+	if err != nil {
+		return pgtype.UUID{}
+	}
+	return pid
+}
+
+// resolveMentions binds extracted refs to real rows so readers (agents via
+// MCP, notifications, UI chips) get ids and URLs, not just text. Refs that
+// don't resolve are kept with found=false — the intent still reads.
+func (s *Service) resolveMentions(c *gin.Context, projectID pgtype.UUID, refs []mentions.Ref) []mentions.Ref {
+	ctx := c.Request.Context()
+	if len(refs) == 0 {
+		return []mentions.Ref{}
+	}
+	wsID, _ := s.q.ProjectWorkspaceID(ctx, projectID)
+	for i := range refs {
+		r := &refs[i]
+		switch r.Kind {
+		case "user":
+			if u, err := s.q.UserByNameInWorkspace(ctx,
+				db.UserByNameInWorkspaceParams{WorkspaceID: wsID, Name: r.Ref}); err == nil {
+				r.ID = u.ID.String()
+				r.Label = u.Name
+				r.Found = true
+			}
+		case "agent":
+			if a, err := s.q.AgentBySlug(ctx,
+				db.AgentBySlugParams{WorkspaceID: wsID, Slug: r.Ref}); err == nil {
+				r.ID = a.ID.String()
+				r.Label = a.Name
+				r.Found = true
+			}
+		case "mention":
+			// bare @name: agents take precedence (slugs are unique), then users
+			if a, err := s.q.AgentBySlug(ctx,
+				db.AgentBySlugParams{WorkspaceID: wsID, Slug: r.Ref}); err == nil {
+				r.Kind = "agent"
+				r.ID = a.ID.String()
+				r.Label = a.Name
+				r.Found = true
+			} else if u, err := s.q.UserByNameInWorkspace(ctx,
+				db.UserByNameInWorkspaceParams{WorkspaceID: wsID, Name: r.Ref}); err == nil {
+				r.Kind = "user"
+				r.ID = u.ID.String()
+				r.Label = u.Name
+				r.Found = true
+			}
+		case "issue":
+			if i, err := s.q.IssueByKeyInProject(ctx,
+				db.IssueByKeyInProjectParams{ProjectID: projectID, Key: r.Ref}); err == nil {
+				r.ID = i.ID.String()
+				r.Label = i.Key + " — " + i.Title
+				r.Found = true
+				if i.GithubUrl.Valid && i.GithubUrl.String != "" {
+					r.URL = i.GithubUrl.String
+				} else {
+					r.URL = "/app/p/" + projectID.String() + "/k/" + i.Key
+				}
+			}
+		}
+	}
+	return refs
+}
+
+// handleMentionables serves the composer's @ menu: workspace members,
+// agents, project issues (incl. GitHub-mirrored issues and PRs), and linked
+// repos for owner/repo#N refs. One round-trip, cached by the composer.
+func (s *Service) handleMentionables(c *gin.Context) {
+	p := c.MustGet(ctxProjectRow).(db.GetProjectForUserRow)
+	ctx := c.Request.Context()
+	wsID, _ := s.q.ProjectWorkspaceID(ctx, p.ID)
+
+	users := []gin.H{}
+	if members, err := s.q.ListWorkspaceMembers(ctx, wsID); err == nil {
+		for _, m := range members {
+			var avatar *string
+			if m.AvatarKey.Valid {
+				a := "/api/files/" + m.AvatarKey.String
+				avatar = &a
+			}
+			users = append(users, gin.H{
+				"id": m.ID.String(), "name": m.Name,
+				"avatar_url": avatar,
+			})
+		}
+	}
+	agents := []gin.H{}
+	if list, err := s.q.ListAgentsMentionable(ctx, wsID); err == nil {
+		for _, a := range list {
+			agents = append(agents, gin.H{
+				"id": a.ID.String(), "name": a.Name, "slug": a.Slug,
+				"description": a.Description,
+			})
+		}
+	}
+	issues := []gin.H{}
+	if list, err := s.q.ListMentionableIssues(ctx, p.ID); err == nil {
+		for _, i := range list {
+			kind := "issue"
+			if i.GithubKind == "pr" {
+				kind = "pull_request"
+			} else if i.GithubUrl.Valid && i.GithubUrl.String != "" {
+				kind = "github_issue"
+			}
+			url := "/app/p/" + p.ID.String() + "/k/" + i.Key
+			if i.GithubUrl.Valid && i.GithubUrl.String != "" {
+				url = i.GithubUrl.String
+			}
+			issues = append(issues, gin.H{
+				"id": i.ID.String(), "key": i.Key, "title": i.Title,
+				"status": i.Status, "kind": kind, "repo": i.Repo,
+				"github_number": i.GithubNumber.Int32, "url": url,
+			})
+		}
+	}
+	repos := []string{}
+	if list, err := s.q.ListProjectRepos(ctx, p.ID); err == nil {
+		for _, r := range list {
+			repos = append(repos, r.Owner+"/"+r.Name)
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"users": users, "agents": agents, "issues": issues, "repos": repos,
+	})
 }

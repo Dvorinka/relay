@@ -13,6 +13,7 @@ import (
 	"github.com/Dvorinka/relay/internal/attachments"
 	"github.com/Dvorinka/relay/internal/auth"
 	"github.com/Dvorinka/relay/internal/avatars"
+	"github.com/Dvorinka/relay/internal/briefs"
 	"github.com/Dvorinka/relay/internal/config"
 	"github.com/Dvorinka/relay/internal/conversations"
 	"github.com/Dvorinka/relay/internal/db"
@@ -74,6 +75,7 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	searchSvc := search.NewService(pool)
 	hookSvc := webhooks.NewService(log, pool)
 	pushSvc := push.NewService(log, pool, cfg)
+	briefSvc := briefs.NewService(log, pool)
 	convSvc.Push = pushSvc
 	hookSvc.Start(context.Background(), hub)
 	mcpHandler := mcpserver.New(db.New(pool), store, log, ghSvc, hub, pushSvc)
@@ -111,6 +113,7 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	rtSvc.RegisterRoutes(priv)
 	searchSvc.RegisterRoutes(priv)
 	pushSvc.RegisterRoutes(priv)
+	briefSvc.RegisterRoutes(priv)
 
 	// external agents: bearer-token MCP, not session cookies
 	r.POST("/mcp", mcpHandler)

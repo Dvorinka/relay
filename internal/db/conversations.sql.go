@@ -59,8 +59,8 @@ func (q *Queries) AgentReadMessageIDs(ctx context.Context, ids []pgtype.UUID) ([
 }
 
 const createMessage = `-- name: CreateMessage :one
-insert into messages (conversation_id, author_user_id, body, parent_id)
-values ($1, $2, $3, $4)
+insert into messages (conversation_id, author_user_id, body, parent_id, mentions)
+values ($1, $2, $3, $4, coalesce($5, '[]'::jsonb))
 returning id
 `
 
@@ -69,6 +69,7 @@ type CreateMessageParams struct {
 	AuthorUserID   pgtype.UUID `json:"author_user_id"`
 	Body           string      `json:"body"`
 	ParentID       pgtype.UUID `json:"parent_id"`
+	Mentions       interface{} `json:"mentions"`
 }
 
 func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (pgtype.UUID, error) {
@@ -77,6 +78,7 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (p
 		arg.AuthorUserID,
 		arg.Body,
 		arg.ParentID,
+		arg.Mentions,
 	)
 	var id pgtype.UUID
 	err := row.Scan(&id)
@@ -87,7 +89,7 @@ const createProjectConversation = `-- name: CreateProjectConversation :one
 insert into conversations (project_id, kind)
 values ($1, 'project')
 on conflict do nothing
-returning id, project_id, kind, issue_id, created_at
+returning id, project_id, kind, issue_id, created_at, brief_id
 `
 
 func (q *Queries) CreateProjectConversation(ctx context.Context, projectID pgtype.UUID) (Conversation, error) {
@@ -99,12 +101,13 @@ func (q *Queries) CreateProjectConversation(ctx context.Context, projectID pgtyp
 		&i.Kind,
 		&i.IssueID,
 		&i.CreatedAt,
+		&i.BriefID,
 	)
 	return i, err
 }
 
 const getConversationByID = `-- name: GetConversationByID :one
-select id, project_id, kind, issue_id, created_at
+select id, project_id, kind, issue_id, created_at, brief_id
 from conversations
 where id = $1
 `
@@ -118,12 +121,13 @@ func (q *Queries) GetConversationByID(ctx context.Context, id pgtype.UUID) (Conv
 		&i.Kind,
 		&i.IssueID,
 		&i.CreatedAt,
+		&i.BriefID,
 	)
 	return i, err
 }
 
 const getConversationForUser = `-- name: GetConversationForUser :one
-select c.id, c.project_id, c.kind, c.issue_id, c.created_at
+select c.id, c.project_id, c.kind, c.issue_id, c.created_at, c.brief_id
 from conversations c
 join projects p on p.id = c.project_id
 join workspace_members wm on wm.workspace_id = p.workspace_id
@@ -145,12 +149,13 @@ func (q *Queries) GetConversationForUser(ctx context.Context, arg GetConversatio
 		&i.Kind,
 		&i.IssueID,
 		&i.CreatedAt,
+		&i.BriefID,
 	)
 	return i, err
 }
 
 const getMessageByID = `-- name: GetMessageByID :one
-select m.id, m.conversation_id, m.body, m.created_at, m.edited_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m.parent_id,
        m.author_user_id, m.author_agent_id,
        coalesce(u.name, a.name, '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
@@ -170,6 +175,7 @@ type GetMessageByIDRow struct {
 	ID               pgtype.UUID        `json:"id"`
 	ConversationID   pgtype.UUID        `json:"conversation_id"`
 	Body             string             `json:"body"`
+	Mentions         []byte             `json:"mentions"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	EditedAt         pgtype.Timestamptz `json:"edited_at"`
 	ParentID         pgtype.UUID        `json:"parent_id"`
@@ -189,6 +195,7 @@ func (q *Queries) GetMessageByID(ctx context.Context, id pgtype.UUID) (GetMessag
 		&i.ID,
 		&i.ConversationID,
 		&i.Body,
+		&i.Mentions,
 		&i.CreatedAt,
 		&i.EditedAt,
 		&i.ParentID,
@@ -226,7 +233,7 @@ func (q *Queries) GetMessageForUser(ctx context.Context, arg GetMessageForUserPa
 }
 
 const getProjectConversation = `-- name: GetProjectConversation :one
-select id, project_id, kind, issue_id, created_at
+select id, project_id, kind, issue_id, created_at, brief_id
 from conversations
 where project_id = $1 and kind = 'project'
 `
@@ -240,12 +247,14 @@ func (q *Queries) GetProjectConversation(ctx context.Context, projectID pgtype.U
 		&i.Kind,
 		&i.IssueID,
 		&i.CreatedAt,
+		&i.BriefID,
 	)
 	return i, err
 }
 
 const getProjectForUser = `-- name: GetProjectForUser :one
-select p.id, p.workspace_id, p.key, p.name, p.description, p.icon, p.color, p.created_at
+select p.id, p.workspace_id, p.key, p.name, p.description, p.icon, p.color,
+       p.statuses, p.local_path, p.brief_policy, p.created_at
 from projects p
 join workspace_members wm on wm.workspace_id = p.workspace_id
 where p.id = $1 and wm.user_id = $2
@@ -264,6 +273,9 @@ type GetProjectForUserRow struct {
 	Description string             `json:"description"`
 	Icon        pgtype.Text        `json:"icon"`
 	Color       pgtype.Text        `json:"color"`
+	Statuses    []byte             `json:"statuses"`
+	LocalPath   pgtype.Text        `json:"local_path"`
+	BriefPolicy string             `json:"brief_policy"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
@@ -279,13 +291,16 @@ func (q *Queries) GetProjectForUser(ctx context.Context, arg GetProjectForUserPa
 		&i.Description,
 		&i.Icon,
 		&i.Color,
+		&i.Statuses,
+		&i.LocalPath,
+		&i.BriefPolicy,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const listMessages = `-- name: ListMessages :many
-select m.id, m.conversation_id, m.body, m.created_at, m.edited_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m.parent_id,
        m.author_user_id, m.author_agent_id,
        coalesce(u.name, a.name, '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
@@ -316,6 +331,7 @@ type ListMessagesRow struct {
 	ID               pgtype.UUID        `json:"id"`
 	ConversationID   pgtype.UUID        `json:"conversation_id"`
 	Body             string             `json:"body"`
+	Mentions         []byte             `json:"mentions"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	EditedAt         pgtype.Timestamptz `json:"edited_at"`
 	ParentID         pgtype.UUID        `json:"parent_id"`
@@ -342,6 +358,7 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]L
 			&i.ID,
 			&i.ConversationID,
 			&i.Body,
+			&i.Mentions,
 			&i.CreatedAt,
 			&i.EditedAt,
 			&i.ParentID,
@@ -548,7 +565,7 @@ func (q *Queries) ParentAuthorID(ctx context.Context, id pgtype.UUID) (pgtype.UU
 }
 
 const recentProjectMessages = `-- name: RecentProjectMessages :many
-select m.id, m.conversation_id, m.body, m.created_at, m.edited_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m.parent_id,
        m.author_user_id, m.author_agent_id,
        coalesce(u.name, a.name, '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
@@ -571,6 +588,7 @@ type RecentProjectMessagesRow struct {
 	ID               pgtype.UUID        `json:"id"`
 	ConversationID   pgtype.UUID        `json:"conversation_id"`
 	Body             string             `json:"body"`
+	Mentions         []byte             `json:"mentions"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	EditedAt         pgtype.Timestamptz `json:"edited_at"`
 	ParentID         pgtype.UUID        `json:"parent_id"`
@@ -596,6 +614,7 @@ func (q *Queries) RecentProjectMessages(ctx context.Context, projectID pgtype.UU
 			&i.ID,
 			&i.ConversationID,
 			&i.Body,
+			&i.Mentions,
 			&i.CreatedAt,
 			&i.EditedAt,
 			&i.ParentID,

@@ -1,5 +1,5 @@
 import { createSignal, For, Show } from "solid-js";
-import type { Project, StatusDef } from "@relay/api-client";
+import type { BriefPolicy, Project, StatusDef } from "@relay/api-client";
 import { api } from "../../lib/api";
 import { ApiClientError } from "@relay/api-client";
 import { statusDefs } from "./meta";
@@ -17,6 +17,9 @@ export function ProjectSettings(props: {
     statusDefs(props.project).map((d) => ({ ...d })),
   );
   const [folder, setFolder] = createSignal(props.project.local_path ?? "");
+  const [policy, setPolicy] = createSignal<BriefPolicy>(
+    (props.project.brief_policy as BriefPolicy) || "on_request",
+  );
   const [saving, setSaving] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
 
@@ -51,6 +54,9 @@ export function ProjectSettings(props: {
       const path = folder().trim();
       if ((path || null) !== (props.project.local_path ?? null)) {
         await api.setProjectLocalPath(props.project.id, path || null);
+      }
+      if (policy() !== props.project.brief_policy) {
+        await api.setBriefPolicy(props.project.id, policy());
       }
       props.onSaved();
       props.onClose();
@@ -180,6 +186,30 @@ export function ProjectSettings(props: {
               file:read
             </code>{" "}
             tools. Path must exist on the machine running the Relay server.
+          </p>
+
+          <p class="mb-2 mt-6 text-[11px] font-medium uppercase tracking-wider text-muted">
+            Visual briefs
+          </p>
+          <select
+            value={policy()}
+            onChange={(e) =>
+              setPolicy(e.currentTarget.value as BriefPolicy)
+            }
+            aria-label="Brief policy"
+            class={inputClass}
+          >
+            <option value="on_request">On request — agents explain when asked</option>
+            <option value="pre_merge">Pre-merge — expected before approvals</option>
+            <option value="never">Never — briefs disabled</option>
+          </select>
+          <p class="mt-1.5 text-[11px] text-muted/70">
+            Controls when agents should post Excalidraw-style diagrams
+            explaining their work. Agents read this through the{" "}
+            <code class="rounded bg-surface-2 px-1 font-mono text-[10.5px]">
+              get_brief_policy
+            </code>{" "}
+            tool.
           </p>
 
           <Show when={error()}>

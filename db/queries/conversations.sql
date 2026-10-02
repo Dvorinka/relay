@@ -1,5 +1,5 @@
 -- name: GetProjectConversation :one
-select id, project_id, kind, issue_id, created_at
+select *
 from conversations
 where project_id = $1 and kind = 'project';
 
@@ -7,31 +7,32 @@ where project_id = $1 and kind = 'project';
 insert into conversations (project_id, kind)
 values ($1, 'project')
 on conflict do nothing
-returning id, project_id, kind, issue_id, created_at;
+returning *;
 
 -- name: GetConversationForUser :one
 -- resolves the conversation only when the user belongs to its workspace
-select c.id, c.project_id, c.kind, c.issue_id, c.created_at
+select c.*
 from conversations c
 join projects p on p.id = c.project_id
 join workspace_members wm on wm.workspace_id = p.workspace_id
 where c.id = $1 and wm.user_id = $2;
 
 -- name: GetConversationByID :one
-select id, project_id, kind, issue_id, created_at
+select *
 from conversations
 where id = $1;
 
 -- name: GetProjectForUser :one
 -- project row only when the caller is a member of its workspace
-select p.id, p.workspace_id, p.key, p.name, p.description, p.icon, p.color, p.created_at
+select p.id, p.workspace_id, p.key, p.name, p.description, p.icon, p.color,
+       p.statuses, p.local_path, p.brief_policy, p.created_at
 from projects p
 join workspace_members wm on wm.workspace_id = p.workspace_id
 where p.id = $1 and wm.user_id = $2;
 
 -- name: ListMessages :many
 -- newest-first page; $2 is an optional "older than message id" cursor
-select m.id, m.conversation_id, m.body, m.created_at, m.edited_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m.parent_id,
        m.author_user_id, m.author_agent_id,
        coalesce(u.name, a.name, '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
@@ -52,8 +53,8 @@ order by m.created_at desc, m.id desc
 limit sqlc.arg(lim)::int;
 
 -- name: CreateMessage :one
-insert into messages (conversation_id, author_user_id, body, parent_id)
-values ($1, $2, $3, sqlc.narg(parent_id))
+insert into messages (conversation_id, author_user_id, body, parent_id, mentions)
+values ($1, $2, $3, sqlc.narg(parent_id), coalesce(sqlc.narg(mentions), '[]'::jsonb))
 returning id;
 
 -- name: MessageParentInConversation :one
@@ -65,7 +66,7 @@ where m.id = sqlc.arg(id)
   and m.deleted_at is null;
 
 -- name: GetMessageByID :one
-select m.id, m.conversation_id, m.body, m.created_at, m.edited_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m.parent_id,
        m.author_user_id, m.author_agent_id,
        coalesce(u.name, a.name, '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
@@ -140,7 +141,7 @@ where mr.message_id = any(sqlc.arg(ids)::uuid[])
 order by mr.created_at;
 
 -- name: RecentProjectMessages :many
-select m.id, m.conversation_id, m.body, m.created_at, m.edited_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m.parent_id,
        m.author_user_id, m.author_agent_id,
        coalesce(u.name, a.name, '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,

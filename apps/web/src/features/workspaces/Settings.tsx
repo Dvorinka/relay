@@ -18,13 +18,7 @@ import { api } from "../../lib/api";
 import { net } from "../../lib/net";
 import { syncToServer } from "../../lib/sync";
 import { useSession } from "../../stores/session";
-import {
-  ACCENT_PRESETS,
-  setAccent,
-  toggleTheme,
-  useAccent,
-  useTheme,
-} from "../../stores/theme";
+import { toggleTheme, useTheme } from "../../stores/theme";
 import AgentsSection from "../agents/AgentsSection";
 import GitHubAppSection from "../github/GitHubAppSection";
 
@@ -241,11 +235,9 @@ function NewWorkspaceForm(props: { onCreated: () => void }) {
   );
 }
 
-// Accent presets plus a free-form wheel; the choice persists in
-// localStorage and applies app-wide through the CSS vars in index.css.
+// Theme toggle only — the accent is the fixed brand cyan.
 function AppearanceSection() {
   const { theme } = useTheme();
-  const { accent } = useAccent();
   return (
     <div class="flex flex-col gap-4">
       <div class="flex items-center gap-2">
@@ -266,45 +258,16 @@ function AppearanceSection() {
       </div>
       <div class="flex items-center gap-2">
         <span class="w-20 text-[12px] text-muted">Accent</span>
-        <div class="flex flex-wrap items-center gap-1.5">
-          <For each={ACCENT_PRESETS}>
-            {([name, hex]) => (
-              <button
-                type="button"
-                title={name}
-                aria-label={`Accent ${name}`}
-                onClick={() => setAccent(hex)}
-                class="h-5 w-5 rounded-full border-2 transition-transform hover:scale-110"
-                style={{
-                  "background-color": hex,
-                  "border-color":
-                    accent().toLowerCase() === hex
-                      ? "var(--fg)"
-                      : "transparent",
-                }}
-              />
-            )}
-          </For>
-          <label
-            class="relative block h-5 w-5 cursor-pointer rounded-full border-2 border-transparent"
-            style={{
-              background:
-                "conic-gradient(#f43f5e,#f59e0b,#84cc16,#0dbd8b,#06b6d4,#3b82f6,#8b5cf6,#ec4899,#f43f5e)",
-            }}
-            title="Custom accent color"
-          >
-            <input
-              type="color"
-              value={accent()}
-              class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-              onInput={(e) => setAccent(e.currentTarget.value)}
-              aria-label="Custom accent color"
-            />
-          </label>
-          <code class="ml-1 rounded border border-border px-1.5 py-0.5 font-mono text-[11px] text-muted">
-            {accent().toUpperCase()}
+        <span class="flex items-center gap-1.5">
+          <span
+            class="h-5 w-5 rounded-full"
+            style={{ "background-color": "#06b6d4" }}
+          />
+          <code class="rounded border border-border px-1.5 py-0.5 font-mono text-[11px] text-muted">
+            #06B6D4
           </code>
-        </div>
+          <span class="text-[11px] text-muted/70">brand</span>
+        </span>
       </div>
     </div>
   );

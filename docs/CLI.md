@@ -23,36 +23,83 @@ a token with `issue:read` on project A cannot write todos on project B.
 ## Commands
 
 ```
-relay-cli projects                              # list granted projects
-relay-cli messages <project_id> [--limit 30]    # read the project thread
-relay-cli say <project_id> "text"               # post a message
+relay-cli projects                                   # list granted projects
+relay-cli conversations <project_id>                 # threads in a project
+relay-cli messages <id> [--limit 30]                 # read a thread — project id
+                                                     #   or any conversation id
+relay-cli say <project_id> "text" [--reply <msg>]    # post; mentions resolve:
+                                                     #   @user, @agent:x, KEY-1,
+                                                     #   owner/repo#42, @file:p
+relay-cli react <message_id> <emoji>                 # toggle a reaction
+relay-cli msg-edit <message_id> "new body"           # edit while unread
+relay-cli read <message_id>                          # get + mark read
 
-relay-cli issues <project_id>                   # list issues
-relay-cli issue <issue_id>                      # issue detail
-relay-cli issue-new <project_id> "title" ["description"]
-relay-cli issue-set <issue_id> status=done priority=high
+relay-cli issues <project_id>                        # list issues
+relay-cli issue <issue_id>                           # issue detail
+relay-cli issue-new <project_id> "title"             # create
+relay-cli issue-set <issue_id> --status done         # update
 
-relay-cli todos <project_id>                    # work list
-relay-cli todo-add <project_id> "what remains" [--issue <id>]
-relay-cli todo-done <todo_id>                   # mark done
-relay-cli todo-undo <todo_id>                   # reopen
-relay-cli todo-del <todo_id>
+relay-cli todos <project_id>                         # work list
+relay-cli todo-add <project_id> "what remains"       # add
+relay-cli todo-done|todo-undo|todo-del <id>          # update
 
-relay-cli gh issues|prs <project_id>            # GitHub lists
-relay-cli gh issue|pr <project_id> <number>     # GitHub detail
+relay-cli files <project_id> [path]                  # linked-folder listing
+relay-cli file-read <project_id> <path>              # read a text file
 
-relay-cli reviews <project_id> [--status pending]      # work reviews
-relay-cli review <review_id>                           # review detail
-relay-cli review-submit <project_id> --file review.json  # structured review
-relay-cli review-submit <project_id> --file -            #   …from stdin
-relay-cli review-await <review_id> [--timeout 60]      # block for a verdict
+relay-cli gh issues|prs <project_id>                 # GitHub lists
+relay-cli gh issue|pr <project_id> <number>          # GitHub detail
 
-relay-cli search <project_id> "query"           # message search
-relay-cli attachment <id>                       # print presigned URL
-relay-cli attachment <id> --out shot.png        # download
+relay-cli reviews <project_id> [--status pending]    # work reviews
+relay-cli review <review_id>                         # review detail
+relay-cli review-submit <project_id> --file f.json   # structured review
+relay-cli review-submit <project_id> --file -        #   …from stdin
+relay-cli review-await <review_id> [--timeout 60]    # block for a verdict
+
+relay-cli briefs <project_id> [issue_id]             # visual briefs + policy
+relay-cli brief <brief_id>                           # scene JSON included
+relay-cli brief-policy <project_id>                  # never|on_request|pre_merge
+relay-cli brief-new <project_id> "title" --file s.json  # create (scene in file)
+relay-cli brief-set <brief_id> --status resolved     # update
+
+relay-cli search <project_id> "query"                # message search
+relay-cli attachment <id>                            # print download URL
+relay-cli attachment <id> --out shot.png             # download
+
+relay-cli completion bash|zsh|fish                   # shell completion
 ```
 
-Output is pretty-printed JSON — pipe to `jq` freely.
+Output is human-readable by default; `--json` prints the raw tool payload —
+that's the mode agents should use (`relay-cli --json … | jq`). Flags may go
+before or after arguments.
+
+## Visual briefs
+
+Briefs are Excalidraw-compatible diagrams an agent attaches to a project or
+issue — "explain this change" as a picture, not a wall of text. Each brief
+carries its own comment conversation; the id is in `brief.conversation_id`,
+and `messages <conversation_id>` / `say <conversation_id>` work on it
+directly. Iterate by commenting, then `brief-set` a revised scene.
+
+The project policy (`brief-policy`) tells you whether briefs are expected:
+`never`, `on_request`, or `pre_merge` (attach one before the review is
+approved). `brief-new` is refused when the policy is `never`.
+
+Scene format — a subset of Excalidraw the app renders:
+
+```json
+{"elements": [
+  {"type": "rectangle", "x": 0, "y": 0, "width": 200, "height": 64,
+   "strokeColor": "#06b6d4", "backgroundColor": "#0e749020"},
+  {"type": "text", "x": 14, "y": 22, "text": "Composer"},
+  {"type": "arrow", "x": 200, "y": 32, "width": 90, "height": 0,
+   "points": [[0,0],[90,0]]},
+  {"type": "diamond", "x": 290, "y": 0, "width": 120, "height": 64},
+  {"type": "ellipse", "x": 430, "y": 0, "width": 120, "height": 64}
+]}
+```
+
+`type` is one of `rectangle|ellipse|diamond|line|arrow|text`; `points` are
+relative to x/y for lines and arrows. Labels are separate `text` elements.
 
 ## Reviews
 

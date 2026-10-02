@@ -20,6 +20,9 @@ const ALL_SCOPES: AgentScope[] = [
   "issue:write",
   "review:read",
   "review:write",
+  "file:read",
+  "brief:read",
+  "brief:write",
 ];
 
 function errorMessage(err: unknown, fallback: string): string {

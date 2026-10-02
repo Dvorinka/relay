@@ -117,6 +117,32 @@ body {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+/* mention chips: @user:, @agent:, KEY-1, owner/repo#1, @file:, @gh: */
+.md .md-ref {
+  display: inline;
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border: none;
+  border-radius: 4px;
+  padding: 0 0.25em;
+  cursor: pointer;
+}
+.md a.md-ref {
+  text-decoration: none;
+}
+.md .md-ref:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.md .md-person {
+  font-weight: 500;
+}
+.md .md-person[data-kind="agent"]::before {
+  content: "◆ ";
+  font-size: 0.8em;
+}
 .md ul,
 .md ol {
   margin: 0.5em 0;

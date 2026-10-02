@@ -54,7 +54,7 @@ func (q *Queries) CreateBoard(ctx context.Context, arg CreateBoardParams) (Board
 const createProject = `-- name: CreateProject :one
 insert into projects (workspace_id, key, name, description, icon, color, created_by)
 values ($1, $2, $3, $4, $5, $6, $7)
-returning id, workspace_id, key, name, description, icon, color, statuses, local_path, created_at
+returning id, workspace_id, key, name, description, icon, color, statuses, local_path, brief_policy, created_at
 `
 
 type CreateProjectParams struct {
@@ -77,6 +77,7 @@ type CreateProjectRow struct {
 	Color       pgtype.Text        `json:"color"`
 	Statuses    []byte             `json:"statuses"`
 	LocalPath   pgtype.Text        `json:"local_path"`
+	BriefPolicy string             `json:"brief_policy"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
@@ -101,6 +102,7 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (C
 		&i.Color,
 		&i.Statuses,
 		&i.LocalPath,
+		&i.BriefPolicy,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -176,7 +178,7 @@ func (q *Queries) DeleteSavedFilter(ctx context.Context, arg DeleteSavedFilterPa
 }
 
 const getProjectByID = `-- name: GetProjectByID :one
-select id, workspace_id, key, name, description, icon, color, statuses, local_path, created_at
+select id, workspace_id, key, name, description, icon, color, statuses, local_path, brief_policy, created_at
 from projects
 where id = $1
 `
@@ -191,6 +193,7 @@ type GetProjectByIDRow struct {
 	Color       pgtype.Text        `json:"color"`
 	Statuses    []byte             `json:"statuses"`
 	LocalPath   pgtype.Text        `json:"local_path"`
+	BriefPolicy string             `json:"brief_policy"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
@@ -207,6 +210,7 @@ func (q *Queries) GetProjectByID(ctx context.Context, id pgtype.UUID) (GetProjec
 		&i.Color,
 		&i.Statuses,
 		&i.LocalPath,
+		&i.BriefPolicy,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -268,7 +272,7 @@ func (q *Queries) ListProjectMemberIDs(ctx context.Context, projectID pgtype.UUI
 }
 
 const listProjectsForUser = `-- name: ListProjectsForUser :many
-select p.id, p.workspace_id, p.key, p.name, p.description, p.icon, p.color, p.statuses, p.local_path, p.created_at
+select p.id, p.workspace_id, p.key, p.name, p.description, p.icon, p.color, p.statuses, p.local_path, p.brief_policy, p.created_at
 from projects p
 join workspace_members wm on wm.workspace_id = p.workspace_id
 where wm.user_id = $1
@@ -285,6 +289,7 @@ type ListProjectsForUserRow struct {
 	Color       pgtype.Text        `json:"color"`
 	Statuses    []byte             `json:"statuses"`
 	LocalPath   pgtype.Text        `json:"local_path"`
+	BriefPolicy string             `json:"brief_policy"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
@@ -307,6 +312,7 @@ func (q *Queries) ListProjectsForUser(ctx context.Context, userID pgtype.UUID) (
 			&i.Color,
 			&i.Statuses,
 			&i.LocalPath,
+			&i.BriefPolicy,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -445,18 +451,19 @@ func (q *Queries) ProjectCounts(ctx context.Context, projectID pgtype.UUID) (Pro
 }
 
 const projectMeta = `-- name: ProjectMeta :one
-select statuses, local_path from projects where id = $1
+select statuses, local_path, brief_policy from projects where id = $1
 `
 
 type ProjectMetaRow struct {
-	Statuses  []byte      `json:"statuses"`
-	LocalPath pgtype.Text `json:"local_path"`
+	Statuses    []byte      `json:"statuses"`
+	LocalPath   pgtype.Text `json:"local_path"`
+	BriefPolicy string      `json:"brief_policy"`
 }
 
 func (q *Queries) ProjectMeta(ctx context.Context, id pgtype.UUID) (ProjectMetaRow, error) {
 	row := q.db.QueryRow(ctx, projectMeta, id)
 	var i ProjectMetaRow
-	err := row.Scan(&i.Statuses, &i.LocalPath)
+	err := row.Scan(&i.Statuses, &i.LocalPath, &i.BriefPolicy)
 	return i, err
 }
 
@@ -518,7 +525,7 @@ set name = coalesce($1, name),
     color = coalesce($4, color),
     updated_at = now()
 where id = $5
-returning id, workspace_id, key, name, description, icon, color, statuses, local_path, created_at
+returning id, workspace_id, key, name, description, icon, color, statuses, local_path, brief_policy, created_at
 `
 
 type UpdateProjectParams struct {
@@ -539,6 +546,7 @@ type UpdateProjectRow struct {
 	Color       pgtype.Text        `json:"color"`
 	Statuses    []byte             `json:"statuses"`
 	LocalPath   pgtype.Text        `json:"local_path"`
+	BriefPolicy string             `json:"brief_policy"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
@@ -561,6 +569,7 @@ func (q *Queries) UpdateProject(ctx context.Context, arg UpdateProjectParams) (U
 		&i.Color,
 		&i.Statuses,
 		&i.LocalPath,
+		&i.BriefPolicy,
 		&i.CreatedAt,
 	)
 	return i, err

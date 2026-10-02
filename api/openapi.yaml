@@ -576,6 +576,130 @@ paths:
                 type: object
                 properties: { deleted: { type: boolean } }
 
+  /api/projects/{projectId}/briefs:
+    get:
+      operationId: listBriefs
+      summary: List visual briefs in this project
+      tags: [briefs]
+      parameters:
+        - { $ref: "#/components/parameters/ProjectId" }
+        - { name: issue_id, in: query, required: false, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Briefs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  briefs:
+                    type: array
+                    items: { $ref: "#/components/schemas/Brief" }
+                  policy: { $ref: "#/components/schemas/BriefPolicy" }
+    post:
+      operationId: createBrief
+      summary: Create a visual brief
+      tags: [briefs]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string, minLength: 1, maxLength: 200 }
+                summary: { type: string }
+                issue_id: { type: string, format: uuid }
+                scene: { type: object, additionalProperties: true, description: "Excalidraw-compatible scene" }
+      responses:
+        "201":
+          description: Created brief
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Brief" }
+
+  /api/projects/{projectId}/brief-policy:
+    post:
+      operationId: setBriefPolicy
+      summary: Set the project's brief policy
+      tags: [briefs]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [policy]
+              properties:
+                policy: { $ref: "#/components/schemas/BriefPolicy" }
+      responses:
+        "200":
+          description: Policy set
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  policy: { $ref: "#/components/schemas/BriefPolicy" }
+
+  /api/briefs/{briefId}:
+    get:
+      operationId: getBrief
+      summary: Get one brief with its scene
+      tags: [briefs]
+      parameters:
+        - { name: briefId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Brief
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Brief" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateBrief
+      summary: Update a brief's title, summary, scene, or status
+      tags: [briefs]
+      parameters:
+        - { name: briefId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string, minLength: 1, maxLength: 200 }
+                summary: { type: string }
+                status: { type: string, enum: [open, resolved, archived] }
+                scene: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: Updated brief
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Brief" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/briefs/{briefId}/conversation:
+    get:
+      operationId: briefConversation
+      summary: The brief's comment thread (creates it on first access)
+      tags: [briefs]
+      parameters:
+        - { name: briefId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Conversation id usable with /conversations/{id}/messages
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { id: { type: string, format: uuid } }
+
   /api/projects/{projectId}/github/files:
     get:
       operationId: repoFileTree
@@ -710,6 +834,59 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Conversation" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/projects/{projectId}/mentionables:
+    get:
+      operationId: mentionables
+      summary: Everything the composer can @-mention in this project
+      description: "Workspace members, agents, issues (including GitHub-mirrored issues and PRs), and linked repos for owner/repo#N refs."
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      responses:
+        "200":
+          description: Mentionable entities
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [users, agents, issues, repos]
+                properties:
+                  users:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        name: { type: string }
+                        avatar_url: { type: ["string", "null"] }
+                  agents:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        name: { type: string }
+                        slug: { type: string }
+                        description: { type: string }
+                  issues:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        key: { type: string }
+                        title: { type: string }
+                        status: { type: string }
+                        kind:
+                          type: string
+                          enum: [issue, github_issue, pull_request]
+                        repo: { type: string }
+                        github_number: { type: integer }
+                        url: { type: string }
+                  repos:
+                    type: array
+                    items: { type: string }
         "403": { $ref: "#/components/responses/Forbidden" }
 
   /api/conversations/{conversationId}/messages:
@@ -2205,7 +2382,32 @@ components:
           description: Issue lanes for this project; built-in six when unset
           items: { $ref: "#/components/schemas/StatusDef" }
         local_path: { type: ["string", "null"], description: "Linked local folder on the server host" }
+        brief_policy: { $ref: "#/components/schemas/BriefPolicy" }
         created_at: { type: string, format: date-time }
+
+    BriefPolicy:
+      type: string
+      enum: [never, on_request, pre_merge]
+      description: |
+        When agents should produce visual briefs. 'never' forbids them,
+        'on_request' creates only when asked, 'pre_merge' expects one before
+        merge-worthy reviews are approved.
+
+    Brief:
+      type: object
+      required: [id, project_id, title, summary, scene, status]
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        issue_id: { type: ["string", "null"], format: uuid }
+        conversation_id: { type: ["string", "null"], format: uuid, description: "Comment thread; messages via /conversations/{id}/messages" }
+        title: { type: string }
+        summary: { type: string }
+        scene: { type: object, additionalProperties: true, description: "Excalidraw-compatible scene JSON" }
+        status: { type: string, enum: [open, resolved, archived] }
+        author_name: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
 
     StatusDef:
       type: object
@@ -2314,6 +2516,10 @@ components:
         conversation_id: { type: string, format: uuid }
         author: { $ref: "#/components/schemas/MessageAuthor" }
         body: { type: string, description: Markdown }
+        mentions:
+          type: array
+          description: "Structured entity references extracted from the body"
+          items: { $ref: "#/components/schemas/MentionRef" }
         parent:
           anyOf:
             - $ref: "#/components/schemas/MessageParent"
@@ -2329,6 +2535,20 @@ components:
         agent_read:
           type: boolean
           description: "True once at least one agent has read the message; edits are then rejected with 409"
+
+    MentionRef:
+      type: object
+      required: [kind, ref, label]
+      properties:
+        kind:
+          type: string
+          enum: [user, agent, issue, gh, file]
+          description: "user|agent|issue|gh|file — @user:, @agent:, KEY-N, owner/repo#N, @file:/@gh:"
+        ref: { type: string, description: "slug | KEY-1 | owner/repo#1 | path" }
+        label: { type: string }
+        id: { type: string, description: "resolved entity uuid when found" }
+        url: { type: string }
+        found: { type: boolean }
 
     IssueStatus:
       type: string
@@ -2405,6 +2625,9 @@ components:
         - issue:write
         - review:read
         - review:write
+        - file:read
+        - brief:read
+        - brief:write
 
     AgentGrant:
       type: object

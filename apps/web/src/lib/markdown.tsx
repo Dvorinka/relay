@@ -25,6 +25,8 @@ interface RelayToken {
   fileSrc?: "local" | "github";
   fileRepo?: string;
   filePath?: string;
+  personKind?: string;
+  personName?: string;
 }
 
 function linkifyExtension(projectId?: string) {
@@ -62,6 +64,17 @@ function linkifyExtension(projectId?: string) {
               filePath: localFile[1] ?? "",
             };
           }
+          // @agent:slug / @user:name — person mentions
+          const person = src.match(/^@(agent|user):([A-Za-z0-9][\w.-]{0,59})/);
+          if (person) {
+            return {
+              type: "relayLink",
+              raw: person[0],
+              text: person[0],
+              personKind: person[1] ?? "",
+              personName: person[2] ?? "",
+            };
+          }
           const gh = src.match(
             /^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#(\d+)(?![\d\w])/,
           );
@@ -96,6 +109,12 @@ function linkifyExtension(projectId?: string) {
               `<button type="button" class="md-ref md-file" ` +
               `data-file-src="${token.fileSrc}" data-repo="${repo}" ` +
               `data-path="${path}" title="${path}">${name}</button>`
+            );
+          }
+          if (token.personKind) {
+            return (
+              `<span class="md-ref md-person" data-kind="${token.personKind}">` +
+              `@${escapeHtml(token.personName ?? "")}</span>`
             );
           }
           if (token.href) {

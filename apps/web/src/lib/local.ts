@@ -1,14 +1,22 @@
-// Local-mode adapter: a Relay API surface backed by localStorage so the app
+// Local-mode adapter: a Relay API surface backed by IndexedDB so the app
 // runs with no server at all ("This device" workspace). Same wire shapes as
 // the real API; sync.ts replays this store onto a server later.
 //
-// ponytail: localStorage ceiling ~5MB incl. data-URL attachments — fine for
-// notes/projects; upgrade path is IndexedDB or file handles if this pinches.
+// Persistence: the JSON doc lives in the `kv` store; attachment bytes live
+// in `blobs` keyed by attachment id — hundreds of MB of quota instead of
+// localStorage's ~5MB. A pre-IDB `relay.localdb.v1` document (data-URL
+// attachments included) is imported once and removed.
+import {
+  dataUrlToBlob,
+  localStore,
+} from "./localdb";
 import {
   ApiClientError,
   type AgentReview,
   type Attachment,
   type Board,
+  type Brief,
+  type BriefPolicy,
   type FileEntry,
   type SavedFilter,
   type StatusDef,
@@ -27,7 +35,9 @@ import {
 } from "@relay/api-client";
 
 interface LocalAttachment extends Attachment {
-  url: string; // data URL
+  // Live object URL at runtime; absent in the persisted doc (the bytes are
+  // in the blobs store).
+  url: string;
 }
 
 interface LocalDB {
@@ -47,7 +57,6 @@ interface LocalDB {
   synced_at?: string;
 }
 
-const DB_KEY = "relay.localdb.v1";
 const LOCAL_WS_ID = "00000000-0000-4000-8000-0000000000c1";
 const LOCAL_USER_ID = "00000000-0000-4000-8000-0000000000a1";
 
@@ -82,26 +91,79 @@ function emptyDB(): LocalDB {
   };
 }
 
-let db: LocalDB = load();
+// Boot order: IDB doc -> runtime db -> object URLs for blobs -> one-time
+// localStorage import. Every adapter method awaits `localReady` via the
+// proxy at the bottom of the file, so the app can render immediately.
+let db: LocalDB = emptyDB();
 
-function load(): LocalDB {
+const LEGACY_KEY = "relay.localdb.v1";
+
+export const localReady: Promise<void> = (async () => {
   try {
-    const raw = localStorage.getItem(DB_KEY);
-    if (raw) return { ...emptyDB(), ...(JSON.parse(raw) as LocalDB) };
+    const saved = await localStore.get<LocalDB>("doc");
+    if (saved) {
+      db = { ...emptyDB(), ...saved };
+      await rehydrateUrls();
+      return;
+    }
+    const raw = localStorage.getItem(LEGACY_KEY);
+    if (!raw) return;
+    const legacy = JSON.parse(raw) as LocalDB;
+    // data URLs -> blobs before the doc is persisted
+    for (const a of Object.values(legacy.attachments ?? {})) {
+      if (a.url?.startsWith("data:")) {
+        const blob = await dataUrlToBlob(a.url);
+        await localStore.putBlob(a.id, blob);
+        a.url = URL.createObjectURL(blob);
+      }
+    }
+    const avatar = legacy.user?.avatar_url;
+    if (avatar?.startsWith("data:")) {
+      const blob = await dataUrlToBlob(avatar);
+      await localStore.putBlob("avatar", blob);
+      legacy.user.avatar_url = URL.createObjectURL(blob);
+    }
+    db = { ...emptyDB(), ...legacy };
+    save();
+    localStorage.removeItem(LEGACY_KEY);
   } catch {
-    /* corrupt store — start clean */
+    /* corrupt/absent store — start clean */
   }
-  return emptyDB();
+})();
+
+// mint object URLs for blobs restored from IDB
+async function rehydrateUrls() {
+  for (const a of Object.values(db.attachments)) {
+    if (a.url) continue;
+    const blob = await localStore.getBlob(a.id);
+    if (blob) a.url = URL.createObjectURL(blob);
+  }
+  if (db.user.avatar_url === "blob:avatar") {
+    const blob = await localStore.getBlob("avatar");
+    if (blob) db.user.avatar_url = URL.createObjectURL(blob);
+  }
 }
 
 function save() {
-  try {
-    localStorage.setItem(DB_KEY, JSON.stringify(db));
-  } catch {
-    // Quota exceeded (usually a big data-URL attachment). Keep running —
-    // the mutation is in memory; warn via console for debugging.
-    console.warn("local store full — change kept in memory only");
-  }
+  // Strip live object URLs — they're per-session; blobs re-mint on load.
+  const doc: LocalDB = {
+    ...db,
+    attachments: Object.fromEntries(
+      Object.entries(db.attachments).map(([id, a]) => [
+        id,
+        { ...a, url: "" },
+      ]),
+    ),
+    user: {
+      ...db.user,
+      avatar_url: db.user.avatar_url?.startsWith("blob:")
+        ? "blob:avatar"
+        : (db.user.avatar_url ?? null),
+    },
+  };
+  void localStore.put("doc", doc).catch(() => {
+    console.warn("local store write failed — change kept in memory only");
+  });
 }
 
 export function dumpLocal(): LocalDB {
@@ -163,7 +225,7 @@ function notFound(): never {
 
 // --- the adapter surface (subset of the server client) ---
 
-export const local = {
+const impl = {
   health: async () => ({ status: "ok", version: "local" }) as const,
 
   session: async (): Promise<AuthSession> => ({
@@ -463,6 +525,25 @@ export const local = {
   listAgentInvites: async () => ({ invites: [] }),
   listGitHubInstallations: async () => ({ installations: [] }),
   listAvailableRepos: async () => ({ repos: [] }),
+  mentionables: async (projectId: string) => ({
+    users: [
+      { id: db.user.id, name: db.user.name, avatar_url: db.user.avatar_url },
+    ],
+    agents: [] as { id: string; name: string; slug: string }[],
+    issues: db.issues
+      .filter((i) => i.project_id === projectId)
+      .map((i) => ({
+        id: i.id,
+        key: i.key,
+        title: i.title,
+        status: i.status,
+        kind: "issue" as const,
+        repo: "",
+        github_number: 0,
+        url: "",
+      })),
+    repos: [] as string[],
+  }),
 
   search: async (q: string): Promise<SearchResults> => {
     const needle = q.toLowerCase();
@@ -512,12 +593,6 @@ export const local = {
     projectId: string,
     file: File,
   ): Promise<Attachment> => {
-    const url = await new Promise<string>((resolve, reject) => {
-      const r = new FileReader();
-      r.onload = () => resolve(String(r.result));
-      r.onerror = () => reject(r.error);
-      r.readAsDataURL(file);
-    });
     const a: LocalAttachment = {
       id: uuid(),
       project_id: projectId,
@@ -525,8 +600,9 @@ export const local = {
       content_type: file.type || "application/octet-stream",
       size_bytes: file.size,
       created_at: now(),
-      url,
+      url: URL.createObjectURL(file),
     };
+    await localStore.putBlob(a.id, file);
     db.attachments[a.id] = a;
     save();
     const { url: _u, ...wire } = a;
@@ -603,20 +679,42 @@ export const local = {
     return { deleted: true };
   },
 
+  // Briefs are agent-authored artifacts — no agents in local mode. The
+  // policy itself persists so a later sync keeps the setting.
+  listBriefs: async (projectId: string) => ({
+    briefs: [] as Brief[],
+    policy: (db.projects.find((p) => p.id === projectId)?.brief_policy ??
+      "on_request") as BriefPolicy,
+  }),
+  createBrief: async () => {
+    throw new ApiClientError(0, "Briefs need a server connection");
+  },
+  getBrief: async () => {
+    throw new ApiClientError(404, "not found");
+  },
+  updateBrief: async () => {
+    throw new ApiClientError(0, "Briefs need a server connection");
+  },
+  briefConversation: async () => {
+    throw new ApiClientError(0, "Briefs need a server connection");
+  },
+  setBriefPolicy: async (projectId: string, policy: BriefPolicy) => {
+    const p = db.projects.find((x) => x.id === projectId);
+    if (!p) notFound();
+    p.brief_policy = policy;
+    save();
+    return { policy };
+  },
+
   pushVapid: async () => ({ enabled: false }),
   pushSubscribe: async () => ({ subscribed: false }),
   pushUnsubscribe: async () => ({ subscribed: false }),
 
   uploadAvatar: async (file: File) => {
-    const url = await new Promise<string>((resolve, reject) => {
-      const r = new FileReader();
-      r.onload = () => resolve(String(r.result));
-      r.onerror = () => reject(r.error);
-      r.readAsDataURL(file);
-    });
-    db.user.avatar_url = url;
+    await localStore.putBlob("avatar", file);
+    db.user.avatar_url = URL.createObjectURL(file);
     save();
-    return { avatar_url: url };
+    return { avatar_url: db.user.avatar_url };
   },
   createWorkspace: async () => {
     throw new ApiClientError(
@@ -641,6 +739,20 @@ export const local = {
   },
   logout: async () => undefined,
 };
+
+// Every method awaits localReady so callers racing boot see persisted state,
+// not an empty store. attachmentURL stays synchronous — it returns the live
+// object URL for an already-loaded attachment (img src can't await).
+const SYNC_READS = new Set(["attachmentURL"]);
+export const local = new Proxy(impl, {
+  get(t, k: string) {
+    if (SYNC_READS.has(k)) return t[k as keyof typeof t];
+    return (...args: unknown[]) =>
+      localReady.then(() =>
+        (t[k as keyof typeof t] as (...a: unknown[]) => unknown)(...args),
+      );
+  },
+}) as typeof impl;
 
 // Todos carry project_id internally (server shape has none) for local
 // filtering; strip it before returning.

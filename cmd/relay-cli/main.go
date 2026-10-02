@@ -1,19 +1,25 @@
 // relay-cli is a single-binary client for Relay's MCP endpoint. It exists
-// for both humans (quick navigation) and agents (the whole surface without
-// an MCP SDK). Auth: RELAY_TOKEN (an rly_ token) + RELAY_URL.
+// for both humans (readable lists by default) and agents (--json emits the
+// exact tool payloads). Auth: RELAY_TOKEN (an rly_ token) + RELAY_URL.
 //
 // Usage:
 //
 //	relay-cli projects
-//	relay-cli messages <project_id> [--limit 30]
-//	relay-cli say <project_id> "text"
+//	relay-cli conversations <project_id>
+//	relay-cli messages <project_id|conversation_id> [--conv <id>] [--limit 30]
+//	relay-cli read <message_id>        (also marks the message read)
+//	relay-cli say <project_id> "text" [--reply <message_id>]
+//	relay-cli react <message_id> <emoji>
+//	relay-cli msg-edit <message_id> "new text"
 //	relay-cli issues <project_id>
-//	relay-cli issue <project_id> <issue_id>
+//	relay-cli issue <issue_id>
 //	relay-cli issue-new <project_id> "title" ["description"]
 //	relay-cli issue-set <issue_id> status=done|priority=high
 //	relay-cli todos <project_id>
-//	relay-cli todo-add <project_id> "what remains" [--issue <id>]
+//	relay-cli todo-add <project_id> "what remains"
 //	relay-cli todo-done <todo_id> | todo-undo <todo_id> | todo-del <todo_id>
+//	relay-cli files <project_id> [prefix]
+//	relay-cli file-read <project_id> <path> [--repo owner/name]
 //	relay-cli gh issues|prs <project_id>
 //	relay-cli gh issue|pr <project_id> <number>
 //	relay-cli search <project_id> "query"
@@ -21,9 +27,11 @@
 //	relay-cli review <review_id>
 //	relay-cli review-submit <project_id> --file review.json (or - for stdin)
 //	relay-cli review-await <review_id> [--timeout 60]
-//	relay-cli attachment <id> [--out file]  (fetches the presigned URL)
+//	relay-cli attachment <id> [--out file]
+//	relay-cli completion bash|zsh|fish
 //
-// Global flags: --url, --token, --json
+// Global flags: --url, --token, --json (raw tool payloads), --limit, --out,
+// --file, --status, --timeout, --reply, --conv, --repo
 package main
 
 import (
@@ -36,16 +44,20 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+	"time"
 )
 
 var (
 	flagURL     = flag.String("url", envOr("RELAY_URL", "http://localhost:8080"), "Relay base URL")
 	flagToken   = flag.String("token", os.Getenv("RELAY_TOKEN"), "rly_ agent token")
+	flagJSON    = flag.Bool("json", false, "raw JSON output")
 	flagOut     = flag.String("out", "", "attachment output file")
 	flagLimit   = flag.Int("limit", 30, "message/issue list size")
 	flagFile    = flag.String("file", "", "review payload JSON file (- for stdin)")
 	flagStatus  = flag.String("status", "", "review status filter")
 	flagTimeout = flag.Int("timeout", 60, "review wait timeout in seconds")
+	flagReply   = flag.String("reply", "", "message id this send replies to")
+	flagConv    = flag.String("conv", "", "conversation id (for messages/read in a specific thread)")
 )
 
 var rpcID atomic.Int64
@@ -131,8 +143,9 @@ func (s *session) call(method string, params any) (json.RawMessage, error) {
 }
 
 func truncate(s string, n int) string {
-	if len(s) > n {
-		return s[:n] + "…"
+	r := []rune(s)
+	if len(r) > n {
+		return string(r[:n]) + "…"
 	}
 	return s
 }
@@ -172,11 +185,11 @@ func (s *session) tool(name string, args map[string]any) (json.RawMessage, error
 }
 
 func connect() *session {
-	s := &session{hc: &http.Client{}, relays: strings.TrimRight(*flagURL, "/"), token: *flagToken}
+	s := &session{hc: &http.Client{Timeout: 90 * time.Second}, relays: strings.TrimRight(*flagURL, "/"), token: *flagToken}
 	_, err := s.call("initialize", map[string]any{
 		"protocolVersion": "2025-06-18",
 		"capabilities":    map[string]any{},
-		"clientInfo":      map[string]any{"name": "relay-cli", "version": "0.1.0"},
+		"clientInfo":      map[string]any{"name": "relay-cli", "version": "0.2.0"},
 	})
 	if err != nil {
 		fail("initialize failed:", err)
@@ -195,7 +208,212 @@ func emit(v json.RawMessage) {
 	fmt.Println(buf.String())
 }
 
+// --- human rendering ---
+
+type anyMap map[string]any
+
+func str(m anyMap, k string) string {
+	if s, ok := m[k].(string); ok {
+		return s
+	}
+	return ""
+}
+
+func list(m anyMap, k string) []any {
+	if l, ok := m[k].([]any); ok {
+		return l
+	}
+	return nil
+}
+
+func asMap(v any) anyMap {
+	if m, ok := v.(map[string]any); ok {
+		return m
+	}
+	return nil
+}
+
+func num(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	}
+	return 0
+}
+
+// fmtTime trims an RFC3339 stamp to HH:MM for display.
+func fmtTime(v any) string {
+	s, _ := v.(string)
+	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return t.Local().Format("2006-01-02 15:04")
+	}
+	return s
+}
+
+// render prints tool payloads human-readably; unknown shapes fall through to
+// JSON. Kept small — one renderer per command family.
+func render(kind string, raw json.RawMessage) {
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		emit(raw)
+		return
+	}
+	top := asMap(v)
+	// tools return either {"items":[...]} or a bare array — normalize
+	rows := func(key string) []any {
+		if arr, ok := v.([]any); ok {
+			return arr
+		}
+		return list(top, key)
+	}
+	switch kind {
+	case "projects":
+		for _, p := range rows("projects") {
+			m := asMap(p)
+			fmt.Printf("%-8s %-24s %s\n", str(m, "key"), str(m, "name"), str(m, "id"))
+		}
+	case "conversations":
+		for _, c := range rows("conversations") {
+			m := asMap(c)
+			fmt.Printf("%s  %s\n", str(m, "id"), str(m, "kind"))
+		}
+	case "messages":
+		msgs := rows("messages")
+		for i := len(msgs) - 1; i >= 0; i-- { // newest last, like the app
+			m := asMap(msgs[i])
+			author := asMap(m["author"])
+			name := str(author, "name")
+			if str(author, "kind") == "agent" {
+				name += "·agent"
+			}
+			if p := asMap(m["parent"]); p != nil {
+				fmt.Printf("  %s\n  └ reply to %s: %s\n", str(p, "id"),
+					str(p, "author"), truncate(str(p, "preview"), 60))
+			}
+			atts := len(list(asMap(m), "attachments"))
+			suffix := ""
+			if atts > 0 {
+				suffix = fmt.Sprintf("  [%d attachment(s)]", atts)
+			}
+			fmt.Printf("%s %s  %s\n%s%s\n\n", str(m, "id"), name,
+				fmtTime(m["created_at"]), str(m, "body"), suffix)
+		}
+	case "issues":
+		for _, i := range rows("issues") {
+			m := asMap(i)
+			fmt.Printf("%-9s %-9s %-6s %s\n",
+				str(m, "key"), str(m, "status"), str(m, "priority"), str(m, "title"))
+		}
+	case "todos":
+		for _, t := range rows("todos") {
+			m := asMap(t)
+			mark := " "
+			if m["done"] == true {
+				mark = "x"
+			}
+			fmt.Printf("[%s] %s  %s\n", mark, str(m, "content"), str(m, "id"))
+		}
+	case "briefs":
+		if p := str(top, "policy"); p != "" {
+			fmt.Printf("policy: %s\n", p)
+		}
+		for _, b := range rows("briefs") {
+			m := asMap(b)
+			key := str(m, "issue_key")
+			if key != "" {
+				key = "  " + key
+			}
+			fmt.Printf("%-9s %-40s%s  %s\n",
+				str(m, "status"), str(m, "title"), key, str(m, "id"))
+		}
+	case "reviews":
+		for _, r := range rows("reviews") {
+			m := asMap(r)
+			fmt.Printf("%s  %-9s %s\n", str(m, "id"), str(m, "status"), str(m, "summary"))
+		}
+	case "files":
+		for _, e := range rows("entries") {
+			m := asMap(e)
+			kind := "f"
+			if m["dir"] == true {
+				kind = "d"
+			}
+			fmt.Printf("%s %s\n", kind, str(m, "path"))
+		}
+	case "gh":
+		for _, it := range rows("issues") {
+			m := asMap(it)
+			fmt.Printf("%-6s %-8s %s\n", "#"+fmt.Sprint(num(m["number"])),
+				str(m, "state"), str(m, "title"))
+		}
+	default:
+		emit(raw)
+	}
+}
+
+func out(kind string, raw json.RawMessage) {
+	if *flagJSON {
+		emit(raw)
+		return
+	}
+	render(kind, raw)
+}
+
 func main() {
+	flag.Usage = func() {
+		_, _ = fmt.Fprintf(flag.CommandLine.Output(), `relay-cli — Relay for agents and humans, via MCP.
+
+Usage: relay-cli [--url URL] [--token rly_...] [--json] <command> [args] [flags]
+
+Chat
+  projects                              list granted projects
+  conversations <project_id>            list conversations
+  messages <project_id|conversation_id> list messages (use --conv for a thread)
+  read <project_id|conversation_id>     mark-read alias for messages
+  say <project_id> <body> [--reply id]  post a message (mentions: @user, KEY-1, repo#42)
+  react <message_id> <emoji>            toggle a reaction
+  msg-edit <message_id> <body>          edit an unread agent message
+
+Work
+  issues <project_id>                   list issues
+  issue <issue_id>                      show one issue
+  issue-new <project_id> <title>        create an issue
+  issue-set <issue_id> --status S       update an issue
+  todos <project_id>                    list todos
+  todo-add <project_id> <text>          add a todo
+  todo-done|todo-undo|todo-del <id>     update todos
+
+Files & attachments
+  files <project_id> [path]             list the linked folder
+  file-read <project_id> <path>         read a text file
+  attachment <id> [--out file]          attachment metadata + download
+
+GitHub
+  gh issues|prs <project_id>            list GitHub issues / PRs
+  gh issue|pr <project_id> <number>     show one
+
+Reviews
+  reviews <project_id> [--status S]     list work reviews
+  review <review_id>                    show a review
+  review-submit <project_id> --file f.json   submit a structured review
+  review-await <review_id> [--timeout n]     block for a verdict
+
+Briefs (visual explanations)
+  briefs <project_id> [issue_id]        list briefs + policy
+  brief <brief_id>                      show a brief incl. scene JSON
+  brief-new <project_id> <title> --file scene.json   create a brief
+  brief-set <brief_id> [--status S] [--file patch]   update a brief
+  brief-policy <project_id>             show the project's brief policy
+
+  search <project_id> <query>           substring search over messages
+  completion bash|zsh|fish              print a shell completion script
+
+Environment: RELAY_URL, RELAY_TOKEN.
+`)
+		flag.PrintDefaults()
+	}
 	flag.Parse()
 	args := flag.Args()
 	// Go's flag stops at the first positional, but usage documents flags
@@ -209,7 +427,12 @@ func main() {
 		}
 		end := i + 1
 		if !strings.Contains(args[i], "=") && end < len(args) {
-			end++ // non-bool flag takes the next token as its value
+			name := strings.TrimLeft(strings.SplitN(args[i], "=", 2)[0], "-")
+			if f := flag.CommandLine.Lookup(name); f != nil {
+				if bf, ok := f.Value.(interface{ IsBoolFlag() bool }); !ok || !bf.IsBoolFlag() {
+					end++ // non-bool flag takes the next token as its value
+				}
+			}
 		}
 		if err := flag.CommandLine.Parse(args[i:end]); err != nil {
 			fail(err)
@@ -221,47 +444,71 @@ func main() {
 		flag.Usage()
 		os.Exit(2)
 	}
+	if args[0] == "completion" {
+		shell := need(args, 1, "bash|zsh|fish")
+		fmt.Print(completionScript(shell))
+		return
+	}
 	s := connect()
+
+	run := func(kind, name string, a map[string]any) {
+		res, err := s.tool(name, a)
+		if err != nil {
+			fail(err)
+		}
+		out(kind, res)
+	}
 
 	switch args[0] {
 	case "projects":
-		out, err := s.tool("list_projects", nil)
-		if err != nil {
-			fail(err)
-		}
-		emit(out)
+		run("projects", "list_projects", nil)
+
+	case "conversations":
+		run("conversations", "list_conversations",
+			map[string]any{"project_id": need(args, 1, "project_id")})
 
 	case "messages":
-		pid := need(args, 1, "project_id")
-		out, err := s.tool("get_messages", map[string]any{"project_id": pid, "limit": *flagLimit})
-		if err != nil {
-			fail(err)
+		pid := need(args, 1, "project_id or conversation_id")
+		a := map[string]any{"limit": *flagLimit}
+		if *flagConv != "" {
+			a["conversation_id"] = *flagConv
+		} else {
+			a["project_id"] = pid
 		}
-		emit(out)
+		run("messages", "get_messages", a)
+
+	case "read":
+		id := need(args, 1, "message_id")
+		run("", "get_message", map[string]any{"message_id": id})
+		_, _ = s.tool("mark_message_read", map[string]any{"message_id": id})
 
 	case "say":
 		pid := need(args, 1, "project_id")
 		text := need(args, 2, "message text")
-		out, err := s.tool("send_message", map[string]any{"project_id": pid, "body": text})
-		if err != nil {
-			fail(err)
+		a := map[string]any{"project_id": pid, "body": text}
+		if *flagReply != "" {
+			a["reply_to"] = *flagReply
 		}
-		emit(out)
+		run("", "send_message", a)
+
+	case "react":
+		run("", "react_to_message", map[string]any{
+			"message_id": need(args, 1, "message_id"),
+			"emoji":      need(args, 2, "emoji"),
+		})
+
+	case "msg-edit":
+		run("", "edit_message", map[string]any{
+			"message_id": need(args, 1, "message_id"),
+			"body":       need(args, 2, "new body"),
+		})
 
 	case "issues":
-		pid := need(args, 1, "project_id")
-		out, err := s.tool("list_issues", map[string]any{"project_id": pid})
-		if err != nil {
-			fail(err)
-		}
-		emit(out)
+		run("issues", "list_issues",
+			map[string]any{"project_id": need(args, 1, "project_id")})
 
 	case "issue":
-		out, err := s.tool("get_issue", map[string]any{"issue_id": need(args, 1, "issue_id")})
-		if err != nil {
-			fail(err)
-		}
-		emit(out)
+		run("", "get_issue", map[string]any{"issue_id": need(args, 1, "issue_id")})
 
 	case "issue-new":
 		pid := need(args, 1, "project_id")
@@ -270,11 +517,7 @@ func main() {
 		if len(args) > 3 {
 			a["description"] = args[3]
 		}
-		out, err := s.tool("create_issue", a)
-		if err != nil {
-			fail(err)
-		}
-		emit(out)
+		run("", "create_issue", a)
 
 	case "issue-set":
 		id := need(args, 1, "issue_id")
@@ -286,55 +529,60 @@ func main() {
 			}
 			a[k] = v
 		}
-		out, err := s.tool("update_issue", a)
-		if err != nil {
-			fail(err)
-		}
-		emit(out)
+		run("", "update_issue", a)
 
 	case "todos":
-		pid := need(args, 1, "project_id")
-		out, err := s.tool("todo_list", map[string]any{"project_id": pid})
-		if err != nil {
-			fail(err)
-		}
-		emit(out)
+		run("todos", "todo_list",
+			map[string]any{"project_id": need(args, 1, "project_id")})
 
 	case "todo-add":
-		pid := need(args, 1, "project_id")
-		text := need(args, 2, "content")
-		a := map[string]any{"project_id": pid, "content": text}
-		out, err := s.tool("todo_add", a)
-		if err != nil {
-			fail(err)
-		}
-		emit(out)
+		run("", "todo_add", map[string]any{
+			"project_id": need(args, 1, "project_id"),
+			"content":    need(args, 2, "content"),
+		})
 
 	case "todo-done", "todo-undo":
-		out, err := s.tool("todo_update", map[string]any{
+		run("", "todo_update", map[string]any{
 			"todo_id": need(args, 1, "todo_id"),
 			"done":    args[0] == "todo-done",
 		})
-		if err != nil {
-			fail(err)
-		}
-		emit(out)
 
 	case "todo-del":
-		out, err := s.tool("todo_delete", map[string]any{"todo_id": need(args, 1, "todo_id")})
-		if err != nil {
-			fail(err)
-		}
-		emit(out)
+		run("", "todo_delete", map[string]any{"todo_id": need(args, 1, "todo_id")})
 
 	case "search":
-		pid := need(args, 1, "project_id")
-		q := need(args, 2, "query")
-		out, err := s.tool("search_messages", map[string]any{"project_id": pid, "query": q})
+		run("", "search_messages", map[string]any{
+			"project_id": need(args, 1, "project_id"),
+			"query":      need(args, 2, "query"),
+		})
+
+	case "files":
+		a := map[string]any{"project_id": need(args, 1, "project_id")}
+		if len(args) > 2 {
+			a["path"] = args[2]
+		}
+		run("files", "list_project_files", a)
+
+	case "file-read":
+		a := map[string]any{
+			"project_id": need(args, 1, "project_id"),
+			"path":       need(args, 2, "path"),
+		}
+		res, err := s.tool("read_project_file", a)
 		if err != nil {
 			fail(err)
 		}
-		emit(out)
+		var m anyMap
+		if err := json.Unmarshal(res, &m); err == nil && !*flagJSON {
+			if c := str(m, "content"); c != "" {
+				fmt.Print(c)
+				if !strings.HasSuffix(c, "\n") {
+					fmt.Println()
+				}
+				return
+			}
+		}
+		emit(res)
 
 	case "gh":
 		sub := need(args, 1, "issues|prs|issue|pr")
@@ -355,29 +603,17 @@ func main() {
 		default:
 			fail("gh subcommand:", sub)
 		}
-		out, err := s.tool(name, a)
-		if err != nil {
-			fail(err)
-		}
-		emit(out)
+		run("gh", name, a)
 
 	case "reviews":
 		a := map[string]any{"project_id": need(args, 1, "project_id")}
 		if *flagStatus != "" {
 			a["status"] = *flagStatus
 		}
-		out, err := s.tool("list_reviews", a)
-		if err != nil {
-			fail(err)
-		}
-		emit(out)
+		run("reviews", "list_reviews", a)
 
 	case "review":
-		out, err := s.tool("get_review", map[string]any{"review_id": need(args, 1, "review_id")})
-		if err != nil {
-			fail(err)
-		}
-		emit(out)
+		run("", "get_review", map[string]any{"review_id": need(args, 1, "review_id")})
 
 	case "review-submit":
 		// The structured payload (files/decisions/actions/…) is read as
@@ -401,50 +637,117 @@ func main() {
 			fail("bad review JSON:", err)
 		}
 		payload["project_id"] = pid
-		out, err := s.tool("submit_review", payload)
-		if err != nil {
-			fail(err)
-		}
-		emit(out)
+		run("", "submit_review", payload)
 
 	case "review-await":
-		out, err := s.tool("await_review", map[string]any{
+		run("", "await_review", map[string]any{
 			"review_id":       need(args, 1, "review_id"),
 			"timeout_seconds": *flagTimeout,
 		})
-		if err != nil {
-			fail(err)
+
+	case "briefs":
+		// briefs <project_id> [issue_id]
+		a := map[string]any{"project_id": need(args, 1, "project_id")}
+		if len(args) > 2 {
+			a["issue_id"] = args[2]
 		}
-		emit(out)
+		run("briefs", "list_briefs", a)
+
+	case "brief":
+		run("", "get_brief", map[string]any{"brief_id": need(args, 1, "brief_id")})
+
+	case "brief-policy":
+		run("", "get_brief_policy", map[string]any{"project_id": need(args, 1, "project_id")})
+
+	case "brief-new":
+		// brief-new <project_id> <title> — scene/summary JSON via --file
+		pid := need(args, 1, "project_id")
+		payload := map[string]any{"project_id": pid, "title": need(args, 2, "title")}
+		if *flagFile != "" {
+			raw, err := os.ReadFile(*flagFile)
+			if err != nil {
+				fail(err)
+			}
+			var extra map[string]any
+			if err := json.Unmarshal(raw, &extra); err != nil {
+				fail("bad JSON in --file:", err)
+			}
+			for k, v := range extra {
+				payload[k] = v
+			}
+			if sc, ok := extra["scene"]; ok {
+				b, _ := json.Marshal(sc)
+				payload["scene"] = string(b)
+			}
+		}
+		run("", "create_brief", payload)
+
+	case "brief-set":
+		// brief-set <brief_id> — fields via --status/--file
+		bid := need(args, 1, "brief_id")
+		payload := map[string]any{"brief_id": bid}
+		if *flagStatus != "" {
+			payload["status"] = *flagStatus
+		}
+		if *flagFile != "" {
+			raw, err := os.ReadFile(*flagFile)
+			if err != nil {
+				fail(err)
+			}
+			var extra map[string]any
+			if err := json.Unmarshal(raw, &extra); err != nil {
+				fail("bad JSON in --file:", err)
+			}
+			for k, v := range extra {
+				if k == "scene" {
+					b, _ := json.Marshal(v)
+					payload[k] = string(b)
+					continue
+				}
+				payload[k] = v
+			}
+		}
+		run("", "update_brief", payload)
 
 	case "attachment":
-		out, err := s.tool("get_attachment", map[string]any{"attachment_id": need(args, 1, "id")})
+		res, err := s.tool("get_attachment", map[string]any{"attachment_id": need(args, 1, "id")})
 		if err != nil {
 			fail(err)
 		}
 		var meta struct {
-			URL string `json:"url"`
+			URL string `json:"download_url"`
 		}
-		_ = json.Unmarshal(out, &meta)
+		_ = json.Unmarshal(res, &meta)
 		if meta.URL == "" {
-			emit(out)
+			emit(res)
 			return
 		}
 		if *flagOut == "" {
 			fmt.Println(meta.URL)
 			return
 		}
-		res, err := http.Get(meta.URL)
+		dl := meta.URL
+		if strings.HasPrefix(dl, "/") {
+			dl = strings.TrimRight(*flagURL, "/") + dl
+		}
+		req, err := http.NewRequest("GET", dl, nil)
 		if err != nil {
 			fail(err)
 		}
-		defer func() { _ = res.Body.Close() }()
+		if s.token != "" {
+			req.Header.Set("Authorization", "Bearer "+s.token)
+		}
+		resp, err := s.hc.Do(req)
+		if err != nil {
+			fail(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
 		f, err := os.Create(*flagOut)
 		if err != nil {
 			fail(err)
 		}
 		defer func() { _ = f.Close() }()
-		if _, err := io.Copy(f, res.Body); err != nil {
+		if _, err := io.Copy(f, resp.Body); err != nil {
 			fail(err)
 		}
 		fmt.Println("saved to", *flagOut)
@@ -467,4 +770,28 @@ func atoi(s string) int {
 		fail("bad number:", s)
 	}
 	return n
+}
+
+func completionScript(shell string) string {
+	cmds := "projects conversations messages read say react msg-edit issues " +
+		"issue issue-new issue-set todos todo-add todo-done todo-undo todo-del " +
+		"search files file-read gh reviews review review-submit review-await " +
+		"briefs brief brief-new brief-set brief-policy attachment completion"
+	switch shell {
+	case "bash":
+		return "# relay-cli bash completion\n_relay_cli() {\n" +
+			"  COMPREPLY=($(compgen -W \"" + cmds + "\" -- \"${COMP_WORDS[1]}\"))\n" +
+			"}\ncomplete -F _relay_cli relay-cli\n"
+	case "zsh":
+		return "#compdef relay-cli\n_relay_cli() {\n  _arguments '1:command:(" + cmds + ")'\n}\ncompdef _relay_cli relay-cli\n"
+	case "fish":
+		var b strings.Builder
+		for _, c := range strings.Fields(cmds) {
+			fmt.Fprintf(&b, "complete -c relay-cli -f -n '__fish_use_subcommand' -a %s\n", c)
+		}
+		return b.String()
+	default:
+		fail("unknown shell:", shell)
+		return ""
+	}
 }
