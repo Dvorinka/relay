@@ -44,7 +44,7 @@ jobs:
         run: |
           cd apps/desktop
           ~/go/bin/wails build -platform windows/amd64 -o relay-desktop-windows-amd64.exe
-          ~/go/bin/wails build -platform linux/amd64 -o relay-desktop-linux-amd64
+          ~/go/bin/wails build -platform linux/amd64 -tags webkit2_41 -o relay-desktop-linux-amd64
           mv build/bin/relay-desktop-* ../../dist/
           rm -f ../../dist/*.o
 
