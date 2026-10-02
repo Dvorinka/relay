@@ -30,6 +30,9 @@ export type McpTokenMeta = components["schemas"]["McpTokenMeta"];
 export type MintedToken = components["schemas"]["MintedToken"];
 export type AgentReview = components["schemas"]["AgentReview"];
 export type ReviewStatus = NonNullable<AgentReview["status"]>;
+export type PendingReviewItem = NonNullable<
+  paths["/api/me/reviews"]["get"]["responses"]["200"]["content"]["application/json"]["reviews"]
+>[number];
 
 export interface LinkedRepo {
   id: string;
@@ -440,6 +443,10 @@ export function createClient(baseUrl: string) {
         status,
         ...(response ? { response } : {}),
       }),
+    myReviews: () =>
+      request<{ reviews: PendingReviewItem[] }>(`/api/me/reviews`),
+    issueReviews: (issueId: string) =>
+      request<{ reviews: AgentReview[] }>(`/api/issues/${issueId}/reviews`),
 
     // Avatars — same FormData trick as uploadAttachment
     uploadAvatar: (file: File) => {

@@ -404,6 +404,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/issues/{issueId}/reviews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Agent work reviews linked to this issue, newest first */
+        get: operations["listIssueReviews"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspaceId}/agents": {
         parameters: {
             query?: never;
@@ -836,6 +853,23 @@ export interface paths {
         };
         /** Redirect to a presigned object URL. Serves the avatars/ key prefix only; message attachments use their project-scoped endpoint. */
         get: operations["readFile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/reviews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Reviews awaiting a verdict across all of the caller's workspaces */
+        get: operations["myPendingReviews"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2102,6 +2136,32 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    listIssueReviews: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                issueId: components["parameters"]["IssueId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Review list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        reviews: components["schemas"]["AgentReview"][];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     listAgents: {
         parameters: {
             query?: never;
@@ -2915,6 +2975,44 @@ export interface operations {
                 content?: never;
             };
             404: components["responses"]["NotFound"];
+        };
+    };
+    myPendingReviews: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Inbox feed of pending reviews */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        reviews: {
+                            /** Format: uuid */
+                            id: string;
+                            /** Format: uuid */
+                            project_id: string;
+                            title: string;
+                            agent: {
+                                /** Format: uuid */
+                                id: string | null;
+                                name: string;
+                                avatar_url: string | null;
+                            };
+                            project_key: string;
+                            project_name: string;
+                            /** Format: date-time */
+                            created_at: string;
+                        }[];
+                    };
+                };
+            };
         };
     };
     unreadCounts: {

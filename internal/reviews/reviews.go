@@ -49,6 +49,8 @@ func NewService(log *zap.Logger, pool *pgxpool.Pool) *Service {
 
 func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
 	g.GET("/projects/:id/reviews", s.memberOnly, s.handleList)
+	g.GET("/me/reviews", s.handleMine)
+	g.GET("/issues/:id/reviews", s.issueGate, s.handleIssueReviews)
 	g.GET("/reviews/:id", s.reviewGate, s.handleGet)
 	g.POST("/reviews/:id/respond", s.reviewGate, s.handleRespond)
 }
@@ -175,6 +177,66 @@ func (s *Service) handleList(c *gin.Context) {
 	}
 	pending, _ := s.q.PendingReviewCount(c.Request.Context(), p.ID)
 	c.JSON(http.StatusOK, gin.H{"reviews": out, "pending": pending})
+}
+
+// handleMine lists pending reviews across the caller's workspaces - the
+// Inbox's "awaiting you" feed.
+func (s *Service) handleMine(c *gin.Context) {
+	rows, err := s.q.ListMyPendingReviews(c.Request.Context(), auth.CurrentUser(c).ID)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	out := make([]gin.H, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, gin.H{
+			"id": r.ID.String(), "project_id": r.ProjectID.String(),
+			"title":       r.Title,
+			"agent":       personJSON(r.AgentID, r.AgentName, r.AgentAvatar.String, r.AgentAvatar.Valid),
+			"project_key": r.ProjectKey, "project_name": r.ProjectName,
+			"created_at": r.CreatedAt.Time.Format(time.RFC3339),
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"reviews": out})
+}
+
+// issueGate verifies membership on the workspace owning the issue, then
+// stashes the issue id for the handler (same 404/403 split as issues.go).
+func (s *Service) issueGate(c *gin.Context) {
+	id, ok := httpx.PathUUID(c, "id")
+	if !ok {
+		c.Abort()
+		return
+	}
+	_, err := s.q.GetIssueForUser(c.Request.Context(), db.GetIssueForUserParams{
+		ID: id, UserID: auth.CurrentUser(c).ID,
+	})
+	if err != nil {
+		if _, err2 := s.q.GetIssueByID(c.Request.Context(), id); err2 == nil {
+			httpx.Error(c, http.StatusForbidden, "forbidden", "not a member of this workspace")
+		} else {
+			httpx.Error(c, http.StatusNotFound, "not_found", "issue not found")
+		}
+		c.Abort()
+		return
+	}
+	c.Set("relay.issue", id)
+	c.Next()
+}
+
+// handleIssueReviews lists reviews linked to one issue - the "what the
+// agent did about this" block on the issue page.
+func (s *Service) handleIssueReviews(c *gin.Context) {
+	rows, err := s.q.ListIssueReviews(c.Request.Context(), c.MustGet("relay.issue").(pgtype.UUID))
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	out := make([]gin.H, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, reviewJSON(db.GetReviewRow(r)))
+	}
+	c.JSON(http.StatusOK, gin.H{"reviews": out})
 }
 
 func (s *Service) handleGet(c *gin.Context) {

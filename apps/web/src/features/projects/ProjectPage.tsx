@@ -1,8 +1,7 @@
 import type { Project, ProjectOverview } from "@relay/api-client";
-import { useParams } from "@solidjs/router";
+import { useParams, useSearchParams } from "@solidjs/router";
 import {
   createResource,
-  createSignal,
   For,
   Show,
 } from "solid-js";
@@ -97,8 +96,14 @@ function Overview(props: { overview: ProjectOverview }) {
 
 export default function ProjectPage() {
   const params = useParams<{ projectId: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
   const projects = useProjects();
-  const [tab, setTab] = createSignal<Tab>("overview");
+  const tab = (): Tab => {
+    const t = searchParams.tab;
+    return TABS.some((x) => x.id === t) ? (t as Tab) : "overview";
+  };
+  const setTab = (t: Tab) =>
+    setSearchParams({ tab: t === "overview" ? undefined : t });
 
   const [overview] = createResource(
     () => params.projectId,

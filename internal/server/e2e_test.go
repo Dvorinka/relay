@@ -145,6 +145,12 @@ func TestCanonicalFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// the rate limiter is DB-backed (fixed window per IP); clear it so
+	// repeated runs against a shared database don't trip on stale hits
+	if _, err := pool.Exec(ctx, "delete from rate_limits"); err != nil {
+		t.Fatal(err)
+	}
+
 	cfg := config.Config{
 		DatabaseURL:     dsn,
 		AuthSecret:      "test-secret-test-secret-test-secret",
