@@ -105,14 +105,16 @@ Authorization: Bearer rly_...
 Tools: `list_projects`, `get_project`, `list_conversations`, `get_messages`,
 `get_message`, `get_attachment`, `search_messages`, `list_issues`,
 `get_issue`, `send_message`, `create_issue`, `update_issue`,
-`mark_message_read`.
+`mark_message_read`, `todo_list`, `todo_add`, `todo_update`,
+`todo_delete`, `github_list_issues`, `github_get_issue`,
+`github_list_prs`, `github_get_pr`.
 
 ## Ecosystem
 
 - **[apps/web](apps/web)** - SolidJS + Vite + Tailwind + Ark UI frontend.
 - **[packages/api-client](packages/api-client)** - OpenAPI-generated TS client shared by all clients.
-- **[apps/desktop](apps/desktop)** - Wails shell for Linux/macOS/Windows: tray, global screenshot shortcut, deep links (phase 9).
-- **[apps/mobile](apps/mobile)** - React Native + Expo for Android: conversations, issues, push, deep links (phase 10).
+- **[apps/desktop](apps/desktop)** - Wails shell for Linux/macOS/Windows proxying your Relay server (phase 9; tray/deep links deferred - see its README).
+- **[apps/mobile](apps/mobile)** - React Native + Expo app for Android: login, conversations, issues, work list, attachments (phase 10; push/iOS deferred - see its README).
 - **MCP server** - built into the `relay` binary at `/mcp`.
 
 ## Documentation
