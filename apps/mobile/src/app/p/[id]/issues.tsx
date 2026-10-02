@@ -20,6 +20,14 @@ const LABEL: Record<string, string> = {
   done: "Done",
   cancelled: "Cancelled",
 };
+const STATUS_COLOR: Record<string, string> = {
+  backlog: "#9aa0aa",
+  todo: "#4a7dff",
+  in_progress: "#e8a23f",
+  review: "#8b5cf6",
+  done: "#34c98e",
+  cancelled: "#9aa0aa",
+};
 
 export default function IssuesScreen() {
   const C = useTheme();
@@ -66,17 +74,25 @@ export default function IssuesScreen() {
       ListEmptyComponent={
         <Text style={s.empty}>No issues.</Text>
       }
-      renderItem={({ item }) => (
-        <View style={s.card}>
-          <View style={{ flex: 1 }}>
-            <Text style={s.key}>{item.key ?? `#${item.number}`}</Text>
-            <Text style={s.title}>{item.title}</Text>
+      renderItem={({ item }) => {
+        const sc = STATUS_COLOR[item.status] ?? C.muted;
+        return (
+          <View style={[s.card, { borderLeftColor: sc, borderLeftWidth: 3 }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={s.key}>{item.key ?? `#${item.number}`}</Text>
+              <Text style={s.title}>{item.title}</Text>
+            </View>
+            <Pressable
+              style={[s.status, { borderColor: sc }]}
+              onPress={() => advance(item)}
+            >
+              <Text style={[s.statusText, { color: sc }]}>
+                {LABEL[item.status] ?? item.status}
+              </Text>
+            </Pressable>
           </View>
-          <Pressable style={s.status} onPress={() => advance(item)}>
-            <Text style={s.statusText}>{LABEL[item.status] ?? item.status}</Text>
-          </Pressable>
-        </View>
-      )}
+        );
+      }}
     />
   );
 }

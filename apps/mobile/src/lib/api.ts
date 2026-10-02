@@ -16,6 +16,13 @@ export function getCookie() {
   return cookie;
 }
 
+// Relative API paths ("/api/files/...") need the configured server prefix and
+// the session cookie for expo-image's source.headers.
+export function fileUrl(path: string | null | undefined): string | null {
+  if (!path) return null;
+  return path.startsWith("http") ? path : server + path;
+}
+
 // RN's native cookie jar does not survive process death and treats
 // "Secure" cookies as undeliverable on plain-HTTP dev servers, so we
 // carry the session cookie ourselves and persist it for cold starts.
@@ -82,10 +89,15 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 
 export const api = {
   me: () =>
-    req<{ user: { id: string; email: string; name: string } }>(
-      "GET",
-      "/api/auth/session",
-    ),
+    req<{
+      user: {
+        id: string;
+        email: string;
+        name: string;
+        avatar_url: string | null;
+      };
+      workspace?: { id: string; name: string };
+    }>("GET", "/api/auth/session"),
   login: (email: string, password: string) =>
     req<{ id: string; email: string; name: string }>("POST", "/api/auth/login", {
       email,
@@ -113,11 +125,32 @@ export const api = {
     conversationId: string,
     body: string,
     attachment_ids?: string[],
+    parent_id?: string,
   ) =>
     req<Message>("POST", `/api/conversations/${conversationId}/messages`, {
       body,
       attachment_ids: attachment_ids ?? [],
+      ...(parent_id ? { parent_id } : {}),
     }),
+  editMessage: (messageId: string, body: string) =>
+    req<{ message: Message }>("PATCH", `/api/messages/${messageId}`, { body }),
+  reactMessage: (messageId: string, emoji: string) =>
+    req<{ reactions: Reaction[] }>(
+      "PUT",
+      `/api/messages/${messageId}/reactions`,
+      { emoji },
+    ),
+  reviews: (projectId: string, status?: string) =>
+    req<{ reviews: Review[] }>(
+      "GET",
+      `/api/projects/${projectId}/reviews${status ? `?status=${status}` : ""}`,
+    ),
+  respondReview: (reviewId: string, status: string, response?: string) =>
+    req<{ review: Review }>("POST", `/api/reviews/${reviewId}/respond`, {
+      status,
+      response: response ?? "",
+    }),
+  workspaces: () => req<{ workspaces: Workspace[] }>("GET", "/api/workspaces"),
   upload: async (
     projectId: string,
     file: { uri: string; name: string; type: string },
@@ -186,10 +219,52 @@ export interface Attachment {
   content_type: string;
   url?: string;
 }
+export interface Reaction {
+  emoji: string;
+  count: number;
+  mine: boolean;
+  names?: string[];
+}
+export interface MessageParent {
+  id: string;
+  author: string;
+  preview: string;
+  deleted: boolean;
+}
 export interface Message {
   id: string;
   body: string;
   created_at: string;
+  edited_at: string | null;
+  agent_read: boolean;
   author: { id: string; name: string; kind: string; avatar_url: string | null };
+  parent: MessageParent | null;
   attachments?: Attachment[];
+  reactions?: Reaction[];
+}
+export interface Person {
+  id: string | null;
+  name: string;
+  avatar_url: string | null;
+}
+export interface Review {
+  id: string;
+  status: string;
+  title: string;
+  summary: string;
+  verify: string;
+  files: unknown[];
+  decisions: unknown[];
+  actions: unknown[];
+  links: unknown[];
+  agent: Person;
+  issue: { id: string; key: string } | null;
+  responder: Person | null;
+  response: string | null;
+  responded_at: string | null;
+  created_at: string;
+}
+export interface Workspace {
+  id: string;
+  name: string;
 }

@@ -1,8 +1,8 @@
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useTheme } from "../lib/theme";
+import { ThemeProvider, useTheme } from "../lib/theme";
 
-export default function Root() {
+function Shell() {
   const C = useTheme();
   return (
     <>
@@ -18,10 +18,20 @@ export default function Root() {
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="login" options={{ headerShown: false }} />
         <Stack.Screen name="projects" options={{ title: "Relay" }} />
+        <Stack.Screen name="settings" options={{ title: "Settings" }} />
         <Stack.Screen name="p/[id]/index" options={{ title: "Conversation" }} />
         <Stack.Screen name="p/[id]/issues" options={{ title: "Issues" }} />
         <Stack.Screen name="p/[id]/todos" options={{ title: "Work list" }} />
+        <Stack.Screen name="p/[id]/reviews" options={{ title: "Reviews" }} />
       </Stack>
     </>
+  );
+}
+
+export default function Root() {
+  return (
+    <ThemeProvider>
+      <Shell />
+    </ThemeProvider>
   );
 }

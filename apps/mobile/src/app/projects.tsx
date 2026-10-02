@@ -1,4 +1,4 @@
-import { useCallback, useState, useMemo} from "react";
+import { useCallback, useEffect, useState, useMemo } from "react";
 import {
   FlatList,
   Pressable,
@@ -7,7 +7,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { router, useFocusEffect } from "expo-router";
+import { router, useFocusEffect, useNavigation } from "expo-router";
 import { api, type Project } from "../lib/api";
 import { useTheme, type Palette } from "../lib/theme";
 
@@ -16,6 +16,17 @@ export default function Projects() {
   const s = useMemo(() => themedStyles(C), [C]);
   const [items, setItems] = useState<Project[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const nav = useNavigation();
+
+  useEffect(() => {
+    nav.setOptions({
+      headerRight: () => (
+        <Pressable onPress={() => router.push("/settings")} hitSlop={12}>
+          <Text style={{ color: C.muted, fontSize: 20 }}>⚙</Text>
+        </Pressable>
+      ),
+    });
+  }, [nav, C]);
 
   const load = useCallback(async () => {
     setRefreshing(true);
