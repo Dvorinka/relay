@@ -36,14 +36,14 @@
     color-scheme: light;
   }
   [data-theme="dark"] {
-    --bg: #101318; --rail: #14171d;
-    --surface: #1a1f27; --surface-2: #21262f;
+    --bg: #0a0c0f; --rail: #0e1116;
+    --surface: #14181f; --surface-2: #1b2029;
     --fg: #e8eaee; --muted: #9aa3b0; --faint: #5f6875;
-    --border: #242a33; --border-hi: #323a45;
+    --border: #20262f; --border-hi: #2c3440;
     --green: #4ade80; --violet: #b49bfa; --sky: #6db3fa;
     --rose: #fb7185; --amber: #fbbf24;
-    --shadow: 0 1px 2px rgb(0 0 0 / .4), 0 4px 18px rgb(0 0 0 / .3);
-    --code-bg: #0b0d10; --code-fg: #d8d3c8;
+    --shadow: 0 1px 2px rgb(0 0 0 / .45), 0 4px 18px rgb(0 0 0 / .35);
+    --code-bg: #060809; --code-fg: #d8d3c8;
     --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
     --accent-glow: color-mix(in srgb, var(--accent) 30%, transparent);
     color-scheme: dark;
@@ -391,8 +391,8 @@
   .pill-btn:hover { border-color: var(--border-hi); background: var(--rail); }
   .pill-btn.accent {
     background: var(--accent); border-color: var(--accent); color: #fff;
-    box-shadow: 0 3px 10px var(--accent-glow);
   }
+  .pill-btn.accent:hover { filter: brightness(1.07); }
 
   .typing {
     display: flex; align-items: center; gap: 8px; padding: 4px 26px;
@@ -460,8 +460,8 @@
     height: 36px; padding: 0 18px; border-radius: 10px; border: 0;
     background: var(--accent); color: #fff; font-weight: 620; font-size: 13px;
     cursor: pointer; flex-shrink: 0;
-    box-shadow: 0 3px 10px var(--accent-glow);
   }
+  .composer .send:hover { filter: brightness(1.07); }
   .composer-foot {
     display: flex; gap: 14px; padding: 4px 10px 5px;
     font-size: 10.5px; color: var(--faint);
