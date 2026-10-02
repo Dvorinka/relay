@@ -34,7 +34,7 @@ const createIssueForAgent = `-- name: CreateIssueForAgent :one
 insert into issues (project_id, number, title, description, status, priority, assignee_id, created_by, agent_id)
 values ($1, $2, $3, $4,
         'todo', $5, null, null, $6)
-returning id, project_id, number, title, description, status, priority, assignee_id, agent_id, created_by, created_at, updated_at, github_node_id, github_repo_id, github_number, origin
+returning id, project_id, number, title, description, status, priority, assignee_id, agent_id, created_by, created_at, updated_at, github_node_id, github_repo_id, github_number, origin, github_kind, github_state, github_url
 `
 
 type CreateIssueForAgentParams struct {
@@ -73,6 +73,9 @@ func (q *Queries) CreateIssueForAgent(ctx context.Context, arg CreateIssueForAge
 		&i.GithubRepoID,
 		&i.GithubNumber,
 		&i.Origin,
+		&i.GithubKind,
+		&i.GithubState,
+		&i.GithubUrl,
 	)
 	return i, err
 }
@@ -99,7 +102,7 @@ func (q *Queries) GetAttachmentByID(ctx context.Context, id pgtype.UUID) (Attach
 }
 
 const getIssueForAgent = `-- name: GetIssueForAgent :one
-select i.id, i.project_id, i.number, i.title, i.description, i.status, i.priority, i.assignee_id, i.agent_id, i.created_by, i.created_at, i.updated_at, i.github_node_id, i.github_repo_id, i.github_number, i.origin, u.name as assignee_name, u.avatar_key as assignee_avatar
+select i.id, i.project_id, i.number, i.title, i.description, i.status, i.priority, i.assignee_id, i.agent_id, i.created_by, i.created_at, i.updated_at, i.github_node_id, i.github_repo_id, i.github_number, i.origin, i.github_kind, i.github_state, i.github_url, u.name as assignee_name, u.avatar_key as assignee_avatar
 from issues i
 left join users u on u.id = i.assignee_id
 where i.id = $1
@@ -122,6 +125,9 @@ type GetIssueForAgentRow struct {
 	GithubRepoID   pgtype.UUID        `json:"github_repo_id"`
 	GithubNumber   pgtype.Int4        `json:"github_number"`
 	Origin         string             `json:"origin"`
+	GithubKind     string             `json:"github_kind"`
+	GithubState    pgtype.Text        `json:"github_state"`
+	GithubUrl      pgtype.Text        `json:"github_url"`
 	AssigneeName   pgtype.Text        `json:"assignee_name"`
 	AssigneeAvatar pgtype.Text        `json:"assignee_avatar"`
 }
@@ -146,6 +152,9 @@ func (q *Queries) GetIssueForAgent(ctx context.Context, id pgtype.UUID) (GetIssu
 		&i.GithubRepoID,
 		&i.GithubNumber,
 		&i.Origin,
+		&i.GithubKind,
+		&i.GithubState,
+		&i.GithubUrl,
 		&i.AssigneeName,
 		&i.AssigneeAvatar,
 	)
@@ -224,7 +233,7 @@ func (q *Queries) ListProjectConversations(ctx context.Context, projectID pgtype
 }
 
 const listProjectIssuesForAgent = `-- name: ListProjectIssuesForAgent :many
-select i.id, i.project_id, i.number, i.title, i.description, i.status, i.priority, i.assignee_id, i.agent_id, i.created_by, i.created_at, i.updated_at, i.github_node_id, i.github_repo_id, i.github_number, i.origin, u.name as assignee_name, u.avatar_key as assignee_avatar
+select i.id, i.project_id, i.number, i.title, i.description, i.status, i.priority, i.assignee_id, i.agent_id, i.created_by, i.created_at, i.updated_at, i.github_node_id, i.github_repo_id, i.github_number, i.origin, i.github_kind, i.github_state, i.github_url, u.name as assignee_name, u.avatar_key as assignee_avatar
 from issues i
 left join users u on u.id = i.assignee_id
 where i.project_id = $1
@@ -254,6 +263,9 @@ type ListProjectIssuesForAgentRow struct {
 	GithubRepoID   pgtype.UUID        `json:"github_repo_id"`
 	GithubNumber   pgtype.Int4        `json:"github_number"`
 	Origin         string             `json:"origin"`
+	GithubKind     string             `json:"github_kind"`
+	GithubState    pgtype.Text        `json:"github_state"`
+	GithubUrl      pgtype.Text        `json:"github_url"`
 	AssigneeName   pgtype.Text        `json:"assignee_name"`
 	AssigneeAvatar pgtype.Text        `json:"assignee_avatar"`
 }
@@ -284,6 +296,9 @@ func (q *Queries) ListProjectIssuesForAgent(ctx context.Context, arg ListProject
 			&i.GithubRepoID,
 			&i.GithubNumber,
 			&i.Origin,
+			&i.GithubKind,
+			&i.GithubState,
+			&i.GithubUrl,
 			&i.AssigneeName,
 			&i.AssigneeAvatar,
 		); err != nil {

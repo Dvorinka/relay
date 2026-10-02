@@ -404,6 +404,16 @@ export function createClient(baseUrl: string) {
       }),
     projectDevelopment: (projectId: string) =>
       request<DevelopmentPanel>(`/api/projects/${projectId}/development`),
+    importGitHub: (projectId: string, repoId?: string) =>
+      post<{
+        results: {
+          repo: string;
+          issues: { created: number; updated: number };
+          prs: { created: number; updated: number };
+          truncated?: boolean;
+          error?: string;
+        }[];
+      }>(`/api/projects/${projectId}/github/import`, repoId ? { repo_id: repoId } : {}),
 
     // Todos
     listTodos: (projectId: string) =>

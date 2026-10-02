@@ -398,4 +398,19 @@ func TestCanonicalFlow(t *testing.T) {
 	if code != 409 {
 		t.Fatalf("push to github: %d %v", code, gh)
 	}
+
+	// Bulk import: no linked repo -> 409 regardless of GitHub config
+	code, imp := c.call("POST", "/api/projects/"+projID+"/github/import", `{}`)
+	if code != 409 {
+		t.Fatalf("github import: %d %v", code, imp)
+	}
+
+	// Overview now carries the issue-activity feed alongside messages
+	code, ov := c.call("GET", "/api/projects/"+projID+"/overview", "")
+	if code != 200 {
+		t.Fatalf("overview: %d %v", code, ov)
+	}
+	if _, ok := ov["issue_activity"].([]any); !ok {
+		t.Fatalf("overview missing issue_activity: %v", ov)
+	}
 }

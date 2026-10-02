@@ -199,6 +199,29 @@ tap-to-advance status, agent work list.
 - Canonical E2E extended: signed delivery verified against a local
   receiver (HMAC over the body), delivery log, test event, 409 no-repo
 
+## Phase 15 - GitHub import & project activity feed ☑
+
+Verified live against `Dvorinka/relay` with a dev token: one POST pulled
+32 real objects (31 PRs, 1 issue) into Relay issues in ~1.4s, and a
+re-run refreshed 32 in place with zero duplicates.
+
+- `POST /api/projects/:id/github/import` (admin) — bulk-pulls every issue
+  and PR on linked repos (`state=all`, 100/page, capped at 500 per kind).
+  Idempotent upsert keyed on `(github_repo_id, github_number)`; PRs land
+  as issues with `github.kind="pr"` — open → `review`, merged → `done`,
+  closed-unmerged → `cancelled`, drafts → `todo`
+- GitHub labels import with their colors; Relay-side labels are never
+  removed by re-imports
+- `pull_request` webhook now mirrors PRs into issues symmetric with
+  `issues` events (was: activity-only on pre-mirrored rows)
+- Issues expose `github.kind|state|url`; badges show a PR glyph and
+  `merged` state with the correct `/pull/` URL
+- Development tab: per-repo "Import issues & PRs" button with per-repo
+  result line
+- Overview page gains an **Issue activity** feed powered by
+  `issue_activity` across the project (mirror/state/field events)
+- Landing favicon: mark re-centered in its viewBox (was cropped)
+
 ## Post-1.0 ideas (not committed)
 
 - Custom statuses, saved filters, issue boards

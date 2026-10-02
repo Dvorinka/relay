@@ -86,6 +86,16 @@ insert into issue_labels (project_id, name, color)
 values (sqlc.arg(project_id), sqlc.arg(name), sqlc.arg(color))
 returning *;
 
+-- name: InsertLabelIfMissing :exec
+-- on conflict do nothing covers the (project_id, lower(name)) expression index
+insert into issue_labels (project_id, name, color)
+values (sqlc.arg(project_id), sqlc.arg(name), sqlc.arg(color))
+on conflict do nothing;
+
+-- name: GetLabelByName :one
+select * from issue_labels
+where project_id = sqlc.arg(project_id) and lower(name) = lower(sqlc.arg(name));
+
 -- name: ListProjectLabels :many
 select * from issue_labels where project_id = sqlc.arg(project_id) order by lower(name);
 
@@ -124,6 +134,18 @@ left join users u on u.id = a.actor_user_id
 where a.issue_id = sqlc.arg(issue_id)
 order by a.created_at desc
 limit 100;
+
+-- name: ListProjectIssueActivity :many
+-- project-wide feed: latest issue events for the overview page
+select a.id, a.issue_id, a.kind, a.payload, a.created_at,
+       i.number as issue_number, i.title as issue_title,
+       u.name as actor_name
+from issue_activity a
+join issues i on i.id = a.issue_id
+left join users u on u.id = a.actor_user_id
+where i.project_id = sqlc.arg(project_id)
+order by a.created_at desc
+limit 20;
 
 -- name: GetIssueConversation :one
 select * from conversations where issue_id = sqlc.arg(issue_id) and kind = 'issue';

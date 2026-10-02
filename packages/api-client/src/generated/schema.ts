@@ -684,6 +684,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{projectId}/github/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pull the full issue and PR history of linked repos into Relay issues
+         * @description Admin-only bulk import. Every GitHub issue and pull request on the linked repository becomes a Relay issue (prs carry github.kind="pr", open PRs land in "review", merged in "done"). Existing mirrors are refreshed, not duplicated — safe to re-run. GitHub labels are created and linked; Relay-side labels are never removed. Bounded to 500 objects per kind per repo.
+         */
+        post: operations["importGitHub"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{projectId}/github/repo/{repoId}": {
         parameters: {
             query?: never;
@@ -1225,13 +1245,18 @@ export interface components {
              * @enum {string}
              */
             origin?: "relay" | "github";
-            /** @description Present when the issue mirrors a GitHub issue */
+            /** @description Present when the issue mirrors a GitHub issue or PR */
             github?: {
                 /** @description owner/name */
                 repo?: string;
                 number?: number;
                 /** @enum {string} */
-                state?: "open" | "closed";
+                kind?: "issue" | "pr";
+                /**
+                 * @description GitHub's raw state
+                 * @enum {string}
+                 */
+                state?: "open" | "closed" | "merged";
                 url?: string;
             };
         };
@@ -1396,6 +1421,22 @@ export interface components {
                 conversations: number;
             };
             recent_messages: components["schemas"]["Message"][];
+            /** @description Latest issue events across the project, newest first */
+            issue_activity?: {
+                /** Format: uuid */
+                id?: string;
+                /** Format: uuid */
+                issue_id?: string;
+                issue_number?: number;
+                issue_title?: string;
+                kind?: string;
+                payload?: {
+                    [key: string]: unknown;
+                };
+                actor?: string;
+                /** Format: date-time */
+                created_at?: string;
+            }[];
         };
     };
     responses: {
@@ -2793,6 +2834,70 @@ export interface operations {
         responses: {
             /** @description Linked */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    importGitHub: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /**
+                     * Format: uuid
+                     * @description Import only this linked repo; omit to import all
+                     */
+                    repo_id?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Per-repo import results */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        results: {
+                            repo?: string;
+                            issues?: {
+                                created?: number;
+                                updated?: number;
+                            };
+                            prs?: {
+                                created?: number;
+                                updated?: number;
+                            };
+                            /** @description True when the 500-object cap cut the listing short */
+                            truncated?: boolean;
+                            error?: string;
+                        }[];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Project has no linked GitHub repository */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description GitHub app not configured */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
