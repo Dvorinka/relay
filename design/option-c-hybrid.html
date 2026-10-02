@@ -1,0 +1,671 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Relay — Project chat (Option C · hybrid)</title>
+<style>
+  /* A's dark Element structure + B's warm polish: softer radii, layered
+     surfaces, centered timeline, pill day separators, warmer neutrals. */
+  :root {
+    --bg: #12151a;
+    --rail: #0d0f13;
+    --surface: #1a1e25;
+    --surface-2: #22262f;
+    --surface-3: #2a2f3a;
+    --fg: #e9eaec;
+    --muted: #979ea9;
+    --faint: #5f6673;
+    --border: #262b34;
+    --border-soft: #2e3440;
+    --accent: #f2541b;
+    --accent-soft: rgb(242 84 27 / 0.16);
+    --accent-ink: #ff8259;
+    --green: #34d399;
+    --teal: #2dd4bf;
+    --violet: #a78bfa;
+    --sky: #60a5fa;
+    --amber: #fbbf24;
+    --rose: #fb7185;
+    --shadow: 0 1px 2px rgb(0 0 0 / .3), 0 6px 24px rgb(0 0 0 / .22);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+    background: var(--bg); color: var(--fg);
+    font-size: 14px; -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+  ::-webkit-scrollbar { width: 9px; }
+  ::-webkit-scrollbar-thumb { background: var(--border-soft); border-radius: 5px; border: 2px solid var(--bg); }
+
+  .app { display: flex; height: 100vh; }
+
+  /* ── spaces rail (A) ─────────────────────────── */
+  .spaces {
+    width: 68px; background: var(--rail);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; align-items: center;
+    padding: 12px 0; gap: 10px; flex-shrink: 0;
+  }
+  .space-logo {
+    width: 40px; height: 40px; border-radius: 13px;
+    background: #000; border: 1px solid var(--border-soft);
+    display: grid; place-items: center; margin-bottom: 6px;
+  }
+  .space-logo svg { width: 22px; height: 22px; }
+  .space {
+    width: 40px; height: 40px; border-radius: 13px;
+    background: var(--surface-2); color: var(--muted);
+    display: grid; place-items: center;
+    font-weight: 600; font-size: 14px; cursor: pointer;
+    border: 1px solid transparent;
+    position: relative; transition: border-radius .15s, background .15s;
+  }
+  .space:hover { border-radius: 10px; color: var(--fg); }
+  .space.active { background: var(--accent-soft); color: var(--accent-ink); border-radius: 10px; }
+  .space .dot {
+    position: absolute; left: -6px; top: 50%; transform: translateY(-50%);
+    width: 4px; height: 18px; border-radius: 2px; background: var(--accent);
+  }
+  .space .badge {
+    position: absolute; right: -3px; bottom: -3px;
+    min-width: 16px; height: 16px; padding: 0 4px; border-radius: 9px;
+    background: var(--accent); color: #fff;
+    font-size: 10px; font-weight: 650;
+    display: grid; place-items: center;
+    border: 2px solid var(--rail);
+  }
+  .spaces .spacer { flex: 1; }
+  .spaces .bottom { display: flex; flex-direction: column; gap: 10px; align-items: center; }
+  .icon-btn {
+    width: 36px; height: 36px; border-radius: 11px; border: 0;
+    background: transparent; color: var(--muted); cursor: pointer;
+    display: grid; place-items: center;
+  }
+  .icon-btn:hover { background: var(--surface-2); color: var(--fg); }
+  .avatar-sm { width: 32px; height: 32px; border-radius: 50%; }
+
+  /* ── room list (A layout, B warmth) ──────────── */
+  .rooms {
+    width: 256px; background: var(--rail);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; flex-shrink: 0;
+  }
+  .rooms-head {
+    padding: 14px 16px 12px; display: flex; align-items: center; gap: 10px;
+  }
+  .rooms-head .mark {
+    width: 30px; height: 30px; border-radius: 9px; background: var(--surface-2);
+    border: 1px solid var(--border-soft);
+    display: grid; place-items: center; color: var(--fg); font-weight: 700; font-size: 13px;
+  }
+  .rooms-head h1 { font-size: 14.5px; font-weight: 650; letter-spacing: -0.01em; }
+  .rooms-head .sub { font-size: 11px; color: var(--muted); }
+  .search-pill {
+    margin: 2px 12px 12px; padding: 8px 12px; border-radius: 10px;
+    background: var(--surface); border: 1px solid var(--border);
+    display: flex; align-items: center; gap: 8px;
+    color: var(--muted); font-size: 12.5px; cursor: text;
+  }
+  .search-pill kbd {
+    margin-left: auto; font-family: inherit; font-size: 10px;
+    color: var(--faint); border: 1px solid var(--border-soft);
+    border-radius: 5px; padding: 1px 5px;
+  }
+  .rooms-scroll { flex: 1; overflow-y: auto; padding: 0 10px 12px; }
+  .rooms-label {
+    padding: 12px 10px 6px; font-size: 10.5px; font-weight: 650;
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint);
+    display: flex; align-items: center;
+  }
+  .rooms-label .add {
+    margin-left: auto; border: 0; background: none; color: var(--faint);
+    cursor: pointer; font-size: 15px; line-height: 1;
+  }
+  .room {
+    display: flex; align-items: center; gap: 9px;
+    padding: 6.5px 10px; border-radius: 9px; cursor: pointer;
+    color: var(--muted); font-size: 13px;
+  }
+  .room:hover { background: var(--surface); color: var(--fg); }
+  .room.active {
+    background: var(--surface-2); color: var(--fg); font-weight: 560;
+    box-shadow: var(--shadow);
+  }
+  .room .hash { color: var(--faint); font-size: 15px; font-weight: 500; }
+  .room.active .hash { color: var(--accent-ink); }
+  .room .badge {
+    margin-left: auto; min-width: 17px; height: 17px; padding: 0 5px;
+    border-radius: 9px; background: var(--accent); color: #fff;
+    font-size: 10.5px; font-weight: 650; display: grid; place-items: center;
+  }
+  .room .badge.dim { background: var(--surface-3); color: var(--muted); }
+
+  /* ── chat column ─────────────────────────────── */
+  .chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .chat-head {
+    height: 58px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 12px; padding: 0 18px;
+    flex-shrink: 0; background: var(--bg);
+  }
+  .chat-head h2 { font-size: 15px; font-weight: 660; letter-spacing: -0.01em; }
+  .chat-head .key {
+    font-family: ui-monospace, monospace; font-size: 11px; color: var(--accent-ink);
+    background: var(--accent-soft);
+    padding: 2px 7px; border-radius: 6px;
+  }
+  .chat-head .desc { font-size: 12px; color: var(--muted); }
+  .chat-head .spacer { flex: 1; }
+  .head-tool {
+    width: 34px; height: 34px; border-radius: 10px; border: 1px solid transparent;
+    background: transparent; color: var(--muted); cursor: pointer;
+    display: grid; place-items: center;
+  }
+  .head-tool:hover { background: var(--surface-2); color: var(--fg); }
+  .head-tool.on { background: var(--accent-soft); color: var(--accent-ink); }
+  .presence { display: flex; align-items: center; margin-right: 4px; }
+  .presence svg {
+    width: 26px; height: 26px; border-radius: 50%;
+    outline: 2px solid var(--bg); margin-left: -7px;
+  }
+  .presence svg:first-child { margin-left: 0; }
+  .presence .n { margin-left: 8px; font-size: 12px; color: var(--muted); }
+
+  .timeline { flex: 1; overflow-y: auto; }
+  .tl-inner { max-width: 800px; margin: 0 auto; padding: 20px 26px 8px; }
+  .day-sep { display: flex; justify-content: center; margin: 16px 0 14px; }
+  .day-sep span {
+    font-size: 11px; font-weight: 600; color: var(--muted);
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 4px 14px; border-radius: 14px;
+  }
+  .unread-sep {
+    display: flex; align-items: center; gap: 12px; margin: 16px 0 10px;
+    color: var(--accent-ink); font-size: 11px; font-weight: 650; letter-spacing: .05em;
+  }
+  .unread-sep::before, .unread-sep::after {
+    content: ""; flex: 1; border-top: 1px solid var(--accent-soft);
+  }
+
+  /* flat rows (A) with softer hover + rounded avatars (B) */
+  .msg { display: flex; gap: 12px; padding: 6px 12px; margin: 0 -12px; border-radius: 10px; }
+  .msg:hover { background: var(--surface); }
+  .msg.grouped { padding-top: 1.5px; padding-bottom: 1.5px; }
+  .msg .av {
+    width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
+    display: grid; place-items: center; font-weight: 650; font-size: 13px;
+    color: #fff; margin-top: 1px;
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / .12);
+  }
+  .msg .av.bot {
+    border-radius: 10px; background: var(--surface-2);
+    border: 1px solid var(--border-soft);
+  }
+  .msg .gutter { width: 34px; flex-shrink: 0; text-align: right; }
+  .msg .gutter time {
+    font-size: 10px; color: var(--faint); opacity: 0; transition: opacity .12s;
+    line-height: 23px;
+  }
+  .msg.grouped:hover .gutter time { opacity: 1; }
+  .msg .body { flex: 1; min-width: 0; }
+  .msg .who { display: flex; align-items: baseline; gap: 8px; margin-bottom: 1px; }
+  .msg .who .name { font-size: 13.5px; font-weight: 650; }
+  .c-teal { color: var(--teal); }
+  .c-green { color: var(--green); }
+  .c-violet { color: var(--violet); }
+  .c-sky { color: var(--sky); }
+  .msg .who time { font-size: 11px; color: var(--faint); }
+  .msg .who .tag {
+    font-size: 9.5px; font-weight: 650; letter-spacing: 0.06em;
+    padding: 2px 6px; border-radius: 5px;
+    background: var(--accent-soft); color: var(--accent-ink);
+    text-transform: uppercase;
+  }
+  .msg .text { font-size: 13.5px; line-height: 1.58; color: var(--fg); }
+  .msg .text code {
+    font-family: ui-monospace, monospace; font-size: 12px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 5px; padding: 1px 5px;
+  }
+  .msg .mention {
+    color: var(--accent-ink); background: var(--accent-soft);
+    border-radius: 5px; padding: 0 5px; font-weight: 560;
+  }
+  .quote {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 5px; font-size: 12.5px; color: var(--muted);
+    padding-left: 11px; position: relative;
+  }
+  .quote::before {
+    content: ""; position: absolute; left: 0; top: 1px; bottom: 1px;
+    width: 3px; border-radius: 2px; background: var(--teal);
+  }
+  .quote .name { color: var(--teal); font-weight: 600; }
+
+  /* attachments — B's rounded chips */
+  .file-chip {
+    display: inline-flex; align-items: center; gap: 10px;
+    margin-top: 7px; padding: 8px 14px 8px 9px;
+    background: var(--surface-2); border: 1px solid var(--border-soft);
+    border-radius: 12px; font-size: 12.5px; cursor: pointer;
+    transition: border-color .12s;
+  }
+  .file-chip:hover { border-color: var(--faint); }
+  .file-chip .ic {
+    width: 32px; height: 32px; border-radius: 8px;
+    background: var(--accent-soft); color: var(--accent-ink);
+    display: grid; place-items: center;
+  }
+  .file-chip .meta b { display: block; font-weight: 600; }
+  .file-chip .meta span { font-size: 11px; color: var(--muted); }
+  .img-embed {
+    margin-top: 8px; border-radius: 14px; overflow: hidden;
+    border: 1px solid var(--border-soft); max-width: 430px;
+    box-shadow: var(--shadow);
+  }
+  .img-embed .ph {
+    height: 230px;
+    background: linear-gradient(135deg, #262b34 0%, #1a1e25 55%, #262b34 100%);
+    display: grid; place-items: center; color: var(--faint);
+    font-size: 12px; font-family: ui-monospace, monospace;
+  }
+  .img-embed .cap {
+    display: flex; justify-content: space-between; padding: 8px 13px;
+    background: var(--surface-2); font-size: 11.5px; color: var(--muted);
+  }
+
+  /* event cards — B's layered card, dark-tuned */
+  .event-card {
+    margin: 10px 0 10px 46px; max-width: 560px;
+    border: 1px solid var(--border-soft); border-radius: 14px;
+    background: var(--surface); overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+  .event-card .ec-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 14px; border-bottom: 1px solid var(--border);
+    font-size: 12px; color: var(--muted); background: var(--rail);
+  }
+  .event-card .st {
+    padding: 2px 9px; border-radius: 10px; font-size: 10px; font-weight: 700;
+    letter-spacing: .04em; text-transform: uppercase;
+  }
+  .st-todo { background: rgb(96 165 250 / .16); color: var(--sky); }
+  .st-prog { background: rgb(251 191 36 / .16); color: var(--amber); }
+  .st-done { background: rgb(52 211 153 / .16); color: var(--green); }
+  .st-rev { background: rgb(167 139 250 / .16); color: var(--violet); }
+  .event-card .ec-body { padding: 12px 15px; }
+  .event-card .ec-title { font-size: 13.5px; font-weight: 620; margin-bottom: 4px; }
+  .event-card .ec-title .key { font-family: ui-monospace, monospace; color: var(--accent-ink); font-weight: 650; }
+  .event-card .ec-sub { font-size: 12px; color: var(--muted); line-height: 1.55; }
+  .event-card .ec-sub code {
+    font-family: ui-monospace, monospace; font-size: 11.5px;
+    background: var(--surface-3); border-radius: 4px; padding: 0 4px;
+  }
+  .event-card .ec-actions { display: flex; gap: 8px; padding: 0 15px 13px; }
+  .chip-btn {
+    padding: 6px 13px; border-radius: 8px; font-size: 12px; font-weight: 560;
+    border: 1px solid var(--border-soft); background: var(--surface-2);
+    color: var(--fg); cursor: pointer;
+  }
+  .chip-btn:hover { border-color: var(--faint); background: var(--surface-3); }
+  .chip-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .chip-btn.ghost { background: transparent; }
+
+  .typing {
+    display: flex; align-items: center; gap: 8px; padding: 8px 26px 0;
+    font-size: 12px; color: var(--muted); min-height: 26px;
+    max-width: 800px; margin: 0 auto; width: 100%;
+  }
+  .typing .dots { display: inline-flex; gap: 3px; }
+  .typing .dots i {
+    width: 5px; height: 5px; border-radius: 50%; background: var(--faint);
+    animation: blink 1.2s infinite;
+  }
+  .typing .dots i:nth-child(2) { animation-delay: .2s; }
+  .typing .dots i:nth-child(3) { animation-delay: .4s; }
+  @keyframes blink { 0%,60%,100% { opacity:.3 } 30% { opacity:1 } }
+
+  /* composer — A's pill structure, B's softness */
+  .composer-wrap { padding: 6px 26px 18px; }
+  .composer-inner { max-width: 800px; margin: 0 auto; }
+  .composer {
+    background: var(--surface-2); border: 1px solid var(--border-soft);
+    border-radius: 16px; padding: 5px; box-shadow: var(--shadow);
+  }
+  .composer:focus-within { border-color: var(--accent-soft); }
+  .paste-strip {
+    display: flex; align-items: center; gap: 10px;
+    margin: 5px 6px 7px; padding: 7px 10px;
+    background: var(--surface); border: 1px dashed var(--faint);
+    border-radius: 11px;
+  }
+  .paste-strip .phimg {
+    height: 42px; width: 60px; border-radius: 8px;
+    background: linear-gradient(135deg,#2a2f3a,#1c2129);
+    display: grid; place-items: center; color: var(--faint); font-size: 10px;
+    font-family: ui-monospace, monospace;
+  }
+  .paste-strip .meta { font-size: 11.5px; color: var(--muted); flex: 1; }
+  .paste-strip .meta b { color: var(--fg); font-weight: 600; }
+  .paste-strip .x {
+    border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 14px;
+  }
+  .composer .row { display: flex; align-items: flex-end; gap: 3px; padding: 3px; }
+  .composer .tool {
+    width: 35px; height: 35px; border-radius: 10px; flex-shrink: 0;
+    border: 0; background: transparent; color: var(--muted); cursor: pointer;
+    display: grid; place-items: center;
+  }
+  .composer .tool:hover { background: var(--surface-3); color: var(--fg); }
+  .composer textarea {
+    flex: 1; border: 0; background: transparent; resize: none;
+    color: var(--fg); font: inherit; font-size: 13.5px; line-height: 1.5;
+    padding: 8px 5px; outline: none; max-height: 160px;
+  }
+  .composer textarea::placeholder { color: var(--faint); }
+  .composer .send {
+    height: 35px; padding: 0 17px; border-radius: 10px; border: 0;
+    background: var(--accent); color: #fff; font-weight: 620; font-size: 13px;
+    cursor: pointer; flex-shrink: 0;
+  }
+  .composer-foot {
+    display: flex; align-items: center; gap: 14px; padding: 4px 12px 8px;
+    font-size: 10.5px; color: var(--faint);
+  }
+  .composer-foot kbd {
+    font-family: inherit; border: 1px solid var(--border-soft); border-radius: 5px;
+    padding: 0 5px; font-size: 10px; background: var(--surface);
+  }
+  .composer-foot .right { margin-left: auto; }
+
+  /* ── context rail — A structure, B warmth ────── */
+  .context {
+    width: 304px; background: var(--rail);
+    border-left: 1px solid var(--border);
+    display: flex; flex-direction: column; flex-shrink: 0;
+    overflow-y: auto;
+  }
+  .ctx-section { padding: 17px 16px 9px; }
+  .ctx-label {
+    font-size: 10.5px; font-weight: 650; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--faint); margin-bottom: 10px;
+    display: flex; align-items: center;
+  }
+  .ctx-label .n {
+    margin-left: auto; font-size: 10px; color: var(--muted);
+    background: var(--surface-2); padding: 1.5px 7px; border-radius: 9px;
+    letter-spacing: 0;
+  }
+  .ctx-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 11px 13px; margin-bottom: 8px;
+    cursor: pointer; transition: border-color .12s, transform .12s;
+  }
+  .ctx-card:hover { border-color: var(--faint); transform: translateY(-1px); }
+  .ctx-card .t { font-size: 12.5px; font-weight: 600; display: flex; gap: 6px; align-items: baseline; }
+  .ctx-card .t .key { font-family: ui-monospace, monospace; color: var(--accent-ink); font-size: 11px; }
+  .ctx-card .s { font-size: 11.5px; color: var(--muted); margin-top: 4px; display: flex; gap: 6px; align-items: center; }
+  .ctx-card .s .st { font-size: 10px; padding: 1px 8px; border-radius: 8px; font-weight: 650; }
+  .prio { font-size: 10px; font-weight: 650; letter-spacing: .05em; }
+  .prio.high { color: var(--rose); }
+  .prio.med { color: var(--amber); }
+  .ctx-link {
+    display: block; font-size: 11.5px; color: var(--accent-ink); text-decoration: none;
+    margin-top: 3px; cursor: pointer;
+  }
+  .member { display: flex; align-items: center; gap: 9px; padding: 4.5px 0; }
+  .member .av {
+    width: 27px; height: 27px; border-radius: 50%;
+    display: grid; place-items: center; font-size: 11px; font-weight: 650; color: #fff;
+    position: relative;
+  }
+  .member .av i {
+    position: absolute; right: -2px; bottom: -2px; width: 9px; height: 9px;
+    border-radius: 50%; border: 2px solid var(--rail); background: var(--faint);
+  }
+  .member .av i.on { background: var(--green); }
+  .member .av i.busy { background: var(--accent); }
+  .member b { font-size: 12.5px; font-weight: 560; display: block; }
+  .member span { font-size: 11px; color: var(--muted); }
+  .ctx-repo {
+    display: flex; align-items: center; gap: 10px; padding: 10px 13px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    font-size: 12px;
+  }
+  .ctx-repo .gh {
+    width: 30px; height: 30px; border-radius: 9px;
+    background: var(--surface-3); display: grid; place-items: center; color: var(--fg);
+  }
+  .ctx-repo b { font-weight: 600; }
+  .ctx-repo span { color: var(--muted); font-size: 11px; display: block; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <nav class="spaces">
+    <div class="space-logo" title="Relay">
+      <svg viewBox="0 0 256 256" fill="none">
+        <path d="M42 60v136h98M42 128h64c34 0 52 18 52 46v22" stroke="#fff" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="178" cy="196" r="18" fill="#f2541b"/>
+      </svg>
+    </div>
+    <div class="space active"><span class="dot"></span>Ry<span class="badge">3</span></div>
+    <div class="space">Dx</div>
+    <div class="space">Io</div>
+    <div class="space">+</div>
+    <div class="spacer"></div>
+    <div class="bottom">
+      <button class="icon-btn" title="Notifications">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+      </button>
+      <button class="icon-btn" title="Settings">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/></svg>
+      </button>
+      <svg class="avatar-sm" viewBox="0 0 32 32"><rect width="32" height="32" rx="16" fill="#a78bfa"/><text x="16" y="21" text-anchor="middle" font-size="13" font-weight="700" fill="#fff" font-family="Inter">T</text></svg>
+    </div>
+  </nav>
+
+  <aside class="rooms">
+    <div class="rooms-head">
+      <div class="mark">T</div>
+      <div style="min-width:0">
+        <h1>Test workspace</h1>
+        <div class="sub">3 projects · 4 members</div>
+      </div>
+    </div>
+    <div class="search-pill">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      Search
+      <kbd>⌘K</kbd>
+    </div>
+    <div class="rooms-scroll">
+      <div class="rooms-label">Inbox</div>
+      <div class="room"><span class="hash"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg></span>Unread<span class="badge">2</span></div>
+      <div class="room"><span class="hash">@</span>Mentions<span class="badge dim">1</span></div>
+
+      <div class="rooms-label">Projects<button class="add">+</button></div>
+      <div class="room active"><span class="hash">#</span>Test Platform<span class="badge">3</span></div>
+      <div class="room"><span class="hash">#</span>Website Refresh</div>
+      <div class="room"><span class="hash">#</span>Infra &amp; Deploys<span class="badge dim">5</span></div>
+
+      <div class="rooms-label">Agents</div>
+      <div class="room"><span class="hash"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 8V4M8 4h8"/><circle cx="9" cy="14" r="1" fill="currentColor"/><circle cx="15" cy="14" r="1" fill="currentColor"/></svg></span>Sweep Bot<span class="badge dim">idle</span></div>
+      <div class="room"><span class="hash"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 8V4M8 4h8"/><circle cx="9" cy="14" r="1" fill="currentColor"/><circle cx="15" cy="14" r="1" fill="currentColor"/></svg></span>Lint Bot<span class="badge">1</span></div>
+    </div>
+  </aside>
+
+  <main class="chat">
+    <header class="chat-head">
+      <h2>Test Platform</h2>
+      <span class="key">TST</span>
+      <span class="desc">Core service, API and web client</span>
+      <div class="spacer"></div>
+      <div class="presence">
+        <svg viewBox="0 0 32 32"><rect width="32" height="32" rx="16" fill="#2dd4bf"/><text x="16" y="21" text-anchor="middle" font-size="12" font-weight="700" fill="#0b0f14">B</text></svg>
+        <svg viewBox="0 0 32 32"><rect width="32" height="32" rx="16" fill="#60a5fa"/><text x="16" y="21" text-anchor="middle" font-size="12" font-weight="700" fill="#fff">D</text></svg>
+        <svg viewBox="0 0 32 32"><rect width="32" height="32" rx="16" fill="#34d399"/><text x="16" y="21" text-anchor="middle" font-size="12" font-weight="700" fill="#0b0f14">A</text></svg>
+        <span class="n">+2</span>
+      </div>
+      <button class="head-tool" title="Search in project"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></button>
+      <button class="head-tool" title="Board view"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="5" height="18" rx="1.5"/><rect x="10" y="3" width="5" height="12" rx="1.5"/><rect x="17" y="3" width="5" height="8" rx="1.5"/></svg></button>
+      <button class="head-tool on" title="Toggle context panel"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg></button>
+    </header>
+
+    <div class="timeline"><div class="tl-inner">
+      <div class="day-sep"><span>Today · Oct 2</span></div>
+
+      <div class="msg">
+        <div class="av" style="background:#2dd4bf">B</div>
+        <div class="body">
+          <div class="who"><span class="name c-teal">Bob</span><time>09:03</time></div>
+          <div class="text">Morning. The import job choked again on repos with <code>size &gt; 2GB</code> — looks like the clone worker times out at 30s.</div>
+        </div>
+      </div>
+      <div class="msg grouped">
+        <div class="gutter"><time>09:04</time></div>
+        <div class="body">
+          <div class="text">I captured the traceback in <code>TST-14</code> — can someone bump the timeout and add a retry with backoff?</div>
+          <div class="file-chip">
+            <div class="ic"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></div>
+            <div class="meta"><b>import-trace.log</b><span>84 KB · log</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="msg">
+        <div class="av bot"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ff8259" stroke-width="1.8"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 8V4M8 4h8"/><circle cx="9" cy="14" r="1" fill="#ff8259"/><circle cx="15" cy="14" r="1" fill="#ff8259"/></svg></div>
+        <div class="body">
+          <div class="who"><span class="name" style="color:var(--fg)">Sweep Bot</span><span class="tag">agent</span><time>09:05</time></div>
+        </div>
+      </div>
+      <div class="event-card">
+        <div class="ec-head"><span class="st st-todo">Todo</span><span>created an issue · high priority</span></div>
+        <div class="ec-body">
+          <div class="ec-title"><span class="key">TST-14</span> Clone worker times out on repositories &gt; 2GB</div>
+          <div class="ec-sub">Raise <code>CloneTimeout</code> to 5m and retry with exponential backoff. Assigned to <b>Bob</b>.</div>
+        </div>
+        <div class="ec-actions">
+          <button class="chip-btn primary">Assign to me</button>
+          <button class="chip-btn">Start work</button>
+          <button class="chip-btn ghost">Open</button>
+        </div>
+      </div>
+
+      <div class="msg">
+        <div class="av" style="background:#60a5fa">D</div>
+        <div class="body">
+          <div class="who"><span class="name c-sky">Dan</span><time>09:08</time></div>
+          <div class="quote"><span class="name">Bob</span><span>I captured the traceback in TST-14…</span></div>
+          <div class="text">On it. Also bumping <code>MaxBodySize</code> so large tarballs don't get cut off mid-import.</div>
+        </div>
+      </div>
+      <div class="msg grouped">
+        <div class="gutter"><time>09:10</time></div>
+        <div class="body">
+          <div class="text">Screenshot of the failing run — note the socket timeout at exactly 30s:</div>
+          <div class="img-embed">
+            <div class="ph">worker-logs.png</div>
+            <div class="cap"><span>worker-logs.png</span><span>1.2 MB</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="unread-sep">New · since 09:32</div>
+
+      <div class="msg">
+        <div class="av" style="background:#34d399">A</div>
+        <div class="body">
+          <div class="who"><span class="name c-green">Alice</span><time>09:32</time></div>
+          <div class="text"><span class="mention">@T</span> the review for the auth refactor is waiting on you — Sweep Bot flagged it as gate-mode.</div>
+        </div>
+      </div>
+      <div class="event-card">
+        <div class="ec-head"><span class="st st-rev">Review</span><span>Sweep Bot submitted a review · waiting for verdict</span></div>
+        <div class="ec-body">
+          <div class="ec-title"><span class="key">REV-7</span> auth: refresh-token rotation + session binding</div>
+          <div class="ec-sub">12 files changed · 3 findings (1 high, 2 low) · branch <code>feat/auth-rotation</code></div>
+        </div>
+        <div class="ec-actions">
+          <button class="chip-btn primary">Approve</button>
+          <button class="chip-btn">Request changes</button>
+          <button class="chip-btn ghost">Diff</button>
+        </div>
+      </div>
+    </div></div>
+
+    <div class="typing"><span class="dots"><i></i><i></i><i></i></span>Dan is typing…</div>
+
+    <div class="composer-wrap"><div class="composer-inner">
+      <div class="composer">
+        <div class="paste-strip">
+          <div class="phimg">img</div>
+          <div class="meta"><b>screenshot-2026-10-02.png</b> · pasted from clipboard · 248 KB</div>
+          <button class="x" title="Remove">✕</button>
+        </div>
+        <div class="row">
+          <button class="tool" title="Attach file"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg></button>
+          <textarea rows="1" placeholder="Message #test-platform — paste an image directly (Ctrl+V)"></textarea>
+          <button class="tool" title="Emoji"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><path d="M9 9h.01M15 9h.01"/></svg></button>
+          <button class="send">Send</button>
+        </div>
+        <div class="composer-foot">
+          <span><kbd>Enter</kbd> send</span>
+          <span><kbd>Shift+Enter</kbd> newline</span>
+          <span><kbd>Ctrl+V</kbd> paste image</span>
+          <span class="right">Markdown supported</span>
+        </div>
+      </div>
+    </div></div>
+  </main>
+
+  <aside class="context">
+    <div class="ctx-section">
+      <div class="ctx-label">Open issues <span class="n">4</span></div>
+      <div class="ctx-card">
+        <div class="t"><span class="key">TST-14</span> Clone worker times out on repos &gt; 2GB</div>
+        <div class="s"><span class="st st-todo">Todo</span><span class="prio high">HIGH</span><span>Bob</span></div>
+      </div>
+      <div class="ctx-card">
+        <div class="t"><span class="key">TST-9</span> Favicon clipped on dark browser themes</div>
+        <div class="s"><span class="st st-prog">In progress</span><span class="prio med">MED</span><span>T</span></div>
+      </div>
+      <div class="ctx-card">
+        <div class="t"><span class="key">TST-7</span> SSE reconnect drops last event</div>
+        <div class="s"><span class="st st-todo">Todo</span><span class="prio med">MED</span><span>Alice</span></div>
+      </div>
+      <a class="ctx-link">Open board →</a>
+    </div>
+
+    <div class="ctx-section">
+      <div class="ctx-label">Reviews <span class="n">1</span></div>
+      <div class="ctx-card">
+        <div class="t"><span class="key">REV-7</span> auth: refresh-token rotation</div>
+        <div class="s"><span class="st st-rev">Pending</span><span>Sweep Bot · 3 findings</span></div>
+      </div>
+      <a class="ctx-link">All reviews →</a>
+    </div>
+
+    <div class="ctx-section">
+      <div class="ctx-label">Development</div>
+      <div class="ctx-repo">
+        <div class="gh"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56v-2.17c-3.2.7-3.87-1.36-3.87-1.36-.52-1.33-1.28-1.68-1.28-1.68-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.03 1.75 2.69 1.25 3.34.95.1-.74.4-1.25.72-1.53-2.55-.29-5.23-1.28-5.23-5.68 0-1.26.45-2.28 1.18-3.09-.12-.29-.51-1.46.11-3.05 0 0 .96-.31 3.15 1.18a10.9 10.9 0 0 1 5.74 0c2.19-1.49 3.15-1.18 3.15-1.18.62 1.59.23 2.76.11 3.05.74.81 1.18 1.83 1.18 3.09 0 4.41-2.69 5.38-5.25 5.67.41.35.77 1.05.77 2.12v3.14c0 .31.21.67.8.56A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5z"/></svg></div>
+        <div><b>relay · main</b><span>2 open PRs · build green</span></div>
+      </div>
+      <a class="ctx-link">Commits &amp; PRs →</a>
+    </div>
+
+    <div class="ctx-section">
+      <div class="ctx-label">Members <span class="n">4</span></div>
+      <div class="member"><div class="av" style="background:#2dd4bf">B<i class="on"></i></div><div><b>Bob</b><span>Backend</span></div></div>
+      <div class="member"><div class="av" style="background:#60a5fa">D<i class="on"></i></div><div><b>Dan</b><span>Platform</span></div></div>
+      <div class="member"><div class="av" style="background:#34d399">A<i class="busy"></i></div><div><b>Alice</b><span>Design</span></div></div>
+      <div class="member"><div class="av" style="background:#f2541b">S<i class="on"></i></div><div><b>Sweep Bot</b><span>agent · gate mode</span></div></div>
+    </div>
+  </aside>
+</div>
+</body>
+</html>
