@@ -44,7 +44,7 @@ thread, thread becomes an issue, issue tracks GitHub state.
 - **Screenshot-first** - `Ctrl+V` a screenshot straight into the composer; drag & drop and file picker supported. Attachments stay attached to their message.
 - **Issues** - fast issue tracker with `MYB-142` keys, statuses, priorities, labels, assignees, comments, and an activity timeline.
 - **Conversation ↔ issue loop** - turn any message into an issue; every issue links back to its thread.
-- **GitHub** - connect repositories through a GitHub App; issues, PRs, and commits mirror into the project with signature-verified webhooks.
+- **GitHub** - connect repositories through a GitHub App (one-click register + install from workspace settings, or pick a repo when creating a project); issues, PRs, and commits mirror into the project with signature-verified webhooks.
 - **Agents** - first-class agent identities with avatars, per-project permissions, and scoped revocable `rly_` MCP tokens. "Last seen" is real MCP activity - never fabricated presence.
 - **Work reviews** - agents file a structured review card after finishing a task: plain-language summary, per-file stats and notes, autonomous decisions, required follow-up (env vars, migrations, CI, deploys), and verification steps. Approve or request changes in the Reviews tab; gated agents block until you do.
 - **MCP server** - streamable-HTTP endpoint exposing projects, conversations, messages, attachments, and issues as tools for external agents.

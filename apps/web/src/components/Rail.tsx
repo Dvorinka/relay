@@ -103,6 +103,13 @@ function NewProjectForm(props: { onDone: () => void }) {
   const [keyEdited, setKeyEdited] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [pending, setPending] = createSignal(false);
+  const [repo, setRepo] = createSignal("");
+  // null = GitHub not connected (API 400s); resolved list = app installed
+  const [repos] = createResource(
+    () => session.workspaces()[0]?.id,
+    (ws) => api.listAvailableRepos(ws).catch(() => null),
+  );
+  const repoList = () => repos()?.repos ?? [];
 
   async function onSubmit(e: SubmitEvent) {
     e.preventDefault();
@@ -119,6 +126,19 @@ function NewProjectForm(props: { onDone: () => void }) {
         name: name().trim(),
         key: key().trim(),
       });
+      const selected = repoList().find((r) => r.full_name === repo());
+      if (selected) {
+        // best effort — the link can always be redone from the project's
+        // Development tab; don't lose the created project over it
+        await api
+          .linkRepo(project.id, {
+            installation_id: selected.installation_id,
+            owner: selected.owner,
+            name: selected.name,
+            default_branch: selected.default_branch,
+          })
+          .catch(() => {});
+      }
       props.onDone();
       navigate(`/app/p/${project.id}`);
     } catch (err) {
@@ -168,6 +188,36 @@ function NewProjectForm(props: { onDone: () => void }) {
         }}
         class={`${inputClass} font-mono uppercase`}
       />
+      <Show when={repoList().length > 0}>
+        <select
+          aria-label="GitHub repository"
+          value={repo()}
+          onChange={(e) => setRepo(e.currentTarget.value)}
+          class={`${inputClass} font-mono`}
+        >
+          <option value="">Link GitHub repo (optional)</option>
+          <For each={repoList()}>
+            {(r) => <option value={r.full_name}>{r.full_name}</option>}
+          </For>
+        </select>
+      </Show>
+      <Show when={repos() === null}>
+        <p class="px-0.5 text-[11.5px] text-muted">
+          <A href="/app/settings" class="text-accent hover:underline">
+            Connect GitHub
+          </A>{" "}
+          in Settings to link a repository.
+        </p>
+      </Show>
+      <Show when={repos() !== null && repos() !== undefined && repoList().length === 0}>
+        <p class="px-0.5 text-[11.5px] text-muted">
+          GitHub connected — install the app on repositories from{" "}
+          <A href="/app/settings" class="text-accent hover:underline">
+            Settings
+          </A>
+          .
+        </p>
+      </Show>
       <FormError message={error()} />
       <div class="flex gap-1.5">
         <SubmitButton pending={pending()} class="h-7 px-2.5">
