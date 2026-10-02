@@ -13,6 +13,7 @@ import { Avatar } from "@ark-ui/solid";
 import { PlusIcon, SearchIcon } from "../../components/icons";
 import { Spinner } from "../../components/ui";
 import { api } from "../../lib/api";
+import { subscribe } from "../../lib/events";
 import { initials } from "../../lib/text";
 import { useSession } from "../../stores/session";
 import {
@@ -117,6 +118,13 @@ export function IssueList(props: { project: Project }) {
     () => props.project.id,
     async (id) => (await api.listIssues(id)).issues,
   );
+
+  const unsub = subscribe((e) => {
+    if (e.project_id === props.project.id && e.type.startsWith("issue.")) {
+      refetch();
+    }
+  });
+  onCleanup(unsub);
 
   const filtered = createMemo(() => {
     const me = session.user()?.id;

@@ -24,6 +24,7 @@ tags:
   - name: mcp
   - name: github
   - name: todos
+  - name: realtime
 paths:
   /api/health:
     get:
@@ -975,6 +976,37 @@ paths:
         - { name: todoId, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
         "204": { description: "Deleted" }
+
+  /api/events:
+    get:
+      operationId: streamEvents
+      summary: Server-sent events for the authenticated user's workspaces
+      description: |
+        Streams `message.created`, `issue.created`, `issue.updated` and
+        `todo.changed` events as `data:` JSON frames. Events are filtered to
+        projects the caller can access. Heartbeat comments every 25s.
+      tags: [realtime]
+      responses:
+        "200":
+          description: "text/event-stream"
+          content:
+            text/event-stream: {}
+
+  /api/me/unread:
+    get:
+      operationId: unreadCounts
+      summary: Per-project unread message counts
+      tags: [realtime]
+      responses:
+        "200": { description: "project_id -> count map" }
+
+  /api/me/mentions:
+    get:
+      operationId: mentions
+      summary: Messages mentioning the caller (@name), newest first
+      tags: [realtime]
+      responses:
+        "200": { description: "Mention feed" }
 
   /api/projects/{projectId}/issues/key/{key}:
     get:

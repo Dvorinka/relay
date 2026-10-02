@@ -79,10 +79,17 @@ and exercised up to the one GitHub-side click that needs a browser session.
 - Issue/PR mirror + HMAC-verified webhooks, `github_sync_state`
 - Project "Development" panel (issues, PRs, recent commits)
 
-## Phase 7 - Realtime & notifications ☐
+## Phase 7 - Realtime & notifications ☑
 
-- SSE event hub, browser live updates
-- Unread counts, mentions, notification center / inbox
+Verified live: an agent posting through `relay-cli` pushed a
+`message.created` SSE frame to a connected browser session, bumped the
+project's unread count, and surfaced the `@mention` in the Inbox feed —
+all without refresh.
+
+- SSE event hub, browser live updates — in-process `events.Hub`, filtered
+  per subscriber by workspace membership, 25s keepalives, reconnecting
+  client with backoff
+- Unread counts (rail badges), `@name` mention feed, Inbox page
 
 ## Phase 8 - Search & polish ☐
 

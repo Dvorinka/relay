@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -22,6 +23,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Dvorinka/relay/internal/db"
+	"github.com/Dvorinka/relay/internal/events"
 	"github.com/Dvorinka/relay/internal/github"
 	"github.com/Dvorinka/relay/internal/storage"
 )
@@ -46,6 +48,8 @@ type Service struct {
 	store *storage.Store
 	gh    *github.Service
 	log   *zap.Logger
+	// Bus publishes domain events for SSE subscribers. Optional.
+	Bus *events.Hub
 
 	mu      sync.Mutex
 	windows map[[16]byte]time.Time // token id -> current minute window start
@@ -55,9 +59,9 @@ type Service struct {
 // New builds the gin handler for POST /mcp. It performs bearer auth,
 // rate limiting, and last_used_at bookkeeping, then hands the request
 // to the mcp-go streamable HTTP transport.
-func New(q *db.Queries, store *storage.Store, log *zap.Logger, gh *github.Service) gin.HandlerFunc {
+func New(q *db.Queries, store *storage.Store, log *zap.Logger, gh *github.Service, hub *events.Hub) gin.HandlerFunc {
 	s := &Service{
-		q: q, store: store, gh: gh, log: log,
+		q: q, store: store, gh: gh, log: log, Bus: hub,
 		windows: make(map[[16]byte]time.Time),
 		counts:  make(map[[16]byte]int),
 	}
@@ -620,6 +624,7 @@ func (s *Service) sendMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 	if err != nil {
 		return errResult(err)
 	}
+	s.publish(ctx, cid, "message.created", map[string]any{"conversation_id": cid.String(), "message": messageJSON(m)})
 	return jsonResult(messageJSON(m))
 }
 
@@ -657,6 +662,7 @@ func (s *Service) createIssue(ctx context.Context, req mcp.CallToolRequest) (*mc
 		return errResult(err)
 	}
 	s.recordActivity(ctx, i.ID, "created", gin.H{"title": title})
+	s.publishPID(pid, "issue.created", map[string]any{"issue": issueJSON(i, pgtype.Text{})})
 	return jsonResult(issueJSON(i, pgtype.Text{}))
 }
 
@@ -691,6 +697,7 @@ func (s *Service) updateIssue(ctx context.Context, req mcp.CallToolRequest) (*mc
 		return errResult(err)
 	}
 	s.recordActivity(ctx, iid, "updated", nil)
+	s.publishPID(pid, "issue.updated", map[string]any{"issue": issueJSON(i, pgtype.Text{})})
 	return jsonResult(issueJSON(i, pgtype.Text{}))
 }
 
@@ -980,4 +987,26 @@ func clampInt(v, lo, hi int) int {
 		return hi
 	}
 	return v
+}
+
+// publish resolves a conversation's project before emitting — a wrong
+// project_id on the event would bypass the SSE membership gate, so never
+// trust the caller.
+func (s *Service) publish(ctx context.Context, conversationID pgtype.UUID, typ string, data map[string]any) {
+	if s.Bus == nil {
+		return
+	}
+	pid, err := s.q.ResolveConversationProject(ctx, conversationID)
+	if err != nil {
+		return
+	}
+	s.publishPID(pid, typ, data)
+}
+
+func (s *Service) publishPID(pid pgtype.UUID, typ string, data map[string]any) {
+	if s.Bus == nil || !pid.Valid {
+		return
+	}
+	id, _ := uuid.FromBytes(pid.Bytes[:])
+	s.Bus.Publish(events.Event{Type: typ, ProjectID: id, Data: data})
 }

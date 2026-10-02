@@ -10,8 +10,10 @@ import (
 	"github.com/Dvorinka/relay/internal/attachments"
 	"github.com/Dvorinka/relay/internal/auth"
 	"github.com/Dvorinka/relay/internal/db"
+	"github.com/Dvorinka/relay/internal/events"
 	"github.com/Dvorinka/relay/internal/httpx"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
@@ -20,6 +22,8 @@ import (
 type Service struct {
 	q   *db.Queries
 	log *zap.Logger
+	// Bus publishes domain events for SSE subscribers. Optional.
+	Bus *events.Hub
 }
 
 func NewService(log *zap.Logger, pool *pgxpool.Pool) *Service {
@@ -200,8 +204,14 @@ func (s *Service) handlePostMessage(c *gin.Context) {
 	// send == read
 	_ = s.q.MarkMessageRead(c.Request.Context(), db.MarkMessageReadParams{MessageID: m.ID, UserID: user.ID})
 	atts := s.attachmentsFor(c, []pgtype.UUID{m.ID})
-	c.JSON(http.StatusCreated, MessageJSON(m.ID, m.ConversationID, m.Body, m.CreatedAt, m.EditedAt,
-		m.AuthorUserID, m.AuthorAgentID, m.AuthorName, m.AuthorAvatar, atts[m.ID.String()]))
+	out := MessageJSON(m.ID, m.ConversationID, m.Body, m.CreatedAt, m.EditedAt,
+		m.AuthorUserID, m.AuthorAgentID, m.AuthorName, m.AuthorAvatar, atts[m.ID.String()])
+	if s.Bus != nil {
+		pid, _ := uuid.FromBytes(conv.ProjectID.Bytes[:])
+		s.Bus.Publish(events.Event{Type: "message.created", ProjectID: pid,
+			Data: map[string]any{"conversation_id": m.ConversationID.String(), "message": out}})
+	}
+	c.JSON(http.StatusCreated, out)
 }
 
 func (s *Service) handleMarkRead(c *gin.Context) {

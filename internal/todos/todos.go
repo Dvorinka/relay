@@ -8,12 +8,14 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
 	"github.com/Dvorinka/relay/internal/auth"
 	"github.com/Dvorinka/relay/internal/db"
+	"github.com/Dvorinka/relay/internal/events"
 	"github.com/Dvorinka/relay/internal/httpx"
 )
 
@@ -23,6 +25,8 @@ const ctxTodo = "relay.todo"
 type Service struct {
 	q   *db.Queries
 	log *zap.Logger
+	// Bus publishes domain events for SSE subscribers. Optional.
+	Bus *events.Hub
 }
 
 func NewService(log *zap.Logger, pool *pgxpool.Pool) *Service {
@@ -147,6 +151,7 @@ func (s *Service) handleCreate(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
+	s.publish(p.ID, "todo.changed")
 	c.JSON(http.StatusCreated, s.todoByID(c, row.ID))
 }
 
@@ -187,6 +192,7 @@ func (s *Service) handleUpdate(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
+	s.publish(t.ProjectID, "todo.changed")
 	c.JSON(http.StatusOK, s.todoByID(c, t.ID))
 }
 
@@ -196,6 +202,7 @@ func (s *Service) handleDelete(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
+	s.publish(t.ProjectID, "todo.changed")
 	c.Status(http.StatusNoContent)
 }
 
@@ -232,4 +239,12 @@ func (s *Service) todoByID(c *gin.Context, id pgtype.UUID) gin.H {
 		return gin.H{"id": id.String()}
 	}
 	return todoJSON(db.ListTodosRow(t))
+}
+
+func (s *Service) publish(projectID pgtype.UUID, typ string) {
+	if s.Bus == nil {
+		return
+	}
+	pid, _ := uuid.FromBytes(projectID.Bytes[:])
+	s.Bus.Publish(events.Event{Type: typ, ProjectID: pid})
 }

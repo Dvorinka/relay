@@ -4,13 +4,17 @@ import {
   createResource,
   createSignal,
   For,
+  onCleanup,
+  onMount,
   Show,
   type ParentProps,
 } from "solid-js";
 import { api } from "../lib/api";
+import { subscribe } from "../lib/events";
 import { deriveKey } from "../lib/text";
 import { useProjects } from "../stores/projects";
 import { useSession } from "../stores/session";
+import { refreshUnread, useUnread } from "../stores/unread";
 import { InboxIcon, PlusIcon, SettingsIcon } from "./icons";
 import { FormError, inputClass, SubmitButton } from "./ui";
 
@@ -51,6 +55,8 @@ function HealthStatus() {
 }
 
 function ProjectRow(props: { project: Project }) {
+  const { unread } = useUnread();
+  const n = () => unread()[props.project.id] ?? 0;
   return (
     <NavItem href={`/app/p/${props.project.id}`}>
       <span
@@ -63,6 +69,11 @@ function ProjectRow(props: { project: Project }) {
         {props.project.key}
       </span>
       <span class="truncate">{props.project.name}</span>
+      <Show when={n() > 0}>
+        <span class="ml-auto rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-medium leading-none text-white">
+          {n() > 99 ? "99+" : n()}
+        </span>
+      </Show>
     </NavItem>
   );
 }
@@ -162,6 +173,11 @@ export function Rail() {
   const session = useSession();
   const projects = useProjects();
   const [creating, setCreating] = createSignal(false);
+  onMount(refreshUnread);
+  const unsub = subscribe((e) => {
+    if (e.type === "message.created") void refreshUnread();
+  });
+  onCleanup(unsub);
   const workspaceName = () => session.workspaces()[0]?.name;
   const list = () => projects.projects() ?? [];
 

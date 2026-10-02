@@ -69,6 +69,15 @@ export interface DevRepoPanel {
   error?: string;
 }
 
+export interface Mention {
+  id: string;
+  body: string;
+  created_at: string;
+  project_id: string;
+  is_read: boolean;
+  author: { name: string; avatar: string | null; kind: string };
+}
+
 export interface Todo {
   id: string;
   content: string;
@@ -383,6 +392,11 @@ export function createClient(baseUrl: string) {
       request<{ id: string; key: string }>(
         `/api/projects/${projectId}/issues/key/${encodeURIComponent(key)}`,
       ),
+
+    // Realtime / notifications
+    unread: () => request<{ unread: Record<string, number> }>(`/api/me/unread`),
+    mentions: () =>
+      request<{ mentions: Mention[] }>(`/api/me/mentions`),
 
     // Attachments
     uploadAttachment: (projectId: string, file: File) => {
