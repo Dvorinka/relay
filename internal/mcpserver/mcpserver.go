@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -277,6 +278,31 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithString("project_id", mcp.Required()),
 		mcp.WithNumber("number", mcp.Required()),
 	), s.ghGetPR)
+
+	srv.AddTool(mcp.NewTool("todo_list",
+		mcp.WithDescription("List the project's todo/work-tracking list (agent-managed)."),
+		mcp.WithString("project_id", mcp.Required()),
+	), s.todoList)
+
+	srv.AddTool(mcp.NewTool("todo_add",
+		mcp.WithDescription("Add a todo item to the project's work list. Optionally link an issue_id."),
+		mcp.WithString("project_id", mcp.Required()),
+		mcp.WithString("content", mcp.Required()),
+		mcp.WithString("issue_id"),
+	), s.todoAdd)
+
+	srv.AddTool(mcp.NewTool("todo_update",
+		mcp.WithDescription("Update a todo: content, done flag, or linked issue."),
+		mcp.WithString("todo_id", mcp.Required()),
+		mcp.WithString("content"),
+		mcp.WithBoolean("done"),
+		mcp.WithString("issue_id"),
+	), s.todoUpdate)
+
+	srv.AddTool(mcp.NewTool("todo_delete",
+		mcp.WithDescription("Delete a todo item."),
+		mcp.WithString("todo_id", mcp.Required()),
+	), s.todoDelete)
 
 	srv.AddTool(mcp.NewTool("mark_message_read",
 		mcp.WithDescription("Mark a message as read by this agent."),
@@ -822,6 +848,128 @@ func (s *Service) ghGetPR(ctx context.Context, req mcp.CallToolRequest) (*mcp.Ca
 		return errResult(err)
 	}
 	return jsonResult(ghPRJSON(*p, r.Owner+"/"+r.Name))
+}
+
+// --- agent todos ---
+
+func todoOut(t db.ListTodosRow) gin.H {
+	out := gin.H{
+		"id": t.ID.String(), "content": t.Content, "done": t.Done,
+		"created_at": t.CreatedAt.Time, "updated_at": t.UpdatedAt.Time,
+	}
+	if t.AgentID.Valid {
+		out["agent"] = gin.H{"id": t.AgentID.String(), "name": t.AgentName.String}
+	}
+	if t.IssueID.Valid && t.IssueKey.Valid {
+		out["issue"] = gin.H{"id": t.IssueID.String(),
+			"key": t.IssueKey.String + "-" + strconv.Itoa(int(t.IssueNumber.Int32))}
+	}
+	return out
+}
+
+func (s *Service) todoList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pid, err := uuidArg(req, "project_id")
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "issue:read"); err != nil {
+		return errResult(err)
+	}
+	rows, err := s.q.ListTodos(ctx, pid)
+	if err != nil {
+		return errResult(err)
+	}
+	out := make([]gin.H, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, todoOut(r))
+	}
+	return jsonResult(out)
+}
+
+func (s *Service) todoAdd(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pid, err := uuidArg(req, "project_id")
+	if err != nil {
+		return errResult(err)
+	}
+	content, err := req.RequireString("content")
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "issue:write"); err != nil {
+		return errResult(err)
+	}
+	var issueID pgtype.UUID
+	if v, ok := req.GetArguments()["issue_id"].(string); ok && v != "" {
+		if err := issueID.Scan(v); err != nil {
+			return errResult(errors.New("invalid issue_id"))
+		}
+	}
+	row, err := s.q.CreateTodo(ctx, db.CreateTodoParams{
+		ProjectID: pid, AgentID: agent(ctx).ID, IssueID: issueID, Content: content,
+	})
+	if err != nil {
+		return errResult(err)
+	}
+	return jsonResult(gin.H{"id": row.ID.String(), "done": row.Done, "content": row.Content})
+}
+
+// todoProject resolves todo_id -> project row for the scope check.
+func (s *Service) todoProject(ctx context.Context, req mcp.CallToolRequest) (pgtype.UUID, db.AgentTodo, error) {
+	tid, err := uuidArg(req, "todo_id")
+	if err != nil {
+		return pgtype.UUID{}, db.AgentTodo{}, err
+	}
+	t, err := s.q.GetTodo(ctx, tid)
+	if err != nil {
+		return pgtype.UUID{}, db.AgentTodo{}, errors.New("todo not found")
+	}
+	return t.ProjectID, t, nil
+}
+
+func (s *Service) todoUpdate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pid, t, err := s.todoProject(ctx, req)
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "issue:write"); err != nil {
+		return errResult(err)
+	}
+	params := db.UpdateTodoParams{ID: t.ID}
+	args := req.GetArguments()
+	if v, ok := args["content"].(string); ok {
+		params.Content = pgtype.Text{String: v, Valid: true}
+	}
+	if v, ok := args["done"].(bool); ok {
+		params.Done = pgtype.Bool{Bool: v, Valid: true}
+	}
+	if v, ok := args["issue_id"].(string); ok {
+		var iid pgtype.UUID
+		if v != "" {
+			if err := iid.Scan(v); err != nil {
+				return errResult(errors.New("invalid issue_id"))
+			}
+		}
+		params.IssueID = iid
+	}
+	row, err := s.q.UpdateTodo(ctx, params)
+	if err != nil {
+		return errResult(err)
+	}
+	return jsonResult(gin.H{"id": row.ID.String(), "done": row.Done, "content": row.Content})
+}
+
+func (s *Service) todoDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pid, t, err := s.todoProject(ctx, req)
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "issue:write"); err != nil {
+		return errResult(err)
+	}
+	if err := s.q.DeleteTodo(ctx, t.ID); err != nil {
+		return errResult(err)
+	}
+	return jsonResult(gin.H{"deleted": t.ID.String()})
 }
 
 func clampInt(v, lo, hi int) int {

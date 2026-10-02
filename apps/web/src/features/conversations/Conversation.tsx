@@ -255,7 +255,7 @@ function MessageRow(props: { projectId: string; message: Message }) {
             {timeAgo(m().created_at)}
           </span>
         </div>
-        <Markdown body={m().body} />
+        <Markdown body={m().body} projectId={props.projectId} />
         <Show when={m().attachments.length > 0}>
           <div class="mt-1.5 flex flex-wrap items-center gap-2">
             <For each={m().attachments}>

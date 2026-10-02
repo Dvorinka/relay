@@ -20,6 +20,7 @@ import (
 	"github.com/Dvorinka/relay/internal/mcpserver"
 	"github.com/Dvorinka/relay/internal/projects"
 	"github.com/Dvorinka/relay/internal/storage"
+	"github.com/Dvorinka/relay/internal/todos"
 	"github.com/Dvorinka/relay/internal/workspaces"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -53,6 +54,7 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	issueSvc := issues.NewService(log, pool)
 	agentSvc := agents.NewService(log, pool)
 	ghSvc := github.NewService(cfg, log, pool)
+	todoSvc := todos.NewService(log, pool)
 	mcpHandler := mcpserver.New(db.New(pool), store, log, ghSvc)
 
 	api := r.Group("/api")
@@ -75,6 +77,7 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	issueSvc.RegisterRoutes(priv)
 	agentSvc.RegisterRoutes(priv)
 	ghSvc.RegisterRoutes(priv, api)
+	todoSvc.RegisterRoutes(priv)
 
 	// external agents: bearer-token MCP, not session cookies
 	r.POST("/mcp", mcpHandler)

@@ -23,6 +23,7 @@ tags:
   - name: agents
   - name: mcp
   - name: github
+  - name: todos
 paths:
   /api/health:
     get:
@@ -919,6 +920,73 @@ paths:
         - $ref: "#/components/parameters/ProjectId"
       responses:
         "200": { description: "Development data" }
+
+  /api/projects/{projectId}/todos:
+    get:
+      operationId: listTodos
+      summary: Project todo list (agent-managed work tracking)
+      tags: [todos]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200": { description: "Todos" }
+    post:
+      operationId: createTodo
+      summary: Add a todo item
+      tags: [todos]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: { type: string }
+                issue_id: { type: string, format: uuid }
+      responses:
+        "201": { description: "Created" }
+
+  /api/todos/{todoId}:
+    patch:
+      operationId: updateTodo
+      summary: Update a todo (content, done, linked issue)
+      tags: [todos]
+      parameters:
+        - { name: todoId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                content: { type: string }
+                done: { type: boolean }
+                issue_id: { type: string }
+      responses:
+        "200": { description: "Updated" }
+    delete:
+      operationId: deleteTodo
+      summary: Delete a todo
+      tags: [todos]
+      parameters:
+        - { name: todoId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: "Deleted" }
+
+  /api/projects/{projectId}/issues/key/{key}:
+    get:
+      operationId: issueByKey
+      summary: Resolve a KEY-42 issue key to its id (for linkification)
+      tags: [issues]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - { name: key, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: "Issue id" }
+        "404": { description: "Not found" }
 
   /api/messages/{messageId}/issue:
     post:

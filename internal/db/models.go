@@ -27,6 +27,18 @@ type AgentProjectPermission struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type AgentTodo struct {
+	ID        pgtype.UUID        `json:"id"`
+	ProjectID pgtype.UUID        `json:"project_id"`
+	AgentID   pgtype.UUID        `json:"agent_id"`
+	IssueID   pgtype.UUID        `json:"issue_id"`
+	Content   string             `json:"content"`
+	Done      bool               `json:"done"`
+	Position  int32              `json:"position"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Attachment struct {
 	ID          pgtype.UUID        `json:"id"`
 	ProjectID   pgtype.UUID        `json:"project_id"`
