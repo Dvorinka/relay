@@ -34,15 +34,18 @@ device, enter your Relay server URL on the login screen
 
 ## Auth model
 
-The app uses the same session cookies as the web app — sign in with a
-regular Relay account. React Native's networking layer persists cookies
-via the platform cookie store.
+The app uses the same session cookie as the web app — sign in with a
+regular Relay account. Because React Native's cookie jar does not
+reliably survive force-stops, `src/lib/api.ts` captures `Set-Cookie` on
+login, persists it in AsyncStorage, and reattaches it on every request
+(including image loads).
 
 ## Notifications & deep links
 
-Not yet wired — push notifications need an EAS project + FCM
-credentials; `relay://` deep links are a config-plugin change once an
-EAS project exists. Tracked in `ROADMAP.md` Phase 10 notes.
+`relay://` is registered as the app scheme. Push notifications are not
+wired — they need an EAS project + FCM credentials; deep-link routes are
+a router `Linking` mapping once URLs are defined. Tracked in `ROADMAP.md`
+Phase 10 notes.
 
 ## Production build
 

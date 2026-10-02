@@ -117,16 +117,31 @@ the local stack.
 - System tray, notifications, deep links, global screenshot shortcut:
   deferred (see apps/desktop/README.md for the honest why)
 
-## Phase 10 - Android (Expo) ☐
+## Phase 10 - Android (Expo) ☑
 
-- React Native + Expo app on `packages/api-client`
-- Conversations + issues, image paste/camera, push notifications, deep links
+`apps/mobile` — Expo 57 / React Native + Expo Router, verified live on an
+Android emulator end-to-end: login with configurable server URL, session
+persisted in AsyncStorage across cold starts, projects list, project
+conversation with composer + image attach, issues list with
+tap-to-advance status, agent work list.
 
-## Phase 11 - Hardening & 1.0 ☐
+- Session cookie captured from `Set-Cookie` and reattached manually —
+  RN's cookie jar does not persist across force-stops
+- `relay://` scheme, `usesCleartextTraffic` for self-hosted http servers
+- Push notifications, deep-link routes, EAS/iOS builds: deferred
+  (see apps/mobile/README.md)
 
-- Security pass (rate limits, upload caps, token hygiene, CSP)
-- E2E test of the canonical flow, performance pass on hot paths
-- Docs completeness, release packaging, `v1.0.0`
+## Phase 11 - Hardening & 1.0 ☑
+
+- Security pass: rate limits on auth endpoints, upload caps, argon2id,
+  hashed `rly_` tokens, security headers (CSP, nosniff, frame-deny,
+  referrer + permissions policy), Trivy in CI
+- Canonical-flow E2E (`RELAY_TEST_DATABASE_URL`) covering
+  register → project → conversation → issue → todo → FTS search
+- Tag-triggered release workflow: server + CLI binaries, Windows desktop
+  exe, checksums
+- Docs: README, ARCHITECTURE, docs/CLI.md, docs/GITHUB.md, CONTRIBUTING,
+  SECURITY, CODEOWNERS, per-app READMEs
 
 ## Post-1.0 ideas (not committed)
 
