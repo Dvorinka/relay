@@ -3,26 +3,34 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Relay — Project chat (Option B · warm light)</title>
+<title>Relay — Project chat (Option B · warm light, refined)</title>
 <style>
+  /* Warm light, refined: flat Element-style timeline (all aligned left,
+     colored displaynames, hover timestamps), full-width chat, and a
+     collapsed context dock that expands as a floating overlay.
+     Improvements: member stack in header, hover actions, reactions,
+     warm "new" divider, polished cards. */
   :root {
     --bg: #fafaf8;
     --rail: #f4f2ee;
     --surface: #ffffff;
+    --surface-2: #f7f5f1;
     --fg: #101318;
     --muted: #5c6470;
     --faint: #9aa1ac;
     --border: #e4e2dc;
+    --border-hi: #d2cec4;
     --accent: #f2541b;
-    --accent-soft: rgb(242 84 27 / 0.08);
+    --accent-soft: rgb(242 84 27 / 0.09);
     --accent-ink: #c93f0f;
-    --bubble-in: #f1efe9;
-    --bubble-out: #fdeee4;
     --green: #059669;
     --violet: #7c5cd6;
     --sky: #2563eb;
     --rose: #e11d48;
-    --shadow: 0 1px 2px rgb(16 19 24 / 0.05), 0 4px 16px rgb(16 19 24 / 0.04);
+    --amber: #b45309;
+    --shadow: 0 1px 2px rgb(16 19 24 / 0.05), 0 4px 16px rgb(16 19 24 / 0.05);
+    --shadow-lg: 0 2px 4px rgb(16 19 24 / .06), 0 16px 44px rgb(16 19 24 / .14);
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; }
@@ -33,94 +41,119 @@
     overflow: hidden;
   }
   ::-webkit-scrollbar { width: 8px; }
-  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 4px; }
 
   .app { display: flex; height: 100vh; }
 
   /* ── workspace nav ───────────────────────────── */
   .nav {
-    width: 264px; background: var(--rail);
+    width: 240px; background: var(--rail);
     border-right: 1px solid var(--border);
     display: flex; flex-direction: column; flex-shrink: 0;
   }
   .nav-top {
-    padding: 16px 18px 10px; display: flex; align-items: center; gap: 10px;
+    padding: 15px 16px 9px; display: flex; align-items: center; gap: 10px;
   }
   .nav-top .logo {
-    width: 34px; height: 34px; border-radius: 10px; background: #101318;
+    width: 32px; height: 32px; border-radius: 10px; background: #101318;
     display: grid; place-items: center; flex-shrink: 0;
   }
-  .nav-top .logo svg { width: 19px; height: 19px; }
-  .nav-top h1 { font-size: 14.5px; font-weight: 650; letter-spacing: -0.01em; }
-  .nav-top .sub { font-size: 11px; color: var(--muted); }
+  .nav-top .logo svg { width: 18px; height: 18px; }
+  .nav-top h1 { font-size: 14px; font-weight: 650; letter-spacing: -0.01em; }
+  .nav-top .sub { font-size: 10.5px; color: var(--muted); }
   .nav-top .col { min-width: 0; flex: 1; }
   .icon-btn {
-    width: 32px; height: 32px; border-radius: 9px; border: 0;
+    width: 30px; height: 30px; border-radius: 9px; border: 0;
     background: transparent; color: var(--muted); cursor: pointer;
     display: grid; place-items: center;
   }
   .icon-btn:hover { background: var(--border); color: var(--fg); }
 
-  .nav-scroll { flex: 1; overflow-y: auto; padding: 4px 12px 12px; }
+  .nav-scroll { flex: 1; overflow-y: auto; padding: 4px 10px 12px; }
   .nav-label {
-    padding: 14px 8px 6px; font-size: 10.5px; font-weight: 650;
-    letter-spacing: 0.07em; text-transform: uppercase; color: var(--faint);
+    padding: 13px 8px 5px; font-size: 10px; font-weight: 700;
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint);
     display: flex; align-items: center;
   }
   .nav-label .add {
     margin-left: auto; border: 0; background: none; color: var(--faint);
-    font-size: 15px; cursor: pointer; line-height: 1;
+    font-size: 14px; cursor: pointer; line-height: 1;
   }
   .nav-item {
-    display: flex; align-items: center; gap: 10px;
-    padding: 7px 10px; border-radius: 9px; cursor: pointer;
-    font-size: 13px; color: var(--muted); text-decoration: none;
+    display: flex; align-items: center; gap: 9px;
+    padding: 6.5px 9px; border-radius: 9px; cursor: pointer;
+    font-size: 12.5px; color: var(--muted); text-decoration: none;
   }
   .nav-item:hover { background: var(--border); color: var(--fg); }
-  .nav-item.active { background: var(--surface); color: var(--fg); font-weight: 550; box-shadow: var(--shadow); }
+  .nav-item.active {
+    background: var(--surface); color: var(--fg); font-weight: 580;
+    box-shadow: var(--shadow);
+  }
   .nav-item svg { color: var(--faint); flex-shrink: 0; }
   .nav-item.active svg { color: var(--accent); }
   .nav-item .badge {
-    margin-left: auto; min-width: 18px; height: 18px; padding: 0 5px;
+    margin-left: auto; min-width: 18px; height: 17px; padding: 0 5px;
     border-radius: 9px; background: var(--accent); color: #fff;
-    font-size: 10.5px; font-weight: 650; display: grid; place-items: center;
+    font-size: 10px; font-weight: 650; display: grid; place-items: center;
   }
   .nav-item .badge.dim { background: var(--border); color: var(--muted); }
   .nav-item .proj-mark {
-    width: 20px; height: 20px; border-radius: 6px; flex-shrink: 0;
+    width: 19px; height: 19px; border-radius: 6px; flex-shrink: 0;
     display: grid; place-items: center;
-    font-size: 10px; font-weight: 700; color: #fff;
+    font-size: 9.5px; font-weight: 700; color: #fff;
   }
 
   .nav-foot {
-    border-top: 1px solid var(--border); padding: 10px 14px;
-    display: flex; align-items: center; gap: 10px;
+    border-top: 1px solid var(--border); padding: 10px 12px;
+    display: flex; align-items: center; gap: 9px;
   }
   .nav-foot .av {
-    width: 30px; height: 30px; border-radius: 50%; background: var(--violet);
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--violet);
     color: #fff; display: grid; place-items: center;
-    font-size: 12px; font-weight: 700;
+    font-size: 11px; font-weight: 700; position: relative;
   }
-  .nav-foot b { font-size: 12.5px; display: block; }
-  .nav-foot span { font-size: 11px; color: var(--muted); }
+  .nav-foot .av i {
+    position: absolute; right: -1px; bottom: -1px; width: 9px; height: 9px;
+    border-radius: 50%; background: var(--green); border: 2px solid var(--rail);
+  }
+  .nav-foot b { font-size: 12px; display: block; }
+  .nav-foot span { font-size: 10.5px; color: var(--muted); }
   .nav-foot .icon-btn { margin-left: auto; }
 
-  /* ── chat column ─────────────────────────────── */
-  .chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  /* ── chat column — full remaining width ──────── */
+  .chat { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
   .chat-head {
-    padding: 14px 22px 12px; border-bottom: 1px solid var(--border);
-    display: flex; align-items: center; gap: 14px; flex-shrink: 0;
+    padding: 12px 24px 11px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 13px; flex-shrink: 0;
+    background: var(--bg);
   }
-  .chat-head .crumb { font-size: 12.5px; color: var(--muted); }
+  .chat-head .crumb { font-size: 12px; color: var(--muted); }
   .chat-head .crumb b { color: var(--fg); font-weight: 600; }
-  .chat-head h2 { font-size: 16px; font-weight: 680; letter-spacing: -0.015em; }
+  .chat-head h2 { font-size: 15.5px; font-weight: 680; letter-spacing: -0.015em; }
   .chat-head .titleblock { display: flex; flex-direction: column; gap: 1px; }
   .chat-head .spacer { flex: 1; }
+
+  /* member presence stack */
+  .faces { display: flex; align-items: center; }
+  .faces .f {
+    width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--bg);
+    display: grid; place-items: center; font-size: 10px; font-weight: 700;
+    color: #fff; margin-left: -7px;
+  }
+  .faces .f:first-child { margin-left: 0; }
+  .faces .more {
+    margin-left: -7px; width: 26px; height: 26px; border-radius: 50%;
+    background: var(--surface-2); border: 2px solid var(--bg);
+    color: var(--muted); font-size: 9.5px; font-weight: 700;
+    display: grid; place-items: center;
+  }
+
   .search-field {
     display: flex; align-items: center; gap: 8px;
     background: var(--surface); border: 1px solid var(--border);
-    border-radius: 10px; padding: 7px 12px; width: 220px;
-    color: var(--faint); font-size: 12.5px;
+    border-radius: 10px; padding: 7px 12px; width: 190px;
+    color: var(--faint); font-size: 12px;
   }
   .search-field kbd {
     margin-left: auto; font-family: inherit; font-size: 10px;
@@ -131,124 +164,203 @@
     display: flex; align-items: center; gap: 7px;
     border: 1px solid var(--border); border-radius: 10px;
     padding: 7px 12px; background: var(--surface);
-    font-size: 12.5px; color: var(--muted); cursor: pointer;
+    font-size: 12px; color: var(--muted); cursor: pointer;
   }
+  .head-pill:hover { border-color: var(--border-hi); color: var(--fg); }
   .head-pill svg { color: var(--faint); }
+  .head-pill.on { border-color: rgb(242 84 27 / .4); color: var(--accent); background: var(--accent-soft); }
 
-  .timeline { flex: 1; overflow-y: auto; padding: 22px 28px 10px; }
-  .tl-inner { max-width: 780px; margin: 0 auto; }
-  .day-sep {
-    display: flex; justify-content: center; margin: 18px 0 14px;
-  }
+  /* flat timeline — element style, warm palette */
+  .timeline { flex: 1; overflow-y: auto; padding: 18px 88px 8px 24px; }
+  .day-sep { display: flex; justify-content: center; margin: 16px 0 14px; }
   .day-sep span {
     font-size: 11px; font-weight: 600; color: var(--muted);
     background: var(--rail); border: 1px solid var(--border);
     padding: 4px 14px; border-radius: 14px;
   }
+  .new-sep { display: flex; align-items: center; gap: 12px; margin: 14px 0; }
+  .new-sep::before, .new-sep::after {
+    content: ""; flex: 1; border-top: 1px solid rgb(242 84 27 / .4);
+  }
+  .new-sep span {
+    font-size: 10.5px; font-weight: 700; color: var(--accent);
+    text-transform: uppercase; letter-spacing: .06em; flex-shrink: 0;
+  }
 
-  /* bubble rows */
-  .row { display: flex; gap: 10px; margin-bottom: 14px; }
-  .row.mine { flex-direction: row-reverse; }
-  .row .av {
-    width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
-    display: grid; place-items: center; align-self: flex-end;
-    font-size: 12px; font-weight: 700; color: #fff;
+  /* flat message rows: avatar, colored name + time, text below */
+  .m { display: flex; gap: 11px; padding: 3px 12px 3px 0; position: relative; }
+  .m:hover { background: var(--rail); border-radius: 10px; }
+  .m + .m { margin-top: 3px; }
+  .m.grouped { margin-top: 0; }
+  .m .av {
+    width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
+    display: grid; place-items: center; font-size: 13px; font-weight: 700;
+    color: #fff; margin-top: 3px; position: relative;
   }
-  .row .stack { max-width: 72%; display: flex; flex-direction: column; }
-  .row.mine .stack { align-items: flex-end; }
-  .bubble {
-    padding: 10px 14px; border-radius: 18px; font-size: 13.5px; line-height: 1.55;
-    box-shadow: var(--shadow);
+  .m .av .st {
+    position: absolute; right: -1px; bottom: -1px; width: 10px; height: 10px;
+    border-radius: 50%; background: var(--green); border: 2px solid var(--bg);
   }
-  .row:not(.mine) .bubble {
-    background: var(--bubble-in); border: 1px solid var(--border);
-    border-bottom-left-radius: 6px;
+  .m .av .st.busy { background: var(--accent); }
+  .m .gutter { width: 34px; flex-shrink: 0; text-align: right; }
+  .m .gutter time {
+    font-size: 10px; color: var(--faint); opacity: 0;
+    line-height: 23px; transition: opacity .1s;
   }
-  .row.mine .bubble {
-    background: var(--bubble-out); border: 1px solid #f6d9c6;
-    border-bottom-right-radius: 6px; color: var(--accent-ink);
+  .m.grouped:hover .gutter time { opacity: 1; }
+  .m .core { flex: 1; min-width: 0; }
+  .m .who { display: flex; align-items: baseline; gap: 8px; margin-bottom: 1px; }
+  .m .who .name { font-size: 13.5px; font-weight: 660; cursor: pointer; }
+  .m .who .name:hover { text-decoration: underline; }
+  .m .who time { font-size: 10.5px; color: var(--faint); }
+  .m .who .tag {
+    font-size: 9px; font-weight: 700; letter-spacing: .07em;
+    padding: 1.5px 7px; border-radius: 8px; text-transform: uppercase;
+    background: var(--surface-2); border: 1px solid var(--border);
+    color: var(--muted);
   }
-  .row.mine .bubble .mention,
-  .bubble code {
-    font-family: ui-monospace, monospace; font-size: 12px;
-    background: rgb(0 0 0 / 0.05); border-radius: 4px; padding: 1px 5px;
+  .c-teal { color: #0d9488; } .c-blue { color: #2563eb; }
+  .c-green { color: #059669; } .c-accent { color: var(--accent-ink); }
+  .m .text { font-size: 13.5px; line-height: 1.58; }
+  .m .text code {
+    font-family: var(--mono); font-size: 12px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 4px; padding: 0 4px;
   }
-  .sig {
-    display: flex; gap: 6px; align-items: baseline; margin-top: 4px;
-    font-size: 10.5px; color: var(--faint); padding: 0 6px;
-  }
-  .sig b { font-weight: 600; color: var(--muted); }
-  .bubble .mention {
+  .m .mention {
     color: var(--accent-ink); background: var(--accent-soft);
     border-radius: 4px; padding: 0 4px; font-weight: 600;
   }
+  .quote {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
+    font-size: 12.5px; color: var(--muted); position: relative; padding-left: 11px;
+  }
+  .quote::before {
+    content: ""; position: absolute; left: 0; top: 1px; bottom: 1px;
+    width: 3px; border-radius: 2px; background: #0d9488;
+  }
+  .quote .name { color: #0d9488; font-weight: 600; }
+
+  /* hover action strip */
+  .m .actions {
+    position: absolute; top: -14px; right: 12px; z-index: 5;
+    display: none; gap: 2px; padding: 3px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; box-shadow: var(--shadow);
+  }
+  .m:hover .actions { display: flex; }
+  .m .actions button {
+    width: 27px; height: 27px; border-radius: 7px; border: 0;
+    background: transparent; color: var(--muted); cursor: pointer;
+    display: grid; place-items: center; font-size: 13px;
+  }
+  .m .actions button:hover { background: var(--rail); color: var(--fg); }
+
+  /* reactions */
+  .reactions { display: flex; gap: 5px; margin-top: 5px; }
+  .rxn {
+    display: inline-flex; align-items: center; gap: 5px;
+    border: 1px solid var(--border); background: var(--surface);
+    border-radius: 13px; padding: 2.5px 9px; font-size: 11.5px;
+    color: var(--muted); cursor: pointer;
+  }
+  .rxn:hover { border-color: var(--border-hi); }
+  .rxn.mine { border-color: rgb(242 84 27 / .35); background: var(--accent-soft); color: var(--accent-ink); }
+  .rxn b { font-weight: 650; }
+
+  .file-chip {
+    display: inline-flex; align-items: center; gap: 10px; margin-top: 7px;
+    padding: 7px 13px 7px 8px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; font-size: 12.5px; cursor: pointer;
+    box-shadow: var(--shadow);
+  }
+  .file-chip .ic {
+    width: 30px; height: 30px; border-radius: 9px;
+    background: var(--accent-soft); color: var(--accent);
+    display: grid; place-items: center;
+  }
+  .file-chip .meta b { display: block; font-weight: 600; font-size: 12.5px; }
+  .file-chip .meta span { font-size: 11px; color: var(--muted); }
 
   .img-embed {
-    margin-top: 6px; border-radius: 14px; overflow: hidden;
-    border: 1px solid var(--border); max-width: 400px;
+    margin-top: 7px; border-radius: 14px; overflow: hidden;
+    border: 1px solid var(--border); max-width: 440px;
     box-shadow: var(--shadow);
   }
   .img-embed .ph {
-    height: 190px;
-    background: linear-gradient(135deg, #e9e6de, #dcd9d0 55%, #e9e6de);
+    height: 200px;
+    background: linear-gradient(135deg, #eae7e0, #dcd9d0 55%, #eae7e0);
     display: grid; place-items: center; color: var(--faint);
-    font-family: ui-monospace, monospace; font-size: 12px;
+    font-family: var(--mono); font-size: 12px;
   }
   .img-embed .cap {
     display: flex; justify-content: space-between; padding: 7px 12px;
     background: var(--surface); font-size: 11px; color: var(--muted);
   }
 
-  /* inline cards in timeline */
+  /* refined inline cards — colored status edge */
   .card {
-    max-width: 520px; margin: 4px 0 14px 42px;
+    margin: 7px 0 12px 0; max-width: 600px;
     background: var(--surface); border: 1px solid var(--border);
     border-radius: 14px; box-shadow: var(--shadow); overflow: hidden;
+    position: relative;
   }
+  .card::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  }
+  .card.c-todo::before { background: var(--sky); }
+  .card.c-rev::before { background: var(--violet); }
   .card .hd {
     display: flex; align-items: center; gap: 8px;
     padding: 9px 14px; border-bottom: 1px solid var(--border);
-    font-size: 11.5px; color: var(--muted); background: var(--rail);
+    font-size: 11.5px; color: var(--muted);
   }
   .card .hd .st {
     padding: 1.5px 9px; border-radius: 10px; font-size: 10px; font-weight: 700;
     letter-spacing: .03em;
   }
   .st-todo { background: rgb(37 99 235 / .1); color: var(--sky); }
-  .st-prog { background: rgb(217 119 6 / .12); color: #b45309; }
+  .st-prog { background: rgb(217 119 6 / .12); color: var(--amber); }
   .st-done { background: rgb(5 150 105 / .12); color: var(--green); }
   .st-rev { background: rgb(124 92 214 / .12); color: var(--violet); }
-  .card .bd { padding: 12px 14px; }
+  .card .bd { padding: 11px 15px; }
   .card .t { font-size: 13.5px; font-weight: 620; margin-bottom: 3px; }
-  .card .t .key { font-family: ui-monospace, monospace; color: var(--accent); }
+  .card .t .key { font-family: var(--mono); color: var(--accent); font-size: 12px; }
   .card .s { font-size: 12px; color: var(--muted); line-height: 1.5; }
-  .card .ft { display: flex; gap: 8px; padding: 0 14px 12px; }
+  .card .s code { font-family: var(--mono); font-size: 11.5px; background: var(--surface-2); border-radius: 4px; padding: 0 4px; }
+  .card .ft { display: flex; gap: 8px; padding: 0 15px 12px; }
   .pill-btn {
     padding: 6px 14px; border-radius: 9px; font-size: 12px; font-weight: 580;
     border: 1px solid var(--border); background: var(--surface);
     color: var(--fg); cursor: pointer;
   }
-  .pill-btn:hover { background: var(--rail); }
-  .pill-btn.dark { background: var(--fg); border-color: var(--fg); color: var(--bg); }
+  .pill-btn:hover { border-color: var(--border-hi); background: var(--rail); }
+  .pill-btn.accent {
+    background: var(--accent); border-color: var(--accent); color: #fff;
+    box-shadow: 0 3px 10px rgb(242 84 27 / .25);
+  }
 
-  .agent-row {
-    display: flex; align-items: center; gap: 7px; margin-left: 42px;
-    margin-bottom: 2px; font-size: 11px; color: var(--faint);
+  .typing {
+    display: flex; align-items: center; gap: 8px; padding: 4px 26px;
+    font-size: 12px; color: var(--muted); min-height: 24px;
   }
-  .agent-row .bot-av {
-    width: 20px; height: 20px; border-radius: 6px; background: #101318;
-    display: grid; place-items: center;
+  .typing .dots { display: inline-flex; gap: 3px; }
+  .typing .dots i {
+    width: 5px; height: 5px; border-radius: 50%; background: var(--faint);
+    animation: blink 1.2s infinite;
   }
-  .agent-row .bot-av svg { width: 12px; height: 12px; }
-  .agent-row b { color: var(--muted); font-weight: 600; }
+  .typing .dots i:nth-child(2) { animation-delay: .2s; }
+  .typing .dots i:nth-child(3) { animation-delay: .4s; }
+  @keyframes blink { 0%,60%,100% { opacity:.3 } 30% { opacity:1 } }
 
   /* composer */
-  .composer-wrap { padding: 8px 28px 20px; }
-  .composer-inner { max-width: 780px; margin: 0 auto; }
+  .composer-wrap { padding: 6px 88px 16px 24px; }
   .composer {
     background: var(--surface); border: 1px solid var(--border);
     border-radius: 18px; box-shadow: var(--shadow); padding: 6px;
   }
+  .composer:focus-within { border-color: rgb(242 84 27 / .45); box-shadow: var(--shadow), 0 0 0 3px rgb(242 84 27 / .08); }
   .paste-strip {
     display: flex; align-items: center; gap: 10px;
     margin: 4px 6px 6px; padding: 7px 10px;
@@ -259,7 +371,7 @@
     height: 42px; width: 60px; border-radius: 8px;
     background: linear-gradient(135deg,#dddad2,#cfccc2);
     display: grid; place-items: center; color: var(--faint); font-size: 10px;
-    font-family: ui-monospace, monospace;
+    font-family: var(--mono);
   }
   .paste-strip .meta { font-size: 11.5px; color: var(--muted); flex: 1; }
   .paste-strip .meta b { color: var(--fg); }
@@ -281,8 +393,9 @@
   .composer textarea::placeholder { color: var(--faint); }
   .composer .send {
     height: 36px; padding: 0 18px; border-radius: 10px; border: 0;
-    background: var(--fg); color: var(--bg); font-weight: 620; font-size: 13px;
+    background: var(--accent); color: #fff; font-weight: 620; font-size: 13px;
     cursor: pointer; flex-shrink: 0;
+    box-shadow: 0 3px 10px rgb(242 84 27 / .28);
   }
   .composer-foot {
     display: flex; gap: 14px; padding: 4px 10px 5px;
@@ -292,22 +405,66 @@
     font-family: inherit; border: 1px solid var(--border); border-radius: 4px;
     padding: 0 4px; font-size: 10px; background: var(--surface);
   }
+  .composer-foot .right { margin-left: auto; }
 
-  /* ── right panel ─────────────────────────────── */
-  .side {
-    width: 296px; background: var(--bg);
-    border-left: 1px solid var(--border);
-    overflow-y: auto; flex-shrink: 0; padding-bottom: 12px;
+  /* ── collapsed context dock ──────────────────── */
+  .dock {
+    width: 52px; flex-shrink: 0; border-left: 1px solid var(--border);
+    background: var(--rail); display: flex; flex-direction: column;
+    align-items: center; padding: 12px 0; gap: 8px;
   }
-  .side-sec { padding: 18px 18px 6px; }
+  .dock-btn {
+    position: relative; width: 36px; height: 36px; border-radius: 11px;
+    border: 0; background: transparent; color: var(--muted); cursor: pointer;
+    display: grid; place-items: center;
+  }
+  .dock-btn:hover { background: var(--border); color: var(--fg); }
+  .dock-btn .n {
+    position: absolute; top: -2px; right: -2px; min-width: 15px; height: 15px;
+    padding: 0 4px; border-radius: 8px; background: var(--accent); color: #fff;
+    font-size: 9px; font-weight: 700; display: grid; place-items: center;
+    border: 2px solid var(--rail);
+  }
+  .dock .sep { width: 24px; border-top: 1px solid var(--border); margin: 4px 0; }
+  .dock .grow { flex: 1; }
+  .dock-av {
+    width: 30px; height: 30px; border-radius: 50%; font-size: 10.5px;
+    font-weight: 700; color: #fff; display: grid; place-items: center;
+    margin: 3px 0; position: relative; cursor: pointer;
+  }
+  .dock-av i {
+    position: absolute; right: -1px; bottom: -1px; width: 8px; height: 8px;
+    border-radius: 50%; border: 2px solid var(--rail); background: var(--faint);
+  }
+  .dock-av i.on { background: var(--green); }
+  .dock-av i.busy { background: var(--accent); }
+
+  /* floating context overlay over chat's right edge */
+  .ctx-overlay {
+    position: absolute; top: 12px; right: 12px; bottom: 12px; width: 302px;
+    background: rgb(255 255 255 / .88); border: 1px solid var(--border);
+    border-radius: 18px; box-shadow: var(--shadow-lg);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    overflow-y: auto; padding-bottom: 12px;
+    display: none; z-index: 20;
+  }
+  .ctx-overlay.open { display: block; }
+  .ctx-head {
+    position: sticky; top: 0; display: flex; align-items: center; gap: 8px;
+    padding: 14px 16px 10px; font-size: 12.5px; font-weight: 650;
+    background: rgb(255 255 255 / .88); backdrop-filter: blur(14px);
+    z-index: 2;
+  }
+  .ctx-head .icon-btn { margin-left: auto; }
+  .side-sec { padding: 8px 16px 6px; }
   .side-label {
-    font-size: 10.5px; font-weight: 680; letter-spacing: 0.07em;
-    text-transform: uppercase; color: var(--faint); margin-bottom: 10px;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--faint); margin-bottom: 9px;
     display: flex; align-items: center;
   }
   .side-label .n {
     margin-left: auto; font-size: 10px; color: var(--muted);
-    background: var(--rail); border: 1px solid var(--border);
+    background: var(--surface-2); border: 1px solid var(--border);
     padding: 1px 7px; border-radius: 8px;
   }
   .mini {
@@ -315,17 +472,17 @@
     border-radius: 11px; padding: 10px 12px; margin-bottom: 8px;
     box-shadow: var(--shadow); cursor: pointer; transition: border-color .12s;
   }
-  .mini:hover { border-color: var(--faint); }
+  .mini:hover { border-color: var(--border-hi); }
   .mini .t { font-size: 12.5px; font-weight: 600; }
   .mini .t .key {
-    font-family: ui-monospace, monospace; color: var(--accent);
+    font-family: var(--mono); color: var(--accent);
     font-size: 10.5px; margin-right: 4px;
   }
   .mini .s { font-size: 11px; color: var(--muted); margin-top: 3px; display: flex; gap: 6px; align-items: center; }
   .mini .s .st { font-size: 9.5px; padding: 1px 7px; border-radius: 8px; }
   .prio { font-size: 10px; font-weight: 700; letter-spacing: .04em; }
   .prio.high { color: var(--rose); }
-  .prio.med { color: #b45309; }
+  .prio.med { color: var(--amber); }
   .side-link {
     font-size: 11.5px; color: var(--accent); text-decoration: none; cursor: pointer;
   }
@@ -374,7 +531,7 @@
         <div class="sub">3 projects</div>
       </div>
       <button class="icon-btn" title="Collapse">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
     </div>
 
@@ -395,10 +552,10 @@
     </div>
 
     <div class="nav-foot">
-      <div class="av">T</div>
+      <div class="av">T<i></i></div>
       <div style="min-width:0"><b>T. Dvorak</b><span>Owner</span></div>
       <button class="icon-btn" title="Settings">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/></svg>
       </button>
     </div>
   </nav>
@@ -411,6 +568,12 @@
         <h2>Project conversation</h2>
       </div>
       <div class="spacer"></div>
+      <div class="faces" title="Bob, Dan, Alice +1">
+        <div class="f" style="background:#0d9488">B</div>
+        <div class="f" style="background:#2563eb">D</div>
+        <div class="f" style="background:#059669">A</div>
+        <div class="more">+1</div>
+      </div>
       <div class="search-field">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
         Search project
@@ -424,156 +587,219 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
         Filters
       </button>
+      <button class="head-pill" onclick="document.getElementById('ctx').classList.toggle('open')" title="Context panel">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg>
+        Context
+      </button>
     </header>
 
     <div class="timeline">
-      <div class="tl-inner">
-        <div class="day-sep"><span>Wednesday, October 1st</span></div>
+      <div class="day-sep"><span>Wednesday, October 1st</span></div>
 
-        <div class="row">
-          <div class="av" style="background:#2dd4bf">B</div>
-          <div class="stack">
-            <div class="bubble">Morning. The import job choked again on repos with <code>size &gt; 2GB</code> — looks like the clone worker times out at 30s. I captured the traceback in <code>TST-14</code>.</div>
-            <div class="sig"><b>Bob</b> 09:03</div>
+      <div class="m">
+        <div class="av" style="background:#0d9488">B<i class="st"></i></div>
+        <div class="core">
+          <div class="who"><span class="name c-teal">Bob</span><time>09:03</time></div>
+          <div class="text">Morning. The import job choked again on repos with <code>size &gt; 2GB</code> — looks like the clone worker times out at 30s.</div>
+        </div>
+        <div class="actions">
+          <button title="React">☺</button>
+          <button title="Reply"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 17l-6-6 6-6"/><path d="M3 11h13a5 5 0 0 1 5 5v2"/></svg></button>
+          <button title="More">⋯</button>
+        </div>
+      </div>
+      <div class="m grouped">
+        <div class="gutter"><time>09:04</time></div>
+        <div class="core">
+          <div class="text">I captured the traceback in <code>TST-14</code> — can someone bump the timeout and add a retry with backoff?</div>
+          <span class="file-chip">
+            <span class="ic"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></span>
+            <span class="meta"><b>import-trace.log</b><span>84 KB · log</span></span>
+          </span>
+          <div class="reactions">
+            <button class="rxn">👀 <b>2</b></button>
+            <button class="rxn mine">✅ <b>1</b></button>
           </div>
         </div>
+      </div>
 
-        <div class="row mine">
-          <div class="av" style="background:#7c5cd6">T</div>
-          <div class="stack">
-            <div class="bubble">On it — bumping <code>CloneTimeout</code> to 5m with retry + backoff.</div>
-            <div class="sig">09:08 <b>You</b></div>
-          </div>
+      <div class="m">
+        <div class="av" style="background:#f2541b;border-radius:12px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 8V4M8 4h8"/><circle cx="9" cy="14" r="1" fill="#fff"/><circle cx="15" cy="14" r="1" fill="#fff"/></svg><i class="st"></i></div>
+        <div class="core">
+          <div class="who"><span class="name" style="color:var(--fg)">Sweep Bot</span><span class="tag">agent</span><time>09:05</time></div>
+          <div class="text" style="color:var(--muted)">filed an issue from that traceback</div>
         </div>
-
-        <div class="row">
-          <div class="av" style="background:#2dd4bf">B</div>
-          <div class="stack">
-            <div class="bubble">Nice. Here's the failing run — note the socket timeout exactly at 30s:
-              <div class="img-embed">
-                <div class="ph">worker-logs.png</div>
-                <div class="cap"><span>worker-logs.png</span><span>1.2 MB</span></div>
-              </div>
+      </div>
+      <div class="m grouped">
+        <div class="gutter"></div>
+        <div class="core">
+          <div class="card c-todo">
+            <div class="hd"><span class="st st-todo">Todo</span><span>issue · high priority · assigned to Bob</span></div>
+            <div class="bd">
+              <div class="t"><span class="key">TST-14</span> Clone worker times out on repositories &gt; 2GB</div>
+              <div class="s">Raise <code>CloneTimeout</code> to 5m and retry with exponential backoff.</div>
             </div>
-            <div class="sig"><b>Bob</b> 09:10</div>
+            <div class="ft">
+              <button class="pill-btn accent">Assign to me</button>
+              <button class="pill-btn">Start work</button>
+              <button class="pill-btn">Open</button>
+            </div>
           </div>
         </div>
+      </div>
 
-        <!-- agent activity card -->
-        <div class="agent-row">
-          <span class="bot-av"><svg viewBox="0 0 24 24" fill="none" stroke="#f2541b" stroke-width="1.8"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 8V4M8 4h8"/><circle cx="9" cy="14" r="1" fill="#f2541b"/><circle cx="15" cy="14" r="1" fill="#f2541b"/></svg></span>
-          <b>Sweep Bot</b> · agent · 09:05
+      <div class="m">
+        <div class="av" style="background:#2563eb">D<i class="st"></i></div>
+        <div class="core">
+          <div class="who"><span class="name c-blue">Dan</span><time>09:08</time></div>
+          <div class="quote"><span class="name">Bob</span><span>I captured the traceback in TST-14…</span></div>
+          <div class="text">On it. Also bumping <code>MaxBodySize</code> so large tarballs don't get cut off mid-import.</div>
         </div>
-        <div class="card">
-          <div class="hd"><span class="st st-todo">TODO</span> created an issue · high priority</div>
-          <div class="bd">
-            <div class="t"><span class="key">TST-14</span> Clone worker times out on repositories &gt; 2GB</div>
-            <div class="s">Raise <code style="font-family:ui-monospace,monospace;font-size:11px">CloneTimeout</code> to 5m and retry with exponential backoff. Assigned to Bob.</div>
-          </div>
-          <div class="ft">
-            <button class="pill-btn dark">Assign to me</button>
-            <button class="pill-btn">Start work</button>
-            <button class="pill-btn">Open</button>
+      </div>
+      <div class="m grouped">
+        <div class="gutter"><time>09:10</time></div>
+        <div class="core">
+          <div class="text">Screenshot of the failing run — socket timeout at exactly 30s:</div>
+          <div class="img-embed">
+            <div class="ph">worker-logs.png</div>
+            <div class="cap"><span>worker-logs.png</span><span>1.2 MB</span></div>
           </div>
         </div>
+      </div>
 
-        <div class="day-sep"><span>Today</span></div>
-
-        <div class="row">
-          <div class="av" style="background:#059669">A</div>
-          <div class="stack">
-            <div class="bubble"><span class="mention">@T</span> the review for the auth refactor is waiting on you — gate mode, so the bot is blocked until you rule on it.</div>
-            <div class="sig"><b>Alice</b> 09:32</div>
-          </div>
+      <div class="m">
+        <div class="av" style="background:#7c5cd6">T<i class="st"></i></div>
+        <div class="core">
+          <div class="who"><span class="name" style="color:#7c5cd6">You</span><time>09:15</time></div>
+          <div class="text">Bumping it now — give me ten minutes to test against the biggest repo we mirror.</div>
         </div>
+      </div>
 
-        <div class="agent-row">
-          <span class="bot-av"><svg viewBox="0 0 24 24" fill="none" stroke="#f2541b" stroke-width="1.8"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 8V4M8 4h8"/><circle cx="9" cy="14" r="1" fill="#f2541b"/><circle cx="15" cy="14" r="1" fill="#f2541b"/></svg></span>
-          <b>Sweep Bot</b> · agent · 09:30
+      <div class="day-sep"><span>Thursday, October 2nd</span></div>
+      <div class="new-sep"><span>New</span></div>
+
+      <div class="m">
+        <div class="av" style="background:#059669">A<i class="st busy"></i></div>
+        <div class="core">
+          <div class="who"><span class="name c-green">Alice</span><time>09:32</time></div>
+          <div class="text"><span class="mention">@T</span> the auth-refactor review is waiting on you — Sweep Bot flagged it as gate-mode.</div>
         </div>
-        <div class="card">
-          <div class="hd"><span class="st st-rev">REVIEW</span> submitted for verdict · gate mode</div>
-          <div class="bd">
-            <div class="t"><span class="key">REV-7</span> auth: refresh-token rotation + session binding</div>
-            <div class="s">12 files changed · 3 findings (1 high, 2 low) · branch <code style="font-family:ui-monospace,monospace;font-size:11px">feat/auth-rotation</code></div>
-          </div>
-          <div class="ft">
-            <button class="pill-btn dark">Approve</button>
-            <button class="pill-btn">Request changes</button>
-            <button class="pill-btn">View diff</button>
+      </div>
+      <div class="m grouped">
+        <div class="gutter"></div>
+        <div class="core">
+          <div class="card c-rev">
+            <div class="hd"><span class="st st-rev">Review</span><span>Sweep Bot submitted a review · awaiting verdict</span></div>
+            <div class="bd">
+              <div class="t"><span class="key">REV-7</span> auth: refresh-token rotation + session binding</div>
+              <div class="s">12 files changed · 3 findings (1 high, 2 low) · branch <code>feat/auth-rotation</code></div>
+            </div>
+            <div class="ft">
+              <button class="pill-btn accent">Approve</button>
+              <button class="pill-btn">Request changes</button>
+              <button class="pill-btn">Diff</button>
+            </div>
           </div>
         </div>
       </div>
     </div>
+
+    <div class="typing"><span class="dots"><i></i><i></i><i></i></span>Dan is typing…</div>
 
     <div class="composer-wrap">
-      <div class="composer-inner">
-        <div class="composer">
-          <div class="paste-strip">
-            <div class="phimg">PNG</div>
-            <div class="meta"><b>screenshot-2026-10-02.png</b> · pasted from clipboard · 248 KB</div>
-            <button class="x" title="Remove">✕</button>
-          </div>
-          <div class="row2">
-            <button class="tool" title="Attach file"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg></button>
-            <textarea rows="1" placeholder="Message Test Platform — drop or Ctrl+V an image"></textarea>
-            <button class="tool" title="Emoji"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><path d="M9 9h.01M15 9h.01"/></svg></button>
-            <button class="send">Send</button>
-          </div>
-          <div class="composer-foot">
-            <span><kbd>Enter</kbd> send</span>
-            <span><kbd>Shift+Enter</kbd> newline</span>
-            <span><kbd>Ctrl+V</kbd> paste image</span>
-          </div>
+      <div class="composer">
+        <div class="paste-strip">
+          <div class="phimg">img</div>
+          <div class="meta"><b>screenshot-2026-10-02.png</b> · pasted from clipboard · 248 KB</div>
+          <button class="x" title="Remove">✕</button>
+        </div>
+        <div class="row2">
+          <button class="tool" title="Attach"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg></button>
+          <textarea rows="1" placeholder="Message #test-platform — paste an image directly (Ctrl+V)"></textarea>
+          <button class="tool" title="Emoji"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><path d="M9 9h.01M15 9h.01"/></svg></button>
+          <button class="send">Send</button>
+        </div>
+        <div class="composer-foot">
+          <span><kbd>Enter</kbd> send</span>
+          <span><kbd>Shift+Enter</kbd> newline</span>
+          <span><kbd>Ctrl+V</kbd> paste image</span>
+          <span class="right">Markdown supported</span>
         </div>
       </div>
     </div>
+
+    <!-- context overlay -->
+    <aside class="ctx-overlay" id="ctx">
+      <div class="ctx-head">
+        Context — Test Platform
+        <button class="icon-btn" onclick="document.getElementById('ctx').classList.remove('open')" title="Close">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="side-sec">
+        <div class="side-label">Open issues <span class="n">4</span></div>
+        <div class="mini">
+          <div class="t"><span class="key">TST-14</span> Clone worker times out on repos &gt; 2GB</div>
+          <div class="s"><span class="st st-todo">Todo</span><span class="prio high">HIGH</span><span>Bob</span></div>
+        </div>
+        <div class="mini">
+          <div class="t"><span class="key">TST-9</span> Favicon clipped on dark browser themes</div>
+          <div class="s"><span class="st st-prog">In progress</span><span class="prio med">MED</span><span>T</span></div>
+        </div>
+        <div class="mini">
+          <div class="t"><span class="key">TST-7</span> SSE reconnect drops last event</div>
+          <div class="s"><span class="st st-todo">Todo</span><span class="prio med">MED</span><span>Alice</span></div>
+        </div>
+        <a class="side-link">Open board →</a>
+      </div>
+      <div class="side-sec">
+        <div class="side-label">Reviews <span class="n">1</span></div>
+        <div class="mini">
+          <div class="t"><span class="key">REV-7</span> auth: refresh-token rotation</div>
+          <div class="s"><span class="st st-rev">Pending</span><span>Sweep Bot · 3 findings</span></div>
+        </div>
+        <a class="side-link">All reviews →</a>
+      </div>
+      <div class="side-sec">
+        <div class="side-label">Development</div>
+        <div class="repo">
+          <div class="gh"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56v-2.17c-3.2.7-3.87-1.36-3.87-1.36-.52-1.33-1.28-1.68-1.28-1.68-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.03 1.75 2.69 1.25 3.34.95.1-.74.4-1.25.72-1.53-2.55-.29-5.23-1.28-5.23-5.68 0-1.26.45-2.28 1.18-3.09-.12-.29-.51-1.46.11-3.05 0 0 .96-.31 3.15 1.18a10.9 10.9 0 0 1 5.74 0c2.19-1.49 3.15-1.18 3.15-1.18.62 1.59.23 2.76.11 3.05.74.81 1.18 1.83 1.18 3.09 0 4.41-2.69 5.38-5.25 5.67.41.35.77 1.05.77 2.12v3.14c0 .31.21.67.8.56A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5z"/></svg></div>
+          <div><b>relay · main</b><span>2 open PRs · build green</span></div>
+        </div>
+        <a class="side-link">Commits &amp; PRs →</a>
+      </div>
+      <div class="side-sec">
+        <div class="side-label">Members <span class="n">4</span></div>
+        <div class="mate"><div class="av" style="background:#0d9488">B<i class="on"></i></div><div><b>Bob</b><span>Backend</span></div></div>
+        <div class="mate"><div class="av" style="background:#2563eb">D<i class="on"></i></div><div><b>Dan</b><span>Platform</span></div></div>
+        <div class="mate"><div class="av" style="background:#059669">A<i class="busy"></i></div><div><b>Alice</b><span>Design</span></div></div>
+        <div class="mate"><div class="av" style="background:#f2541b">S<i class="on"></i></div><div><b>Sweep Bot</b><span>agent · gate</span></div></div>
+      </div>
+    </aside>
   </main>
 
-  <!-- right context -->
-  <aside class="side">
-    <div class="side-sec">
-      <div class="side-label">Open issues <span class="n">4</span></div>
-      <div class="mini">
-        <div class="t"><span class="key">TST-14</span>Clone worker times out on repos &gt; 2GB</div>
-        <div class="s"><span class="st st-todo">TODO</span><span class="prio high">HIGH</span><span>Bob</span></div>
-      </div>
-      <div class="mini">
-        <div class="t"><span class="key">TST-9</span>Favicon clipped on dark themes</div>
-        <div class="s"><span class="st st-prog">IN PROGRESS</span><span class="prio med">MED</span><span>You</span></div>
-      </div>
-      <div class="mini">
-        <div class="t"><span class="key">TST-7</span>SSE reconnect drops last event</div>
-        <div class="s"><span class="st st-todo">TODO</span><span class="prio med">MED</span><span>Alice</span></div>
-      </div>
-      <a class="side-link">Open board →</a>
-    </div>
-
-    <div class="side-sec">
-      <div class="side-label">Pending reviews <span class="n">1</span></div>
-      <div class="mini">
-        <div class="t"><span class="key">REV-7</span>auth: refresh-token rotation</div>
-        <div class="s"><span class="st st-rev">PENDING</span><span>Sweep Bot · 3 findings</span></div>
-      </div>
-      <a class="side-link">All reviews →</a>
-    </div>
-
-    <div class="side-sec">
-      <div class="side-label">Repository</div>
-      <div class="repo">
-        <div class="gh"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56v-2.17c-3.2.7-3.87-1.36-3.87-1.36-.52-1.33-1.28-1.68-1.28-1.68-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.03 1.75 2.69 1.25 3.34.95.1-.74.4-1.25.72-1.53-2.55-.29-5.23-1.28-5.23-5.68 0-1.26.45-2.28 1.18-3.09-.12-.29-.51-1.46.11-3.05 0 0 .96-.31 3.15 1.18a10.9 10.9 0 0 1 5.74 0c2.19-1.49 3.15-1.18 3.15-1.18.62 1.59.23 2.76.11 3.05.74.81 1.18 1.83 1.18 3.09 0 4.41-2.69 5.38-5.25 5.67.41.35.77 1.05.77 2.12v3.14c0 .31.21.67.8.56A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5z"/></svg></div>
-        <div><b>Dvorinka/relay</b><span>main · 2 open PRs · build green</span></div>
-      </div>
-      <a class="side-link">Commits &amp; PRs →</a>
-    </div>
-
-    <div class="side-sec">
-      <div class="side-label">Members <span class="n">4</span></div>
-      <div class="mate"><div class="av" style="background:#2dd4bf">B<i class="on"></i></div><div><b>Bob</b><span>Backend</span></div></div>
-      <div class="mate"><div class="av" style="background:#059669">A<i class="busy"></i></div><div><b>Alice</b><span>Design</span></div></div>
-      <div class="mate"><div class="av" style="background:#7c5cd6">T<i class="on"></i></div><div><b>You</b><span>Owner</span></div></div>
-      <div class="mate"><div class="av" style="background:#f2541b">S<i class="on"></i></div><div><b>Sweep Bot</b><span>agent · gate mode</span></div></div>
-    </div>
+  <!-- collapsed context dock -->
+  <aside class="dock">
+    <button class="dock-btn" title="Issues · 4" onclick="document.getElementById('ctx').classList.toggle('open')">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg>
+      <span class="n">4</span>
+    </button>
+    <button class="dock-btn" title="Reviews · 1" onclick="document.getElementById('ctx').classList.toggle('open')">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      <span class="n">1</span>
+    </button>
+    <button class="dock-btn" title="Development" onclick="document.getElementById('ctx').classList.toggle('open')">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+    </button>
+    <div class="sep"></div>
+    <div class="dock-av" style="background:#0d9488" title="Bob — online">B<i class="on"></i></div>
+    <div class="dock-av" style="background:#2563eb" title="Dan — online">D<i class="on"></i></div>
+    <div class="dock-av" style="background:#059669" title="Alice — busy">A<i class="busy"></i></div>
+    <div class="dock-av" style="background:#f2541b" title="Sweep Bot — agent">S<i class="on"></i></div>
+    <div class="grow"></div>
+    <button class="dock-btn" title="Settings">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/></svg>
+    </button>
   </aside>
 </div>
 </body>
