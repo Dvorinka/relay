@@ -47,19 +47,50 @@ type Conversation struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type GithubApp struct {
+	ID               bool               `json:"id"`
+	AppID            int64              `json:"app_id"`
+	Slug             string             `json:"slug"`
+	Name             string             `json:"name"`
+	ClientID         string             `json:"client_id"`
+	ClientSecretEnc  []byte             `json:"client_secret_enc"`
+	PrivateKeyEnc    []byte             `json:"private_key_enc"`
+	WebhookSecretEnc []byte             `json:"webhook_secret_enc"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
+type GithubEvent struct {
+	DeliveryID  string             `json:"delivery_id"`
+	Event       string             `json:"event"`
+	ProcessedAt pgtype.Timestamptz `json:"processed_at"`
+}
+
+type GithubInstallation struct {
+	ID             pgtype.UUID        `json:"id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	InstallationID int64              `json:"installation_id"`
+	AccountLogin   string             `json:"account_login"`
+	AccountType    string             `json:"account_type"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
 type Issue struct {
-	ID          pgtype.UUID        `json:"id"`
-	ProjectID   pgtype.UUID        `json:"project_id"`
-	Number      int32              `json:"number"`
-	Title       string             `json:"title"`
-	Description string             `json:"description"`
-	Status      string             `json:"status"`
-	Priority    string             `json:"priority"`
-	AssigneeID  pgtype.UUID        `json:"assignee_id"`
-	AgentID     pgtype.UUID        `json:"agent_id"`
-	CreatedBy   pgtype.UUID        `json:"created_by"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	ID           pgtype.UUID        `json:"id"`
+	ProjectID    pgtype.UUID        `json:"project_id"`
+	Number       int32              `json:"number"`
+	Title        string             `json:"title"`
+	Description  string             `json:"description"`
+	Status       string             `json:"status"`
+	Priority     string             `json:"priority"`
+	AssigneeID   pgtype.UUID        `json:"assignee_id"`
+	AgentID      pgtype.UUID        `json:"agent_id"`
+	CreatedBy    pgtype.UUID        `json:"created_by"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	GithubNodeID pgtype.Text        `json:"github_node_id"`
+	GithubRepoID pgtype.UUID        `json:"github_repo_id"`
+	GithubNumber pgtype.Int4        `json:"github_number"`
+	Origin       string             `json:"origin"`
 }
 
 type IssueActivity struct {
@@ -157,6 +188,17 @@ type RateLimit struct {
 	Key         string             `json:"key"`
 	WindowStart pgtype.Timestamptz `json:"window_start"`
 	Count       int32              `json:"count"`
+}
+
+type Repository struct {
+	ID             pgtype.UUID        `json:"id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	InstallationID int64              `json:"installation_id"`
+	Owner          string             `json:"owner"`
+	Name           string             `json:"name"`
+	DefaultBranch  string             `json:"default_branch"`
+	LinkedBy       pgtype.UUID        `json:"linked_by"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
 type Session struct {

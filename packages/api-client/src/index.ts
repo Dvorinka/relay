@@ -29,6 +29,51 @@ export type AgentGrant = components["schemas"]["AgentGrant"];
 export type McpTokenMeta = components["schemas"]["McpTokenMeta"];
 export type MintedToken = components["schemas"]["MintedToken"];
 
+export interface LinkedRepo {
+  id: string;
+  owner: string;
+  name: string;
+  full_name: string;
+  default_branch: string;
+  installation_id: number;
+  url: string;
+}
+
+export interface DevRepoPanel {
+  repo: LinkedRepo;
+  issues: {
+    number: number;
+    title: string;
+    state: string;
+    url: string;
+    author: string;
+    updated_at: string;
+  }[];
+  prs: {
+    number: number;
+    title: string;
+    state: string;
+    draft: boolean;
+    url: string;
+    author: string;
+    head: string;
+    base: string;
+  }[];
+  commits: {
+    sha: string;
+    message: string;
+    url: string;
+    author: string;
+    date: string;
+  }[];
+  error?: string;
+}
+
+export interface DevelopmentPanel {
+  repos: DevRepoPanel[];
+  fetched_at: string;
+}
+
 export type CreateIssueRequest = NonNullable<
   paths["/api/projects/{projectId}/issues"]["post"]["requestBody"]
 >["content"]["application/json"];
@@ -252,6 +297,62 @@ export function createClient(baseUrl: string) {
       request<void>(`/api/agents/${agentId}/tokens/${tokenId}`, {
         method: "DELETE",
       }),
+
+    // GitHub
+    getGitHubApp: () =>
+      request<{
+        registered: boolean;
+        app_id?: number;
+        slug?: string;
+        name?: string;
+        install_url?: string;
+      }>("/api/github/app"),
+    githubManifest: (workspaceId: string) =>
+      post<{ manifest: Record<string, unknown>; post_url: string }>(
+        `/api/github/app/manifest?workspace=${encodeURIComponent(workspaceId)}`,
+      ),
+    deleteGitHubApp: () =>
+      request<void>("/api/github/app", { method: "DELETE" }),
+    listGitHubInstallations: (workspaceId: string) =>
+      request<{
+        installations: {
+          id: string;
+          installation_id: number;
+          account_login: string;
+        }[];
+        install_url?: string;
+      }>(`/api/workspaces/${workspaceId}/github/installations`),
+    listAvailableRepos: (workspaceId: string) =>
+      request<{
+        repos: {
+          installation_id: number;
+          full_name: string;
+          owner: string;
+          name: string;
+          default_branch: string;
+          private: boolean;
+        }[];
+      }>(`/api/workspaces/${workspaceId}/github/repos`),
+    listProjectRepos: (projectId: string) =>
+      request<{ repos: LinkedRepo[] }>(
+        `/api/projects/${projectId}/github/repos`,
+      ),
+    linkRepo: (
+      projectId: string,
+      input: {
+        installation_id: number;
+        owner: string;
+        name: string;
+        default_branch?: string;
+      },
+    ) =>
+      put<LinkedRepo>(`/api/projects/${projectId}/github/repo`, input),
+    unlinkRepo: (projectId: string, repoId: string) =>
+      request<void>(`/api/projects/${projectId}/github/repo/${repoId}`, {
+        method: "DELETE",
+      }),
+    projectDevelopment: (projectId: string) =>
+      request<DevelopmentPanel>(`/api/projects/${projectId}/development`),
 
     // Attachments
     uploadAttachment: (projectId: string, file: File) => {

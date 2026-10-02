@@ -13,25 +13,31 @@ values (sqlc.arg(project_id), sqlc.arg(number), sqlc.arg(title), sqlc.arg(descri
 returning *;
 
 -- name: GetIssueForUser :one
-select i.*, u.name as assignee_name, u.avatar_key as assignee_avatar
+select i.*, u.name as assignee_name, u.avatar_key as assignee_avatar,
+       gr.owner as github_repo_owner, gr.name as github_repo_name
 from issues i
 join projects p on p.id = i.project_id
 join workspace_members wm on wm.workspace_id = p.workspace_id and wm.user_id = sqlc.arg(user_id)
 left join users u on u.id = i.assignee_id
+left join repositories gr on gr.id = i.github_repo_id
 where i.id = sqlc.arg(id);
 
 -- name: GetIssueByID :one
-select i.*, u.name as assignee_name, u.avatar_key as assignee_avatar
+select i.*, u.name as assignee_name, u.avatar_key as assignee_avatar,
+       gr.owner as github_repo_owner, gr.name as github_repo_name
 from issues i
 left join users u on u.id = i.assignee_id
+left join repositories gr on gr.id = i.github_repo_id
 where i.id = sqlc.arg(id);
 
 -- name: ListIssuesForUser :many
-select i.*, u.name as assignee_name, u.avatar_key as assignee_avatar
+select i.*, u.name as assignee_name, u.avatar_key as assignee_avatar,
+       gr.owner as github_repo_owner, gr.name as github_repo_name
 from issues i
 join projects p on p.id = i.project_id
 join workspace_members wm on wm.workspace_id = p.workspace_id and wm.user_id = sqlc.arg(user_id)
 left join users u on u.id = i.assignee_id
+left join repositories gr on gr.id = i.github_repo_id
 where i.project_id = sqlc.arg(project_id)
   and (sqlc.narg(status)::text is null or i.status = sqlc.narg(status))
   and (sqlc.narg(assignee)::uuid is null or i.assignee_id = sqlc.narg(assignee))

@@ -42,14 +42,29 @@ goose + sqlc wired, OpenAPI skeleton, health endpoint, brand kit, docs.
 - Hero, feature grid, MCP callout, self-host quickstart, footer
 - Brand-true, dark/light aware, zero tracking
 
-## Phase 5 - Agents & MCP ☐
+## Phase 5 - Agents & MCP ☑
 
 - Agent identities (name, avatar, description, last-seen)
 - Scoped, revocable `rly_` MCP tokens, per-project permissions
 - MCP server (streamable HTTP): full tool list from the spec
 - Project settings: agent access management
 
-## Phase 6 - GitHub ☐
+## Phase 5.5 - Agent workflow ☐
+
+- `relay` CLI: single Go binary wrapping the MCP endpoint (`rly_` tokens)
+- Agent-managed project todos - the agent's persistent "what remains" list,
+  linked to issues, visible in the project UI
+- GitHub refs in messages (`owner/repo#123`) linkified; `MYB-42` keys link
+  to internal issues
+- Kanban board view for issues
+
+## Phase 6 - GitHub ☑
+
+Verified end-to-end against `Dvorinka/relay`: PAT/dev token lists repos,
+repo links to a project, development panel shows live commits, synthetic
+webhooks mirror issue open/close/rename, and MCP tools read real GitHub
+issues and PRs. App-mode (manifest registration + installation) is built
+and exercised up to the one GitHub-side click that needs a browser session.
 
 - GitHub App creation via manifest, installation flow
 - Repository linking per project

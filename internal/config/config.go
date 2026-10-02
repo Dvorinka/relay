@@ -30,6 +30,9 @@ type Config struct {
 	StorageBucket         string
 	StorageMaxUploadMiB   int64
 	StoragePresignTTL     int
+	// GITHUB_TOKEN is a dev fallback so the development panel works without a
+	// registered GitHub App. Installation tokens take precedence once an app exists.
+	GitHubToken string
 }
 
 func Load() (Config, error) {
@@ -52,6 +55,7 @@ func Load() (Config, error) {
 		StorageBucket:         getEnv("STORAGE_BUCKET", "relay"),
 		StorageMaxUploadMiB:   int64(getInt("STORAGE_MAX_UPLOAD_MIB", 25)),
 		StoragePresignTTL:     getInt("STORAGE_PRESIGN_TTL", 300),
+		GitHubToken:           os.Getenv("GITHUB_TOKEN"),
 	}
 
 	var missing []string

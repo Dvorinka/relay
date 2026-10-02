@@ -17,6 +17,12 @@ tags:
   - name: workspaces
   - name: projects
   - name: conversations
+  - name: messages
+  - name: attachments
+  - name: issues
+  - name: agents
+  - name: mcp
+  - name: github
 paths:
   /api/health:
     get:
@@ -801,6 +807,119 @@ paths:
         "200": { description: JSON-RPC response }
         "401": { description: "Missing, revoked, or expired token" }
 
+  /api/github/app:
+    get:
+      operationId: getGitHubApp
+      summary: GitHub App registration status
+      tags: [github]
+      responses:
+        "200": { description: "App status" }
+    delete:
+      operationId: deleteGitHubApp
+      summary: Remove the registered GitHub App
+      tags: [github]
+      responses:
+        "204": { description: "Removed" }
+
+  /api/github/app/manifest:
+    post:
+      operationId: githubManifest
+      summary: Start GitHub App manifest registration
+      tags: [github]
+      responses:
+        "200": { description: "Manifest JSON + post URL" }
+
+  /api/github/callback:
+    get:
+      operationId: githubCallback
+      summary: GitHub app-manifest callback (browser redirect)
+      tags: [github]
+      parameters:
+        - { name: code, in: query, required: true, schema: { type: string } }
+      responses:
+        "302": { description: "Redirect back to the app" }
+
+  /api/github/webhook:
+    post:
+      operationId: githubWebhook
+      summary: GitHub webhook receiver (HMAC-verified)
+      tags: [github]
+      responses:
+        "202": { description: "Accepted for processing" }
+
+  /api/workspaces/{workspaceId}/github/installations:
+    get:
+      operationId: listGitHubInstallations
+      summary: GitHub installations for a workspace
+      tags: [github]
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200": { description: "Installations" }
+
+  /api/workspaces/{workspaceId}/github/repos:
+    get:
+      operationId: listAvailableRepos
+      summary: Repositories reachable via the workspace's installations
+      tags: [github]
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200": { description: "Installable repositories" }
+
+  /api/projects/{projectId}/github/repos:
+    get:
+      operationId: listProjectRepos
+      summary: Repositories linked to a project
+      tags: [github]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200": { description: "Linked repositories" }
+
+  /api/projects/{projectId}/github/repo:
+    put:
+      operationId: linkRepo
+      summary: Link a repository to a project
+      tags: [github]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [installation_id, owner, name]
+              properties:
+                installation_id: { type: integer, format: int64 }
+                owner: { type: string }
+                name: { type: string }
+                default_branch: { type: string }
+      responses:
+        "201": { description: "Linked" }
+
+  /api/projects/{projectId}/github/repo/{repoId}:
+    delete:
+      operationId: unlinkRepo
+      summary: Unlink a repository from a project
+      tags: [github]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - { name: repoId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: "Unlinked" }
+
+  /api/projects/{projectId}/development:
+    get:
+      operationId: projectDevelopment
+      summary: Development panel — open GitHub issues, PRs, recent commits (60s cache)
+      tags: [github]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200": { description: "Development data" }
+
   /api/messages/{messageId}/issue:
     post:
       operationId: createIssueFromMessage
@@ -1132,6 +1251,15 @@ components:
           items: { $ref: "#/components/schemas/Label" }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        origin: { type: string, enum: [relay, github], description: "relay = native, github = mirrored from a linked repository" }
+        github:
+          type: object
+          description: "Present when the issue mirrors a GitHub issue"
+          properties:
+            repo: { type: string, description: "owner/name" }
+            number: { type: integer }
+            state: { type: string, enum: [open, closed] }
+            url: { type: string }
 
     IssueActivity:
       type: object

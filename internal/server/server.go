@@ -15,6 +15,7 @@ import (
 	"github.com/Dvorinka/relay/internal/config"
 	"github.com/Dvorinka/relay/internal/conversations"
 	"github.com/Dvorinka/relay/internal/db"
+	"github.com/Dvorinka/relay/internal/github"
 	"github.com/Dvorinka/relay/internal/issues"
 	"github.com/Dvorinka/relay/internal/mcpserver"
 	"github.com/Dvorinka/relay/internal/projects"
@@ -51,7 +52,8 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	attSvc := attachments.NewService(log, pool, store, cfg)
 	issueSvc := issues.NewService(log, pool)
 	agentSvc := agents.NewService(log, pool)
-	mcpHandler := mcpserver.New(db.New(pool), store, log)
+	ghSvc := github.NewService(cfg, log, pool)
+	mcpHandler := mcpserver.New(db.New(pool), store, log, ghSvc)
 
 	api := r.Group("/api")
 	api.GET("/health", func(c *gin.Context) {
@@ -72,6 +74,7 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	attSvc.RegisterRoutes(priv)
 	issueSvc.RegisterRoutes(priv)
 	agentSvc.RegisterRoutes(priv)
+	ghSvc.RegisterRoutes(priv, api)
 
 	// external agents: bearer-token MCP, not session cookies
 	r.POST("/mcp", mcpHandler)
