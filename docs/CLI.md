@@ -41,12 +41,53 @@ relay-cli todo-del <todo_id>
 relay-cli gh issues|prs <project_id>            # GitHub lists
 relay-cli gh issue|pr <project_id> <number>     # GitHub detail
 
+relay-cli reviews <project_id> [--status pending]      # work reviews
+relay-cli review <review_id>                           # review detail
+relay-cli review-submit <project_id> --file review.json  # structured review
+relay-cli review-submit <project_id> --file -            #   …from stdin
+relay-cli review-await <review_id> [--timeout 60]      # block for a verdict
+
 relay-cli search <project_id> "query"           # message search
 relay-cli attachment <id>                       # print presigned URL
 relay-cli attachment <id> --out shot.png        # download
 ```
 
 Output is pretty-printed JSON — pipe to `jq` freely.
+
+## Reviews
+
+Agents file a structured review when they finish requested work. The payload
+is fixed-schema — keep it that way, users read it as a card in the app:
+
+```json
+{
+  "title": "Short imperative title",
+  "summary": "Plain-language paragraph: what changed and why.",
+  "issue_id": "optional",
+  "files": [
+    {"path": "internal/x.go", "status": "modified",
+     "additions": 12, "deletions": 3,
+     "note": "one-line explanation for a non-reviewer"}
+  ],
+  "decisions": [
+    {"decision": "what you chose", "rationale": "why"}
+  ],
+  "actions": [
+    {"kind": "env|secret|ci|deploy|migration|config|other",
+     "label": "New RELAY_FOO env var", "detail": "what to set and where"}
+  ],
+  "links": [{"label": "PR #42", "url": "https://…"}],
+  "verify": "Numbered steps the user can follow to check the work."
+}
+```
+
+The agent's **review mode** is set on the agent in Settings → Agents:
+
+- `notify` — file the review after finishing; `submit_review` returns
+  `must_wait: false`.
+- `gate` — `submit_review` returns `must_wait: true`; call
+  `review-await <id>` and act on the verdict (`approved` or
+  `changes_requested` + the user's note).
 
 ## A typical agent loop
 

@@ -46,6 +46,7 @@ thread, thread becomes an issue, issue tracks GitHub state.
 - **Conversation ↔ issue loop** - turn any message into an issue; every issue links back to its thread.
 - **GitHub** - connect repositories through a GitHub App; issues, PRs, and commits mirror into the project with signature-verified webhooks.
 - **Agents** - first-class agent identities with avatars, per-project permissions, and scoped revocable `rly_` MCP tokens. "Last seen" is real MCP activity - never fabricated presence.
+- **Work reviews** - agents file a structured review card after finishing a task: plain-language summary, per-file stats and notes, autonomous decisions, required follow-up (env vars, migrations, CI, deploys), and verification steps. Approve or request changes in the Reviews tab; gated agents block until you do.
 - **MCP server** - streamable-HTTP endpoint exposing projects, conversations, messages, attachments, and issues as tools for external agents.
 - **Realtime** - SSE event stream for live messages, issue changes, and notifications.
 - **Search** - `Ctrl/Cmd+K` across projects, issues, messages, and GitHub items, backed by Postgres FTS.
@@ -107,7 +108,30 @@ Tools: `list_projects`, `get_project`, `list_conversations`, `get_messages`,
 `get_issue`, `send_message`, `create_issue`, `update_issue`,
 `mark_message_read`, `todo_list`, `todo_add`, `todo_update`,
 `todo_delete`, `github_list_issues`, `github_get_issue`,
-`github_list_prs`, `github_get_pr`.
+`github_list_prs`, `github_get_pr`, `submit_review`, `list_reviews`,
+`get_review`, `await_review`.
+
+### Agent work reviews
+
+When an agent finishes work it files a review in the project's **Reviews**
+tab — the same card every time: what changed, per-file notes, decisions it
+made autonomously, what you need to do (new env vars, migrations, deploy
+steps, CI changes), and how to verify. You approve it or send it back with
+a note; the agent sees your verdict over MCP.
+
+Each agent picks a **review mode** when you create or edit it in Settings:
+
+- `notify` (default) - the agent works to completion, then files the review
+  for your records. Change your mind later and request a follow-up.
+- `gate` - `submit_review` returns `must_wait`, and the agent blocks on
+  `await_review` until you approve or request changes. Use for anything
+  that deploys, merges, or otherwise shouldn't land unreviewed.
+
+The review-card pattern is adapted from
+[devdotfast/whiteboard](https://github.com/devdotfast/whiteboard) (MIT) -
+structured summaries, decision logs, and required-actions instead of a raw
+diff. Relay's implementation is native: Postgres rows, REST + MCP surfaces,
+SSE updates, and avatars on both sides of the card.
 
 ## Ecosystem
 

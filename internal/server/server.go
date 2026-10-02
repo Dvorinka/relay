@@ -12,6 +12,7 @@ import (
 	"github.com/Dvorinka/relay/internal/agents"
 	"github.com/Dvorinka/relay/internal/attachments"
 	"github.com/Dvorinka/relay/internal/auth"
+	"github.com/Dvorinka/relay/internal/avatars"
 	"github.com/Dvorinka/relay/internal/config"
 	"github.com/Dvorinka/relay/internal/conversations"
 	"github.com/Dvorinka/relay/internal/db"
@@ -21,6 +22,7 @@ import (
 	"github.com/Dvorinka/relay/internal/mcpserver"
 	"github.com/Dvorinka/relay/internal/projects"
 	"github.com/Dvorinka/relay/internal/realtime"
+	"github.com/Dvorinka/relay/internal/reviews"
 	"github.com/Dvorinka/relay/internal/search"
 	"github.com/Dvorinka/relay/internal/storage"
 	"github.com/Dvorinka/relay/internal/todos"
@@ -33,7 +35,7 @@ import (
 func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string) http.Handler {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(gin.Recovery(), accessLog(log))
+	r.Use(gin.Recovery(), securityHeaders(), accessLog(log))
 
 	store, err := storage.New(cfg.StorageEndpoint, cfg.StoragePublicEndpoint, cfg.StorageRegion,
 		cfg.StorageAccessKey, cfg.StorageSecretKey, cfg.StorageBucket, cfg.StoragePresignTTL)
@@ -58,10 +60,13 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	agentSvc := agents.NewService(log, pool)
 	ghSvc := github.NewService(cfg, log, pool)
 	todoSvc := todos.NewService(log, pool)
+	reviewSvc := reviews.NewService(log, pool)
+	avSvc := avatars.NewService(log, pool, store)
 	hub := events.New()
 	convSvc.Bus = hub
 	issueSvc.Bus = hub
 	todoSvc.Bus = hub
+	reviewSvc.Bus = hub
 	rtSvc := realtime.NewService(hub, pool)
 	searchSvc := search.NewService(pool)
 	mcpHandler := mcpserver.New(db.New(pool), store, log, ghSvc, hub)
@@ -87,6 +92,8 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	agentSvc.RegisterRoutes(priv)
 	ghSvc.RegisterRoutes(priv, api)
 	todoSvc.RegisterRoutes(priv)
+	reviewSvc.RegisterRoutes(priv)
+	avSvc.RegisterRoutes(priv)
 	rtSvc.RegisterRoutes(priv)
 	searchSvc.RegisterRoutes(priv)
 
@@ -95,6 +102,24 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 
 	mountStatic(r, cfg.StaticDir)
 	return r
+}
+
+// securityHeaders sets baseline headers on every response. img-src allows
+// https: so presigned storage URLs on any host render; style-src keeps
+// 'unsafe-inline' because UI libs set element styles directly.
+func securityHeaders() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		h := c.Writer.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		h.Set("Content-Security-Policy",
+			"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
+				"img-src 'self' data: blob: https:; connect-src 'self'; font-src 'self'; "+
+				"object-src 'none'; base-uri 'self'; frame-ancestors 'none'")
+		c.Next()
+	}
 }
 
 // mountStatic serves the built SPA from dir when it exists; API routes win,

@@ -15,14 +15,22 @@ import { Conversation } from "../conversations/Conversation";
 import { DevelopmentPanel } from "../github/GitHub";
 import { Board } from "../issues/Board";
 import { IssueList } from "../issues/IssueList";
+import { Reviews } from "../reviews/Reviews";
 
-type Tab = "overview" | "issues" | "board" | "conversation" | "development";
+type Tab =
+  | "overview"
+  | "issues"
+  | "board"
+  | "conversation"
+  | "reviews"
+  | "development";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "issues", label: "Issues" },
   { id: "board", label: "Board" },
   { id: "conversation", label: "Conversation" },
+  { id: "reviews", label: "Reviews" },
   { id: "development", label: "Development" },
 ];
 
@@ -182,6 +190,9 @@ export default function ProjectPage() {
       </Show>
       <Show when={tab() === "conversation"}>
         <Conversation projectId={params.projectId} />
+      </Show>
+      <Show when={tab() === "reviews" ? project() : undefined} keyed>
+        {(p) => <Reviews project={p} />}
       </Show>
       <Show when={tab() === "development" ? project() : undefined} keyed>
         {(p) => (

@@ -1,6 +1,6 @@
 -- name: CreateAgent :one
-insert into agents (workspace_id, name, slug, description, created_by)
-values (sqlc.arg(workspace_id), sqlc.arg(name), sqlc.arg(slug), sqlc.arg(description), sqlc.arg(created_by))
+insert into agents (workspace_id, name, slug, description, review_mode, created_by)
+values (sqlc.arg(workspace_id), sqlc.arg(name), sqlc.arg(slug), sqlc.arg(description), sqlc.arg(review_mode), sqlc.arg(created_by))
 returning *;
 
 -- name: AgentSlugExists :one
@@ -35,6 +35,7 @@ order by a.name;
 update agents set
     name = coalesce(sqlc.narg(name), name),
     description = coalesce(sqlc.narg(description), description),
+    review_mode = coalesce(sqlc.narg(review_mode), review_mode),
     updated_at = now()
 where id = sqlc.arg(id)
 returning *;
@@ -116,3 +117,7 @@ select p.* from agent_project_permissions g
 join projects p on p.id = g.project_id
 where g.agent_id = sqlc.arg(agent_id) and 'project:read' = any(g.scopes)
 order by p.name;
+
+-- name: UpdateAgentAvatar :one
+update agents set avatar_key = sqlc.arg(avatar_key), updated_at = now() where id = sqlc.arg(id)
+returning *;

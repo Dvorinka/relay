@@ -240,16 +240,55 @@ export default function Settings() {
     return role === "owner" || role === "admin";
   };
   const [showNew, setShowNew] = createSignal(false);
+  const [avatarError, setAvatarError] = createSignal<string | null>(null);
 
   return (
     <div class="mx-auto w-full max-w-2xl px-6 py-8">
       <h1 class="mb-6 text-[15px] font-semibold">Settings</h1>
 
       <Section title="Account">
-        <div class="mb-5">
-          <p class="text-[13px] font-medium">{session.user()?.name}</p>
-          <p class="text-[13px] text-muted">{session.user()?.email}</p>
+        <div class="mb-5 flex items-center gap-3">
+          <Show
+            when={session.user()?.avatar_url}
+            fallback={
+              <span class="flex h-10 w-10 items-center justify-center rounded-full border border-border bg-surface font-mono text-[13px] text-muted">
+                {(session.user()?.name ?? "?").slice(0, 1).toUpperCase()}
+              </span>
+            }
+          >
+            {(url) => (
+              <img
+                src={url()}
+                alt=""
+                class="h-10 w-10 rounded-full border border-border object-cover"
+              />
+            )}
+          </Show>
+          <div class="min-w-0 flex-1">
+            <p class="text-[13px] font-medium">{session.user()?.name}</p>
+            <p class="text-[13px] text-muted">{session.user()?.email}</p>
+          </div>
+          <label class="cursor-pointer rounded-md border border-border bg-surface px-2.5 py-1 text-[12px] hover:bg-hover">
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/webp"
+              class="sr-only"
+              onChange={async (e) => {
+                const f = e.currentTarget.files?.[0];
+                if (!f) return;
+                try {
+                  await api.uploadAvatar(f);
+                  await session.refresh();
+                } catch (err) {
+                  setAvatarError(errorMessage(err, "Upload failed"));
+                }
+                e.currentTarget.value = "";
+              }}
+            />
+            Set avatar
+          </label>
         </div>
+        <FormError message={avatarError()} />
         <ChangePasswordForm />
       </Section>
 

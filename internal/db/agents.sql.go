@@ -81,9 +81,9 @@ func (q *Queries) AgentWorkspaceRole(ctx context.Context, arg AgentWorkspaceRole
 }
 
 const createAgent = `-- name: CreateAgent :one
-insert into agents (workspace_id, name, slug, description, created_by)
-values ($1, $2, $3, $4, $5)
-returning id, workspace_id, name, slug, description, avatar_key, created_by, created_at, updated_at
+insert into agents (workspace_id, name, slug, description, review_mode, created_by)
+values ($1, $2, $3, $4, $5, $6)
+returning id, workspace_id, name, slug, description, avatar_key, created_by, created_at, updated_at, review_mode
 `
 
 type CreateAgentParams struct {
@@ -91,6 +91,7 @@ type CreateAgentParams struct {
 	Name        string      `json:"name"`
 	Slug        string      `json:"slug"`
 	Description string      `json:"description"`
+	ReviewMode  string      `json:"review_mode"`
 	CreatedBy   pgtype.UUID `json:"created_by"`
 }
 
@@ -100,6 +101,7 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent
 		arg.Name,
 		arg.Slug,
 		arg.Description,
+		arg.ReviewMode,
 		arg.CreatedBy,
 	)
 	var i Agent
@@ -113,6 +115,7 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ReviewMode,
 	)
 	return i, err
 }
@@ -176,7 +179,7 @@ func (q *Queries) DeleteAgentGrant(ctx context.Context, arg DeleteAgentGrantPara
 }
 
 const getAgentByID = `-- name: GetAgentByID :one
-select id, workspace_id, name, slug, description, avatar_key, created_by, created_at, updated_at from agents where id = $1
+select id, workspace_id, name, slug, description, avatar_key, created_by, created_at, updated_at, review_mode from agents where id = $1
 `
 
 func (q *Queries) GetAgentByID(ctx context.Context, id pgtype.UUID) (Agent, error) {
@@ -192,12 +195,13 @@ func (q *Queries) GetAgentByID(ctx context.Context, id pgtype.UUID) (Agent, erro
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ReviewMode,
 	)
 	return i, err
 }
 
 const getAgentForUser = `-- name: GetAgentForUser :one
-select a.id, a.workspace_id, a.name, a.slug, a.description, a.avatar_key, a.created_by, a.created_at, a.updated_at from agents a
+select a.id, a.workspace_id, a.name, a.slug, a.description, a.avatar_key, a.created_by, a.created_at, a.updated_at, a.review_mode from agents a
 join workspace_members wm on wm.workspace_id = a.workspace_id and wm.user_id = $1
 where a.id = $2
 `
@@ -221,12 +225,13 @@ func (q *Queries) GetAgentForUser(ctx context.Context, arg GetAgentForUserParams
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ReviewMode,
 	)
 	return i, err
 }
 
 const getTokenAgent = `-- name: GetTokenAgent :one
-select t.id as token_id, a.id, a.workspace_id, a.name, a.slug, a.description, a.avatar_key, a.created_by, a.created_at, a.updated_at from mcp_tokens t
+select t.id as token_id, a.id, a.workspace_id, a.name, a.slug, a.description, a.avatar_key, a.created_by, a.created_at, a.updated_at, a.review_mode from mcp_tokens t
 join agents a on a.id = t.agent_id
 where t.token_hash = $1
   and t.revoked_at is null
@@ -244,6 +249,7 @@ type GetTokenAgentRow struct {
 	CreatedBy   pgtype.UUID        `json:"created_by"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	ReviewMode  string             `json:"review_mode"`
 }
 
 // resolve a presented bearer token to its agent when usable
@@ -261,6 +267,7 @@ func (q *Queries) GetTokenAgent(ctx context.Context, tokenHash []byte) (GetToken
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ReviewMode,
 	)
 	return i, err
 }
@@ -310,7 +317,7 @@ func (q *Queries) ListAgentGrants(ctx context.Context, agentID pgtype.UUID) ([]L
 }
 
 const listAgentsForWorkspace = `-- name: ListAgentsForWorkspace :many
-select a.id, a.workspace_id, a.name, a.slug, a.description, a.avatar_key, a.created_by, a.created_at, a.updated_at, cast((
+select a.id, a.workspace_id, a.name, a.slug, a.description, a.avatar_key, a.created_by, a.created_at, a.updated_at, a.review_mode, cast((
     select max(t.last_used_at) from mcp_tokens t where t.agent_id = a.id
 ) as timestamptz) as last_seen_at
 from agents a
@@ -328,6 +335,7 @@ type ListAgentsForWorkspaceRow struct {
 	CreatedBy   pgtype.UUID        `json:"created_by"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	ReviewMode  string             `json:"review_mode"`
 	LastSeenAt  pgtype.Timestamptz `json:"last_seen_at"`
 }
 
@@ -350,6 +358,7 @@ func (q *Queries) ListAgentsForWorkspace(ctx context.Context, workspaceID pgtype
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ReviewMode,
 			&i.LastSeenAt,
 		); err != nil {
 			return nil, err
@@ -503,19 +512,26 @@ const updateAgent = `-- name: UpdateAgent :one
 update agents set
     name = coalesce($1, name),
     description = coalesce($2, description),
+    review_mode = coalesce($3, review_mode),
     updated_at = now()
-where id = $3
-returning id, workspace_id, name, slug, description, avatar_key, created_by, created_at, updated_at
+where id = $4
+returning id, workspace_id, name, slug, description, avatar_key, created_by, created_at, updated_at, review_mode
 `
 
 type UpdateAgentParams struct {
 	Name        pgtype.Text `json:"name"`
 	Description pgtype.Text `json:"description"`
+	ReviewMode  pgtype.Text `json:"review_mode"`
 	ID          pgtype.UUID `json:"id"`
 }
 
 func (q *Queries) UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent, error) {
-	row := q.db.QueryRow(ctx, updateAgent, arg.Name, arg.Description, arg.ID)
+	row := q.db.QueryRow(ctx, updateAgent,
+		arg.Name,
+		arg.Description,
+		arg.ReviewMode,
+		arg.ID,
+	)
 	var i Agent
 	err := row.Scan(
 		&i.ID,
@@ -527,6 +543,35 @@ func (q *Queries) UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ReviewMode,
+	)
+	return i, err
+}
+
+const updateAgentAvatar = `-- name: UpdateAgentAvatar :one
+update agents set avatar_key = $1, updated_at = now() where id = $2
+returning id, workspace_id, name, slug, description, avatar_key, created_by, created_at, updated_at, review_mode
+`
+
+type UpdateAgentAvatarParams struct {
+	AvatarKey pgtype.Text `json:"avatar_key"`
+	ID        pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) UpdateAgentAvatar(ctx context.Context, arg UpdateAgentAvatarParams) (Agent, error) {
+	row := q.db.QueryRow(ctx, updateAgentAvatar, arg.AvatarKey, arg.ID)
+	var i Agent
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Name,
+		&i.Slug,
+		&i.Description,
+		&i.AvatarKey,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ReviewMode,
 	)
 	return i, err
 }

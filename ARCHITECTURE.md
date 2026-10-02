@@ -52,7 +52,9 @@ docs/                specs, plans, guides
 | `attachments` | upload pipeline, MIME/size validation, S3 keys, presigned URLs |
 | `issues` | issue tracker, statuses, labels, counters, activity |
 | `github` | app installation, repo linking, webhook ingest, sync state |
-| `agents` | agent identities, MCP token lifecycle |
+| `agents` | agent identities, MCP token lifecycle, review mode |
+| `reviews` | structured agent work reviews, verdict flow, pending counts |
+| `avatars` | user/agent logo upload, `/api/files` reader for avatar keys |
 | `mcp` | streamable-HTTP MCP server, tool handlers, scope enforcement |
 | `realtime` | in-process event hub → SSE fan-out |
 | `notifications` | inbox items, unread aggregation |
@@ -74,6 +76,7 @@ repositories ── github_installations
 agents ── agent_project_permissions ── mcp_tokens
 conversations ── messages ── message_attachments, message_reads
 issues ── issue_labels, issue_comments, issue_activity
+agent_reviews (project + agent, optional issue; verdict by a human)
 notifications
 github_links, github_sync_state
 ```

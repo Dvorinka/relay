@@ -18,6 +18,7 @@ type Agent struct {
 	CreatedBy   pgtype.UUID        `json:"created_by"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	ReviewMode  string             `json:"review_mode"`
 }
 
 type AgentProjectPermission struct {
@@ -25,6 +26,27 @@ type AgentProjectPermission struct {
 	ProjectID pgtype.UUID        `json:"project_id"`
 	Scopes    []string           `json:"scopes"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type AgentReview struct {
+	ID          pgtype.UUID        `json:"id"`
+	ProjectID   pgtype.UUID        `json:"project_id"`
+	IssueID     pgtype.UUID        `json:"issue_id"`
+	AgentID     pgtype.UUID        `json:"agent_id"`
+	Status      string             `json:"status"`
+	Title       string             `json:"title"`
+	Summary     string             `json:"summary"`
+	Files       []byte             `json:"files"`
+	Decisions   []byte             `json:"decisions"`
+	Actions     []byte             `json:"actions"`
+	Links       []byte             `json:"links"`
+	Verify      string             `json:"verify"`
+	Supersedes  pgtype.UUID        `json:"supersedes"`
+	RespondedBy pgtype.UUID        `json:"responded_by"`
+	Response    string             `json:"response"`
+	RespondedAt pgtype.Timestamptz `json:"responded_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 type AgentTodo struct {
