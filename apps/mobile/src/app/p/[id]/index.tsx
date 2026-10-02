@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useMemo} from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -20,9 +20,11 @@ import {
   useNavigation,
 } from "expo-router";
 import { api, getCookie, getServer, type Message } from "../../../lib/api";
-import { C } from "../../../lib/theme";
+import { useTheme, type Palette } from "../../../lib/theme";
 
 export default function ConversationScreen() {
+  const C = useTheme();
+  const s = useMemo(() => themedStyles(C), [C]);
   const { id } = useLocalSearchParams<{ id: string }>();
   const nav = useNavigation();
   const [convId, setConvId] = useState("");
@@ -163,7 +165,7 @@ export default function ConversationScreen() {
   );
 }
 
-const s = StyleSheet.create({
+const themedStyles = (C: Palette) => StyleSheet.create({
   tabs: {
     flexDirection: "row",
     gap: 18,
@@ -234,5 +236,5 @@ const s = StyleSheet.create({
     height: 40,
     justifyContent: "center",
   },
-  sendText: { color: "#fff", fontWeight: "600" },
+  sendText: { color: C.onAccent, fontWeight: "600" },
 });

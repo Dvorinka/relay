@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useState, useMemo} from "react";
 import {
   FlatList,
   Pressable,
@@ -9,9 +9,11 @@ import {
 } from "react-native";
 import { router, useFocusEffect } from "expo-router";
 import { api, type Project } from "../lib/api";
-import { C } from "../lib/theme";
+import { useTheme, type Palette } from "../lib/theme";
 
 export default function Projects() {
+  const C = useTheme();
+  const s = useMemo(() => themedStyles(C), [C]);
   const [items, setItems] = useState<Project[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -65,7 +67,7 @@ export default function Projects() {
   );
 }
 
-const s = StyleSheet.create({
+const themedStyles = (C: Palette) => StyleSheet.create({
   card: {
     flexDirection: "row",
     alignItems: "center",
@@ -85,7 +87,7 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  keyText: { color: "#fff", fontWeight: "700" },
+  keyText: { color: C.onAccent, fontWeight: "700" },
   name: { color: C.text, fontWeight: "600", fontSize: 16 },
   muted: { color: C.muted, fontSize: 12 },
   chev: { color: C.muted, fontSize: 24 },

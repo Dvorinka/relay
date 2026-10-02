@@ -35,7 +35,7 @@ func main() {
 			Handler: app,
 		},
 		Bind:             []any{app},
-		BackgroundColour: &options.RGBA{R: 16, G: 19, B: 24, A: 255},
+		BackgroundColour: &options.RGBA{R: 10, G: 10, B: 11, A: 255},
 		OnStartup:        app.startup,
 		Windows: &windows.Options{
 			WebviewIsTransparent: false,

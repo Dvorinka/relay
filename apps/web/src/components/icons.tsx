@@ -221,6 +221,22 @@ export function MoonIcon(props: IconProps): JSX.Element {
   );
 }
 
+export function MenuIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <path d="M2.5 4h11M2.5 8h11M2.5 12h11" />
+    </svg>
+  );
+}
+
 export function ReplyIcon(props: IconProps): JSX.Element {
   return (
     <svg

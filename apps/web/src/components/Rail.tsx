@@ -1,6 +1,7 @@
 import type { Project } from "@relay/api-client";
 import { A, useNavigate } from "@solidjs/router";
 import {
+  createEffect,
   createResource,
   createSignal,
   For,
@@ -12,6 +13,7 @@ import {
 import { api } from "../lib/api";
 import { subscribe } from "../lib/events";
 import { deriveKey } from "../lib/text";
+import { useNav } from "../stores/nav";
 import { useProjects } from "../stores/projects";
 import { useSession } from "../stores/session";
 import {
@@ -26,8 +28,14 @@ const navClass =
   "flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-muted transition-colors hover:bg-hover hover:text-fg";
 
 function NavItem(props: ParentProps<{ href: string }>) {
+  const { closeNav } = useNav();
   return (
-    <A href={props.href} class={navClass} activeClass="bg-hover text-fg">
+    <A
+      href={props.href}
+      class={navClass}
+      activeClass="bg-hover text-fg"
+      onClick={closeNav}
+    >
       {props.children}
     </A>
   );
@@ -238,6 +246,7 @@ function NewProjectForm(props: { onDone: () => void }) {
 export function Rail() {
   const session = useSession();
   const projects = useProjects();
+  const { navOpen, closeNav } = useNav();
   const [creating, setCreating] = createSignal(false);
   onMount(refreshUnread);
   const unsub = subscribe((e) => {
@@ -247,11 +256,34 @@ export function Rail() {
     }
   });
   onCleanup(unsub);
+  createEffect(() => {
+    if (!navOpen()) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeNav();
+    };
+    window.addEventListener("keydown", onKey);
+    onCleanup(() => window.removeEventListener("keydown", onKey));
+  });
   const workspaceName = () => session.workspaces()[0]?.name;
   const list = () => projects.projects() ?? [];
 
   return (
-    <aside class="flex w-56 shrink-0 flex-col border-r border-border">
+    <>
+      <Show when={navOpen()}>
+        <button
+          type="button"
+          aria-label="Close navigation"
+          onClick={closeNav}
+          class="fixed inset-0 z-30 bg-black/40 md:hidden"
+        />
+      </Show>
+      <aside
+        class={`flex w-64 shrink-0 flex-col border-r border-border bg-rail md:w-56 ${
+          navOpen()
+            ? "fixed inset-y-0 left-0 z-40 shadow-2xl"
+            : "hidden md:flex"
+        }`}
+      >
       <Show when={workspaceName()}>
         {(name) => (
           <div class="border-b border-border px-4 py-2.5">
@@ -320,6 +352,7 @@ export function Rail() {
           Settings
         </NavItem>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }

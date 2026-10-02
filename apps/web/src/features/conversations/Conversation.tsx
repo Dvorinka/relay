@@ -359,6 +359,9 @@ function MessageRow(props: {
     }
   }
 
+  // Touch devices have no hover: tapping the row toggles the toolbar.
+  const [tapped, setTapped] = createSignal(false);
+
   const toolBtn =
     "flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-hover hover:text-fg";
 
@@ -367,6 +370,12 @@ function MessageRow(props: {
       class={`group relative flex gap-3 px-4 hover:bg-hover/60 ${
         props.grouped ? "py-[3px]" : "mt-4 py-1.5"
       }`}
+      onClick={(e) => {
+        if (window.matchMedia("(hover: none)").matches &&
+            !(e.target as HTMLElement).closest("a,button,textarea,input,pre")) {
+          setTapped((v) => !v);
+        }
+      }}
     >
       <Show
         when={!props.grouped}
@@ -465,7 +474,10 @@ function MessageRow(props: {
           onChange={(reactions) => props.onChanged({ ...m(), reactions })}
         />
       </div>
-      <div class="absolute -top-3 right-3 hidden items-center gap-0.5 rounded-lg border border-border bg-surface px-1 py-0.5 shadow-sm group-hover:flex">
+      <div
+        class="msg-actions absolute -top-3 right-3 hidden items-center gap-0.5 rounded-lg border border-border bg-surface px-1 py-0.5 shadow-sm group-hover:flex"
+        style={{ display: tapped() ? "flex" : undefined }}
+      >
         <For each={QUICK_REACTIONS}>
           {(emoji) => (
             <button
@@ -947,7 +959,7 @@ function ConversationThread(props: {
       </div>
 
       <div
-        class="shrink-0 px-4 pb-4 pt-1"
+        class="shrink-0 px-3 pb-4 pt-1 [padding-bottom:max(1rem,env(safe-area-inset-bottom))] sm:px-4"
         onDragOver={(e) => {
           e.preventDefault();
           setDragging(true);

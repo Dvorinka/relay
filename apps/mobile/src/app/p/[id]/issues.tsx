@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useState, useMemo} from "react";
 import {
   FlatList,
   Pressable,
@@ -9,7 +9,7 @@ import {
 } from "react-native";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { api, type Issue } from "../../../lib/api";
-import { C } from "../../../lib/theme";
+import { useTheme, type Palette } from "../../../lib/theme";
 
 const STATUSES = ["backlog", "todo", "in_progress", "review", "done"];
 const LABEL: Record<string, string> = {
@@ -22,6 +22,8 @@ const LABEL: Record<string, string> = {
 };
 
 export default function IssuesScreen() {
+  const C = useTheme();
+  const s = useMemo(() => themedStyles(C), [C]);
   const { id } = useLocalSearchParams<{ id: string }>();
   const [items, setItems] = useState<Issue[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -79,7 +81,7 @@ export default function IssuesScreen() {
   );
 }
 
-const s = StyleSheet.create({
+const themedStyles = (C: Palette) => StyleSheet.create({
   card: {
     flexDirection: "row",
     alignItems: "center",

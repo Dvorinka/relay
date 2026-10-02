@@ -247,7 +247,7 @@ export function LabelsPicker(props: {
     }),
   );
   const [newName, setNewName] = createSignal("");
-  const [newColor, setNewColor] = createSignal("#f2541b");
+  const [newColor, setNewColor] = createSignal("#06b6d4");
   const [creating, setCreating] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
 
