@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
+import * as FileSystem from "expo-file-system/legacy";
 
 export const defaultServer =
   (Constants.expoConfig?.extra?.relayUrl as string) ?? "http://10.0.2.2:8080";
@@ -117,19 +118,39 @@ export const api = {
       body,
       attachment_ids: attachment_ids ?? [],
     }),
-  upload: async (file: {
-    uri: string;
-    name: string;
-    type: string;
-  }): Promise<Attachment> => {
-    const form = new FormData();
-    // @ts-expect-error — React Native FormData accepts {uri,name,type}
-    form.append("file", file);
-    const res = await fetch(server + "/api/attachments", {
-      method: "POST",
-      headers: cookie ? { cookie } : undefined,
-      body: form,
+  upload: async (
+    projectId: string,
+    file: { uri: string; name: string; type: string },
+  ): Promise<Attachment> => {
+    // Every upload path in this RN/Expo-Go stack funnels into the same
+    // broken FormData native bridge — build the multipart body manually.
+    const b64 = await FileSystem.readAsStringAsync(file.uri, {
+      encoding: FileSystem.EncodingType.Base64,
     });
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const boundary = "----relay" + Math.random().toString(36).slice(2);
+    const enc = new TextEncoder();
+    const head = enc.encode(
+      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${file.name}"\r\nContent-Type: ${file.type}\r\n\r\n`,
+    );
+    const tail = enc.encode(`\r\n--${boundary}--\r\n`);
+    const body = new Uint8Array(head.length + bytes.length + tail.length);
+    body.set(head);
+    body.set(bytes, head.length);
+    body.set(tail, head.length + bytes.length);
+    const res = await fetch(
+      server + `/api/projects/${projectId}/attachments`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": `multipart/form-data; boundary=${boundary}`,
+          ...(cookie ? { cookie } : {}),
+        },
+        body: body.buffer as ArrayBuffer,
+      },
+    );
     if (!res.ok) throw new Error(`upload HTTP ${res.status}`);
     return res.json() as Promise<Attachment>;
   },

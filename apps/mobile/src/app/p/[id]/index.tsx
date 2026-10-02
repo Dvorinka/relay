@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
-  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -11,6 +10,8 @@ import {
   TextInput,
   View,
 } from "react-native";
+// expo-image forwards request headers; RN's Image drops them on Android.
+import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import {
   router,
@@ -58,7 +59,7 @@ export default function ConversationScreen() {
     if (!a) return;
     const name = a.fileName ?? "image.jpg";
     const type = a.mimeType ?? "image/jpeg";
-    const att = await api.upload({ uri: a.uri, name, type });
+    const att = await api.upload(id, { uri: a.uri, name, type });
     if (!convId) return;
     await api.postMessage(convId, att.filename, [att.id]);
     await load();
@@ -115,11 +116,11 @@ export default function ConversationScreen() {
                 <Image
                   key={a.id}
                   source={{
-                    uri: `${getServer()}/api/attachments/${a.id}/url`,
+                    uri: `${getServer()}/api/projects/${id}/attachments/${a.id}/url`,
                     headers: { cookie: getCookie() },
                   }}
                   style={s.img}
-                  resizeMode="cover"
+                  contentFit="cover"
                 />
               ) : (
                 <Text key={a.id} style={s.file}>
