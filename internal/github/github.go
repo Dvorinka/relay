@@ -14,11 +14,13 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -64,6 +66,7 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup, pub *gin.RouterGroup) {
 	g.PUT("/projects/:id/github/repo", s.projectAdminOnly, s.handleLinkRepo)
 	g.DELETE("/projects/:id/github/repo/:repoId", s.projectAdminOnly, s.handleUnlinkRepo)
 	g.GET("/projects/:id/development", s.projectMemberOnly, s.handleDevelopment)
+	g.POST("/projects/:id/github/import", s.projectAdminOnly, s.handleImport)
 	// browser redirect targets / webhook entry
 	pub.GET("/github/callback", s.handleCallback)
 	pub.POST("/github/webhook", s.handleWebhook)
@@ -522,8 +525,11 @@ type webhookPayload struct {
 	PullRequest *struct {
 		Number  int    `json:"number"`
 		Title   string `json:"title"`
+		Body    string `json:"body"`
 		State   string `json:"state"`
 		Merged  bool   `json:"merged"`
+		Draft   bool   `json:"draft"`
+		NodeID  string `json:"node_id"`
 		HTMLURL string `json:"html_url"`
 		User    struct {
 			Login string `json:"login"`
@@ -604,47 +610,106 @@ func (s *Service) onIssue(ctx context.Context, p webhookPayload) {
 	if err != nil {
 		return // repo not linked to any project — ignore
 	}
-	// map GitHub state to ours
-	status := "todo"
-	if p.Issue.State == "closed" {
-		status = "done"
+	item := importItem{
+		kind:   "issue",
+		number: p.Issue.Number,
+		title:  p.Issue.Title,
+		body:   p.Issue.Body,
+		state:  p.Issue.State,
+		url:    p.Issue.HTMLURL,
+		nodeID: p.Issue.NodeID,
+		status: issueStatus(p.Issue.State),
 	}
+	_, created, err := s.upsertGitHub(ctx, repo, item)
+	if err != nil {
+		s.log.Warn("mirror issue", zap.Error(err))
+		return
+	}
+	if created {
+		s.ghActivity(ctx, item.issueID, "github_mirrored",
+			fmt.Sprintf(`{"repo":"%s","number":%d,"state":%q}`, repo.Owner+"/"+repo.Name, p.Issue.Number, p.Issue.State))
+	}
+}
+
+// importItem is one GitHub object normalized for upsertGitHub.
+type importItem struct {
+	kind    string // 'issue' | 'pr'
+	number  int
+	title   string
+	body    string
+	state   string // raw GitHub state: open|closed|merged
+	url     string
+	nodeID  string
+	status  string      // mapped Relay status
+	issueID pgtype.UUID // filled by upsertGitHub
+}
+
+// issueStatus maps a GitHub issue state onto a Relay status.
+func issueStatus(state string) string {
+	if state == "closed" {
+		return "done"
+	}
+	return "todo"
+}
+
+// prStatus maps a GitHub PR onto a Relay status: merged lands done, closed
+// without merge lands cancelled, drafts park in todo, open sits in review.
+func prStatus(state string, merged, draft bool) string {
+	switch {
+	case merged:
+		return "done"
+	case state == "closed":
+		return "cancelled"
+	case draft:
+		return "todo"
+	default:
+		return "review"
+	}
+}
+
+// upsertGitHub creates or refreshes the Relay issue mirroring one GitHub
+// object. Returns whether the row was created.
+func (s *Service) upsertGitHub(ctx context.Context, repo db.Repository, in importItem) (pgtype.UUID, bool, error) {
 	existing, err := s.q.FindIssueByGitHub(ctx, db.FindIssueByGitHubParams{
-		RepoID: repo.ID, Number: pgtype.Int4{Int32: int32(p.Issue.Number), Valid: true},
+		RepoID: repo.ID, Number: pgtype.Int4{Int32: int32(in.number), Valid: true},
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		n, err := s.q.NextIssueNumber(ctx, repo.ProjectID)
 		if err != nil {
-			return
+			return pgtype.UUID{}, false, err
 		}
-		created, err := s.q.CreateGitHubIssue(ctx, db.CreateGitHubIssueParams{
+		row, err := s.q.CreateGitHubIssue(ctx, db.CreateGitHubIssueParams{
 			ProjectID: repo.ProjectID, Number: n,
-			Title: p.Issue.Title, Description: truncate(p.Issue.Body, 40000),
-			Status: status,
-			NodeID: pgtype.Text{String: p.Issue.NodeID, Valid: true},
-			RepoID: repo.ID, GhNumber: pgtype.Int4{Int32: int32(p.Issue.Number), Valid: true},
+			Title: in.title, Description: truncate(in.body, 40000),
+			Status: in.status,
+			NodeID: pgtype.Text{String: in.nodeID, Valid: in.nodeID != ""},
+			RepoID: repo.ID, GhNumber: pgtype.Int4{Int32: int32(in.number), Valid: true},
+			Kind:    in.kind,
+			GhState: pgtype.Text{String: in.state, Valid: in.state != ""},
+			GhUrl:   pgtype.Text{String: in.url, Valid: in.url != ""},
 		})
 		if err != nil {
-			s.log.Warn("mirror issue", zap.Error(err))
-			return
+			return pgtype.UUID{}, false, err
 		}
-		s.ghActivity(ctx, created.ID, "github_mirrored",
-			fmt.Sprintf(`{"repo":"%s","number":%d,"state":%q}`, repo.Owner+"/"+repo.Name, p.Issue.Number, p.Issue.State))
-		return
+		in.issueID = row.ID
+		return row.ID, true, nil
 	}
 	if err != nil {
-		return
+		return pgtype.UUID{}, false, err
 	}
-	_, _ = s.q.UpdateGitHubIssue(ctx, db.UpdateGitHubIssueParams{
-		ID:          existing.ID,
-		Title:       pgtype.Text{String: p.Issue.Title, Valid: true},
-		Description: pgtype.Text{String: truncate(p.Issue.Body, 40000), Valid: true},
-		Status:      pgtype.Text{String: status, Valid: true},
-	})
-	if existing.Status != status {
+	if existing.Status != in.status {
 		s.ghActivity(ctx, existing.ID, "github_state",
-			fmt.Sprintf(`{"number":%d,"state":%q}`, p.Issue.Number, p.Issue.State))
+			fmt.Sprintf(`{"number":%d,"state":%q}`, in.number, in.state))
 	}
+	row, err := s.q.UpdateGitHubIssue(ctx, db.UpdateGitHubIssueParams{
+		ID:          existing.ID,
+		Title:       pgtype.Text{String: in.title, Valid: true},
+		Description: pgtype.Text{String: truncate(in.body, 40000), Valid: true},
+		Status:      pgtype.Text{String: in.status, Valid: true},
+		GhState:     pgtype.Text{String: in.state, Valid: in.state != ""},
+		GhUrl:       pgtype.Text{String: in.url, Valid: in.url != ""},
+	})
+	return row.ID, false, err
 }
 
 // ghActivity records a GitHub-originated entry in the issue's activity feed.
@@ -668,25 +733,183 @@ func (s *Service) onPullRequest(ctx context.Context, p webhookPayload) {
 	if err != nil {
 		return
 	}
-	state := p.PullRequest.State
-	if p.PullRequest.Merged {
+	pr := p.PullRequest
+	state := pr.State
+	if pr.Merged {
 		state = "merged"
 	}
-	payload, _ := json.Marshal(gin.H{
-		"number": p.PullRequest.Number, "title": p.PullRequest.Title,
-		"state": state, "url": p.PullRequest.HTMLURL, "author": p.PullRequest.User.Login,
-		"repo": repo.Owner + "/" + repo.Name,
-	})
-	// surface on the project conversation as an activity record — find the
-	// project conversation and attach activity to it via issue_activity? No:
-	// PR events land in project activity via a synthetic row keyed on the repo.
-	// Cheapest correct surface: create an issue_activity row only if a
-	// mirrored issue exists for this PR number.
-	if iss, err := s.q.FindIssueByGitHub(ctx, db.FindIssueByGitHubParams{
-		RepoID: repo.ID, Number: pgtype.Int4{Int32: int32(p.PullRequest.Number), Valid: true},
-	}); err == nil {
-		_, _ = s.q.RecordIssueActivity(ctx, db.RecordIssueActivityParams{
-			IssueID: iss.ID, Kind: "github.pr_" + state, Payload: payload,
+	item := importItem{
+		kind:   "pr",
+		number: pr.Number,
+		title:  pr.Title,
+		body:   pr.Body,
+		state:  state,
+		url:    pr.HTMLURL,
+		nodeID: pr.NodeID,
+		status: prStatus(pr.State, pr.Merged, pr.Draft),
+	}
+	_, created, err := s.upsertGitHub(ctx, repo, item)
+	if err != nil {
+		s.log.Warn("mirror pr", zap.Error(err))
+		return
+	}
+	if created {
+		s.ghActivity(ctx, item.issueID, "github_mirrored",
+			fmt.Sprintf(`{"repo":"%s","number":%d,"state":%q,"kind":"pr","author":%q}`,
+				repo.Owner+"/"+repo.Name, pr.Number, state, pr.User.Login))
+	}
+}
+
+// --- bulk import ---
+
+// handleImport pulls the full issue and PR history of a linked repo into
+// Relay issues. Idempotent: existing mirrors are refreshed, not duplicated.
+func (s *Service) handleImport(c *gin.Context) {
+	p := project(c)
+
+	var req struct {
+		RepoID string `json:"repo_id"`
+	}
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "invalid body")
+			return
+		}
+	}
+
+	repos, err := s.q.ListProjectRepos(c.Request.Context(), p.ID)
+	if err != nil || len(repos) == 0 {
+		httpx.Error(c, http.StatusConflict, "no_repo", "project has no linked GitHub repository")
+		return
+	}
+	if req.RepoID != "" {
+		rid, err := uuid.Parse(req.RepoID)
+		if err != nil {
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "invalid repo_id")
+			return
+		}
+		found := repos[:0]
+		for _, r := range repos {
+			if r.ID.Valid && uuid.UUID(r.ID.Bytes) == rid {
+				found = append(found, r)
+			}
+		}
+		if len(found) == 0 {
+			httpx.Error(c, http.StatusNotFound, "not_found", "repository not linked to this project")
+			return
+		}
+		repos = found
+	}
+
+	cli, err := s.Client(c.Request.Context())
+	if err != nil {
+		httpx.Error(c, http.StatusServiceUnavailable, "github_unavailable", "GitHub is not configured")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Minute)
+	defer cancel()
+
+	results := make([]gin.H, 0, len(repos))
+	for _, r := range repos {
+		res := s.importRepo(ctx, cli, r)
+		res["repo"] = r.Owner + "/" + r.Name
+		results = append(results, res)
+	}
+	c.JSON(http.StatusOK, gin.H{"results": results})
+}
+
+// importRepo pulls issues and PRs for one linked repo. Errors are recorded
+// per repo so one bad repo does not sink the whole import.
+func (s *Service) importRepo(ctx context.Context, cli *Client, repo db.Repository) gin.H {
+	res := gin.H{"issues": gin.H{"created": 0, "updated": 0},
+		"prs": gin.H{"created": 0, "updated": 0}}
+
+	ghIssues, err := cli.ListIssuesAll(ctx, repo.InstallationID, repo.Owner, repo.Name)
+	if err != nil {
+		res["error"] = "issues: " + err.Error()
+		return res
+	}
+	prs, err := cli.ListPRsAll(ctx, repo.InstallationID, repo.Owner, repo.Name)
+	if err != nil {
+		res["error"] = "pull_requests: " + err.Error()
+		return res
+	}
+	res["truncated"] = len(ghIssues) >= maxImportPages*100 || len(prs) >= maxImportPages*100
+
+	sort.Slice(ghIssues, func(i, j int) bool { return ghIssues[i].Number < ghIssues[j].Number })
+	sort.Slice(prs, func(i, j int) bool { return prs[i].Number < prs[j].Number })
+
+	for _, gi := range ghIssues {
+		item := importItem{
+			kind: "issue", number: gi.Number, title: gi.Title, body: gi.Body,
+			state: gi.State, url: gi.HTMLURL, nodeID: gi.NodeID,
+			status: issueStatus(gi.State),
+		}
+		id, created, err := s.upsertGitHub(ctx, repo, item)
+		if err != nil {
+			s.log.Warn("import issue", zap.Int("number", gi.Number), zap.Error(err))
+			continue
+		}
+		s.linkGitHubLabels(ctx, repo.ProjectID, id, gi.Labels)
+		bump(res["issues"], created)
+	}
+	for _, pr := range prs {
+		state := pr.State
+		if pr.MergedAt != nil {
+			state = "merged"
+		}
+		item := importItem{
+			kind: "pr", number: pr.Number, title: pr.Title, body: pr.Body,
+			state: state, url: pr.HTMLURL, nodeID: pr.NodeID,
+			status: prStatus(pr.State, pr.MergedAt != nil, pr.Draft),
+		}
+		_, created, err := s.upsertGitHub(ctx, repo, item)
+		if err != nil {
+			s.log.Warn("import pr", zap.Int("number", pr.Number), zap.Error(err))
+			continue
+		}
+		bump(res["prs"], created)
+	}
+	return res
+}
+
+func bump(counts any, created bool) {
+	m := counts.(gin.H)
+	if created {
+		m["created"] = m["created"].(int) + 1
+	} else {
+		m["updated"] = m["updated"].(int) + 1
+	}
+}
+
+// linkGitHubLabels ensures each GitHub label exists as a project label and
+// links it to the issue. Relay-side labels the user added are never removed;
+// GitHub-side removals do not propagate.
+func (s *Service) linkGitHubLabels(ctx context.Context, projectID, issueID pgtype.UUID, labels []struct {
+	Name  string `json:"name"`
+	Color string `json:"color"`
+}) {
+	for _, l := range labels {
+		name := strings.TrimSpace(l.Name)
+		if name == "" {
+			continue
+		}
+		color := "#" + l.Color
+		if len(l.Color) != 6 {
+			color = "#6b7280"
+		}
+		_ = s.q.InsertLabelIfMissing(ctx, db.InsertLabelIfMissingParams{
+			ProjectID: projectID, Name: name, Color: color,
+		})
+		lab, err := s.q.GetLabelByName(ctx, db.GetLabelByNameParams{
+			ProjectID: projectID, Name: name,
+		})
+		if err != nil {
+			continue
+		}
+		_ = s.q.LinkIssueLabel(ctx, db.LinkIssueLabelParams{
+			IssueID: issueID, LabelID: lab.ID,
 		})
 	}
 }

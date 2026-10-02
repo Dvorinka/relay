@@ -13,10 +13,12 @@ import (
 
 const createGitHubIssue = `-- name: CreateGitHubIssue :one
 insert into issues (project_id, number, title, description, status, priority,
-                    github_node_id, github_repo_id, github_number, origin)
+                    github_node_id, github_repo_id, github_number, origin,
+                    github_kind, github_state, github_url)
 values ($1, $2, $3, $4,
-        $5, 'none', $6, $7, $8, 'github')
-returning id, project_id, number, title, description, status, priority, assignee_id, agent_id, created_by, created_at, updated_at, github_node_id, github_repo_id, github_number, origin
+        $5, 'none', $6, $7, $8, 'github',
+        $9, $10, $11)
+returning id, project_id, number, title, description, status, priority, assignee_id, agent_id, created_by, created_at, updated_at, github_node_id, github_repo_id, github_number, origin, github_kind, github_state, github_url
 `
 
 type CreateGitHubIssueParams struct {
@@ -28,6 +30,9 @@ type CreateGitHubIssueParams struct {
 	NodeID      pgtype.Text `json:"node_id"`
 	RepoID      pgtype.UUID `json:"repo_id"`
 	GhNumber    pgtype.Int4 `json:"gh_number"`
+	Kind        string      `json:"kind"`
+	GhState     pgtype.Text `json:"gh_state"`
+	GhUrl       pgtype.Text `json:"gh_url"`
 }
 
 func (q *Queries) CreateGitHubIssue(ctx context.Context, arg CreateGitHubIssueParams) (Issue, error) {
@@ -40,6 +45,9 @@ func (q *Queries) CreateGitHubIssue(ctx context.Context, arg CreateGitHubIssuePa
 		arg.NodeID,
 		arg.RepoID,
 		arg.GhNumber,
+		arg.Kind,
+		arg.GhState,
+		arg.GhUrl,
 	)
 	var i Issue
 	err := row.Scan(
@@ -59,6 +67,9 @@ func (q *Queries) CreateGitHubIssue(ctx context.Context, arg CreateGitHubIssuePa
 		&i.GithubRepoID,
 		&i.GithubNumber,
 		&i.Origin,
+		&i.GithubKind,
+		&i.GithubState,
+		&i.GithubUrl,
 	)
 	return i, err
 }
@@ -91,7 +102,7 @@ func (q *Queries) DeleteRepoLink(ctx context.Context, id pgtype.UUID) error {
 }
 
 const findIssueByGitHub = `-- name: FindIssueByGitHub :one
-select id, project_id, number, title, description, status, priority, assignee_id, agent_id, created_by, created_at, updated_at, github_node_id, github_repo_id, github_number, origin from issues
+select id, project_id, number, title, description, status, priority, assignee_id, agent_id, created_by, created_at, updated_at, github_node_id, github_repo_id, github_number, origin, github_kind, github_state, github_url from issues
 where github_repo_id = $1 and github_number = $2
 `
 
@@ -120,6 +131,9 @@ func (q *Queries) FindIssueByGitHub(ctx context.Context, arg FindIssueByGitHubPa
 		&i.GithubRepoID,
 		&i.GithubNumber,
 		&i.Origin,
+		&i.GithubKind,
+		&i.GithubState,
+		&i.GithubUrl,
 	)
 	return i, err
 }
@@ -370,15 +384,19 @@ update issues set
     title = coalesce($1::text, title),
     description = coalesce($2::text, description),
     status = coalesce($3::text, status),
+    github_state = coalesce($4::text, github_state),
+    github_url = coalesce($5::text, github_url),
     updated_at = now()
-where id = $4
-returning id, project_id, number, title, description, status, priority, assignee_id, agent_id, created_by, created_at, updated_at, github_node_id, github_repo_id, github_number, origin
+where id = $6
+returning id, project_id, number, title, description, status, priority, assignee_id, agent_id, created_by, created_at, updated_at, github_node_id, github_repo_id, github_number, origin, github_kind, github_state, github_url
 `
 
 type UpdateGitHubIssueParams struct {
 	Title       pgtype.Text `json:"title"`
 	Description pgtype.Text `json:"description"`
 	Status      pgtype.Text `json:"status"`
+	GhState     pgtype.Text `json:"gh_state"`
+	GhUrl       pgtype.Text `json:"gh_url"`
 	ID          pgtype.UUID `json:"id"`
 }
 
@@ -387,6 +405,8 @@ func (q *Queries) UpdateGitHubIssue(ctx context.Context, arg UpdateGitHubIssuePa
 		arg.Title,
 		arg.Description,
 		arg.Status,
+		arg.GhState,
+		arg.GhUrl,
 		arg.ID,
 	)
 	var i Issue
@@ -407,6 +427,9 @@ func (q *Queries) UpdateGitHubIssue(ctx context.Context, arg UpdateGitHubIssuePa
 		&i.GithubRepoID,
 		&i.GithubNumber,
 		&i.Origin,
+		&i.GithubKind,
+		&i.GithubState,
+		&i.GithubUrl,
 	)
 	return i, err
 }

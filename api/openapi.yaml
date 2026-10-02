@@ -951,6 +951,60 @@ paths:
       responses:
         "201": { description: "Linked" }
 
+  /api/projects/{projectId}/github/import:
+    post:
+      operationId: importGitHub
+      summary: Pull the full issue and PR history of linked repos into Relay issues
+      description: >
+        Admin-only bulk import. Every GitHub issue and pull request on the
+        linked repository becomes a Relay issue (prs carry github.kind="pr",
+        open PRs land in "review", merged in "done"). Existing mirrors are
+        refreshed, not duplicated — safe to re-run. GitHub labels are created
+        and linked; Relay-side labels are never removed. Bounded to 500
+        objects per kind per repo.
+      tags: [github]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                repo_id: { type: string, format: uuid, description: "Import only this linked repo; omit to import all" }
+      responses:
+        "200":
+          description: Per-repo import results
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [results]
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        repo: { type: string }
+                        issues:
+                          type: object
+                          properties:
+                            created: { type: integer }
+                            updated: { type: integer }
+                        prs:
+                          type: object
+                          properties:
+                            created: { type: integer }
+                            updated: { type: integer }
+                        truncated: { type: boolean, description: "True when the 500-object cap cut the listing short" }
+                        error: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: "Project has no linked GitHub repository" }
+        "503": { description: "GitHub app not configured" }
+
   /api/projects/{projectId}/github/repo/{repoId}:
     delete:
       operationId: unlinkRepo
@@ -1708,11 +1762,12 @@ components:
         origin: { type: string, enum: [relay, github], description: "relay = native, github = mirrored from a linked repository" }
         github:
           type: object
-          description: "Present when the issue mirrors a GitHub issue"
+          description: "Present when the issue mirrors a GitHub issue or PR"
           properties:
             repo: { type: string, description: "owner/name" }
             number: { type: integer }
-            state: { type: string, enum: [open, closed] }
+            kind: { type: string, enum: [issue, pr] }
+            state: { type: string, enum: [open, closed, merged], description: "GitHub's raw state" }
             url: { type: string }
 
     IssueActivity:
@@ -1909,5 +1964,19 @@ components:
         recent_messages:
           type: array
           items: { $ref: "#/components/schemas/Message" }
+        issue_activity:
+          type: array
+          description: "Latest issue events across the project, newest first"
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              issue_id: { type: string, format: uuid }
+              issue_number: { type: integer }
+              issue_title: { type: string }
+              kind: { type: string }
+              payload: { type: object, additionalProperties: true }
+              actor: { type: string }
+              created_at: { type: string, format: date-time }
 security:
   - sessionCookie: []

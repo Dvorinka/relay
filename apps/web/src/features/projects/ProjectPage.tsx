@@ -92,9 +92,55 @@ function Overview(props: { overview: ProjectOverview }) {
             )}
           </For>
         </ul>
+
+        <Show when={(props.overview.issue_activity?.length ?? 0) > 0}>
+          <h2 class="mb-2 mt-8 text-[13px] font-semibold">Issue activity</h2>
+          <ul class="divide-y divide-border rounded-md border border-border">
+            <For each={props.overview.issue_activity}>
+              {(a) => (
+                <li class="px-3 py-2.5">
+                  <div class="flex items-baseline gap-2">
+                    <span class="font-mono text-[11px] text-muted">
+                      {props.overview.project.key}-{a.issue_number}
+                    </span>
+                    <span class="truncate text-[13px]">{a.issue_title}</span>
+                    <span class="ml-auto shrink-0 text-[11px] text-muted">
+                      {timeAgo(a.created_at ?? "")}
+                    </span>
+                  </div>
+                  <p class="mt-0.5 text-[12px] text-muted">
+                    {activityText(a.kind ?? "")}
+                    {a.actor ? ` · ${a.actor}` : ""}
+                  </p>
+                </li>
+              )}
+            </For>
+          </ul>
+        </Show>
       </div>
     </div>
   );
+}
+
+function activityText(kind: string): string {
+  switch (kind) {
+    case "created":
+      return "Issue created";
+    case "status_changed":
+      return "Status changed";
+    case "field_changed":
+      return "Fields updated";
+    case "commented":
+      return "New comment";
+    case "from_message":
+      return "Created from a message";
+    case "github_mirrored":
+      return "Mirrored from GitHub";
+    case "github_state":
+      return "GitHub state changed";
+    default:
+      return kind.startsWith("github.") ? "GitHub activity" : kind.replaceAll("_", " ");
+  }
 }
 
 export default function ProjectPage() {

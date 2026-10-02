@@ -125,6 +125,9 @@ type Issue struct {
 	GithubRepoID pgtype.UUID        `json:"github_repo_id"`
 	GithubNumber pgtype.Int4        `json:"github_number"`
 	Origin       string             `json:"origin"`
+	GithubKind   string             `json:"github_kind"`
+	GithubState  pgtype.Text        `json:"github_state"`
+	GithubUrl    pgtype.Text        `json:"github_url"`
 }
 
 type IssueActivity struct {

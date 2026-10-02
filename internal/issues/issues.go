@@ -755,14 +755,25 @@ func issueJSON(i db.Issue, assigneeName, assigneeAvatar pgtype.Text, labels []gi
 	if i.GithubNumber.Valid && ghOwner.Valid && ghRepo.Valid {
 		full := ghOwner.String + "/" + ghRepo.String
 		state := "open"
-		if i.Status == "done" || i.Status == "cancelled" {
+		if i.GithubState.Valid && i.GithubState.String != "" {
+			state = i.GithubState.String
+		} else if i.Status == "done" || i.Status == "cancelled" {
 			state = "closed"
+		}
+		url := i.GithubUrl.String
+		if url == "" {
+			path := "issues"
+			if i.GithubKind == "pr" {
+				path = "pull"
+			}
+			url = "https://github.com/" + full + "/" + path + "/" + strconv.Itoa(int(i.GithubNumber.Int32))
 		}
 		out["github"] = gin.H{
 			"repo":   full,
 			"number": i.GithubNumber.Int32,
+			"kind":   i.GithubKind,
 			"state":  state,
-			"url":    "https://github.com/" + full + "/issues/" + strconv.Itoa(int(i.GithubNumber.Int32)),
+			"url":    url,
 		}
 	}
 	return out
@@ -783,6 +794,7 @@ func listRowToIssue(r db.ListIssuesForUserRow) db.Issue {
 		AssigneeID: r.AssigneeID, AgentID: r.AgentID, CreatedBy: r.CreatedBy,
 		GithubNodeID: r.GithubNodeID, GithubRepoID: r.GithubRepoID,
 		GithubNumber: r.GithubNumber, Origin: r.Origin,
+		GithubKind: r.GithubKind, GithubState: r.GithubState, GithubUrl: r.GithubUrl,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
 }
@@ -794,6 +806,7 @@ func forUserRowToIssue(r db.GetIssueForUserRow) db.Issue {
 		AssigneeID: r.AssigneeID, AgentID: r.AgentID, CreatedBy: r.CreatedBy,
 		GithubNodeID: r.GithubNodeID, GithubRepoID: r.GithubRepoID,
 		GithubNumber: r.GithubNumber, Origin: r.Origin,
+		GithubKind: r.GithubKind, GithubState: r.GithubState, GithubUrl: r.GithubUrl,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
 }
@@ -805,6 +818,7 @@ func byIDRowToIssue(r db.GetIssueByIDRow) db.Issue {
 		AssigneeID: r.AssigneeID, AgentID: r.AgentID, CreatedBy: r.CreatedBy,
 		GithubNodeID: r.GithubNodeID, GithubRepoID: r.GithubRepoID,
 		GithubNumber: r.GithubNumber, Origin: r.Origin,
+		GithubKind: r.GithubKind, GithubState: r.GithubState, GithubUrl: r.GithubUrl,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
 }

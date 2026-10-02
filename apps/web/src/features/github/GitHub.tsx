@@ -256,6 +256,29 @@ export function DevelopmentPanel(props: {
     (id) => api.projectDevelopment(id),
   );
   const [confirm, setConfirm] = createSignal<string | null>(null);
+  const [importing, setImporting] = createSignal<string | null>(null);
+  const [importMsg, setImportMsg] = createSignal<Record<string, string>>({});
+
+  async function runImport(repoId: string) {
+    setImporting(repoId);
+    setImportMsg((m) => ({ ...m, [repoId]: "" }));
+    try {
+      const res = await api.importGitHub(props.projectId, repoId);
+      const r = res.results[0];
+      if (!r) return;
+      const msg = r.error
+        ? `Import failed — ${r.error}`
+        : `Issues: +${r.issues.created} new, ${r.issues.updated} refreshed · PRs: +${r.prs.created} new, ${r.prs.updated} refreshed${r.truncated ? " · capped at 500 per kind" : ""}`;
+      setImportMsg((m) => ({ ...m, [repoId]: msg }));
+    } catch (err) {
+      setImportMsg((m) => ({
+        ...m,
+        [repoId]: err instanceof Error ? err.message : "Import failed",
+      }));
+    } finally {
+      setImporting(null);
+    }
+  }
 
   const hasRepos = createMemo(() => (linked()?.repos.length ?? 0) > 0);
 
@@ -265,7 +288,8 @@ export function DevelopmentPanel(props: {
         <Show when={hasRepos()}>
           <For each={linked()?.repos}>
             {(repo: LinkedRepo) => (
-              <div class="mb-2 flex items-center justify-between rounded-md border border-border bg-surface px-3 py-2">
+              <>
+                <div class="mb-2 flex items-center justify-between rounded-md border border-border bg-surface px-3 py-2">
                 <div class="flex items-center gap-2">
                   {markGitHub("", "h-3.5 w-3.5 text-muted")}
                   <a
@@ -280,18 +304,27 @@ export function DevelopmentPanel(props: {
                     {repo.default_branch}
                   </span>
                 </div>
-                <Show
-                  when={confirm() === repo.id}
-                  fallback={
-                    <button
-                      type="button"
-                      onClick={() => setConfirm(repo.id)}
-                      class="text-[11.5px] text-muted hover:text-danger"
-                    >
-                      Unlink
-                    </button>
-                  }
-                >
+                <div class="flex items-center gap-3">
+                  <button
+                    type="button"
+                    disabled={importing() === repo.id}
+                    onClick={() => runImport(repo.id)}
+                    class="text-[11.5px] font-medium text-accent hover:underline disabled:opacity-50"
+                  >
+                    {importing() === repo.id ? "Importing…" : "Import issues & PRs"}
+                  </button>
+                  <Show
+                    when={confirm() === repo.id}
+                    fallback={
+                      <button
+                        type="button"
+                        onClick={() => setConfirm(repo.id)}
+                        class="text-[11.5px] text-muted hover:text-danger"
+                      >
+                        Unlink
+                      </button>
+                    }
+                  >
                   <button
                     type="button"
                     onClick={async () => {
@@ -304,7 +337,14 @@ export function DevelopmentPanel(props: {
                     Confirm unlink
                   </button>
                 </Show>
+                </div>
               </div>
+                <Show when={importMsg()[repo.id]}>
+                  {(msg) => (
+                    <p class="mb-2 px-1 text-[11.5px] text-muted">{msg()}</p>
+                  )}
+                </Show>
+              </>
             )}
           </For>
         </Show>

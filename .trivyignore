@@ -1,0 +1,7 @@
+# node-forge@1.4.0 (CVE-2026-85393) — HIGH, RSA PKCS#1 v1.5 signature forgery.
+# Transitive build-time dep of expo → @expo/cli / @expo/code-signing-certificates
+# (apps/mobile). Not shipped in any runtime artifact; Relay's APK builds do not
+# verify third-party PKCS#1 signatures. No fixed release exists as of
+# 2026-10-02 (1.4.0 is latest). Revisit: 2026-12-01 or on first node-forge
+# release, whichever is earlier.
+CVE-2026-85393

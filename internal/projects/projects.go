@@ -4,6 +4,7 @@
 package projects
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"regexp"
@@ -242,6 +243,21 @@ func (s *Service) handleOverview(c *gin.Context) {
 		msgs = append(msgs, conversations.MessageJSON(m.ID, m.ConversationID, m.Body, m.CreatedAt, m.EditedAt,
 			m.AuthorUserID, m.AuthorAgentID, m.AuthorName, m.AuthorAvatar, nil))
 	}
+	acts, _ := s.q.ListProjectIssueActivity(c.Request.Context(), p.ID)
+	activity := make([]gin.H, 0, len(acts))
+	for _, a := range acts {
+		actor := ""
+		if a.ActorName.Valid {
+			actor = a.ActorName.String
+		}
+		activity = append(activity, gin.H{
+			"id": a.ID.String(), "issue_id": a.IssueID.String(),
+			"issue_number": a.IssueNumber, "issue_title": a.IssueTitle,
+			"kind": a.Kind, "payload": json.RawMessage(a.Payload),
+			"actor":      actor,
+			"created_at": a.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
+		})
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"project": projectJSON(p),
 		"counts": gin.H{
@@ -250,6 +266,7 @@ func (s *Service) handleOverview(c *gin.Context) {
 			"conversations": counts.Conversations,
 		},
 		"recent_messages": msgs,
+		"issue_activity":  activity,
 	})
 }
 

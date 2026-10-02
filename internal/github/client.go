@@ -141,7 +141,8 @@ type GHIssue struct {
 	} `json:"user"`
 	PullRequest *struct{} `json:"pull_request"` // non-nil means it's a PR
 	Labels      []struct {
-		Name string `json:"name"`
+		Name  string `json:"name"`
+		Color string `json:"color"`
 	} `json:"labels"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -151,6 +152,8 @@ type PR struct {
 	Title    string     `json:"title"`
 	State    string     `json:"state"`
 	Draft    bool       `json:"draft"`
+	Body     string     `json:"body"`
+	NodeID   string     `json:"node_id"`
 	MergedAt *time.Time `json:"merged_at"`
 	HTMLURL  string     `json:"html_url"`
 	User     struct {
@@ -201,6 +204,70 @@ func (c *Client) ListInstallationRepos(ctx context.Context, installID int64) ([]
 	return out.Repositories, err
 }
 
+// maxImportPages bounds a single list call so imports stay finite even on
+// very large repos. 5 pages x 100 = 500 items.
+const maxImportPages = 5
+
+// listPaged walks GitHub's ?page= pagination until a short page or the cap.
+// Jarvis: ceiling 500 items per list call, upgrade if repos outgrow it.
+func (c *Client) listPaged(ctx context.Context, tok, url string, each func(dec *json.Decoder) error) error {
+	for page := 1; page <= maxImportPages; page++ {
+		full := fmt.Sprintf("%s&per_page=100&page=%d", url, page)
+		req, err := http.NewRequestWithContext(ctx, "GET", full, nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		req.Header.Set("Authorization", "Bearer "+tok)
+		res, err := c.hc.Do(req)
+		if err != nil {
+			return err
+		}
+		var items []json.RawMessage
+		derr := json.NewDecoder(res.Body).Decode(&items)
+		_ = res.Body.Close()
+		if res.StatusCode >= 300 {
+			return fmt.Errorf("github GET %s: %s", full, res.Status)
+		}
+		if derr != nil {
+			return derr
+		}
+		for _, raw := range items {
+			if err := each(json.NewDecoder(bytes.NewReader(raw))); err != nil {
+				return err
+			}
+		}
+		if len(items) < 100 {
+			return nil
+		}
+	}
+	return nil
+}
+
+// ListIssuesAll returns every issue (open and closed) on the repo, PRs
+// excluded, up to the import cap.
+func (c *Client) ListIssuesAll(ctx context.Context, installID int64, owner, repo string) ([]GHIssue, error) {
+	tok, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return nil, err
+	}
+	var out []GHIssue
+	url := fmt.Sprintf("%s/repos/%s/%s/issues?state=all", apiBase, owner, repo)
+	err = c.listPaged(ctx, tok, url, func(dec *json.Decoder) error {
+		var i GHIssue
+		if err := dec.Decode(&i); err != nil {
+			return err
+		}
+		if i.PullRequest == nil { // issues endpoint returns PRs too
+			out = append(out, i)
+		}
+		return nil
+	})
+	return out, err
+}
+
+// ListIssues is the dev-panel call: open issues only, first page, cheap.
 func (c *Client) ListIssues(ctx context.Context, installID int64, owner, repo string) ([]GHIssue, error) {
 	tok, err := c.installationToken(ctx, installID)
 	if err != nil {
@@ -260,6 +327,7 @@ func (c *Client) GetIssue(ctx context.Context, installID int64, owner, repo stri
 	return &out, err
 }
 
+// ListPRs is the dev-panel call: open PRs, first page.
 func (c *Client) ListPRs(ctx context.Context, installID int64, owner, repo string) ([]PR, error) {
 	tok, err := c.installationToken(ctx, installID)
 	if err != nil {
@@ -269,6 +337,25 @@ func (c *Client) ListPRs(ctx context.Context, installID int64, owner, repo strin
 	err = c.do(ctx, "GET",
 		fmt.Sprintf("%s/repos/%s/%s/pulls?state=open&per_page=50", apiBase, owner, repo),
 		tok, nil, &out)
+	return out, err
+}
+
+// ListPRsAll returns every PR (open, closed, merged) up to the import cap.
+func (c *Client) ListPRsAll(ctx context.Context, installID int64, owner, repo string) ([]PR, error) {
+	tok, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return nil, err
+	}
+	var out []PR
+	url := fmt.Sprintf("%s/repos/%s/%s/pulls?state=all", apiBase, owner, repo)
+	err = c.listPaged(ctx, tok, url, func(dec *json.Decoder) error {
+		var pr PR
+		if err := dec.Decode(&pr); err != nil {
+			return err
+		}
+		out = append(out, pr)
+		return nil
+	})
 	return out, err
 }
 

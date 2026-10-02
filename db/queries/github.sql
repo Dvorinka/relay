@@ -68,9 +68,11 @@ where github_repo_id = sqlc.arg(repo_id) and github_number = sqlc.arg(number);
 
 -- name: CreateGitHubIssue :one
 insert into issues (project_id, number, title, description, status, priority,
-                    github_node_id, github_repo_id, github_number, origin)
+                    github_node_id, github_repo_id, github_number, origin,
+                    github_kind, github_state, github_url)
 values (sqlc.arg(project_id), sqlc.arg(number), sqlc.arg(title), sqlc.arg(description),
-        sqlc.arg(status), 'none', sqlc.arg(node_id), sqlc.arg(repo_id), sqlc.arg(gh_number), 'github')
+        sqlc.arg(status), 'none', sqlc.arg(node_id), sqlc.arg(repo_id), sqlc.arg(gh_number), 'github',
+        sqlc.arg(kind), sqlc.arg(gh_state), sqlc.arg(gh_url))
 returning *;
 
 -- name: UpdateGitHubIssue :one
@@ -78,6 +80,8 @@ update issues set
     title = coalesce(sqlc.narg(title)::text, title),
     description = coalesce(sqlc.narg(description)::text, description),
     status = coalesce(sqlc.narg(status)::text, status),
+    github_state = coalesce(sqlc.narg(gh_state)::text, github_state),
+    github_url = coalesce(sqlc.narg(gh_url)::text, github_url),
     updated_at = now()
 where id = sqlc.arg(id)
 returning *;

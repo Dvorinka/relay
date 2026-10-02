@@ -9,10 +9,15 @@ personal access tokens are needed in production.
 - **Linked repositories** on a project — visible on the Development tab.
 - **Development panel** — open GitHub issues, open pull requests, and recent
   commits per linked repository (cached 60 s).
-- **Issue mirroring** — GitHub issues on linked repos become Relay issues
-  (`origin: github`, badge `#N open|closed`). Edits, closes, and reopens on
-  GitHub update the mirrored issue; PR events on a mirrored issue number land
-  in its activity feed.
+- **Issue & PR mirroring** — GitHub issues and pull requests on linked repos
+  become Relay issues (`origin: github`; PRs carry `github.kind="pr"` and a
+  `/pull/N` link). Edits, closes, merges, and reopens on GitHub update the
+  mirrored issue.
+- **Bulk import** — Development tab → **Import issues & PRs** (or
+  `POST /api/projects/:id/github/import`) pulls the full history:
+  `state=all`, paginated, capped at 500 per kind per repo. Open PRs land in
+  `review`, merged in `done`, closed in `cancelled`; GitHub labels are
+  imported with their colors. Re-runs refresh in place — no duplicates.
 - **MCP tools** — `github_list_issues`, `github_get_issue`,
   `github_list_prs`, `github_get_pr` under the `issue:read` scope.
 

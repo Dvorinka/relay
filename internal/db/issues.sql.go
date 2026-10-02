@@ -32,7 +32,7 @@ const createIssue = `-- name: CreateIssue :one
 insert into issues (project_id, number, title, description, status, priority, assignee_id, created_by)
 values ($1, $2, $3, $4,
         $5, $6, $7, $8)
-returning id, project_id, number, title, description, status, priority, assignee_id, agent_id, created_by, created_at, updated_at, github_node_id, github_repo_id, github_number, origin
+returning id, project_id, number, title, description, status, priority, assignee_id, agent_id, created_by, created_at, updated_at, github_node_id, github_repo_id, github_number, origin, github_kind, github_state, github_url
 `
 
 type CreateIssueParams struct {
@@ -75,6 +75,9 @@ func (q *Queries) CreateIssue(ctx context.Context, arg CreateIssueParams) (Issue
 		&i.GithubRepoID,
 		&i.GithubNumber,
 		&i.Origin,
+		&i.GithubKind,
+		&i.GithubState,
+		&i.GithubUrl,
 	)
 	return i, err
 }
@@ -129,7 +132,7 @@ func (q *Queries) CreateLabel(ctx context.Context, arg CreateLabelParams) (Issue
 }
 
 const getIssueByID = `-- name: GetIssueByID :one
-select i.id, i.project_id, i.number, i.title, i.description, i.status, i.priority, i.assignee_id, i.agent_id, i.created_by, i.created_at, i.updated_at, i.github_node_id, i.github_repo_id, i.github_number, i.origin, u.name as assignee_name, u.avatar_key as assignee_avatar,
+select i.id, i.project_id, i.number, i.title, i.description, i.status, i.priority, i.assignee_id, i.agent_id, i.created_by, i.created_at, i.updated_at, i.github_node_id, i.github_repo_id, i.github_number, i.origin, i.github_kind, i.github_state, i.github_url, u.name as assignee_name, u.avatar_key as assignee_avatar,
        gr.owner as github_repo_owner, gr.name as github_repo_name
 from issues i
 left join users u on u.id = i.assignee_id
@@ -154,6 +157,9 @@ type GetIssueByIDRow struct {
 	GithubRepoID    pgtype.UUID        `json:"github_repo_id"`
 	GithubNumber    pgtype.Int4        `json:"github_number"`
 	Origin          string             `json:"origin"`
+	GithubKind      string             `json:"github_kind"`
+	GithubState     pgtype.Text        `json:"github_state"`
+	GithubUrl       pgtype.Text        `json:"github_url"`
 	AssigneeName    pgtype.Text        `json:"assignee_name"`
 	AssigneeAvatar  pgtype.Text        `json:"assignee_avatar"`
 	GithubRepoOwner pgtype.Text        `json:"github_repo_owner"`
@@ -180,6 +186,9 @@ func (q *Queries) GetIssueByID(ctx context.Context, id pgtype.UUID) (GetIssueByI
 		&i.GithubRepoID,
 		&i.GithubNumber,
 		&i.Origin,
+		&i.GithubKind,
+		&i.GithubState,
+		&i.GithubUrl,
 		&i.AssigneeName,
 		&i.AssigneeAvatar,
 		&i.GithubRepoOwner,
@@ -206,7 +215,7 @@ func (q *Queries) GetIssueConversation(ctx context.Context, issueID pgtype.UUID)
 }
 
 const getIssueForUser = `-- name: GetIssueForUser :one
-select i.id, i.project_id, i.number, i.title, i.description, i.status, i.priority, i.assignee_id, i.agent_id, i.created_by, i.created_at, i.updated_at, i.github_node_id, i.github_repo_id, i.github_number, i.origin, u.name as assignee_name, u.avatar_key as assignee_avatar,
+select i.id, i.project_id, i.number, i.title, i.description, i.status, i.priority, i.assignee_id, i.agent_id, i.created_by, i.created_at, i.updated_at, i.github_node_id, i.github_repo_id, i.github_number, i.origin, i.github_kind, i.github_state, i.github_url, u.name as assignee_name, u.avatar_key as assignee_avatar,
        gr.owner as github_repo_owner, gr.name as github_repo_name,
        gr.installation_id as github_installation_id
 from issues i
@@ -239,6 +248,9 @@ type GetIssueForUserRow struct {
 	GithubRepoID         pgtype.UUID        `json:"github_repo_id"`
 	GithubNumber         pgtype.Int4        `json:"github_number"`
 	Origin               string             `json:"origin"`
+	GithubKind           string             `json:"github_kind"`
+	GithubState          pgtype.Text        `json:"github_state"`
+	GithubUrl            pgtype.Text        `json:"github_url"`
 	AssigneeName         pgtype.Text        `json:"assignee_name"`
 	AssigneeAvatar       pgtype.Text        `json:"assignee_avatar"`
 	GithubRepoOwner      pgtype.Text        `json:"github_repo_owner"`
@@ -266,11 +278,37 @@ func (q *Queries) GetIssueForUser(ctx context.Context, arg GetIssueForUserParams
 		&i.GithubRepoID,
 		&i.GithubNumber,
 		&i.Origin,
+		&i.GithubKind,
+		&i.GithubState,
+		&i.GithubUrl,
 		&i.AssigneeName,
 		&i.AssigneeAvatar,
 		&i.GithubRepoOwner,
 		&i.GithubRepoName,
 		&i.GithubInstallationID,
+	)
+	return i, err
+}
+
+const getLabelByName = `-- name: GetLabelByName :one
+select id, project_id, name, color, created_at from issue_labels
+where project_id = $1 and lower(name) = lower($2)
+`
+
+type GetLabelByNameParams struct {
+	ProjectID pgtype.UUID `json:"project_id"`
+	Name      string      `json:"name"`
+}
+
+func (q *Queries) GetLabelByName(ctx context.Context, arg GetLabelByNameParams) (IssueLabel, error) {
+	row := q.db.QueryRow(ctx, getLabelByName, arg.ProjectID, arg.Name)
+	var i IssueLabel
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Color,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -301,6 +339,24 @@ func (q *Queries) GetMessageWithProjectForUser(ctx context.Context, arg GetMessa
 	var i GetMessageWithProjectForUserRow
 	err := row.Scan(&i.ID, &i.Body, &i.ProjectID)
 	return i, err
+}
+
+const insertLabelIfMissing = `-- name: InsertLabelIfMissing :exec
+insert into issue_labels (project_id, name, color)
+values ($1, $2, $3)
+on conflict do nothing
+`
+
+type InsertLabelIfMissingParams struct {
+	ProjectID pgtype.UUID `json:"project_id"`
+	Name      string      `json:"name"`
+	Color     string      `json:"color"`
+}
+
+// on conflict do nothing covers the (project_id, lower(name)) expression index
+func (q *Queries) InsertLabelIfMissing(ctx context.Context, arg InsertLabelIfMissingParams) error {
+	_, err := q.db.Exec(ctx, insertLabelIfMissing, arg.ProjectID, arg.Name, arg.Color)
+	return err
 }
 
 const linkIssueLabel = `-- name: LinkIssueLabel :exec
@@ -404,7 +460,7 @@ func (q *Queries) ListIssueLabels(ctx context.Context, issueID pgtype.UUID) ([]I
 }
 
 const listIssuesForUser = `-- name: ListIssuesForUser :many
-select i.id, i.project_id, i.number, i.title, i.description, i.status, i.priority, i.assignee_id, i.agent_id, i.created_by, i.created_at, i.updated_at, i.github_node_id, i.github_repo_id, i.github_number, i.origin, u.name as assignee_name, u.avatar_key as assignee_avatar,
+select i.id, i.project_id, i.number, i.title, i.description, i.status, i.priority, i.assignee_id, i.agent_id, i.created_by, i.created_at, i.updated_at, i.github_node_id, i.github_repo_id, i.github_number, i.origin, i.github_kind, i.github_state, i.github_url, u.name as assignee_name, u.avatar_key as assignee_avatar,
        gr.owner as github_repo_owner, gr.name as github_repo_name
 from issues i
 join projects p on p.id = i.project_id
@@ -447,6 +503,9 @@ type ListIssuesForUserRow struct {
 	GithubRepoID    pgtype.UUID        `json:"github_repo_id"`
 	GithubNumber    pgtype.Int4        `json:"github_number"`
 	Origin          string             `json:"origin"`
+	GithubKind      string             `json:"github_kind"`
+	GithubState     pgtype.Text        `json:"github_state"`
+	GithubUrl       pgtype.Text        `json:"github_url"`
 	AssigneeName    pgtype.Text        `json:"assignee_name"`
 	AssigneeAvatar  pgtype.Text        `json:"assignee_avatar"`
 	GithubRepoOwner pgtype.Text        `json:"github_repo_owner"`
@@ -486,6 +545,9 @@ func (q *Queries) ListIssuesForUser(ctx context.Context, arg ListIssuesForUserPa
 			&i.GithubRepoID,
 			&i.GithubNumber,
 			&i.Origin,
+			&i.GithubKind,
+			&i.GithubState,
+			&i.GithubUrl,
 			&i.AssigneeName,
 			&i.AssigneeAvatar,
 			&i.GithubRepoOwner,
@@ -532,6 +594,59 @@ func (q *Queries) ListLabelsForIssues(ctx context.Context, ids []pgtype.UUID) ([
 			&i.Color,
 			&i.CreatedAt,
 			&i.IssueID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProjectIssueActivity = `-- name: ListProjectIssueActivity :many
+select a.id, a.issue_id, a.kind, a.payload, a.created_at,
+       i.number as issue_number, i.title as issue_title,
+       u.name as actor_name
+from issue_activity a
+join issues i on i.id = a.issue_id
+left join users u on u.id = a.actor_user_id
+where i.project_id = $1
+order by a.created_at desc
+limit 20
+`
+
+type ListProjectIssueActivityRow struct {
+	ID          pgtype.UUID        `json:"id"`
+	IssueID     pgtype.UUID        `json:"issue_id"`
+	Kind        string             `json:"kind"`
+	Payload     []byte             `json:"payload"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	IssueNumber int32              `json:"issue_number"`
+	IssueTitle  string             `json:"issue_title"`
+	ActorName   pgtype.Text        `json:"actor_name"`
+}
+
+// project-wide feed: latest issue events for the overview page
+func (q *Queries) ListProjectIssueActivity(ctx context.Context, projectID pgtype.UUID) ([]ListProjectIssueActivityRow, error) {
+	rows, err := q.db.Query(ctx, listProjectIssueActivity, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListProjectIssueActivityRow{}
+	for rows.Next() {
+		var i ListProjectIssueActivityRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.IssueID,
+			&i.Kind,
+			&i.Payload,
+			&i.CreatedAt,
+			&i.IssueNumber,
+			&i.IssueTitle,
+			&i.ActorName,
 		); err != nil {
 			return nil, err
 		}
@@ -690,7 +805,7 @@ update issues set
     priority = coalesce($4, priority),
     updated_at = now()
 where id = $5
-returning id, project_id, number, title, description, status, priority, assignee_id, agent_id, created_by, created_at, updated_at, github_node_id, github_repo_id, github_number, origin
+returning id, project_id, number, title, description, status, priority, assignee_id, agent_id, created_by, created_at, updated_at, github_node_id, github_repo_id, github_number, origin, github_kind, github_state, github_url
 `
 
 type UpdateIssueFieldsParams struct {
@@ -727,6 +842,9 @@ func (q *Queries) UpdateIssueFields(ctx context.Context, arg UpdateIssueFieldsPa
 		&i.GithubRepoID,
 		&i.GithubNumber,
 		&i.Origin,
+		&i.GithubKind,
+		&i.GithubState,
+		&i.GithubUrl,
 	)
 	return i, err
 }
