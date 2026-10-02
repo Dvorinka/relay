@@ -119,6 +119,11 @@ made autonomously, what you need to do (new env vars, migrations, deploy
 steps, CI changes), and how to verify. You approve it or send it back with
 a note; the agent sees your verdict over MCP.
 
+Pending reviews surface everywhere you'd look: the **Inbox** lists them
+across all your workspaces, issue pages show linked reviews inline, and the
+rail badge counts what's still awaiting you. Every project tab is a deep
+link (`?tab=reviews`), so inbox items land exactly where the verdict lives.
+
 Each agent picks a **review mode** when you create or edit it in Settings:
 
 - `notify` (default) - the agent works to completion, then files the review
