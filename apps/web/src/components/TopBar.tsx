@@ -3,6 +3,9 @@ import { A, useNavigate } from "@solidjs/router";
 import { Portal } from "solid-js/web";
 import { initials } from "../lib/text";
 import { useSession } from "../stores/session";
+import { toggleTheme, useTheme } from "../stores/theme";
+import { openPalette } from "./CommandPalette";
+import { MoonIcon, SunIcon } from "./icons";
 import { RelayMark, SearchIcon } from "./icons";
 
 function AccountMenu() {
@@ -65,6 +68,7 @@ function AccountMenu() {
 }
 
 export function TopBar() {
+  const { theme } = useTheme();
   return (
     <header class="flex h-12 shrink-0 items-center gap-3 border-b border-border px-4">
       <A href="/app" class="flex items-center gap-2">
@@ -76,6 +80,7 @@ export function TopBar() {
 
       <button
         type="button"
+        onClick={openPalette}
         class="flex h-7 w-64 items-center gap-2 rounded-md border border-border bg-surface px-2.5 text-[13px] text-muted transition-colors hover:bg-hover"
       >
         <SearchIcon class="h-3.5 w-3.5" />
@@ -85,6 +90,19 @@ export function TopBar() {
         </kbd>
       </button>
 
+      <button
+        type="button"
+        onClick={toggleTheme}
+        title={theme() === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+        aria-label="Toggle color theme"
+        class="flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-hover hover:text-fg"
+      >
+        {theme() === "dark" ? (
+          <SunIcon class="h-3.5 w-3.5" />
+        ) : (
+          <MoonIcon class="h-3.5 w-3.5" />
+        )}
+      </button>
       <AccountMenu />
     </header>
   );

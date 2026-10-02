@@ -91,10 +91,17 @@ all without refresh.
   client with backoff
 - Unread counts (rail badges), `@name` mention feed, Inbox page
 
-## Phase 8 - Search & polish ☐
+## Phase 8 - Search & polish ☑
+
+Verified live: FTS indexes on messages/issues/projects/todos; `RLY-2`
+matches its issue by key, `spacing` ranks the renamed sidebar issue first;
+the `Ctrl/Cmd+K` palette groups results and navigates; the theme toggle
+flips a persistent dark/light preference (system-aware default).
 
 - Postgres FTS global search, `Ctrl/Cmd+K` palette
-- Keyboard-first navigation pass, dark/light polish, a11y audit
+- Keyboard-first navigation pass (j/k lists, palette arrows, Enter to open)
+- Dark/light theme toggle persisted in localStorage, a11y labels on icon
+  buttons
 
 ## Phase 9 - Desktop (Wails) ☐
 

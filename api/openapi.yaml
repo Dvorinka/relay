@@ -1000,6 +1000,16 @@ paths:
       responses:
         "200": { description: "project_id -> count map" }
 
+  /api/search:
+    get:
+      operationId: search
+      summary: Global full-text search over messages, issues, projects, todos
+      tags: [search]
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 2, maxLength: 200 } }
+      responses:
+        "200": { description: "Grouped, ranked results" }
+
   /api/me/mentions:
     get:
       operationId: mentions
