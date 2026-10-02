@@ -1,23 +1,28 @@
-import type { AgentReview, Issue, Project } from "@relay/api-client";
+import type {
+  AgentReview,
+  Issue,
+  Project,
+  SearchResults,
+} from "@relay/api-client";
 import { A, useNavigate, useParams, useSearchParams } from "@solidjs/router";
 import {
   createEffect,
   createMemo,
   createResource,
+  createSignal,
   For,
   onCleanup,
   Show,
 } from "solid-js";
 import { Avatar } from "@ark-ui/solid";
 import {
+  GitPullRequestIcon,
   IssueIcon,
-  SearchIcon,
   SettingsIcon,
   XIcon,
 } from "../../components/icons";
 import { Spinner } from "../../components/ui";
 import { api } from "../../lib/api";
-import { openPalette } from "../../components/CommandPalette";
 import { subscribe } from "../../lib/events";
 import { initials } from "../../lib/text";
 import { timeAgo } from "../../lib/time";
@@ -25,17 +30,17 @@ import { useProjects } from "../../stores/projects";
 import { useSession } from "../../stores/session";
 import { Conversation } from "../conversations/Conversation";
 import { DevelopmentPanel, markGitHub } from "../github/GitHub";
-import { Board } from "../issues/Board";
+import { PullRequestList } from "../github/PullRequestList";
 import { IssueList } from "../issues/IssueList";
 import { isClosed, StatusDot } from "../issues/meta";
 import { Reviews } from "../reviews/Reviews";
 import { WebhooksSection } from "../webhooks/Webhooks";
 
-type View = "board" | "issues" | "reviews" | "development" | "settings";
+type View = "issues" | "pulls" | "reviews" | "development" | "settings";
 
 const VIEWS: { id: View; label: string }[] = [
-  { id: "board", label: "Board" },
   { id: "issues", label: "Issues" },
+  { id: "pulls", label: "Pull requests" },
   { id: "reviews", label: "Reviews" },
   { id: "development", label: "Development" },
   { id: "settings", label: "Project settings" },
@@ -163,6 +168,125 @@ function MiniReview(props: { review: AgentReview; onOpen: () => void }) {
   );
 }
 
+// Discord-style rail search: field pinned above the issues list, results
+// scoped to this project swap in while typing; Esc/✕ returns to context.
+function RailSearch(props: { projectId: string }) {
+  const [q, setQ] = createSignal("");
+  const [results, setResults] = createSignal<SearchResults | null>(null);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => clearTimeout(timer));
+
+  function onInput(v: string) {
+    setQ(v);
+    clearTimeout(timer);
+    const needle = v.trim();
+    if (needle.length < 2) {
+      setResults(null);
+      return;
+    }
+    timer = setTimeout(async () => {
+      try {
+        const r = await api.search(needle);
+        const pid = props.projectId;
+        setResults({
+          messages: r.messages.filter((m) => m.project_id === pid),
+          issues: r.issues.filter((i) => i.project_id === pid),
+          todos: r.todos.filter((t) => t.project_id === pid),
+          projects: [],
+        });
+      } catch {
+        setResults(null);
+      }
+    }, 250);
+  }
+
+  return (
+    <div class="px-4 pt-4">
+      <div class="relative">
+        <input
+          type="text"
+          value={q()}
+          placeholder="Search"
+          aria-label="Search this project"
+          onInput={(e) => onInput(e.currentTarget.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              setQ("");
+              setResults(null);
+              e.currentTarget.blur();
+            }
+          }}
+          class="h-8 w-full rounded-md border border-transparent bg-surface px-2.5 pr-7 text-[12.5px] placeholder:text-muted/70 focus:border-accent/50 focus:outline-none"
+        />
+        <Show when={q()}>
+          <button
+            type="button"
+            aria-label="Clear search"
+            class="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted hover:text-fg"
+            onClick={() => {
+              setQ("");
+              setResults(null);
+            }}
+          >
+            <XIcon class="h-3 w-3" />
+          </button>
+        </Show>
+      </div>
+      <SearchResultsView results={results()} query={q().trim()} />
+    </div>
+  );
+}
+
+function SearchResultsView(props: {
+  results: SearchResults | null;
+  query: string;
+}) {
+  return (
+    <Show when={props.results}>
+      {(r) => {
+        const empty = () =>
+          r().messages.length + r().issues.length + r().todos.length === 0;
+        return (
+          <div class="mt-3 flex flex-col gap-3 border-b border-border pb-4">
+            <p class="text-[11px] font-medium uppercase tracking-[0.07em] text-muted/80">
+              {empty() ? `No results for “${props.query}”` : "Results"}
+            </p>
+            <For each={r().issues.slice(0, 5)}>
+              {(i) => (
+                <A
+                  href={`/app/p/${i.project_id}/i/${i.id}`}
+                  class="flex items-center gap-2 text-[12.5px] transition-colors hover:text-accent"
+                >
+                  <span class="font-mono text-[10.5px] text-accent">
+                    {i.key}
+                  </span>
+                  <span class="truncate">{i.title}</span>
+                </A>
+              )}
+            </For>
+            <For each={r().messages.slice(0, 5)}>
+              {(m) => (
+                <p class="text-[12px] text-muted">
+                  <span class="font-medium text-fg">{m.author}</span>
+                  {": "}
+                  {m.body.slice(0, 90)}
+                </p>
+              )}
+            </For>
+            <For each={r().todos.slice(0, 3)}>
+              {(t) => (
+                <p class="text-[12px] text-muted">
+                  {t.done ? "☑" : "☐"} {t.content}
+                </p>
+              )}
+            </For>
+          </div>
+        );
+      }}
+    </Show>
+  );
+}
+
 function ContextRail(props: {
   project: Project;
   onOpenView: (v: View) => void;
@@ -198,6 +322,7 @@ function ContextRail(props: {
 
   return (
     <aside class="h-full w-72 shrink-0 overflow-y-auto border-l border-border pb-6 xl:w-80">
+      <RailSearch projectId={props.project.id} />
       <RailSection label="Open issues" count={openIssues().length}>
         <div class="flex flex-col gap-1.5">
           <For
@@ -357,9 +482,7 @@ function ViewSheet(props: {
       <div
         role="dialog"
         aria-label={label()}
-        class={`relative z-10 flex h-full flex-col border-l border-border bg-bg shadow-2xl ${
-          props.view === "board" ? "w-[min(1100px,94vw)]" : "w-[min(760px,92vw)]"
-        }`}
+        class="relative z-10 flex h-full w-[min(760px,92vw)] flex-col border-l border-border bg-bg shadow-2xl"
       >
         <div class="flex h-12 shrink-0 items-center gap-3 border-b border-border px-4">
           <h2 class="text-[13.5px] font-semibold">{label()}</h2>
@@ -376,11 +499,11 @@ function ViewSheet(props: {
           </button>
         </div>
         <div class="flex min-h-0 flex-1 flex-col">
-          <Show when={props.view === "board"}>
-            <Board project={props.project} />
-          </Show>
           <Show when={props.view === "issues"}>
             <IssueList project={props.project} />
+          </Show>
+          <Show when={props.view === "pulls"}>
+            <PullRequestList projectId={props.project.id} />
           </Show>
           <Show when={props.view === "reviews"}>
             <Reviews project={props.project} />
@@ -417,6 +540,15 @@ export default function ProjectPage() {
   };
   const openView = (v: View | undefined) =>
     setSearchParams({ view: v ?? undefined, tab: undefined });
+
+  // The board became its own page — old ?view=board / ?tab=board links land
+  // there instead of opening a sheet.
+  createEffect(() => {
+    const v = searchParams.view ?? searchParams.tab;
+    if (v === "board") {
+      navigate(`/app/p/${params.projectId}/board`, { replace: true });
+    }
+  });
 
   const [overview] = createResource(
     () => params.projectId,
@@ -471,10 +603,7 @@ export default function ProjectPage() {
           <div class="ml-auto flex items-center gap-1">
             <HeadButton
               title="Board"
-              active={view() === "board"}
-              onClick={() =>
-                openView(view() === "board" ? undefined : "board")
-              }
+              onClick={() => navigate(`/app/p/${params.projectId}/board`)}
             >
               <BoardIcon class="h-4 w-4" />
             </HeadButton>
@@ -487,8 +616,14 @@ export default function ProjectPage() {
             >
               <IssueIcon class="h-4 w-4" />
             </HeadButton>
-            <HeadButton title="Search (Ctrl+K)" onClick={openPalette}>
-              <SearchIcon class="h-4 w-4" />
+            <HeadButton
+              title="Pull requests"
+              active={view() === "pulls"}
+              onClick={() =>
+                openView(view() === "pulls" ? undefined : "pulls")
+              }
+            >
+              <GitPullRequestIcon class="h-4 w-4" />
             </HeadButton>
           </div>
         </header>

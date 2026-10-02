@@ -15,6 +15,8 @@ import {
 } from "../../components/ui";
 import { MoonIcon, SunIcon } from "../../components/icons";
 import { api } from "../../lib/api";
+import { net } from "../../lib/net";
+import { syncToServer } from "../../lib/sync";
 import { useSession } from "../../stores/session";
 import {
   ACCENT_PRESETS,
@@ -308,6 +310,184 @@ function AppearanceSection() {
   );
 }
 
+// Connection card: which backend this app talks to. Local mode stores
+// everything on this device; "Connect a server" moves to a real Relay
+// backend, and "Sync to server" pushes the local store up once connected.
+function ConnectionSection() {
+  const session = useSession();
+  const [syncPending, setSyncPending] = createSignal(false);
+  const [connectPending, setConnectPending] = createSignal(false);
+  const [step, setStep] = createSignal("");
+  const [result, setResult] = createSignal<string | null>(null);
+  const [error, setError] = createSignal<string | null>(null);
+
+  const mode = () =>
+    net.isLocal()
+      ? "This device (local)"
+      : net.serverUrl() || window.location.origin;
+
+  async function onSync(e: SubmitEvent) {
+    e.preventDefault();
+    const data = new FormData(e.currentTarget as HTMLFormElement);
+    setError(null);
+    setResult(null);
+    setSyncPending(true);
+    try {
+      const r = await syncToServer(
+        String(data.get("server_url") ?? ""),
+        String(data.get("email") ?? ""),
+        String(data.get("password") ?? ""),
+        setStep,
+      );
+      setResult(
+        `Synced ${r.projects} project(s), ${r.messages} message(s), ${r.issues} issue(s), ${r.todos} todo(s). Local data is unchanged.`,
+      );
+    } catch (err) {
+      setError(errorMessage(err, "Sync failed"));
+    } finally {
+      setSyncPending(false);
+      setStep("");
+    }
+  }
+
+  async function onConnect(e: SubmitEvent) {
+    e.preventDefault();
+    const data = new FormData(e.currentTarget as HTMLFormElement);
+    setError(null);
+    setConnectPending(true);
+    try {
+      await session.login(
+        {
+          email: String(data.get("email") ?? ""),
+          password: String(data.get("password") ?? ""),
+        },
+        String(data.get("server_url") ?? ""),
+      );
+    } catch (err) {
+      setError(errorMessage(err, "Could not connect"));
+      setConnectPending(false);
+      return;
+    }
+    setConnectPending(false);
+  }
+
+  return (
+    <div class="flex flex-col gap-4">
+      <div class="flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2.5">
+        <span
+          class={`h-2 w-2 rounded-full ${net.isLocal() ? "bg-amber-500" : "bg-emerald-500"}`}
+        />
+        <div class="min-w-0 flex-1">
+          <p class="text-[13px] font-medium">{mode()}</p>
+          <p class="text-[12px] text-muted">
+            {net.isLocal()
+              ? "Everything is stored on this device. Nothing is shared."
+              : "Connected — syncs across devices signed in here."}
+          </p>
+        </div>
+        <Show
+          when={!net.isLocal()}
+          fallback={null}
+        >
+          <button
+            type="button"
+            class="rounded-md border border-border px-2.5 py-1 text-[12px] text-muted transition-colors hover:bg-hover hover:text-fg"
+            onClick={async () => {
+              await session.enterLocal();
+            }}
+          >
+            Work locally
+          </button>
+        </Show>
+      </div>
+
+      <Show when={net.isLocal()}>
+        <form onSubmit={onSync} class="flex max-w-sm flex-col gap-3">
+          <p class="text-[12.5px] text-muted">
+            Copy this device's workspace to a server. Creates projects,
+            replays messages and issues — local data stays here either way.
+          </p>
+          <input
+            type="url"
+            name="server_url"
+            required
+            placeholder="https://relay.example.com"
+            aria-label="Server URL"
+            class={inputClass}
+          />
+          <input
+            type="email"
+            name="email"
+            required
+            placeholder="you@example.com"
+            aria-label="Account email"
+            class={inputClass}
+          />
+          <input
+            type="password"
+            name="password"
+            required
+            placeholder="Password"
+            aria-label="Account password"
+            class={inputClass}
+          />
+          <Show when={step()}>
+            <p class="text-[12px] text-muted">{step()}…</p>
+          </Show>
+          <div>
+            <SubmitButton pending={syncPending()}>
+              {syncPending() ? "Syncing..." : "Sync to server"}
+            </SubmitButton>
+          </div>
+        </form>
+      </Show>
+
+      <Show when={net.isLocal()}>
+        <form onSubmit={onConnect} class="flex max-w-sm flex-col gap-3 border-t border-border pt-4">
+          <p class="text-[12.5px] text-muted">
+            Or connect a server now — you'll sign in there and leave local
+            mode. Sync first if you want this device's data kept.
+          </p>
+          <input
+            type="url"
+            name="server_url"
+            required
+            placeholder="https://relay.example.com"
+            aria-label="Server URL"
+            class={inputClass}
+          />
+          <input
+            type="email"
+            name="email"
+            required
+            placeholder="you@example.com"
+            aria-label="Account email"
+            class={inputClass}
+          />
+          <input
+            type="password"
+            name="password"
+            required
+            placeholder="Password"
+            aria-label="Account password"
+            class={inputClass}
+          />
+          <div>
+            <SubmitButton pending={connectPending()}>
+              {connectPending() ? "Connecting..." : "Connect & sign in"}
+            </SubmitButton>
+          </div>
+        </form>
+      </Show>
+
+      <FormError message={error()} />
+      <Show when={result()}>
+        <p class="text-[13px] text-emerald-500">{result()}</p>
+      </Show>
+    </div>
+  );
+}
+
 export default function Settings() {
   const session = useSession();
   const current = () => session.workspaces()[0];
@@ -321,6 +501,10 @@ export default function Settings() {
   return (
     <div class="mx-auto w-full max-w-2xl px-6 py-8">
       <h1 class="mb-6 text-[15px] font-semibold">Settings</h1>
+
+      <Section title="Connection">
+        <ConnectionSection />
+      </Section>
 
       <Section title="Appearance">
         <AppearanceSection />
@@ -369,7 +553,9 @@ export default function Settings() {
           </label>
         </div>
         <FormError message={avatarError()} />
-        <ChangePasswordForm />
+        <Show when={!net.isLocal()}>
+          <ChangePasswordForm />
+        </Show>
       </Section>
 
       <Section title="Workspace">
@@ -415,7 +601,7 @@ export default function Settings() {
         </Show>
       </Section>
 
-      <Show when={current()}>
+      <Show when={!net.isLocal() && current()}>
         {(ws) => (
           <>
             <Section title="Agents">

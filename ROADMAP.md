@@ -251,6 +251,36 @@ rendered in chat. `TestChatSemantics` covers the semantics end-to-end.
   (light+dark schemes, in-app appearance override, inbox, reviews,
   replies/reactions/edit-lock, status-colored issues)
 
+## Phase 17 - Navigation rework & local mode ☑
+
+Verified live: local mode entered from the login screen, project + message +
+issue + reaction created with no server, data persisted across reload, and
+"Sync to server" replayed the workspace onto `localhost:8080` cross-origin
+(bearer token + CORS). Board renders as its own page; PR sheet lists linked
+repos' open PRs; rail search filters this project inline.
+
+- Kanban is a dedicated page (`/app/p/:id/board`) reachable from the chat
+  header; legacy `?view=board`/`?tab=board` links redirect
+- PR button next to Issues opens the pull-requests sheet (linked-repo PRs
+  with state, draft flag, head→base, author)
+- Search moved into the project rail above Open issues (Discord-style):
+  project-scoped results for issues/messages/todos, Esc/✕ clears; global
+  ⌘K palette unchanged via keyboard
+- **Local mode**: `lib/local.ts` is a localStorage-backed adapter behind the
+  same `api.*` surface - projects, conversations, messages (replies, edits,
+  reactions, data-URL attachments), issues, labels, todos, avatar, search.
+  Agents/reviews/GitHub return empty and read-only surfaces degrade cleanly
+- **Connection model**: login/register return a session token; `RequireAuth`
+  accepts `Authorization: Bearer` and `?access_token=` (SSE); `/api` answers
+  CORS `*` since bearer-auth requests carry no ambient credentials
+- **Sync**: `syncToServer(url,email,password)` replays local projects →
+  messages (with reply links and attachment re-upload) → issues → todos,
+  preserving order and statuses
+- Settings → Connection card shows mode, offers "Work locally", sync form,
+  and connect-to-server; Rail marks the workspace `local`
+- CSP `connect-src` widened to `http:`/`https:` so a hosted SPA can reach
+  arbitrary servers
+
 ## Post-1.0 ideas (not committed)
 
 - Custom statuses, saved filters, issue boards

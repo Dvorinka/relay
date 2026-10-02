@@ -5,9 +5,8 @@ import { initials } from "../lib/text";
 import { useSession } from "../stores/session";
 import { useNav } from "../stores/nav";
 import { toggleTheme, useTheme } from "../stores/theme";
-import { openPalette } from "./CommandPalette";
 import { MenuIcon, MoonIcon, SunIcon } from "./icons";
-import { RelayMark, SearchIcon } from "./icons";
+import { RelayMark } from "./icons";
 
 function AccountMenu() {
   const session = useSession();
@@ -87,26 +86,6 @@ export function TopBar() {
       </A>
 
       <div class="flex-1" />
-
-      <button
-        type="button"
-        onClick={openPalette}
-        class="hidden h-7 w-64 items-center gap-2 rounded-md border border-border bg-surface px-2.5 text-[13px] text-muted transition-colors hover:bg-hover sm:flex"
-      >
-        <SearchIcon class="h-3.5 w-3.5" />
-        <span class="flex-1 text-left">Search</span>
-        <kbd class="rounded border border-border px-1 font-mono text-[10px] leading-4 text-muted">
-          ⌘K
-        </kbd>
-      </button>
-      <button
-        type="button"
-        onClick={openPalette}
-        aria-label="Search"
-        class="flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-hover hover:text-fg sm:hidden"
-      >
-        <SearchIcon class="h-4 w-4" />
-      </button>
 
       <button
         type="button"

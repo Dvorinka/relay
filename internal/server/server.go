@@ -75,7 +75,12 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	hookSvc.Start(context.Background(), hub)
 	mcpHandler := mcpserver.New(db.New(pool), store, log, ghSvc, hub)
 
-	api := r.Group("/api")
+	api := r.Group("/api", corsForTokenClients())
+	// Gin 404s unmatched methods before group middleware — handle CORS
+	// preflights explicitly.
+	api.OPTIONS("/*path", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
 	api.GET("/health", func(c *gin.Context) {
 		if err := pool.Ping(c.Request.Context()); err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{
@@ -122,8 +127,32 @@ func securityHeaders() gin.HandlerFunc {
 		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		h.Set("Content-Security-Policy",
 			"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
-				"img-src 'self' data: blob: https:; connect-src 'self'; font-src 'self'; "+
+				"img-src 'self' data: blob: https:; connect-src 'self' http: https:; font-src 'self'; "+
 				"object-src 'none'; base-uri 'self'; frame-ancestors 'none'")
+		c.Next()
+	}
+}
+
+// corsForTokenClients lets browser clients hosted off-origin (the offline/
+// local-mode SPA) call the API. "*" is safe because cross-origin requests
+// authenticate via Authorization bearer, not ambient cookies - browsers do
+// not attach cookies without credentials:include.
+func corsForTokenClients() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.GetHeader("Origin") == "" {
+			c.Next()
+			return
+		}
+		h := c.Writer.Header()
+		h.Set("Access-Control-Allow-Origin", "*")
+		h.Set("Vary", "Origin")
+		h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		h.Set("Access-Control-Max-Age", "600")
+		if c.Request.Method == http.MethodOptions {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
 		c.Next()
 	}
 }

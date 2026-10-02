@@ -616,7 +616,7 @@ func TestChatSemantics(t *testing.T) {
 	if env["error"] != nil {
 		t.Fatalf("react_to_message: %v", env["error"])
 	}
-	code, lst = c.call("GET", "/api/conversations/"+convID+"/messages", "")
+	_, lst = c.call("GET", "/api/conversations/"+convID+"/messages", "")
 	for _, mm := range lst["messages"].([]any) {
 		m := mm.(map[string]any)
 		if m["id"] != msg1 {

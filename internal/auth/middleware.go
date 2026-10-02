@@ -2,6 +2,7 @@ package auth
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Dvorinka/relay/internal/db"
@@ -15,17 +16,34 @@ const (
 )
 
 // RequireAuth resolves the session cookie to a user and rejects misses.
+// Bearer tokens (Authorization: Bearer <session token>) are accepted as a
+// fallback so clients running off another origin (local/offline mode
+// syncing to a server) can authenticate without SameSite cookies.
 // Sliding expiry: the session row is touched at most once per 5 minutes.
 func (s *Service) RequireAuth(c *gin.Context) {
 	raw, err := c.Cookie(SessionCookie)
+	viaBearer := false
 	if err != nil || raw == "" {
+		const prefix = "Bearer "
+		h := c.GetHeader("Authorization")
+		if strings.HasPrefix(h, prefix) {
+			raw = strings.TrimSpace(strings.TrimPrefix(h, prefix))
+			viaBearer = raw != ""
+		} else if q := c.Query("access_token"); q != "" {
+			// EventSource cannot set headers — SSE uses this fallback.
+			raw, viaBearer = q, true
+		}
+	}
+	if raw == "" {
 		httpx.Error(c, http.StatusUnauthorized, "unauthorized", "authentication required")
 		return
 	}
 	hash := hashToken(raw)
 	row, err := s.q.GetSessionUser(c.Request.Context(), hash)
 	if err != nil {
-		s.clearCookie(c)
+		if !viaBearer {
+			s.clearCookie(c)
+		}
 		httpx.Error(c, http.StatusUnauthorized, "unauthorized", "session expired")
 		return
 	}

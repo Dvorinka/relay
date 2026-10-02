@@ -1235,6 +1235,8 @@ export interface components {
         AuthSession: {
             user: components["schemas"]["User"];
             workspaces: components["schemas"]["WorkspaceWithRole"][];
+            /** @description Session bearer token, returned by login/register only. Clients hosted off-origin (local-mode SPA syncing to a server) send it as `Authorization: Bearer <token>` since cookies are same-origin. */
+            token?: string;
         };
         Workspace: {
             /** Format: uuid */

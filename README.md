@@ -37,13 +37,26 @@ thread, thread becomes an issue, issue tracks GitHub state.
 
 > Agents don't live in Relay. They communicate through it.
 
+<p align="center">
+  <img src="docs/shots/chat.png" alt="Project conversation with replies, reactions, and agent replies" width="720">
+</p>
+
+<table>
+  <tr>
+    <td><img src="docs/shots/board.png" alt="Kanban board"></td>
+    <td><img src="docs/shots/reviews.png" alt="Agent work reviews"></td>
+  </tr>
+</table>
+
 ## Features
 
 - **Projects** - Linear-style project organization: overview, issues, conversations, activity, members, settings.
 - **Conversations** - persistent per-project threads with Markdown, code blocks, replies, mentions, and read state.
 - **Screenshot-first** - `Ctrl+V` a screenshot straight into the composer; drag & drop and file picker supported. Attachments stay attached to their message.
-- **Issues** - fast issue tracker with `MYB-142` keys, statuses, priorities, labels, assignees, comments, and an activity timeline.
+- **Issues** - fast issue tracker with `MYB-142` keys, statuses, priorities, labels, assignees, comments, and an activity timeline. Kanban board is a full page, one click from chat.
 - **Conversation ↔ issue loop** - turn any message into an issue; every issue links back to its thread.
+- **Offline-first local mode** - no server required: pick "Work locally" on the sign-in screen and the whole app (projects, chat, issues, board, search) runs against on-device storage. Point it at a server later and **Sync to server** replays local data onto it.
+- **Any-server clients** - sign in to any reachable Relay server from the login screen; the API accepts bearer tokens cross-origin (CORS `*`), so the web build works hosted anywhere.
 - **GitHub** - connect repositories through a GitHub App (one-click register + install from workspace settings, or pick a repo when creating a project); issues, PRs, and commits mirror into the project with signature-verified webhooks.
 - **Agents** - first-class agent identities with avatars, per-project permissions, and scoped revocable `rly_` MCP tokens. "Last seen" is real MCP activity - never fabricated presence.
 - **Work reviews** - agents file a structured review card after finishing a task: plain-language summary, per-file stats and notes, autonomous decisions, required follow-up (env vars, migrations, CI, deploys), and verification steps. Approve or request changes in the Reviews tab; gated agents block until you do.

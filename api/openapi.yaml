@@ -1817,6 +1817,12 @@ components:
         workspaces:
           type: array
           items: { $ref: "#/components/schemas/WorkspaceWithRole" }
+        token:
+          type: string
+          description: >-
+            Session bearer token, returned by login/register only. Clients
+            hosted off-origin (local-mode SPA syncing to a server) send it as
+            `Authorization: Bearer <token>` since cookies are same-origin.
 
     Workspace:
       type: object

@@ -11,6 +11,7 @@ import {
   type ParentProps,
 } from "solid-js";
 import { api } from "../lib/api";
+import { net } from "../lib/net";
 import { subscribe } from "../lib/events";
 import { deriveKey } from "../lib/text";
 import { useNav } from "../stores/nav";
@@ -287,7 +288,14 @@ export function Rail() {
       <Show when={workspaceName()}>
         {(name) => (
           <div class="border-b border-border px-4 py-2.5">
-            <p class="truncate text-[13px] font-medium">{name()}</p>
+            <p class="flex items-center gap-2 truncate text-[13px] font-medium">
+              <span class="truncate">{name()}</span>
+              <Show when={net.isLocal()}>
+                <span class="shrink-0 rounded border border-border px-1 py-px font-mono text-[9.5px] uppercase tracking-wide text-muted">
+                  local
+                </span>
+              </Show>
+            </p>
           </div>
         )}
       </Show>
