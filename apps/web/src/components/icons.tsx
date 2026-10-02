@@ -220,3 +220,73 @@ export function MoonIcon(props: IconProps): JSX.Element {
     </svg>
   );
 }
+
+export function ReplyIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <path d="M6.5 3 2.5 7l4 4" />
+      <path d="M2.5 7h6a4 4 0 0 1 4 4v2" />
+    </svg>
+  );
+}
+
+export function PencilIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <path d="M10.8 2.7a1.6 1.6 0 0 1 2.5 2.5l-8 8L2 14l.8-3.3 8-8Z" />
+    </svg>
+  );
+}
+
+export function SmileIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <circle cx="8" cy="8" r="6.5" />
+      <path d="M5.5 9.5a3.4 3.4 0 0 0 5 0" />
+      <path d="M5.7 6.3h.01M10.3 6.3h.01" stroke-width="2" />
+    </svg>
+  );
+}
+
+export function LockIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <rect x="3.5" y="7" width="9" height="6.5" rx="1.5" />
+      <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />
+    </svg>
+  );
+}

@@ -4,8 +4,10 @@
 package mcpserver
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -240,11 +242,29 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 	), s.getIssue)
 
 	srv.AddTool(mcp.NewTool("send_message",
-		mcp.WithDescription("Post a message as this agent. Give project_id to post in the project's main thread, or conversation_id to reply in a specific conversation."),
+		mcp.WithDescription("Post a message as this agent. Give project_id to post in the project's main thread, or conversation_id to reply in a specific conversation. Pass reply_to (a message id) to thread the reply under that message."),
 		mcp.WithString("project_id"),
 		mcp.WithString("conversation_id"),
 		mcp.WithString("body", mcp.Required(), mcp.Description("Markdown body")),
+		mcp.WithString("reply_to", mcp.Description("Message UUID this message replies to")),
 	), s.sendMessage)
+
+	srv.AddTool(mcp.NewTool("edit_message",
+		mcp.WithDescription("Edit one of this agent's own messages. Allowed only while no agent has read it."),
+		mcp.WithString("message_id", mcp.Required()),
+		mcp.WithString("body", mcp.Required(), mcp.Description("New markdown body")),
+	), s.editMessage)
+
+	srv.AddTool(mcp.NewTool("react_to_message",
+		mcp.WithDescription("Toggle an emoji reaction on a message."),
+		mcp.WithString("message_id", mcp.Required()),
+		mcp.WithString("emoji", mcp.Required(), mcp.Description("e.g. 👀 ✅ 🎉")),
+	), s.reactToMessage)
+
+	srv.AddTool(mcp.NewTool("set_avatar",
+		mcp.WithDescription("Set this agent's profile picture. Accepts a base64-encoded png/jpeg/gif/webp image, max 2 MiB decoded."),
+		mcp.WithString("image_base64", mcp.Required(), mcp.Description("Base64-encoded image bytes")),
+	), s.setAvatar)
 
 	srv.AddTool(mcp.NewTool("create_issue",
 		mcp.WithDescription("Create an issue in a granted project."),
@@ -373,10 +393,26 @@ func messageJSON(m db.GetMessageFullRow) gin.H {
 	if m.AuthorAvatar.Valid {
 		avatar = "/api/files/" + m.AuthorAvatar.String
 	}
+	var parent any
+	if m.ParentID.Valid {
+		preview := m.ParentBody.String
+		if m.ParentDeleted.Bool {
+			preview = ""
+		} else if len([]rune(preview)) > 160 {
+			preview = string([]rune(preview)[:160]) + "…"
+		}
+		parent = gin.H{
+			"id":      m.ParentID.String(),
+			"author":  m.ParentAuthorName,
+			"preview": preview,
+			"deleted": m.ParentDeleted.Bool,
+		}
+	}
 	return gin.H{
 		"id":              m.ID,
 		"conversation_id": m.ConversationID,
 		"body":            m.Body,
+		"parent":          parent,
 		"created_at":      m.CreatedAt.Time,
 		"edited_at":       editedAt,
 		"author": gin.H{
@@ -477,6 +513,16 @@ func (s *Service) getMessages(ctx context.Context, req mcp.CallToolRequest) (*mc
 	if err != nil {
 		return errResult(err)
 	}
+	// fetching is the agent's read receipt - it is what locks user edits
+	ids := make([]pgtype.UUID, 0, len(rows))
+	for _, r := range rows {
+		ids = append(ids, r.ID)
+	}
+	if err := s.q.MarkMessagesReadAgent(ctx, db.MarkMessagesReadAgentParams{
+		AgentID: agent(ctx).ID, Ids: ids,
+	}); err != nil {
+		s.log.Warn("mark agent read", zap.Error(err))
+	}
 	out := make([]gin.H, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, messageJSON(db.GetMessageFullRow(r)))
@@ -500,6 +546,9 @@ func (s *Service) getMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	if err != nil {
 		return errResult(err)
 	}
+	_ = s.q.MarkMessageReadAgent(ctx, db.MarkMessageReadAgentParams{
+		MessageID: mid, AgentID: agent(ctx).ID,
+	})
 	return jsonResult(messageJSON(m))
 }
 
@@ -665,8 +714,19 @@ func (s *Service) sendMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 	if strings.TrimSpace(body) == "" || len(body) > 40000 {
 		return mcp.NewToolResultError("body must be 1..40000 chars"), nil
 	}
+	var parent pgtype.UUID
+	if v := req.GetString("reply_to", ""); v != "" {
+		if err := parent.Scan(v); err != nil || !parent.Valid {
+			return mcp.NewToolResultError("invalid reply_to"), nil
+		}
+		if _, err := s.q.MessageInConversation(ctx, db.MessageInConversationParams{
+			ID: parent, ConversationID: cid,
+		}); err != nil {
+			return mcp.NewToolResultError("reply_to is not a message in this conversation"), nil
+		}
+	}
 	id, err := s.q.CreateAgentMessage(ctx, db.CreateAgentMessageParams{
-		ConversationID: cid, AgentID: agent(ctx).ID, Body: body,
+		ConversationID: cid, AgentID: agent(ctx).ID, Body: body, ParentID: parent,
 	})
 	if err != nil {
 		return errResult(err)
@@ -750,6 +810,131 @@ func (s *Service) updateIssue(ctx context.Context, req mcp.CallToolRequest) (*mc
 	s.recordActivity(ctx, iid, "updated", nil)
 	s.publishPID(pid, "issue.updated", map[string]any{"issue": issueJSON(i, pgtype.Text{})})
 	return jsonResult(issueJSON(i, pgtype.Text{}))
+}
+
+// editMessage mirrors the REST rule: the author may edit only while no
+// agent has read the message. Once any agent (this one included) has a
+// read receipt on it, the message is locked.
+func (s *Service) editMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	mid, err := uuidArg(req, "message_id")
+	if err != nil {
+		return errResult(err)
+	}
+	pid, err := s.q.ResolveMessageProject(ctx, mid)
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "message:write"); err != nil {
+		return errResult(err)
+	}
+	locked, err := s.q.MessageReadByAgent(ctx, mid)
+	if err != nil {
+		return errResult(err)
+	}
+	if locked {
+		return mcp.NewToolResultError("message_locked: an agent has read this message"), nil
+	}
+	body, err := req.RequireString("body")
+	if err != nil {
+		return errResult(err)
+	}
+	if strings.TrimSpace(body) == "" || len(body) > 40000 {
+		return mcp.NewToolResultError("body must be 1..40000 chars"), nil
+	}
+	if _, err := s.q.UpdateMessageBodyAgent(ctx, db.UpdateMessageBodyAgentParams{
+		ID: mid, AuthorAgentID: agent(ctx).ID, Body: body,
+	}); err != nil {
+		return errResult(errors.New("only the author can edit a message"))
+	}
+	m, err := s.q.GetMessageFull(ctx, mid)
+	if err != nil {
+		return errResult(err)
+	}
+	s.publish(ctx, m.ConversationID, "message.updated",
+		map[string]any{"conversation_id": m.ConversationID.String(), "message": messageJSON(m)})
+	return jsonResult(messageJSON(m))
+}
+
+// reactToMessage toggles this agent's emoji on a message and publishes the
+// new aggregate over SSE.
+func (s *Service) reactToMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	mid, err := uuidArg(req, "message_id")
+	if err != nil {
+		return errResult(err)
+	}
+	pid, err := s.q.ResolveMessageProject(ctx, mid)
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "message:write"); err != nil {
+		return errResult(err)
+	}
+	emoji, err := req.RequireString("emoji")
+	if err != nil {
+		return errResult(err)
+	}
+	emoji = strings.TrimSpace(emoji)
+	if emoji == "" || len(emoji) > 32 {
+		return mcp.NewToolResultError("emoji required (<= 32 chars)"), nil
+	}
+	removed, err := s.q.RemoveReactionAgent(ctx, db.RemoveReactionAgentParams{
+		MessageID: mid, AgentID: agent(ctx).ID, Emoji: emoji,
+	})
+	if err != nil {
+		return errResult(err)
+	}
+	if removed == 0 {
+		if err := s.q.AddReactionAgent(ctx, db.AddReactionAgentParams{
+			MessageID: mid, AgentID: agent(ctx).ID, Emoji: emoji,
+		}); err != nil {
+			return errResult(err)
+		}
+	}
+	m, err := s.q.GetMessageFull(ctx, mid)
+	if err != nil {
+		return errResult(err)
+	}
+	s.publish(ctx, m.ConversationID, "reaction.updated",
+		map[string]any{"conversation_id": m.ConversationID.String(), "message_id": mid.String()})
+	return jsonResult(gin.H{"ok": true})
+}
+
+// avatarImageTypes mirrors internal/avatars: logos stay small and square.
+var avatarImageTypes = map[string]bool{
+	"image/png": true, "image/jpeg": true, "image/gif": true, "image/webp": true,
+}
+
+// setAvatar lets the agent upload its own profile picture - the same file
+// the workspace admin can set via PUT /api/agents/:id/avatar.
+func (s *Service) setAvatar(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if s.store == nil {
+		return mcp.NewToolResultError("storage not configured"), nil
+	}
+	raw, err := req.RequireString("image_base64")
+	if err != nil {
+		return errResult(err)
+	}
+	data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(raw))
+	if err != nil {
+		return mcp.NewToolResultError("image_base64 is not valid base64"), nil
+	}
+	if len(data) == 0 || len(data) > 2<<20 {
+		return mcp.NewToolResultError("image must be 1 byte to 2 MiB"), nil
+	}
+	ct, _, _ := strings.Cut(http.DetectContentType(data), ";")
+	if !avatarImageTypes[strings.TrimSpace(ct)] {
+		return mcp.NewToolResultError("unsupported image type; png, jpeg, gif or webp"), nil
+	}
+	key := "avatars/a/" + agent(ctx).ID.String()
+	if err := s.store.Put(ctx, key, bytes.NewReader(data), int64(len(data)), ct); err != nil {
+		return errResult(err)
+	}
+	if _, err := s.q.UpdateAgentAvatar(ctx, db.UpdateAgentAvatarParams{
+		ID: agent(ctx).ID, AvatarKey: pgtype.Text{String: key, Valid: true},
+	}); err != nil {
+		return errResult(err)
+	}
+	return jsonResult(gin.H{"ok": true, "avatar_url": "/api/files/" + key})
 }
 
 func (s *Service) markRead(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

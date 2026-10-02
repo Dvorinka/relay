@@ -300,6 +300,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/messages/{messageId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Edit a message's body - author only, locked once any agent has read it */
+        patch: operations["editMessage"];
+        trace?: never;
+    };
+    "/api/messages/{messageId}/reactions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Toggle the caller's emoji reaction on a message */
+        put: operations["toggleReaction"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{projectId}/attachments": {
         parameters: {
             query?: never;
@@ -1274,6 +1308,22 @@ export interface components {
             /** Format: date-time */
             created_at: string;
         };
+        MessageParent: {
+            /** Format: uuid */
+            id: string;
+            author: string;
+            /** @description Plain-text snippet; empty when deleted */
+            preview: string;
+            deleted: boolean;
+        };
+        Reaction: {
+            emoji: string;
+            count: number;
+            /** @description The caller reacted with this emoji */
+            mine: boolean;
+            /** @description Up to 8 reactor display names, oldest first */
+            names: string[];
+        };
         Message: {
             /** Format: uuid */
             id: string;
@@ -1282,11 +1332,15 @@ export interface components {
             author: components["schemas"]["MessageAuthor"];
             /** @description Markdown */
             body: string;
+            parent?: components["schemas"]["MessageParent"] | null;
             attachments: components["schemas"]["Attachment"][];
+            reactions: components["schemas"]["Reaction"][];
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
             edited_at?: string | null;
+            /** @description True once at least one agent has read the message; edits are then rejected with 409 */
+            agent_read: boolean;
         };
         /** @enum {string} */
         IssueStatus: "backlog" | "todo" | "in_progress" | "review" | "done" | "cancelled";
@@ -2141,6 +2195,11 @@ export interface operations {
                     /** @description May be empty when attachment_ids is non-empty. */
                     body: string;
                     attachment_ids?: string[];
+                    /**
+                     * Format: uuid
+                     * @description Message this reply threads under (same conversation)
+                     */
+                    parent_id?: string;
                 };
             };
         };
@@ -2152,6 +2211,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Message"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    editMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                messageId: components["parameters"]["MessageId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    body: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated message */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Message"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            /** @description An agent has read the message; editing is locked */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    toggleReaction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                messageId: components["parameters"]["MessageId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    emoji: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Aggregated reactions for the message */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        reactions: components["schemas"]["Reaction"][];
+                    };
                 };
             };
             400: components["responses"]["BadRequest"];

@@ -465,6 +465,8 @@ function InviteCard(props: {
         {props.invite.project_ids.length === 0
           ? " on every project in this workspace."
           : ` on ${props.invite.project_ids.length} project(s).`}
+        {" "}Agents can set their own profile picture with the{" "}
+        <code class="font-mono">set_avatar</code> MCP tool.
       </p>
       <button
         type="button"

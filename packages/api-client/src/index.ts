@@ -17,6 +17,8 @@ export type ProjectOverview = components["schemas"]["ProjectOverview"];
 export type Conversation = components["schemas"]["Conversation"];
 export type Message = components["schemas"]["Message"];
 export type MessageAuthor = components["schemas"]["MessageAuthor"];
+export type MessageParent = components["schemas"]["MessageParent"];
+export type Reaction = components["schemas"]["Reaction"];
 export type Attachment = components["schemas"]["Attachment"];
 export type Issue = components["schemas"]["Issue"];
 export type IssueStatus = components["schemas"]["IssueStatus"];
@@ -258,10 +260,18 @@ export function createClient(baseUrl: string) {
       conversationId: string,
       body: string,
       attachmentIds?: string[],
+      parentId?: string,
     ) =>
       post<Message>(`/api/conversations/${conversationId}/messages`, {
         body,
         attachment_ids: attachmentIds,
+        parent_id: parentId,
+      }),
+    editMessage: (messageId: string, body: string) =>
+      patch<Message>(`/api/messages/${messageId}`, { body }),
+    toggleReaction: (messageId: string, emoji: string) =>
+      put<{ reactions: Reaction[] }>(`/api/messages/${messageId}/reactions`, {
+        emoji,
       }),
     markMessageRead: (messageId: string) =>
       post<void>(`/api/messages/${messageId}/read`),

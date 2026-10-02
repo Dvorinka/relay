@@ -240,8 +240,14 @@ func (s *Service) handleOverview(c *gin.Context) {
 	recent, _ := s.q.RecentProjectMessages(c.Request.Context(), p.ID)
 	msgs := make([]gin.H, 0, len(recent))
 	for _, m := range recent {
-		msgs = append(msgs, conversations.MessageJSON(m.ID, m.ConversationID, m.Body, m.CreatedAt, m.EditedAt,
-			m.AuthorUserID, m.AuthorAgentID, m.AuthorName, m.AuthorAvatar, nil))
+		msgs = append(msgs, conversations.MessageJSON(conversations.MessageView{
+			ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
+			Body: m.Body, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+			AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
+			AuthorName: m.AuthorName, AuthorAvatar: m.AuthorAvatar,
+			ParentAuthorName: m.ParentAuthorName, ParentBody: m.ParentBody,
+			ParentDeleted: m.ParentDeleted,
+		}))
 	}
 	acts, _ := s.q.ListProjectIssueActivity(c.Request.Context(), p.ID)
 	activity := make([]gin.H, 0, len(acts))

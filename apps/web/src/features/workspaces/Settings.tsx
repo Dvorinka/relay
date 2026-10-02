@@ -13,8 +13,16 @@ import {
   inputClass,
   primaryButtonClass,
 } from "../../components/ui";
+import { MoonIcon, SunIcon } from "../../components/icons";
 import { api } from "../../lib/api";
 import { useSession } from "../../stores/session";
+import {
+  ACCENT_PRESETS,
+  setAccent,
+  toggleTheme,
+  useAccent,
+  useTheme,
+} from "../../stores/theme";
 import AgentsSection from "../agents/AgentsSection";
 import GitHubAppSection from "../github/GitHubAppSection";
 
@@ -231,6 +239,75 @@ function NewWorkspaceForm(props: { onCreated: () => void }) {
   );
 }
 
+// Accent presets plus a free-form wheel; the choice persists in
+// localStorage and applies app-wide through the CSS vars in index.css.
+function AppearanceSection() {
+  const { theme } = useTheme();
+  const { accent } = useAccent();
+  return (
+    <div class="flex flex-col gap-4">
+      <div class="flex items-center gap-2">
+        <span class="w-20 text-[12px] text-muted">Theme</span>
+        <button
+          type="button"
+          onClick={toggleTheme}
+          class="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 text-[12.5px] transition-colors hover:bg-hover"
+        >
+          <Show
+            when={theme() === "dark"}
+            fallback={<SunIcon class="h-3.5 w-3.5" />}
+          >
+            <MoonIcon class="h-3.5 w-3.5" />
+          </Show>
+          {theme() === "dark" ? "Dark" : "Light"}
+        </button>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="w-20 text-[12px] text-muted">Accent</span>
+        <div class="flex flex-wrap items-center gap-1.5">
+          <For each={ACCENT_PRESETS}>
+            {([name, hex]) => (
+              <button
+                type="button"
+                title={name}
+                aria-label={`Accent ${name}`}
+                onClick={() => setAccent(hex)}
+                class="h-5 w-5 rounded-full border-2 transition-transform hover:scale-110"
+                style={{
+                  "background-color": hex,
+                  "border-color":
+                    accent().toLowerCase() === hex
+                      ? "var(--fg)"
+                      : "transparent",
+                }}
+              />
+            )}
+          </For>
+          <label
+            class="relative block h-5 w-5 cursor-pointer rounded-full border-2 border-transparent"
+            style={{
+              background:
+                "conic-gradient(#f43f5e,#f59e0b,#84cc16,#0dbd8b,#06b6d4,#3b82f6,#8b5cf6,#ec4899,#f43f5e)",
+            }}
+            title="Custom accent color"
+          >
+            <input
+              type="color"
+              value={accent()}
+              class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+              onInput={(e) => setAccent(e.currentTarget.value)}
+              aria-label="Custom accent color"
+            />
+          </label>
+          <code class="ml-1 rounded border border-border px-1.5 py-0.5 font-mono text-[11px] text-muted">
+            {accent().toUpperCase()}
+          </code>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Settings() {
   const session = useSession();
   const current = () => session.workspaces()[0];
@@ -244,6 +321,10 @@ export default function Settings() {
   return (
     <div class="mx-auto w-full max-w-2xl px-6 py-8">
       <h1 class="mb-6 text-[15px] font-semibold">Settings</h1>
+
+      <Section title="Appearance">
+        <AppearanceSection />
+      </Section>
 
       <Section title="Account">
         <div class="mb-5 flex items-center gap-3">

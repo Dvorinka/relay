@@ -424,12 +424,75 @@ paths:
                   type: array
                   items: { type: string, format: uuid }
                   maxItems: 20
+                parent_id:
+                  type: string
+                  format: uuid
+                  description: Message this reply threads under (same conversation)
       responses:
         "201":
           description: Posted
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Message" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/messages/{messageId}:
+    patch:
+      operationId: editMessage
+      summary: Edit a message's body - author only, locked once any agent has read it
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/MessageId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string, minLength: 1, maxLength: 20000 }
+      responses:
+        "200":
+          description: Updated message
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: An agent has read the message; editing is locked
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/messages/{messageId}/reactions:
+    put:
+      operationId: toggleReaction
+      summary: Toggle the caller's emoji reaction on a message
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/MessageId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [emoji]
+              properties:
+                emoji: { type: string, maxLength: 32 }
+      responses:
+        "200":
+          description: Aggregated reactions for the message
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reactions]
+                properties:
+                  reactions:
+                    type: array
+                    items: { $ref: "#/components/schemas/Reaction" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
@@ -1840,19 +1903,50 @@ components:
         size_bytes: { type: integer, format: int64 }
         created_at: { type: string, format: date-time }
 
+    MessageParent:
+      type: object
+      required: [id, author, preview, deleted]
+      properties:
+        id: { type: string, format: uuid }
+        author: { type: string }
+        preview: { type: string, description: "Plain-text snippet; empty when deleted" }
+        deleted: { type: boolean }
+
+    Reaction:
+      type: object
+      required: [emoji, count, mine, names]
+      properties:
+        emoji: { type: string }
+        count: { type: integer }
+        mine: { type: boolean, description: "The caller reacted with this emoji" }
+        names:
+          type: array
+          items: { type: string }
+          description: "Up to 8 reactor display names, oldest first"
+
     Message:
       type: object
-      required: [id, conversation_id, author, body, attachments, created_at]
+      required: [id, conversation_id, author, body, attachments, reactions, created_at, agent_read]
       properties:
         id: { type: string, format: uuid }
         conversation_id: { type: string, format: uuid }
         author: { $ref: "#/components/schemas/MessageAuthor" }
         body: { type: string, description: Markdown }
+        parent:
+          anyOf:
+            - $ref: "#/components/schemas/MessageParent"
+            - type: "null"
         attachments:
           type: array
           items: { $ref: "#/components/schemas/Attachment" }
+        reactions:
+          type: array
+          items: { $ref: "#/components/schemas/Reaction" }
         created_at: { type: string, format: date-time }
         edited_at: { type: ["string", "null"], format: date-time }
+        agent_read:
+          type: boolean
+          description: "True once at least one agent has read the message; edits are then rejected with 409"
 
     IssueStatus:
       type: string

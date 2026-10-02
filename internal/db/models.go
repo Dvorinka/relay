@@ -185,12 +185,21 @@ type Message struct {
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	EditedAt       pgtype.Timestamptz `json:"edited_at"`
 	DeletedAt      pgtype.Timestamptz `json:"deleted_at"`
+	ParentID       pgtype.UUID        `json:"parent_id"`
 }
 
 type MessageAttachment struct {
 	MessageID    pgtype.UUID `json:"message_id"`
 	AttachmentID pgtype.UUID `json:"attachment_id"`
 	Position     int32       `json:"position"`
+}
+
+type MessageReaction struct {
+	MessageID pgtype.UUID        `json:"message_id"`
+	UserID    pgtype.UUID        `json:"user_id"`
+	AgentID   pgtype.UUID        `json:"agent_id"`
+	Emoji     string             `json:"emoji"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
 type MessageRead struct {

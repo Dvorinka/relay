@@ -11,9 +11,26 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createAgentMessage = `-- name: CreateAgentMessage :one
-insert into messages (conversation_id, author_agent_id, body)
+const addReactionAgent = `-- name: AddReactionAgent :exec
+insert into message_reactions (message_id, agent_id, emoji)
 values ($1, $2, $3)
+on conflict (message_id, agent_id, emoji) where agent_id is not null do nothing
+`
+
+type AddReactionAgentParams struct {
+	MessageID pgtype.UUID `json:"message_id"`
+	AgentID   pgtype.UUID `json:"agent_id"`
+	Emoji     string      `json:"emoji"`
+}
+
+func (q *Queries) AddReactionAgent(ctx context.Context, arg AddReactionAgentParams) error {
+	_, err := q.db.Exec(ctx, addReactionAgent, arg.MessageID, arg.AgentID, arg.Emoji)
+	return err
+}
+
+const createAgentMessage = `-- name: CreateAgentMessage :one
+insert into messages (conversation_id, author_agent_id, body, parent_id)
+values ($1, $2, $3, $4)
 returning id
 `
 
@@ -21,10 +38,16 @@ type CreateAgentMessageParams struct {
 	ConversationID pgtype.UUID `json:"conversation_id"`
 	AgentID        pgtype.UUID `json:"agent_id"`
 	Body           string      `json:"body"`
+	ParentID       pgtype.UUID `json:"parent_id"`
 }
 
 func (q *Queries) CreateAgentMessage(ctx context.Context, arg CreateAgentMessageParams) (pgtype.UUID, error) {
-	row := q.db.QueryRow(ctx, createAgentMessage, arg.ConversationID, arg.AgentID, arg.Body)
+	row := q.db.QueryRow(ctx, createAgentMessage,
+		arg.ConversationID,
+		arg.AgentID,
+		arg.Body,
+		arg.ParentID,
+	)
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
@@ -162,26 +185,36 @@ func (q *Queries) GetIssueForAgent(ctx context.Context, id pgtype.UUID) (GetIssu
 }
 
 const getMessageFull = `-- name: GetMessageFull :one
-select m.id, m.conversation_id, m.body, m.created_at, m.edited_at,
+select m.id, m.conversation_id, m.body, m.created_at, m.edited_at, m.parent_id,
        m.author_user_id, m.author_agent_id,
        coalesce(u.name, a.name, '') as author_name,
-       coalesce(u.avatar_key, a.avatar_key) as author_avatar
+       coalesce(u.avatar_key, a.avatar_key) as author_avatar,
+       coalesce(pu.name, pa.name, '') as parent_author_name,
+       pm.body as parent_body,
+       (pm.id is not null and pm.deleted_at is not null) as parent_deleted
 from messages m
 left join users u on u.id = m.author_user_id
 left join agents a on a.id = m.author_agent_id
+left join messages pm on pm.id = m.parent_id
+left join users pu on pu.id = pm.author_user_id
+left join agents pa on pa.id = pm.author_agent_id
 where m.id = $1
 `
 
 type GetMessageFullRow struct {
-	ID             pgtype.UUID        `json:"id"`
-	ConversationID pgtype.UUID        `json:"conversation_id"`
-	Body           string             `json:"body"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	EditedAt       pgtype.Timestamptz `json:"edited_at"`
-	AuthorUserID   pgtype.UUID        `json:"author_user_id"`
-	AuthorAgentID  pgtype.UUID        `json:"author_agent_id"`
-	AuthorName     string             `json:"author_name"`
-	AuthorAvatar   pgtype.Text        `json:"author_avatar"`
+	ID               pgtype.UUID        `json:"id"`
+	ConversationID   pgtype.UUID        `json:"conversation_id"`
+	Body             string             `json:"body"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	EditedAt         pgtype.Timestamptz `json:"edited_at"`
+	ParentID         pgtype.UUID        `json:"parent_id"`
+	AuthorUserID     pgtype.UUID        `json:"author_user_id"`
+	AuthorAgentID    pgtype.UUID        `json:"author_agent_id"`
+	AuthorName       string             `json:"author_name"`
+	AuthorAvatar     pgtype.Text        `json:"author_avatar"`
+	ParentAuthorName string             `json:"parent_author_name"`
+	ParentBody       pgtype.Text        `json:"parent_body"`
+	ParentDeleted    pgtype.Bool        `json:"parent_deleted"`
 }
 
 func (q *Queries) GetMessageFull(ctx context.Context, id pgtype.UUID) (GetMessageFullRow, error) {
@@ -193,10 +226,14 @@ func (q *Queries) GetMessageFull(ctx context.Context, id pgtype.UUID) (GetMessag
 		&i.Body,
 		&i.CreatedAt,
 		&i.EditedAt,
+		&i.ParentID,
 		&i.AuthorUserID,
 		&i.AuthorAgentID,
 		&i.AuthorName,
 		&i.AuthorAvatar,
+		&i.ParentAuthorName,
+		&i.ParentBody,
+		&i.ParentDeleted,
 	)
 	return i, err
 }
@@ -328,6 +365,42 @@ func (q *Queries) MarkMessageReadAgent(ctx context.Context, arg MarkMessageReadA
 	return err
 }
 
+const markMessagesReadAgent = `-- name: MarkMessagesReadAgent :exec
+insert into message_reads (message_id, agent_id)
+select m.id, $1 from messages m
+where m.id = any($2::uuid[]) and m.deleted_at is null
+on conflict (message_id, agent_id) where agent_id is not null do nothing
+`
+
+type MarkMessagesReadAgentParams struct {
+	AgentID pgtype.UUID   `json:"agent_id"`
+	Ids     []pgtype.UUID `json:"ids"`
+}
+
+// batch read receipt: fetching messages marks them read by this agent
+func (q *Queries) MarkMessagesReadAgent(ctx context.Context, arg MarkMessagesReadAgentParams) error {
+	_, err := q.db.Exec(ctx, markMessagesReadAgent, arg.AgentID, arg.Ids)
+	return err
+}
+
+const messageInConversation = `-- name: MessageInConversation :one
+select id from messages
+where id = $1 and conversation_id = $2
+  and deleted_at is null
+`
+
+type MessageInConversationParams struct {
+	ID             pgtype.UUID `json:"id"`
+	ConversationID pgtype.UUID `json:"conversation_id"`
+}
+
+func (q *Queries) MessageInConversation(ctx context.Context, arg MessageInConversationParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, messageInConversation, arg.ID, arg.ConversationID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const recordIssueActivityAgent = `-- name: RecordIssueActivityAgent :exec
 insert into issue_activity (issue_id, actor_agent_id, kind, payload)
 values ($1, $2, $3, $4)
@@ -348,6 +421,25 @@ func (q *Queries) RecordIssueActivityAgent(ctx context.Context, arg RecordIssueA
 		arg.Payload,
 	)
 	return err
+}
+
+const removeReactionAgent = `-- name: RemoveReactionAgent :execrows
+delete from message_reactions
+where message_id = $1 and agent_id = $2 and emoji = $3
+`
+
+type RemoveReactionAgentParams struct {
+	MessageID pgtype.UUID `json:"message_id"`
+	AgentID   pgtype.UUID `json:"agent_id"`
+	Emoji     string      `json:"emoji"`
+}
+
+func (q *Queries) RemoveReactionAgent(ctx context.Context, arg RemoveReactionAgentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, removeReactionAgent, arg.MessageID, arg.AgentID, arg.Emoji)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const resolveAttachmentProject = `-- name: ResolveAttachmentProject :one
@@ -461,4 +553,26 @@ func (q *Queries) SearchMessagesInProject(ctx context.Context, arg SearchMessage
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateMessageBodyAgent = `-- name: UpdateMessageBodyAgent :one
+update messages set body = $1, edited_at = now()
+where id = $2
+  and author_agent_id = $3
+  and deleted_at is null
+returning id
+`
+
+type UpdateMessageBodyAgentParams struct {
+	Body          string      `json:"body"`
+	ID            pgtype.UUID `json:"id"`
+	AuthorAgentID pgtype.UUID `json:"author_agent_id"`
+}
+
+// agents may edit their own messages while no agent has read them
+func (q *Queries) UpdateMessageBodyAgent(ctx context.Context, arg UpdateMessageBodyAgentParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, updateMessageBodyAgent, arg.Body, arg.ID, arg.AuthorAgentID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }

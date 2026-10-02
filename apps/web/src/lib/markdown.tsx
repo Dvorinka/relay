@@ -73,6 +73,19 @@ function linkifyExtension(projectId?: string) {
 
 const parsers = new Map<string, Marked>();
 
+// Fenced code blocks render with a language header and a copy affordance,
+// Discord-style. The copy button's handler is delegated in <Markdown> -
+// DOMPurify strips inline handlers.
+function codeRenderer(token: { text: string; lang?: string }): string {
+  const lang = (token.lang ?? "").trim().split(/\s/)[0] ?? "";
+  const label = lang === "" ? "text" : escapeHtml(lang);
+  return (
+    `<div class="md-pre"><div class="md-pre-head"><span>${label}</span>` +
+    `<button type="button" class="md-pre-copy">copy</button></div>` +
+    `<pre><code>${escapeHtml(token.text)}</code></pre></div>`
+  );
+}
+
 function parserFor(projectId?: string): Marked {
   const cacheKey = projectId ?? "";
   let p = parsers.get(cacheKey);
@@ -87,6 +100,7 @@ function parserFor(projectId?: string): Marked {
       },
       ...linkifyExtension(projectId),
     });
+    p.use({ renderer: { code: codeRenderer } });
     parsers.set(cacheKey, p);
   }
   return p;
@@ -105,6 +119,34 @@ export function Markdown(props: {
 }) {
   const html = createMemo(() => renderMarkdown(props.body, props.projectId));
   return (
-    <div class={`md ${props.class ?? ""}`} innerHTML={html()} />
+    <div
+      class={`md ${props.class ?? ""}`}
+      innerHTML={html()}
+      onClick={(e) => {
+        const btn = (e.target as HTMLElement).closest(".md-pre-copy");
+        const code = btn?.parentElement?.nextElementSibling?.textContent;
+        if (!btn || code == null) return;
+        const done = () => {
+          btn.textContent = "copied";
+          setTimeout(() => {
+            btn.textContent = "copy";
+          }, 1200);
+        };
+        if (navigator.clipboard?.writeText) {
+          void navigator.clipboard.writeText(code).then(done, () => {});
+        } else {
+          // insecure-context fallback (LAN dev origins)
+          const ta = document.createElement("textarea");
+          ta.value = code;
+          ta.style.position = "fixed";
+          ta.style.opacity = "0";
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand("copy");
+          ta.remove();
+          done();
+        }
+      }}
+    />
   );
 }

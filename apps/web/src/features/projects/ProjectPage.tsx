@@ -4,7 +4,6 @@ import {
   createEffect,
   createMemo,
   createResource,
-  createSignal,
   For,
   onCleanup,
   Show,
@@ -41,23 +40,6 @@ const VIEWS: { id: View; label: string }[] = [
   { id: "development", label: "Development" },
   { id: "settings", label: "Project settings" },
 ];
-
-function PanelIcon(props: { class?: string }) {
-  return (
-    <svg
-      class={props.class}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="1.8"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-    >
-      <rect x="3" y="3" width="18" height="18" rx="2" />
-      <path d="M15 3v18" />
-    </svg>
-  );
-}
 
 function BoardIcon(props: { class?: string }) {
   return (
@@ -121,11 +103,21 @@ function RailSection(props: {
   );
 }
 
+// Status-colored left edge, matching design/design.html's issue cards.
+const ISSUE_EDGE: Record<string, string> = {
+  backlog: "border-l-faint",
+  todo: "border-l-blue-500",
+  in_progress: "border-l-amber-500",
+  review: "border-l-violet-500",
+};
+
 function MiniIssue(props: { project: Project; issue: Issue }) {
   return (
     <A
       href={`/app/p/${props.project.id}/i/${props.issue.id}`}
-      class="block rounded-lg border border-border bg-surface px-3 py-2 transition-colors hover:border-muted/60"
+      class={`block rounded-lg border border-l-2 border-border bg-surface px-3 py-2 transition-colors hover:border-muted/60 ${
+        ISSUE_EDGE[props.issue.status] ?? "border-l-border"
+      }`}
     >
       <div class="flex items-baseline gap-2">
         <span class="font-mono text-[10.5px] font-medium text-accent">
@@ -151,7 +143,7 @@ function MiniReview(props: { review: AgentReview; onOpen: () => void }) {
     <button
       type="button"
       onClick={props.onOpen}
-      class="block w-full rounded-lg border border-border bg-surface px-3 py-2 text-left transition-colors hover:border-muted/60"
+      class="block w-full rounded-lg border border-l-2 border-border border-l-violet-500 bg-surface px-3 py-2 text-left transition-colors hover:border-muted/60"
     >
       <div class="flex items-baseline gap-2">
         <span class="font-mono text-[10.5px] font-medium text-violet-500">
@@ -417,7 +409,6 @@ export default function ProjectPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const projects = useProjects();
-  const [railOpen, setRailOpen] = createSignal(true);
 
   // Legacy ?tab= links open the matching sheet once, then drop the param.
   const view = (): View | undefined => {
@@ -499,20 +490,13 @@ export default function ProjectPage() {
             <HeadButton title="Search (Ctrl+K)" onClick={openPalette}>
               <SearchIcon class="h-4 w-4" />
             </HeadButton>
-            <HeadButton
-              title={railOpen() ? "Hide panel" : "Show panel"}
-              active={railOpen()}
-              onClick={() => setRailOpen((v) => !v)}
-            >
-              <PanelIcon class="h-4 w-4" />
-            </HeadButton>
           </div>
         </header>
 
         <Conversation projectId={params.projectId} />
       </div>
 
-      <Show when={railOpen() && project()} keyed>
+      <Show when={project()} keyed>
         {(p) => (
           <div class="hidden lg:block">
             <ContextRail project={p} onOpenView={openView} />
