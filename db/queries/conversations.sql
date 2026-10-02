@@ -194,3 +194,10 @@ where m.deleted_at is null
   and position(lower('@' || me.name) in lower(m.body)) > 0
 order by m.created_at desc, m.id desc
 limit 50;
+
+-- name: ParentAuthorID :one
+-- user who wrote a message's parent; null when the parent is an agent's
+select m2.author_user_id
+from messages m
+join messages m2 on m2.id = m.parent_id
+where m.id = $1;

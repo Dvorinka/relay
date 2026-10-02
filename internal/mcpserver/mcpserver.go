@@ -11,10 +11,13 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -27,6 +30,8 @@ import (
 	"github.com/Dvorinka/relay/internal/db"
 	"github.com/Dvorinka/relay/internal/events"
 	"github.com/Dvorinka/relay/internal/github"
+	"github.com/Dvorinka/relay/internal/localfiles"
+	"github.com/Dvorinka/relay/internal/push"
 	"github.com/Dvorinka/relay/internal/storage"
 )
 
@@ -53,6 +58,8 @@ type Service struct {
 	log   *zap.Logger
 	// Bus publishes domain events for SSE subscribers. Optional.
 	Bus *events.Hub
+	// Push fans out web-push notifications. Optional.
+	Push *push.Service
 
 	mu      sync.Mutex
 	windows map[[16]byte]time.Time // token id -> current minute window start
@@ -62,9 +69,9 @@ type Service struct {
 // New builds the gin handler for POST /mcp. It performs bearer auth,
 // rate limiting, and last_used_at bookkeeping, then hands the request
 // to the mcp-go streamable HTTP transport.
-func New(q *db.Queries, store *storage.Store, log *zap.Logger, gh *github.Service, hub *events.Hub) gin.HandlerFunc {
+func New(q *db.Queries, store *storage.Store, log *zap.Logger, gh *github.Service, hub *events.Hub, pushSvc *push.Service) gin.HandlerFunc {
 	s := &Service{
-		q: q, store: store, gh: gh, log: log, Bus: hub,
+		q: q, store: store, gh: gh, log: log, Bus: hub, Push: pushSvc,
 		windows: make(map[[16]byte]time.Time),
 		counts:  make(map[[16]byte]int),
 	}
@@ -304,6 +311,18 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithString("project_id", mcp.Required()),
 		mcp.WithNumber("number", mcp.Required()),
 	), s.ghGetPR)
+
+	srv.AddTool(mcp.NewTool("list_project_files",
+		mcp.WithDescription("List one directory level of the project's linked local folder. Omit path for the root."),
+		mcp.WithString("project_id", mcp.Required()),
+		mcp.WithString("path"),
+	), s.listProjectFiles)
+
+	srv.AddTool(mcp.NewTool("read_project_file",
+		mcp.WithDescription("Read a UTF-8 file (<=256KB) from the project's linked local folder."),
+		mcp.WithString("project_id", mcp.Required()),
+		mcp.WithString("path", mcp.Required()),
+	), s.readProjectFile)
 
 	srv.AddTool(mcp.NewTool("todo_list",
 		mcp.WithDescription("List the project's todo/work-tracking list (agent-managed)."),
@@ -677,8 +696,8 @@ func issueJSON(i db.Issue, assigneeName pgtype.Text) gin.H {
 
 func (s *Service) sendMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	var cid pgtype.UUID
+	var pid pgtype.UUID
 	if v := req.GetString("project_id", ""); v != "" {
-		var pid pgtype.UUID
 		if err := pid.Scan(v); err != nil || !pid.Valid {
 			return mcp.NewToolResultError("invalid project_id"), nil
 		}
@@ -699,7 +718,7 @@ func (s *Service) sendMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 		if err != nil {
 			return mcp.NewToolResultError("conversation_id or project_id required"), nil
 		}
-		pid, err := s.q.ResolveConversationProject(ctx, cid)
+		pid, err = s.q.ResolveConversationProject(ctx, cid)
 		if err != nil {
 			return errResult(err)
 		}
@@ -736,6 +755,10 @@ func (s *Service) sendMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 		return errResult(err)
 	}
 	s.publish(ctx, cid, "message.created", map[string]any{"conversation_id": cid.String(), "message": messageJSON(m)})
+	if s.Push != nil {
+		s.Push.NotifyMessage(pid, pgtype.UUID{}, body, m.ID,
+			"/app/p/"+pid.String(), agent(ctx).Name)
+	}
 	return jsonResult(messageJSON(m))
 }
 
@@ -1384,6 +1407,13 @@ func (s *Service) submitReview(ctx context.Context, req mcp.CallToolRequest) (*m
 	s.publishPID(pid, "review.created", map[string]any{
 		"review_id": row.ID.String(), "title": row.Title, "agent": agent(ctx).Name,
 	})
+	if s.Push != nil {
+		s.Push.NotifyProject(pid, push.Payload{
+			Title: "Review requested by " + agent(ctx).Name,
+			Body:  row.Title, URL: "/app/p/" + pid.String(),
+			Tag: "review-" + row.ID.String(),
+		})
+	}
 	return jsonResult(gin.H{
 		"id": row.ID.String(), "status": row.Status,
 		"created_at":  row.CreatedAt.Time,
@@ -1489,4 +1519,91 @@ func (s *Service) awaitReview(ctx context.Context, req mcp.CallToolRequest) (*mc
 // listRowAsGet bridges the two joined row types - identical fields.
 func listRowAsGet(r db.ListProjectReviewsRow) db.GetReviewRow {
 	return db.GetReviewRow(r)
+}
+
+// --- local folder tools (file:read) ---
+
+// localRoot loads the project's linked folder; empty when unlinked.
+func (s *Service) localRoot(ctx context.Context, pid pgtype.UUID) (string, error) {
+	meta, err := s.q.ProjectMeta(ctx, pid)
+	if err != nil {
+		return "", err
+	}
+	if !meta.LocalPath.Valid {
+		return "", nil
+	}
+	return meta.LocalPath.String, nil
+}
+
+func (s *Service) listProjectFiles(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pid, err := uuidArg(req, "project_id")
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "file:read"); err != nil {
+		return errResult(err)
+	}
+	root, err := s.localRoot(ctx, pid)
+	if err != nil {
+		return errResult(err)
+	}
+	if root == "" {
+		return mcp.NewToolResultError("no folder linked to this project"), nil
+	}
+	dir, ok := localfiles.ResolveInRoot(root, req.GetString("path", ""))
+	if !ok {
+		return mcp.NewToolResultError("path not found"), nil
+	}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return errResult(err)
+	}
+	out := make([]gin.H, 0, len(ents))
+	for _, e := range ents {
+		if e.IsDir() && localfiles.SkipDirs[e.Name()] {
+			continue
+		}
+		if !e.IsDir() && localfiles.Sensitive(e.Name()) {
+			continue
+		}
+		out = append(out, gin.H{"name": e.Name(), "dir": e.IsDir()})
+		if len(out) >= localfiles.MaxTreeEntries {
+			break
+		}
+	}
+	return jsonResult(gin.H{"entries": out})
+}
+
+func (s *Service) readProjectFile(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pid, err := uuidArg(req, "project_id")
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "file:read"); err != nil {
+		return errResult(err)
+	}
+	root, err := s.localRoot(ctx, pid)
+	if err != nil {
+		return errResult(err)
+	}
+	if root == "" {
+		return mcp.NewToolResultError("no folder linked to this project"), nil
+	}
+	path := req.GetString("path", "")
+	full, ok := localfiles.ResolveInRoot(root, path)
+	if !ok || localfiles.Sensitive(filepath.Base(full)) {
+		return mcp.NewToolResultError("path not found"), nil
+	}
+	st, err := os.Stat(full)
+	if err != nil || st.IsDir() || st.Size() > localfiles.MaxReadBytes {
+		return mcp.NewToolResultError("not a readable text file (or over 256KB)"), nil
+	}
+	data, err := os.ReadFile(full)
+	if err != nil {
+		return errResult(err)
+	}
+	if !utf8.Valid(data) {
+		return mcp.NewToolResultError("binary file"), nil
+	}
+	return jsonResult(gin.H{"path": path, "content": string(data), "size": st.Size()})
 }

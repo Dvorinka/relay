@@ -310,6 +310,119 @@ function AppearanceSection() {
   );
 }
 
+
+// urlB64ToUint8Array converts the VAPID public key (URL-safe base64) into
+// the ArrayBuffer PushManager.subscribe wants.
+function urlB64ToUint8Array(b64: string): Uint8Array {
+  const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+  const raw = atob((b64 + pad).replace(/-/g, "+").replace(/_/g, "/"));
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+function NotificationsSection() {
+  const supported = () =>
+    "serviceWorker" in navigator &&
+    "PushManager" in window &&
+    "Notification" in window;
+  const [permission, setPermission] = createSignal(
+    supported() ? Notification.permission : "unsupported",
+  );
+  const [subscribed, setSubscribed] = createSignal(false);
+  const [ephemeral, setEphemeral] = createSignal(false);
+  const [busy, setBusy] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+
+  createResource(async () => {
+    if (!supported() || net.isLocal()) return;
+    try {
+      const v = await api.pushVapid();
+      setEphemeral(v.ephemeral === true);
+      if (!v.enabled) return;
+      const reg = await navigator.serviceWorker.getRegistration("/sw.js");
+      const sub = await reg?.pushManager.getSubscription();
+      setSubscribed(!!sub);
+    } catch {
+      /* server without push */
+    }
+  });
+
+  async function toggle() {
+    setBusy(true);
+    setError(null);
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      if (subscribed()) {
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) {
+          await api.pushUnsubscribe(sub.endpoint);
+          await sub.unsubscribe();
+        }
+        setSubscribed(false);
+        return;
+      }
+      const perm = await Notification.requestPermission();
+      setPermission(perm);
+      if (perm !== "granted") {
+        setError("Notification permission was not granted");
+        return;
+      }
+      const vapid = await api.pushVapid();
+      if (!vapid.enabled || !vapid.public_key) {
+        setError("This server has no push keys configured");
+        return;
+      }
+      setEphemeral(vapid.ephemeral === true);
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlB64ToUint8Array(
+          vapid.public_key,
+        ).buffer as ArrayBuffer,
+      });
+      const json = sub.toJSON();
+      await api.pushSubscribe(sub.endpoint, {
+        p256dh: json.keys?.p256dh ?? "",
+        auth: json.keys?.auth ?? "",
+      });
+      setSubscribed(true);
+    } catch (err) {
+      setError(errorMessage(err, "Subscription failed"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div class="flex flex-col gap-3">
+      <div class="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => void toggle()}
+          disabled={busy() || !supported() || permission() === "unsupported"}
+          class="h-8 rounded-md border border-border bg-surface px-3 text-[12.5px] transition-colors hover:bg-hover disabled:opacity-50"
+        >
+          {subscribed() ? "Disable notifications" : "Enable notifications"}
+        </button>
+        <span class="text-[12px] text-muted">
+          {subscribed()
+            ? "On — mentions, replies, and reviews reach this browser"
+            : permission() === "denied"
+              ? "Blocked by the browser — allow notifications in site settings"
+              : "Mentions, replies, and review requests"}
+        </span>
+      </div>
+      <Show when={ephemeral() && subscribed()}>
+        <p class="text-[11px] text-amber-600 dark:text-amber-400">
+          Server uses ephemeral push keys — notifications stop after a server
+          restart until you toggle this off and on.
+        </p>
+      </Show>
+      <FormError message={error()} />
+    </div>
+  );
+}
+
 // Connection card: which backend this app talks to. Local mode stores
 // everything on this device; "Connect a server" moves to a real Relay
 // backend, and "Sync to server" pushes the local store up once connected.
@@ -419,6 +532,7 @@ function ConnectionSection() {
             type="email"
             name="email"
             required
+            autocomplete="email"
             placeholder="you@example.com"
             aria-label="Account email"
             class={inputClass}
@@ -427,6 +541,7 @@ function ConnectionSection() {
             type="password"
             name="password"
             required
+            autocomplete="current-password"
             placeholder="Password"
             aria-label="Account password"
             class={inputClass}
@@ -460,6 +575,7 @@ function ConnectionSection() {
             type="email"
             name="email"
             required
+            autocomplete="email"
             placeholder="you@example.com"
             aria-label="Account email"
             class={inputClass}
@@ -468,6 +584,7 @@ function ConnectionSection() {
             type="password"
             name="password"
             required
+            autocomplete="current-password"
             placeholder="Password"
             aria-label="Account password"
             class={inputClass}
@@ -509,6 +626,12 @@ export default function Settings() {
       <Section title="Appearance">
         <AppearanceSection />
       </Section>
+
+      <Show when={!net.isLocal()}>
+        <Section title="Notifications">
+          <NotificationsSection />
+        </Section>
+      </Show>
 
       <Section title="Account">
         <div class="mb-5 flex items-center gap-3">

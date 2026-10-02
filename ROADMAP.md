@@ -283,7 +283,28 @@ repos' open PRs; rail search filters this project inline.
 
 ## Post-1.0 ideas (not committed)
 
-- Custom statuses, saved filters, issue boards
 - Relay Cloud (hosted offering) - self-hosting stays first-class
 - iOS build of the mobile app
 - DragonflyDB cache layer if hot paths need it
+
+## Phase 18 — project states, boards, push, local folders, mobile outbox
+
+- **Custom statuses**: `projects.statuses` JSONB definitions (id, label,
+  color, closed flag) editable in project settings; the DB CHECK constraint
+  is gone — the server validates against project defs. Issues, lists, board
+  lanes, and filters all honor custom lanes.
+- **Saved filters & named boards**: `saved_filters` + `boards` tables;
+  "Save view" in the issues panel and named board tabs on the board page
+  persist per project.
+- **Web Push**: VAPID (`RELAY_VAPID_*`), subscription endpoints, service
+  worker (`sw.js`), Settings → Notifications card. Mentions, replies and
+  review requests push to subscribed browsers.
+- **Linked project folder**: `projects.local_path` — a local directory can
+  stand beside (or instead of) GitHub; file tree/read endpoints with
+  traversal + sensitive-file (`.env`, keys) protection. `@file:path` and
+  `@gh:repo:path` composer mentions autocomplete and open an inline preview.
+- **MCP `file:read` scope**: `list_project_files` / `read_project_file`
+  tools serve the linked folder and GitHub trees to agents.
+- **Mobile outbox**: messages and picked images queue in AsyncStorage when
+  the server is unreachable; a successful poll drains them in order. Full
+  local-mode remains a desktop/web feature by design.

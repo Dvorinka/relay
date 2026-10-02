@@ -21,6 +21,7 @@ import (
 	"github.com/Dvorinka/relay/internal/issues"
 	"github.com/Dvorinka/relay/internal/mcpserver"
 	"github.com/Dvorinka/relay/internal/projects"
+	"github.com/Dvorinka/relay/internal/push"
 	"github.com/Dvorinka/relay/internal/realtime"
 	"github.com/Dvorinka/relay/internal/reviews"
 	"github.com/Dvorinka/relay/internal/search"
@@ -72,8 +73,10 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	rtSvc := realtime.NewService(hub, pool)
 	searchSvc := search.NewService(pool)
 	hookSvc := webhooks.NewService(log, pool)
+	pushSvc := push.NewService(log, pool, cfg)
+	convSvc.Push = pushSvc
 	hookSvc.Start(context.Background(), hub)
-	mcpHandler := mcpserver.New(db.New(pool), store, log, ghSvc, hub)
+	mcpHandler := mcpserver.New(db.New(pool), store, log, ghSvc, hub, pushSvc)
 
 	api := r.Group("/api", corsForTokenClients())
 	// Gin 404s unmatched methods before group middleware — handle CORS
@@ -107,6 +110,7 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	avSvc.RegisterRoutes(priv)
 	rtSvc.RegisterRoutes(priv)
 	searchSvc.RegisterRoutes(priv)
+	pushSvc.RegisterRoutes(priv)
 
 	// external agents: bearer-token MCP, not session cookies
 	r.POST("/mcp", mcpHandler)

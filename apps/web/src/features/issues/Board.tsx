@@ -3,20 +3,29 @@ import { subscribe } from "../../lib/events";
 import { A } from "@solidjs/router";
 import { api } from "../../lib/api";
 import type { Issue, IssueStatus, Project, Todo } from "@relay/api-client";
-import { GitHubBadge, LabelChip, PriorityGlyph, STATUS_LABEL, StatusDot } from "./meta";
+import { GitHubBadge, LabelChip, PriorityGlyph, statusDefs, StatusDot } from "./meta";
 
-const COLUMNS: IssueStatus[] = [
-  "backlog",
-  "todo",
-  "in_progress",
-  "review",
-  "done",
-];
-
-export function Board(props: { project: Project }) {
+// Columns come from the project's lanes — every def gets a column so
+// custom statuses are droppable too. Closed lanes render dimmed.
+export function Board(props: {
+  project: Project;
+  filters?: Record<string, string>;
+}) {
+  // Named boards carry filters; the default board lists everything.
   const [issues, { refetch }] = createResource(
-    () => props.project.id,
-    async (id) => (await api.listIssues(id)).issues,
+    () => [props.project.id, JSON.stringify(props.filters ?? {})] as const,
+    async ([id, fj]) =>
+      (
+        await api.listIssues(
+          id,
+          JSON.parse(fj) as {
+            status?: string;
+            assignee?: string;
+            label?: string;
+            q?: string;
+          },
+        )
+      ).issues,
   );
   const [todos, { refetch: refetchTodos }] = createResource(
     () => props.project.id,
@@ -39,10 +48,10 @@ export function Board(props: { project: Project }) {
   return (
     <div class="flex min-h-0 flex-1 flex-col gap-4 px-6 py-4">
       <div class="flex min-h-0 flex-1 gap-3 overflow-x-auto pb-1">
-        <For each={COLUMNS}>
-          {(status) => (
+        <For each={statusDefs(props.project)}>
+          {(def) => (
             <div
-              class="flex w-60 shrink-0 flex-col rounded-lg border border-border bg-surface/50"
+              class={`flex w-60 shrink-0 flex-col rounded-lg border border-border ${def.closed ? "bg-surface/30 opacity-75" : "bg-surface/50"}`}
               onDragOver={(e) => {
                 e.preventDefault();
                 if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
@@ -51,20 +60,20 @@ export function Board(props: { project: Project }) {
                 e.preventDefault();
                 const id = e.dataTransfer?.getData("text/relay-issue");
                 const issue = issues()?.find((i) => i.id === id);
-                if (issue) void move(issue, status);
+                if (issue) void move(issue, def.id);
               }}
             >
               <div class="flex items-center justify-between border-b border-border px-3 py-2">
                 <div class="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.12em] text-muted">
-                  <StatusDot status={status} class="h-1.5 w-1.5" />
-                  {STATUS_LABEL[status]}
+                  <StatusDot status={def.id} defs={statusDefs(props.project)} class="h-1.5 w-1.5" />
+                  {def.label}
                 </div>
                 <div class="text-[11px] text-muted/70">
-                  {issues()?.filter((i) => i.status === status).length ?? 0}
+                  {issues()?.filter((i) => i.status === def.id).length ?? 0}
                 </div>
               </div>
               <div class="flex min-h-16 flex-1 flex-col gap-1.5 overflow-y-auto p-2">
-                <For each={issues()?.filter((i) => i.status === status)}>
+                <For each={issues()?.filter((i) => i.status === def.id)}>
                   {(issue) => (
                     <A
                       href={`/app/p/${props.project.id}/i/${issue.id}`}

@@ -12,6 +12,7 @@ import { Markdown } from "../../lib/markdown";
 import { timeAgo } from "../../lib/time";
 import { Conversation } from "../conversations/Conversation";
 import { ReviewStatusChip } from "../reviews/Reviews";
+import { statusDefs } from "./meta";
 import { AssigneeSelect, LabelsPicker, PrioritySelect, StatusSelect } from "./fields";
 import { GitHubBadge, LabelChip, statusLabel } from "./meta";
 
@@ -387,6 +388,7 @@ export default function IssuePage() {
                       value={i.status}
                       onChange={(v) => void patch({ status: v })}
                       disabled={saving()}
+                      defs={statusDefs(project())}
                     />
                   </div>
                   <div>

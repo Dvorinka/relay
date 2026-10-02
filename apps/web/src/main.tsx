@@ -15,6 +15,12 @@ import Home from "./pages/Home";
 import Inbox from "./pages/Inbox";
 import { SessionProvider } from "./stores/session";
 
+// Push notifications ride this worker; harmless when the server has no
+// VAPID keys (the subscribe call then reports disabled).
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+}
+
 render(
   () => (
     <SessionProvider>

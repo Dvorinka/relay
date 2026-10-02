@@ -51,6 +51,24 @@ export async function syncToServer(
     });
     result.projects++;
 
+    // Lanes must exist before issues that reference them.
+    if (p.statuses && p.statuses.length > 0) {
+      await remote.setProjectStatuses(created.id, p.statuses);
+    }
+    for (const f of db.savedFilters[p.id] ?? []) {
+      await remote.createSavedFilter(created.id, {
+        name: f.name,
+        filters: f.filters,
+      });
+    }
+    for (const b of db.boards[p.id] ?? []) {
+      await remote.createBoard(created.id, {
+        name: b.name,
+        filters: b.filters,
+      });
+    }
+    // local_path deliberately stays local — it's a path on *that* machine.
+
     // Attachments first so message posts can reference the new IDs.
     const conv = db.conversations.find(
       (c) => c.project_id === p.id && !c.issue_id,

@@ -26,10 +26,22 @@ import {
   fileUrl,
   getCookie,
   getServer,
-  type Attachment,
   type Message,
 } from "../../../lib/api";
+import {
+  drainOutbox,
+  enqueueMessage,
+  outboxFor,
+  subscribeOutbox,
+  type QueuedMessage,
+} from "../../../lib/outbox";
 import { useTheme, type Palette } from "../../../lib/theme";
+
+interface LocalPick {
+  uri: string;
+  name: string;
+  type: string;
+}
 
 const QUICK_EMOJI = ["👀", "✅", "❤️", "🎉", "👍"];
 const GROUP_GAP_MS = 5 * 60 * 1000;
@@ -154,7 +166,8 @@ export default function ConversationScreen() {
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
   const [meId, setMeId] = useState("");
-  const [pending, setPending] = useState<Attachment[]>([]);
+  const [pending, setPending] = useState<LocalPick[]>([]);
+  const [queued, setQueued] = useState<QueuedMessage[]>([]);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [editing, setEditing] = useState<Message | null>(null);
   const [sheetFor, setSheetFor] = useState<Message | null>(null);
@@ -166,6 +179,8 @@ export default function ConversationScreen() {
       if (c.title) nav.setOptions({ title: c.title });
       const m = await api.messages(c.id);
       setMessages(m.messages);
+      // a successful round-trip means we're online — flush the outbox
+      void drainOutbox();
     } catch {
       // transient poll failure — the 4s timer retries
     }
@@ -175,27 +190,40 @@ export default function ConversationScreen() {
     api.me().then((r) => setMeId(r.user.id)).catch(() => {});
   }, []);
 
+  const refreshQueued = useCallback(() => {
+    void outboxFor(id).then(setQueued);
+  }, [id]);
+
   useFocusEffect(
     useCallback(() => {
       void load();
-      const t = setInterval(load, 4000);
-      return () => clearInterval(t);
-    }, [load]),
+      refreshQueued();
+      const t = setInterval(() => {
+        void load().then(refreshQueued);
+      }, 4000);
+      const unsub = subscribeOutbox(refreshQueued);
+      return () => {
+        clearInterval(t);
+        unsub();
+      };
+    }, [load, refreshQueued]),
   );
 
+  // Picks stay local until send — the photo survives an offline compose.
   const pick = async () => {
-    const r = await ImagePicker.launchImageLibraryAsync({ quality: 0.9 });
-    const a = r.assets?.[0];
-    if (!a) return;
-    try {
-      const att = await api.upload(id, {
-        uri: a.uri,
-        name: a.fileName ?? "image.jpg",
-        type: a.mimeType ?? "image/jpeg",
-      });
-      setPending((p) => [...p, att]);
-    } catch (e) {
-      Alert.alert("Upload failed", e instanceof Error ? e.message : "try again");
+    const r = await ImagePicker.launchImageLibraryAsync({
+      quality: 0.9,
+      allowsMultipleSelection: true,
+    });
+    for (const a of r.assets ?? []) {
+      setPending((p) => [
+        ...p,
+        {
+          uri: a.uri,
+          name: a.fileName ?? "image.jpg",
+          type: a.mimeType ?? "image/jpeg",
+        },
+      ]);
     }
   };
 
@@ -210,12 +238,25 @@ export default function ConversationScreen() {
         setEditing(null);
       } else {
         if (!text && pending.length === 0) return;
-        await api.postMessage(
-          convId,
-          text,
-          pending.map((p) => p.id),
-          replyTo?.id,
-        );
+        try {
+          const ids: string[] = [];
+          for (const p of pending) {
+            const att = await api.upload(id, p);
+            ids.push(att.id);
+          }
+          await api.postMessage(convId, text, ids, replyTo?.id);
+        } catch {
+          // Offline or server down — stage the message, uploads included,
+          // and let the poll-driven drain deliver it later.
+          await enqueueMessage({
+            projectId: id,
+            conversationId: convId,
+            body: text,
+            replyTo: replyTo?.id,
+            files: pending,
+          });
+          refreshQueued();
+        }
         setPending([]);
         setReplyTo(null);
       }
@@ -370,27 +411,37 @@ export default function ConversationScreen() {
           );
         }}
         ListFooterComponent={
-          messages.length === 0 ? (
-            <ActivityIndicator color={C.accent} style={{ marginTop: 40 }} />
-          ) : null
+          <View>
+            {messages.length === 0 && queued.length === 0 ? (
+              <ActivityIndicator color={C.accent} style={{ marginTop: 40 }} />
+            ) : null}
+            {queued.map((qm) => (
+              <View key={qm.id} style={s.queuedRow}>
+                <Text style={s.queuedText} numberOfLines={2}>
+                  {qm.body ||
+                    `${qm.files.length} attachment${qm.files.length === 1 ? "" : "s"}`}
+                </Text>
+                <Text style={s.queuedTag}>
+                  queued — sends when you are back online
+                </Text>
+              </View>
+            ))}
+          </View>
         }
       />
       {pending.length > 0 && (
         <View style={s.pendingStrip}>
           {pending.map((p) => (
-            <View key={p.id} style={s.pendingChip}>
+            <View key={p.uri} style={s.pendingChip}>
               <Image
-                source={{
-                  uri: `${getServer()}/api/projects/${id}/attachments/${p.id}/download`,
-                  headers: { cookie: getCookie() },
-                }}
+                source={{ uri: p.uri }}
                 style={s.pendingThumb}
               />
               <Text style={s.pendingName} numberOfLines={1}>
-                {p.filename}
+                {p.name}
               </Text>
               <Pressable
-                onPress={() => setPending((l) => l.filter((x) => x.id !== p.id))}
+                onPress={() => setPending((l) => l.filter((x) => x.uri !== p.uri))}
                 hitSlop={8}
               >
                 <Text style={s.pendingX}>✕</Text>
@@ -595,6 +646,19 @@ const themedStyles = (C: Palette) =>
     pendingThumb: { width: 32, height: 32, borderRadius: 6 },
     pendingName: { color: C.text, fontSize: 12, flexShrink: 1 },
     pendingX: { color: C.muted, fontSize: 14, paddingHorizontal: 4 },
+    queuedRow: {
+      marginHorizontal: 12,
+      marginTop: 8,
+      padding: 10,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderStyle: "dashed",
+      borderColor: C.border,
+      backgroundColor: C.surface,
+      opacity: 0.85,
+    },
+    queuedText: { color: C.text, fontSize: 13.5 },
+    queuedTag: { color: C.muted, fontSize: 11, marginTop: 4, fontStyle: "italic" },
     modeStrip: {
       flexDirection: "row",
       alignItems: "center",

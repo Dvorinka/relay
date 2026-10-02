@@ -85,6 +85,14 @@ type Attachment struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type Board struct {
+	ID        pgtype.UUID        `json:"id"`
+	ProjectID pgtype.UUID        `json:"project_id"`
+	Name      string             `json:"name"`
+	Filters   []byte             `json:"filters"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type Conversation struct {
 	ID        pgtype.UUID        `json:"id"`
 	ProjectID pgtype.UUID        `json:"project_id"`
@@ -229,6 +237,8 @@ type Project struct {
 	CreatedBy   pgtype.UUID        `json:"created_by"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	Statuses    []byte             `json:"statuses"`
+	LocalPath   pgtype.Text        `json:"local_path"`
 }
 
 type ProjectCounter struct {
@@ -240,6 +250,17 @@ type ProjectMember struct {
 	ProjectID pgtype.UUID        `json:"project_id"`
 	UserID    pgtype.UUID        `json:"user_id"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type PushSubscription struct {
+	ID        pgtype.UUID        `json:"id"`
+	UserID    pgtype.UUID        `json:"user_id"`
+	Endpoint  string             `json:"endpoint"`
+	Auth      string             `json:"auth"`
+	Keys      []byte             `json:"keys"`
+	UserAgent pgtype.Text        `json:"user_agent"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	LastSeen  pgtype.Timestamptz `json:"last_seen"`
 }
 
 type RateLimit struct {
@@ -257,6 +278,15 @@ type Repository struct {
 	DefaultBranch  string             `json:"default_branch"`
 	LinkedBy       pgtype.UUID        `json:"linked_by"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type SavedFilter struct {
+	ID        pgtype.UUID        `json:"id"`
+	ProjectID pgtype.UUID        `json:"project_id"`
+	UserID    pgtype.UUID        `json:"user_id"`
+	Name      string             `json:"name"`
+	Filters   []byte             `json:"filters"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
 type Session struct {

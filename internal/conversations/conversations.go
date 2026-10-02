@@ -13,6 +13,7 @@ import (
 	"github.com/Dvorinka/relay/internal/db"
 	"github.com/Dvorinka/relay/internal/events"
 	"github.com/Dvorinka/relay/internal/httpx"
+	"github.com/Dvorinka/relay/internal/push"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -25,6 +26,8 @@ type Service struct {
 	log *zap.Logger
 	// Bus publishes domain events for SSE subscribers. Optional.
 	Bus *events.Hub
+	// Push fans out web-push notifications on mentions/replies. Optional.
+	Push *push.Service
 }
 
 func NewService(log *zap.Logger, pool *pgxpool.Pool) *Service {
@@ -156,10 +159,10 @@ func (s *Service) handleListMessages(c *gin.Context) {
 			AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 			AuthorName: m.AuthorName, AuthorAvatar: m.AuthorAvatar,
 			ParentAuthorName: m.ParentAuthorName, ParentBody: m.ParentBody,
-			ParentDeleted:      m.ParentDeleted,
-			Attachments:        atts[m.ID.String()],
-			Reactions:          rxns[m.ID.String()],
-			AgentRead:          read[m.ID.String()],
+			ParentDeleted: m.ParentDeleted,
+			Attachments:   atts[m.ID.String()],
+			Reactions:     rxns[m.ID.String()],
+			AgentRead:     read[m.ID.String()],
 		}))
 	}
 	c.JSON(http.StatusOK, gin.H{"messages": msgs, "has_more": hasMore})
@@ -245,6 +248,10 @@ func (s *Service) handlePostMessage(c *gin.Context) {
 		pid, _ := uuid.FromBytes(conv.ProjectID.Bytes[:])
 		s.Bus.Publish(events.Event{Type: "message.created", ProjectID: pid,
 			Data: map[string]any{"conversation_id": m.ConversationID.String(), "message": out}})
+	}
+	if s.Push != nil {
+		s.Push.NotifyMessage(conv.ProjectID, user.ID, req.Body, m.ID,
+			"/app/p/"+conv.ProjectID.String(), m.AuthorName)
 	}
 	c.JSON(http.StatusCreated, out)
 }
@@ -525,18 +532,18 @@ func conversationJSON(conv db.Conversation) gin.H {
 // MessageView is the render input for MessageJSON; the sqlc row types all
 // carry the same field names, so callers map one in per query variant.
 type MessageView struct {
-	ID, ConversationID, ParentID       pgtype.UUID
-	Body                               string
-	CreatedAt, EditedAt                pgtype.Timestamptz
-	AuthorUserID, AuthorAgentID        pgtype.UUID
-	AuthorName                         string
-	AuthorAvatar                       pgtype.Text
-	ParentAuthorName                   string
-	ParentBody                         pgtype.Text
-	ParentDeleted                      pgtype.Bool
-	Attachments                        []gin.H
-	Reactions                          []gin.H
-	AgentRead                          bool
+	ID, ConversationID, ParentID pgtype.UUID
+	Body                         string
+	CreatedAt, EditedAt          pgtype.Timestamptz
+	AuthorUserID, AuthorAgentID  pgtype.UUID
+	AuthorName                   string
+	AuthorAvatar                 pgtype.Text
+	ParentAuthorName             string
+	ParentBody                   pgtype.Text
+	ParentDeleted                pgtype.Bool
+	Attachments                  []gin.H
+	Reactions                    []gin.H
+	AgentRead                    bool
 }
 
 // MessageJSON renders one message for the API. Author is a user/agent pair;
@@ -561,9 +568,9 @@ func MessageJSON(v MessageView) gin.H {
 	var parent *gin.H
 	if v.ParentID.Valid {
 		p := gin.H{
-			"id":         v.ParentID.String(),
-			"author":     v.ParentAuthorName,
-			"deleted":    v.ParentDeleted.Bool,
+			"id":      v.ParentID.String(),
+			"author":  v.ParentAuthorName,
+			"deleted": v.ParentDeleted.Bool,
 		}
 		if v.ParentDeleted.Bool {
 			p["preview"] = ""

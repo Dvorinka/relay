@@ -14,6 +14,7 @@ import (
 	"github.com/Dvorinka/relay/internal/conversations"
 	"github.com/Dvorinka/relay/internal/db"
 	"github.com/Dvorinka/relay/internal/httpx"
+	"github.com/Dvorinka/relay/internal/statuses"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -36,6 +37,16 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
 	g.GET("/projects/:id", s.memberOnly, s.handleGet)
 	g.PATCH("/projects/:id", s.memberOnly, s.handleUpdate)
 	g.GET("/projects/:id/overview", s.memberOnly, s.handleOverview)
+	g.PUT("/projects/:id/statuses", s.memberOnly, s.handleSetStatuses)
+	g.PUT("/projects/:id/local_path", s.memberOnly, s.handleSetLocalPath)
+	g.GET("/projects/:id/files", s.memberOnly, s.handleFiles)
+	g.GET("/projects/:id/files/read", s.memberOnly, s.handleReadFile)
+	g.GET("/projects/:id/filters", s.memberOnly, s.handleListFilters)
+	g.POST("/projects/:id/filters", s.memberOnly, s.handleCreateFilter)
+	g.DELETE("/projects/:id/filters/:filterID", s.memberOnly, s.handleDeleteFilter)
+	g.GET("/projects/:id/boards", s.memberOnly, s.handleListBoards)
+	g.POST("/projects/:id/boards", s.memberOnly, s.handleCreateBoard)
+	g.DELETE("/projects/:id/boards/:boardID", s.memberOnly, s.handleDeleteBoard)
 }
 
 const ctxProject = "relay.project"
@@ -88,6 +99,8 @@ func projectJSON(p db.GetProjectByIDRow) gin.H {
 		"key": p.Key, "name": p.Name, "description": p.Description,
 		"icon":       textOrNil(p.Icon),
 		"color":      textOrNil(p.Color),
+		"statuses":   statuses.Parse(p.Statuses),
+		"local_path": textOrNil(p.LocalPath),
 		"created_at": p.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
 	}
 }
@@ -113,6 +126,8 @@ func (s *Service) handleList(c *gin.Context) {
 			"id": r.ID.String(), "workspace_id": r.WorkspaceID.String(),
 			"key": r.Key, "name": r.Name, "description": r.Description,
 			"icon": textOrNil(r.Icon), "color": textOrNil(r.Color),
+			"statuses":   statuses.Parse(r.Statuses),
+			"local_path": textOrNil(r.LocalPath),
 			"created_at": r.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
 		})
 	}

@@ -25,9 +25,12 @@ export default function Projects() {
 
   useEffect(() => {
     nav.setOptions({
+      // Android native-stack defaults the title left — it collides with
+      // headerLeft. Centering keeps both visible.
+      headerTitleAlign: "center",
       headerRight: () => (
         <Pressable onPress={() => router.push("/settings")} hitSlop={12}>
-          <Text style={{ color: C.muted, fontSize: 20 }}>⚙</Text>
+          <Text style={{ color: C.muted, fontSize: 20 }}>{"⚙︎"}</Text>
         </Pressable>
       ),
       headerLeft: () => (

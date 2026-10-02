@@ -53,8 +53,9 @@ thread, thread becomes an issue, issue tracks GitHub state.
 - **Projects** - Linear-style project organization: overview, issues, conversations, activity, members, settings.
 - **Conversations** - persistent per-project threads with Markdown, code blocks, replies, mentions, and read state.
 - **Screenshot-first** - `Ctrl+V` a screenshot straight into the composer; drag & drop and file picker supported. Attachments stay attached to their message.
-- **Issues** - fast issue tracker with `MYB-142` keys, statuses, priorities, labels, assignees, comments, and an activity timeline. Kanban board is a full page, one click from chat.
+- **Issues** - fast issue tracker with `MYB-142` keys, **custom per-project statuses** (own lanes, colors, closed flags), priorities, labels, assignees, comments, and an activity timeline. Kanban board is a full page, one click from chat; **named boards** and **saved filters** persist per project.
 - **Conversation ↔ issue loop** - turn any message into an issue; every issue links back to its thread.
+- **Project folder + file mentions** - link a local folder to a project (instead of or alongside GitHub) from project settings, then `@file:path` and `@gh:repo:path` mentions autocomplete in the composer and open a code preview inline. Agents can read linked files through MCP (`file:read` scope). Sensitive files (`.env`, keys, credentials) are never listed or served.
 - **Offline-first local mode** - no server required: pick "Work locally" on the sign-in screen and the whole app (projects, chat, issues, board, search) runs against on-device storage. Point it at a server later and **Sync to server** replays local data onto it.
 - **Any-server clients** - sign in to any reachable Relay server from the login screen; the API accepts bearer tokens cross-origin (CORS `*`), so the web build works hosted anywhere.
 - **GitHub** - connect repositories through a GitHub App (one-click register + install from workspace settings, or pick a repo when creating a project); issues, PRs, and commits mirror into the project with signature-verified webhooks.
@@ -63,7 +64,8 @@ thread, thread becomes an issue, issue tracks GitHub state.
 - **MCP server** - streamable-HTTP endpoint exposing projects, conversations, messages, attachments, and issues as tools for external agents.
 - **Realtime** - SSE event stream for live messages, issue changes, and notifications.
 - **Search** - `Ctrl/Cmd+K` across projects, issues, messages, and GitHub items, backed by Postgres FTS.
-- **Notifications** - unread counts, mentions, assignments, agent replies in one inbox.
+- **Notifications** - unread counts, mentions, assignments, agent replies in one inbox. Optional **Web Push** (VAPID) delivers mentions and review requests to the browser even when the tab is closed - enable in Settings → Notifications.
+- **Mobile outbox** - the Android app queues messages and images when offline and syncs them automatically on reconnect.
 - **Web first** - dark and light mode, keyboard-first, accessible. Desktop (Wails: Linux/macOS/Windows) and Android (Expo) clients consume the same API - see the [roadmap](ROADMAP.md).
 
 ## Architecture

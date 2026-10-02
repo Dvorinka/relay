@@ -22,6 +22,9 @@ interface RelayToken {
   href?: string;
   key?: string;
   text: string;
+  fileSrc?: "local" | "github";
+  fileRepo?: string;
+  filePath?: string;
 }
 
 function linkifyExtension(projectId?: string) {
@@ -31,9 +34,34 @@ function linkifyExtension(projectId?: string) {
         name: "relayLink",
         level: "inline" as const,
         start(src: string) {
-          return src.match(/[A-Za-z]/)?.index;
+          return src.match(/[@A-Za-z0-9]/)?.index;
         },
         tokenizer(src: string): RelayToken | undefined {
+          // @gh:owner/repo:path — linked-repo file mention
+          const ghFile = src.match(
+            /^@gh:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+):([^\s]+)/,
+          );
+          if (ghFile) {
+            return {
+              type: "relayLink",
+              raw: ghFile[0],
+              text: ghFile[2] ?? ghFile[0],
+              fileSrc: "github",
+              fileRepo: ghFile[1] ?? "",
+              filePath: ghFile[2] ?? "",
+            };
+          }
+          // @file:path — linked local folder mention
+          const localFile = src.match(/^@file:([^\s]+)/);
+          if (localFile) {
+            return {
+              type: "relayLink",
+              raw: localFile[0],
+              text: localFile[1] ?? "",
+              fileSrc: "local",
+              filePath: localFile[1] ?? "",
+            };
+          }
           const gh = src.match(
             /^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#(\d+)(?![\d\w])/,
           );
@@ -58,6 +86,18 @@ function linkifyExtension(projectId?: string) {
           return undefined;
         },
         renderer(token: RelayToken) {
+          if (token.fileSrc && token.filePath) {
+            const name = escapeHtml(
+              token.filePath.split("/").pop() ?? token.filePath,
+            );
+            const repo = escapeHtml(token.fileRepo ?? "");
+            const path = escapeHtml(token.filePath);
+            return (
+              `<button type="button" class="md-ref md-file" ` +
+              `data-file-src="${token.fileSrc}" data-repo="${repo}" ` +
+              `data-path="${path}" title="${path}">${name}</button>`
+            );
+          }
           if (token.href) {
             return `<a href="${token.href}" target="_blank" rel="noreferrer" class="md-ref">${token.text}</a>`;
           }
@@ -123,6 +163,21 @@ export function Markdown(props: {
       class={`md ${props.class ?? ""}`}
       innerHTML={html()}
       onClick={(e) => {
+        const file = (e.target as HTMLElement).closest(".md-file");
+        if (file) {
+          e.preventDefault();
+          window.dispatchEvent(
+            new CustomEvent("relay:open-file", {
+              detail: {
+                src: file.getAttribute("data-file-src"),
+                repo: file.getAttribute("data-repo") || undefined,
+                path: file.getAttribute("data-path"),
+                projectId: props.projectId,
+              },
+            }),
+          );
+          return;
+        }
         const btn = (e.target as HTMLElement).closest(".md-pre-copy");
         const code = btn?.parentElement?.nextElementSibling?.textContent;
         if (!btn || code == null) return;

@@ -8,6 +8,10 @@ import {
   ApiClientError,
   type AgentReview,
   type Attachment,
+  type Board,
+  type FileEntry,
+  type SavedFilter,
+  type StatusDef,
   type AuthSession,
   type Conversation,
   type Issue,
@@ -38,6 +42,8 @@ interface LocalDB {
   attachments: Record<string, LocalAttachment>;
   myReactions: Record<string, string[]>; // message_id -> emojis I reacted with
   counters: Record<string, number>; // project_id -> next issue number
+  savedFilters: Record<string, SavedFilter[]>; // project_id -> views
+  boards: Record<string, Board[]>; // project_id -> named boards
   synced_at?: string;
 }
 
@@ -71,6 +77,8 @@ function emptyDB(): LocalDB {
     attachments: {},
     myReactions: {},
     counters: {},
+    savedFilters: {},
+    boards: {},
   };
 }
 
@@ -526,6 +534,78 @@ export const local = {
   },
   attachmentURL: (_projectId: string, attachmentId: string) =>
     db.attachments[attachmentId]?.url ?? "",
+
+  setProjectStatuses: async (projectId: string, statuses: StatusDef[] | null) => {
+    const p = db.projects.find((x) => x.id === projectId);
+    if (!p) notFound();
+    p.statuses = statuses ?? undefined;
+    save();
+    return { statuses: statuses ?? [] };
+  },
+  setProjectLocalPath: async (projectId: string, path: string | null) => {
+    const p = db.projects.find((x) => x.id === projectId);
+    if (!p) notFound();
+    p.local_path = path;
+    save();
+    return { local_path: path };
+  },
+  // Folder browsing is a server-side capability (the directory lives on the
+  // server host). In local mode the browser can't see it — empty tree.
+  listProjectFiles: async () => ({ entries: [] as FileEntry[], truncated: false }),
+  readProjectFile: async () => {
+    throw new ApiClientError(404, "no linked folder in local mode");
+  },
+  repoFileTree: async () => ({ entries: [], truncated: false, repo: "", branch: "" }),
+  repoFileRead: async () => {
+    throw new ApiClientError(404, "no GitHub integration in local mode");
+  },
+
+  listSavedFilters: async (projectId: string) => ({
+    filters: db.savedFilters[projectId] ?? [],
+  }),
+  createSavedFilter: async (
+    projectId: string,
+    input: { name: string; filters: Record<string, unknown> },
+  ): Promise<SavedFilter> => {
+    const f: SavedFilter = {
+      id: uuid(),
+      name: input.name,
+      filters: input.filters,
+    };
+    (db.savedFilters[projectId] ??= []).push(f);
+    save();
+    return f;
+  },
+  deleteSavedFilter: async (projectId: string, filterId: string) => {
+    db.savedFilters[projectId] = (db.savedFilters[projectId] ?? []).filter(
+      (f) => f.id !== filterId,
+    );
+    save();
+    return { deleted: true };
+  },
+  listBoards: async (projectId: string) => ({
+    boards: db.boards[projectId] ?? [],
+  }),
+  createBoard: async (
+    projectId: string,
+    input: { name: string; filters: Record<string, unknown> },
+  ): Promise<Board> => {
+    const b: Board = { id: uuid(), name: input.name, filters: input.filters };
+    (db.boards[projectId] ??= []).push(b);
+    save();
+    return b;
+  },
+  deleteBoard: async (projectId: string, boardId: string) => {
+    db.boards[projectId] = (db.boards[projectId] ?? []).filter(
+      (b) => b.id !== boardId,
+    );
+    save();
+    return { deleted: true };
+  },
+
+  pushVapid: async () => ({ enabled: false }),
+  pushSubscribe: async () => ({ subscribed: false }),
+  pushUnsubscribe: async () => ({ subscribed: false }),
 
   uploadAvatar: async (file: File) => {
     const url = await new Promise<string>((resolve, reject) => {

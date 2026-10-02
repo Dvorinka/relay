@@ -12,9 +12,9 @@ import (
 )
 
 type Config struct {
-	DatabaseURL     string
-	ListenAddr      string
-	PublicURL       string
+	DatabaseURL string
+	ListenAddr  string
+	PublicURL   string
 	// LandingURL is the GitHub App's homepage link; defaults to PublicURL so
 	// self-hosted installs point at the app itself.
 	LandingURL      string
@@ -31,8 +31,14 @@ type Config struct {
 	StorageAccessKey      string
 	StorageSecretKey      string
 	StorageBucket         string
-	StorageMaxUploadMiB   int64
-	StoragePresignTTL     int
+
+	// Web Push: empty keys -> auto-generated ephemeral pair (dev mode,
+	// subscriptions die on restart). Set both for stable delivery.
+	VapidPublic         string
+	VapidPrivate        string
+	VapidSubject        string
+	StorageMaxUploadMiB int64
+	StoragePresignTTL   int
 	// GITHUB_TOKEN is a dev fallback so the development panel works without a
 	// registered GitHub App. Installation tokens take precedence once an app exists.
 	GitHubToken string
@@ -57,9 +63,13 @@ func Load() (Config, error) {
 		StorageAccessKey:      os.Getenv("STORAGE_ACCESS_KEY"),
 		StorageSecretKey:      os.Getenv("STORAGE_SECRET_KEY"),
 		StorageBucket:         getEnv("STORAGE_BUCKET", "relay"),
-		StorageMaxUploadMiB:   int64(getInt("STORAGE_MAX_UPLOAD_MIB", 25)),
-		StoragePresignTTL:     getInt("STORAGE_PRESIGN_TTL", 300),
-		GitHubToken:           os.Getenv("GITHUB_TOKEN"),
+
+		VapidPublic:         os.Getenv("RELAY_VAPID_PUBLIC_KEY"),
+		VapidPrivate:        os.Getenv("RELAY_VAPID_PRIVATE_KEY"),
+		VapidSubject:        getEnv("RELAY_VAPID_SUBJECT", "mailto:admin@localhost"),
+		StorageMaxUploadMiB: int64(getInt("STORAGE_MAX_UPLOAD_MIB", 25)),
+		StoragePresignTTL:   getInt("STORAGE_PRESIGN_TTL", 300),
+		GitHubToken:         os.Getenv("GITHUB_TOKEN"),
 	}
 
 	var missing []string

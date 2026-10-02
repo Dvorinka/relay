@@ -5,6 +5,7 @@ import { createResource, createSignal } from "solid-js";
 import { Portal } from "solid-js/web";
 import { FormError, inputClass, SubmitButton } from "../../components/ui";
 import { api } from "../../lib/api";
+import { statusDefs } from "./meta";
 import { AssigneeSelect, LabelsPicker, PrioritySelect, StatusSelect } from "./fields";
 
 export function NewIssueDialog(props: {
@@ -98,6 +99,7 @@ export function NewIssueDialog(props: {
               />
               <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <StatusSelect
+                  defs={statusDefs(props.project)}
                   label="Status"
                   value={status()}
                   onChange={setStatus}

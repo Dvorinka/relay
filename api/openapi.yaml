@@ -361,6 +361,343 @@ paths:
               schema: { $ref: "#/components/schemas/ProjectOverview" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /api/projects/{projectId}/statuses:
+    put:
+      operationId: setProjectStatuses
+      summary: Replace the project's issue status lanes (null resets to built-ins)
+      tags: [projects]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                statuses:
+                  type: ["array", "null"]
+                  items: { $ref: "#/components/schemas/StatusDef" }
+      responses:
+        "200":
+          description: Active status list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  statuses:
+                    type: array
+                    items: { $ref: "#/components/schemas/StatusDef" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/projects/{projectId}/local_path:
+    put:
+      operationId: setProjectLocalPath
+      summary: Link a local folder on the server host (null clears)
+      tags: [projects]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path: { type: ["string", "null"] }
+      responses:
+        "200":
+          description: Linked path
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  local_path: { type: ["string", "null"] }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/projects/{projectId}/files:
+    get:
+      operationId: listProjectFiles
+      summary: List one directory level of the linked local folder
+      tags: [projects]
+      parameters:
+        - { $ref: "#/components/parameters/ProjectId" }
+        - { name: path, in: query, schema: { type: string, default: "" } }
+        - { name: recursive, in: query, schema: { type: string, enum: ["1"] },
+            description: "Flatten the whole tree into a file-path list (autocomplete)" }
+      responses:
+        "200":
+          description: Directory entries (dirs first)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries:
+                    type: array
+                    items: { $ref: "#/components/schemas/FileEntry" }
+                  truncated: { type: boolean }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/projects/{projectId}/files/read:
+    get:
+      operationId: readProjectFile
+      summary: Read a UTF-8 file (<=256KB) from the linked folder
+      tags: [projects]
+      parameters:
+        - { $ref: "#/components/parameters/ProjectId" }
+        - { name: path, in: query, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: File content
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  path: { type: string }
+                  content: { type: string }
+                  size: { type: integer }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413": { $ref: "#/components/responses/BadRequest" }
+
+  /api/projects/{projectId}/filters:
+    get:
+      operationId: listSavedFilters
+      summary: The caller's saved issue filters for this project
+      tags: [projects]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      responses:
+        "200":
+          description: Saved filters
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  filters:
+                    type: array
+                    items: { $ref: "#/components/schemas/SavedFilter" }
+    post:
+      operationId: createSavedFilter
+      summary: Save a named filter
+      tags: [projects]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 60 }
+                filters: { type: object, additionalProperties: true }
+      responses:
+        "201":
+          description: Created filter
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SavedFilter" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /api/projects/{projectId}/filters/{filterId}:
+    delete:
+      operationId: deleteSavedFilter
+      summary: Delete one of the caller's saved filters
+      tags: [projects]
+      parameters:
+        - { $ref: "#/components/parameters/ProjectId" }
+        - { name: filterId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { deleted: { type: boolean } }
+
+  /api/projects/{projectId}/boards:
+    get:
+      operationId: listBoards
+      summary: Named board views for this project
+      tags: [projects]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      responses:
+        "200":
+          description: Boards
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  boards:
+                    type: array
+                    items: { $ref: "#/components/schemas/Board" }
+    post:
+      operationId: createBoard
+      summary: Save a named board view
+      tags: [projects]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 60 }
+                filters: { type: object, additionalProperties: true }
+      responses:
+        "201":
+          description: Created board
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Board" }
+
+  /api/projects/{projectId}/boards/{boardId}:
+    delete:
+      operationId: deleteBoard
+      summary: Delete a named board
+      tags: [projects]
+      parameters:
+        - { $ref: "#/components/parameters/ProjectId" }
+        - { name: boardId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { deleted: { type: boolean } }
+
+  /api/projects/{projectId}/github/files:
+    get:
+      operationId: repoFileTree
+      summary: Recursive file tree of a linked GitHub repo
+      tags: [github]
+      parameters:
+        - { $ref: "#/components/parameters/ProjectId" }
+        - { name: repo, in: query, required: true, schema: { type: string }, description: "owner/name" }
+      responses:
+        "200":
+          description: Tree entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        path: { type: string }
+                        dir: { type: boolean }
+                  truncated: { type: boolean }
+                  repo: { type: string }
+                  branch: { type: string }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502": { $ref: "#/components/responses/BadRequest" }
+
+  /api/projects/{projectId}/github/files/read:
+    get:
+      operationId: repoFileRead
+      summary: Read a file from a linked GitHub repo
+      tags: [github]
+      parameters:
+        - { $ref: "#/components/parameters/ProjectId" }
+        - { name: repo, in: query, required: true, schema: { type: string } }
+        - { name: path, in: query, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: File content
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  path: { type: string }
+                  content: { type: string }
+                  size: { type: integer }
+                  repo: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "502": { $ref: "#/components/responses/BadRequest" }
+
+  /api/push/vapid:
+    get:
+      operationId: pushVapidKey
+      summary: Web-push application server key (enabled=false when unconfigured)
+      tags: [push]
+      responses:
+        "200":
+          description: Key info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean }
+                  public_key: { type: string }
+                  ephemeral: { type: boolean }
+
+  /api/push/subscriptions:
+    put:
+      operationId: pushSubscribe
+      summary: Register (or refresh) a push subscription for the caller
+      tags: [push]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [endpoint, keys]
+              properties:
+                endpoint: { type: string }
+                keys:
+                  type: object
+                  required: [p256dh, auth]
+                  properties:
+                    p256dh: { type: string }
+                    auth: { type: string }
+      responses:
+        "200":
+          description: Subscribed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { subscribed: { type: boolean } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "503": { $ref: "#/components/responses/BadRequest" }
+    delete:
+      operationId: pushUnsubscribe
+      summary: Remove a push subscription
+      tags: [push]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [endpoint]
+              properties:
+                endpoint: { type: string }
+      responses:
+        "200":
+          description: Unsubscribed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { subscribed: { type: boolean } }
+
   /api/projects/{projectId}/conversation:
     get:
       operationId: projectConversation
@@ -1863,7 +2200,46 @@ components:
         description: { type: string }
         icon: { type: ["string", "null"] }
         color: { type: ["string", "null"], pattern: "^#[0-9a-fA-F]{6}$" }
+        statuses:
+          type: array
+          description: Issue lanes for this project; built-in six when unset
+          items: { $ref: "#/components/schemas/StatusDef" }
+        local_path: { type: ["string", "null"], description: "Linked local folder on the server host" }
         created_at: { type: string, format: date-time }
+
+    StatusDef:
+      type: object
+      required: [id, label, color]
+      properties:
+        id: { type: string, pattern: "^[a-z0-9_-]{1,32}$" }
+        label: { type: string, minLength: 1, maxLength: 40 }
+        color: { type: string, pattern: "^#[0-9a-fA-F]{6}$" }
+        closed: { type: boolean, description: "Terminal state (maps to GitHub closed)" }
+
+    SavedFilter:
+      type: object
+      required: [id, name, filters]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        filters: { type: object, additionalProperties: true }
+
+    Board:
+      type: object
+      required: [id, name, filters]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        filters: { type: object, additionalProperties: true }
+
+    FileEntry:
+      type: object
+      required: [name, path, dir]
+      properties:
+        name: { type: string }
+        path: { type: string }
+        dir: { type: boolean }
+        size: { type: integer }
 
     CreateProjectRequest:
       type: object
@@ -1956,7 +2332,7 @@ components:
 
     IssueStatus:
       type: string
-      enum: [backlog, todo, in_progress, review, done, cancelled]
+      description: "Built-in lane id or a project's custom status id"
 
     IssuePriority:
       type: string

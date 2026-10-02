@@ -13,6 +13,7 @@ import {
   createSignal,
   For,
   onCleanup,
+  onMount,
   Show,
 } from "solid-js";
 import { Portal } from "solid-js/web";
@@ -622,6 +623,27 @@ function ConversationThread(props: {
   const [pending, setPending] = createSignal<PendingAttachment[]>([]);
   const [dragging, setDragging] = createSignal(false);
   const [replyTo, setReplyTo] = createSignal<Message | null>(null);
+
+  // File mentions: @file:path (linked local folder) and
+  // @gh:owner/repo:path (linked GitHub repos). Trees load lazily on the
+  // first mention keystroke.
+  const [repos] = createResource(
+    () => props.projectId,
+    async (id) => (await api.listProjectRepos(id)).repos,
+  );
+  const [localPaths, setLocalPaths] = createSignal<string[] | null>(null);
+  const [ghPaths, setGhPaths] = createSignal<string[] | null>(null);
+  const [mention, setMention] = createSignal<{
+    kind: "file" | "gh";
+    part: string;
+    start: number;
+  } | null>(null);
+  const [mentionIdx, setMentionIdx] = createSignal(0);
+  const [preview, setPreview] = createSignal<{
+    src: string;
+    repo?: string;
+    path: string;
+  } | null>(null);
   let scrollEl: HTMLDivElement | undefined;
   let inputEl: HTMLTextAreaElement | undefined;
   let fileEl: HTMLInputElement | undefined;
@@ -722,6 +744,104 @@ function ConversationThread(props: {
       inputEl.style.height = `${Math.min(inputEl.scrollHeight, 160)}px`;
     }
   }
+
+  // --- file mentions ---
+
+  async function loadLocalPaths() {
+    if (localPaths() !== null) return;
+    setLocalPaths([]);
+    try {
+      const r = await api.listProjectFiles(props.projectId, "", true);
+      setLocalPaths(r.entries.map((e) => e.path));
+    } catch {
+      setLocalPaths([]); // no folder linked or unreadable
+    }
+  }
+
+  async function loadGhPaths() {
+    if (ghPaths() !== null) return;
+    setGhPaths([]);
+    try {
+      const out: string[] = [];
+      for (const r of repos() ?? []) {
+        const t = await api.repoFileTree(props.projectId, r.full_name);
+        for (const e of t.entries) {
+          if (!e.dir) {
+            out.push(`${r.full_name}:${e.path}`);
+          }
+        }
+      }
+      setGhPaths(out);
+    } catch {
+      setGhPaths([]);
+    }
+  }
+
+  // Detects the mention token under the caret: "@file:<part>" or
+  // "@gh:<part>" — the trigger must be at start or after whitespace.
+  function detectMention(text: string, caret: number) {
+    const before = text.slice(0, caret);
+    const m = before.match(/@(?:file|gh):(\S*)$/);
+    if (!m) {
+      setMention(null);
+      return;
+    }
+    const start = caret - m[0].length;
+    if (start > 0 && !/\s/.test(text[start - 1]!)) {
+      setMention(null);
+      return;
+    }
+    const kind = m[0].startsWith("@gh:") ? ("gh" as const) : ("file" as const);
+    setMention({ kind, part: m[1] ?? "", start });
+    setMentionIdx(0);
+    if (kind === "file") {
+      void loadLocalPaths();
+    } else {
+      void loadGhPaths();
+    }
+  }
+
+  const mentionCandidates = () => {
+    const m = mention();
+    if (!m) return [];
+    const src = m.kind === "file" ? (localPaths() ?? []) : (ghPaths() ?? []);
+    const needle = m.part.toLowerCase();
+    const hits = needle
+      ? src.filter((p) => p.toLowerCase().includes(needle))
+      : src;
+    return hits.slice(0, 8);
+  };
+
+  function pickMention(item: string) {
+    const m = mention();
+    if (!m || !inputEl) return;
+    const text = draft();
+    const token = m.kind === "file" ? `@file:${item}` : `@gh:${item}`;
+    const next = `${text.slice(0, m.start)}${token} ${text.slice(inputEl.selectionStart)}`;
+    setDraft(next);
+    setMention(null);
+    const el = inputEl;
+    queueMicrotask(() => {
+      el.focus();
+      const pos = m.start + token.length + 1;
+      el.setSelectionRange(pos, pos);
+      autogrow();
+    });
+  }
+
+  // File preview modal, opened by md-file chip clicks anywhere in the thread.
+  const onOpenFile = (e: Event) => {
+    const d = (e as CustomEvent).detail as {
+      src: string;
+      repo?: string;
+      path: string;
+      projectId?: string;
+    };
+    if (d.projectId !== props.projectId || !d.path) return;
+    setPreview({ src: d.src, repo: d.repo, path: d.path });
+  };
+  onMount(() => window.addEventListener("relay:open-file", onOpenFile));
+  onCleanup(() => window.removeEventListener("relay:open-file", onOpenFile));
 
   // --- attachments ---
 
@@ -959,7 +1079,7 @@ function ConversationThread(props: {
       </div>
 
       <div
-        class="shrink-0 px-3 pb-4 pt-1 [padding-bottom:max(1rem,env(safe-area-inset-bottom))] sm:px-4"
+        class="relative shrink-0 px-3 pb-4 pt-1 [padding-bottom:max(1rem,env(safe-area-inset-bottom))] sm:px-4"
         onDragOver={(e) => {
           e.preventDefault();
           setDragging(true);
@@ -979,6 +1099,35 @@ function ConversationThread(props: {
         }}
       >
         <FormError message={sendError()} />
+        <Show when={mention() && mentionCandidates().length > 0}>
+          <div
+            role="listbox"
+            aria-label="File suggestions"
+            class="absolute bottom-full left-3 right-3 z-20 mb-1 max-h-64 overflow-y-auto rounded-lg border border-border bg-surface shadow-lg sm:left-4 sm:right-4"
+          >
+            <For each={mentionCandidates()}>
+              {(p, i) => (
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={i() === mentionIdx()}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    pickMention(p);
+                  }}
+                  class={`flex w-full items-center gap-2 px-3 py-1.5 text-left font-mono text-[12px] transition-colors ${
+                    i() === mentionIdx()
+                      ? "bg-hover text-fg"
+                      : "text-muted"
+                  }`}
+                >
+                  <FileIcon class="h-3.5 w-3.5 shrink-0 text-faint" />
+                  <span class="truncate">{p}</span>
+                </button>
+              )}
+            </For>
+          </div>
+        </Show>
         <div
           class={`rounded-2xl border bg-surface transition-colors ${
             dragging()
@@ -1050,14 +1199,42 @@ function ConversationThread(props: {
               onInput={(e) => {
                 setDraft(e.currentTarget.value);
                 autogrow();
+                detectMention(
+                  e.currentTarget.value,
+                  e.currentTarget.selectionStart,
+                );
               }}
               onKeyDown={(e) => {
+                const m = mention();
+                if (m && mentionCandidates().length > 0) {
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setMentionIdx((i) =>
+                      Math.min(i + 1, mentionCandidates().length - 1),
+                    );
+                    return;
+                  }
+                  if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setMentionIdx((i) => Math.max(i - 1, 0));
+                    return;
+                  }
+                  if (e.key === "Enter" || e.key === "Tab") {
+                    e.preventDefault();
+                    pickMention(mentionCandidates()[mentionIdx()]!);
+                    return;
+                  }
+                }
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
                   void send();
                 }
-                if (e.key === "Escape" && replyTo()) {
-                  setReplyTo(null);
+                if (e.key === "Escape") {
+                  if (mention()) {
+                    setMention(null);
+                  } else if (replyTo()) {
+                    setReplyTo(null);
+                  }
                 }
               }}
               onPaste={(e) => {
@@ -1102,6 +1279,85 @@ function ConversationThread(props: {
             addFiles(files);
           }}
         />
+      </div>
+      <Show when={preview()} keyed>
+        {(pv) => (
+          <FilePreview
+            projectId={props.projectId}
+            src={pv.src}
+            repo={pv.repo}
+            path={pv.path}
+            onClose={() => setPreview(null)}
+          />
+        )}
+      </Show>
+    </div>
+  );
+}
+
+// FilePreview: read a mentioned local/GitHub file into a modal. Content is
+// text-only, capped at 256KB server-side.
+function FilePreview(props: {
+  projectId: string;
+  src: string;
+  repo?: string;
+  path: string;
+  onClose: () => void;
+}) {
+  const [file] = createResource(
+    () => [props.src, props.repo, props.path] as const,
+    ([src, repo, path]) =>
+      src === "github" && repo
+        ? api.repoFileRead(props.projectId, repo, path)
+        : api.readProjectFile(props.projectId, path),
+  );
+  return (
+    <div
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) props.onClose();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") props.onClose();
+      }}
+    >
+      <div class="flex max-h-[80vh] w-full max-w-3xl flex-col rounded-xl border border-border bg-surface shadow-xl">
+        <div class="flex items-center gap-2 border-b border-border px-4 py-2.5">
+          <FileIcon class="h-4 w-4 shrink-0 text-faint" />
+          <span class="min-w-0 flex-1 truncate font-mono text-[12px] text-muted">
+            <Show when={props.src === "github"}>
+              <span class="text-accent-ink">{props.repo}</span>
+              <span>:</span>
+            </Show>
+            {props.path}
+          </span>
+          <button
+            type="button"
+            onClick={props.onClose}
+            aria-label="Close preview"
+            class="rounded p-1 text-muted transition-colors hover:bg-hover hover:text-fg"
+          >
+            <XIcon class="h-4 w-4" />
+          </button>
+        </div>
+        <div class="min-h-0 flex-1 overflow-auto">
+          <Show
+            when={file.state === "ready"}
+            fallback={
+              <div class="flex justify-center py-10">
+                <Show when={file.state === "errored"} fallback={<Spinner />}>
+                  <p class="px-4 py-8 text-[13px] text-muted">
+                    Could not read file
+                  </p>
+                </Show>
+              </div>
+            }
+          >
+            <pre class="px-4 py-3 font-mono text-[12px] leading-relaxed whitespace-pre-wrap break-all">
+              {file()?.content}
+            </pre>
+          </Show>
+        </div>
       </div>
     </div>
   );

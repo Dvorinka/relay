@@ -532,6 +532,21 @@ func (q *Queries) MessageReadByAgent(ctx context.Context, messageID pgtype.UUID)
 	return exists, err
 }
 
+const parentAuthorID = `-- name: ParentAuthorID :one
+select m2.author_user_id
+from messages m
+join messages m2 on m2.id = m.parent_id
+where m.id = $1
+`
+
+// user who wrote a message's parent; null when the parent is an agent's
+func (q *Queries) ParentAuthorID(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, parentAuthorID, id)
+	var author_user_id pgtype.UUID
+	err := row.Scan(&author_user_id)
+	return author_user_id, err
+}
+
 const recentProjectMessages = `-- name: RecentProjectMessages :many
 select m.id, m.conversation_id, m.body, m.created_at, m.edited_at, m.parent_id,
        m.author_user_id, m.author_agent_id,

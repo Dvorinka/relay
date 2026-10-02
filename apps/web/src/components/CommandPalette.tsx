@@ -10,8 +10,7 @@ import {
 import { Portal } from "solid-js/web";
 import { api } from "../lib/api";
 import { messagePreview } from "../lib/text";
-import { STATUS_LABEL } from "../features/issues/meta";
-import type { IssueStatus } from "@relay/api-client";
+import { statusLabel } from "../features/issues/meta";
 
 interface Results {
   projects: { id: string; key: string; name: string }[];
@@ -86,7 +85,7 @@ export function CommandPalette() {
       })),
       ...r.issues.map((i) => ({
         label: i.title,
-        sub: `${i.key} · ${STATUS_LABEL[i.status as IssueStatus] ?? i.status}`,
+        sub: `${i.key} · ${statusLabel(i.status)}`,
         href: `/app/p/${i.project_id}/i/${i.id}`,
         group: "Issues",
       })),

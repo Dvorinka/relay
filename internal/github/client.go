@@ -3,10 +3,13 @@ package github
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 )
@@ -381,4 +384,64 @@ func (c *Client) ListCommits(ctx context.Context, installID int64, owner, repo, 
 		fmt.Sprintf("%s/repos/%s/%s/commits?sha=%s&per_page=15", apiBase, owner, repo, branch),
 		tok, nil, &out)
 	return out, err
+}
+
+// TreeEntry is one node in a repo's recursive git tree.
+type TreeEntry struct {
+	Path string `json:"path"`
+	Type string `json:"type"` // "blob" | "tree"
+}
+
+// RepoTree returns the repo's recursive file tree (paths only). GitHub caps
+// at 100k entries / ~7MB; truncated flags the cut.
+func (c *Client) RepoTree(ctx context.Context, installID int64, owner, repo, branch string) ([]TreeEntry, bool, error) {
+	tok, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return nil, false, err
+	}
+	var out struct {
+		Tree      []TreeEntry `json:"tree"`
+		Truncated bool        `json:"truncated"`
+	}
+	err = c.do(ctx, "GET",
+		fmt.Sprintf("%s/repos/%s/%s/git/trees/%s?recursive=1", apiBase, owner, repo, url.PathEscape(branch)),
+		tok, nil, &out)
+	return out.Tree, out.Truncated, err
+}
+
+// RepoFile reads a UTF-8 file ≤256KB at branch. Returns the decoded content.
+func (c *Client) RepoFile(ctx context.Context, installID int64, owner, repo, path, branch string) (string, int64, error) {
+	tok, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return "", 0, err
+	}
+	var out struct {
+		Content  string `json:"content"`
+		Encoding string `json:"encoding"`
+		Size     int64  `json:"size"`
+	}
+	err = c.do(ctx, "GET",
+		fmt.Sprintf("%s/repos/%s/%s/contents/%s?ref=%s", apiBase, owner, repo,
+			url.PathEscape(path), url.QueryEscape(branch)),
+		tok, nil, &out)
+	if err != nil {
+		return "", 0, err
+	}
+	if out.Encoding != "base64" {
+		return "", 0, fmt.Errorf("unexpected encoding %q", out.Encoding)
+	}
+	if out.Size > 256*1024 {
+		return "", 0, fmt.Errorf("file exceeds 256KB")
+	}
+	// GitHub wraps base64 at 60 chars — strip whitespace before decoding
+	raw, err := base64.StdEncoding.DecodeString(strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == ' ' || r == '\t' {
+			return -1
+		}
+		return r
+	}, out.Content))
+	if err != nil {
+		return "", 0, err
+	}
+	return string(raw), out.Size, nil
 }

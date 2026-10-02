@@ -35,6 +35,11 @@ device, enter your Relay server URL on the login screen
   fenced blocks), inline images, staged attachments (`+`), long-press
   action sheet (reply / react / edit — edit locks once an agent has read
   the message), 4s polling refresh
+- **Offline outbox** — sends that fail without connectivity queue in
+  AsyncStorage (text + local image picks) and drain on the next successful
+  poll; queued items render as dashed cards above the timeline. Unlike
+  desktop/web local mode, this is a send-only queue — full offline mode is
+  intentionally not on mobile.
 - **Issues** — status-colored chips; tap a status to advance the issue
 - **Reviews** — pending-first review cards with approve / request-changes
   (note required) verdicts

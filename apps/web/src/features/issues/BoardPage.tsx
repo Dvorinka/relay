@@ -1,18 +1,40 @@
 import { A, useParams } from "@solidjs/router";
-import { createResource, Show } from "solid-js";
+import { createResource, createSignal, For, Show } from "solid-js";
 import { api } from "../../lib/api";
 import { Spinner } from "../../components/ui";
-import { IssueIcon } from "../../components/icons";
+import { IssueIcon, PlusIcon, SettingsIcon, XIcon } from "../../components/icons";
 import { Board } from "./Board";
+import { ProjectSettings } from "./ProjectSettings";
+import type { IssueFilters } from "@relay/api-client";
 
 // Standalone kanban page — the chat header's Board button lands here so the
-// board gets the full window instead of a sheet.
+// board gets the full window instead of a sheet. Named boards (saved views)
+// show up as tabs.
 export default function BoardPage() {
   const params = useParams<{ projectId: string }>();
-  const [project] = createResource(
+  const [project, { refetch: refetchProject }] = createResource(
     () => params.projectId,
     (id) => api.getProject(id),
   );
+  const [boards, { refetch: refetchBoards }] = createResource(
+    () => params.projectId,
+    async (id) => (await api.listBoards(id)).boards,
+  );
+  const [activeBoard, setActiveBoard] = createSignal<string | null>(null);
+  const [saving, setSaving] = createSignal(false);
+  const [settingsOpen, setSettingsOpen] = createSignal(false);
+  let nameEl: HTMLInputElement | undefined;
+
+  const active = () => boards()?.find((b) => b.id === activeBoard());
+
+  const saveBoard = async () => {
+    const name = nameEl?.value.trim();
+    if (!name) return;
+    await api.createBoard(params.projectId, { name, filters: {} });
+    if (nameEl) nameEl.value = "";
+    setSaving(false);
+    refetchBoards();
+  };
 
   return (
     <div class="flex h-full min-h-0 flex-col">
@@ -37,10 +59,98 @@ export default function BoardPage() {
               <span class="rounded border border-border px-1.5 py-0.5 font-mono text-[10.5px] text-muted">
                 {p().key}
               </span>
-              <span class="text-[12.5px] text-muted">· Board</span>
             </>
           )}
         </Show>
+        <div class="flex min-w-0 items-center gap-1 overflow-x-auto">
+          <span class="text-[12.5px] text-muted">·</span>
+          <button
+            type="button"
+            onClick={() => setActiveBoard(null)}
+            class={`rounded px-2 py-1 text-[12.5px] transition-colors ${
+              activeBoard() === null
+                ? "bg-hover font-medium text-fg"
+                : "text-muted hover:text-fg"
+            }`}
+          >
+            Board
+          </button>
+          <For each={boards() ?? []}>
+            {(b) => (
+              <span class="inline-flex items-center rounded border border-transparent">
+                <button
+                  type="button"
+                  onClick={() => setActiveBoard(b.id)}
+                  class={`rounded px-2 py-1 text-[12.5px] transition-colors ${
+                    activeBoard() === b.id
+                      ? "bg-hover font-medium text-fg"
+                      : "text-muted hover:text-fg"
+                  }`}
+                >
+                  {b.name}
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Delete board ${b.name}`}
+                  onClick={async () => {
+                    await api.deleteBoard(params.projectId, b.id);
+                    if (activeBoard() === b.id) setActiveBoard(null);
+                    refetchBoards();
+                  }}
+                  class="rounded p-0.5 text-muted/50 opacity-0 transition-opacity hover:text-fg [span:hover>&]:opacity-100"
+                >
+                  <XIcon class="h-3 w-3" />
+                </button>
+              </span>
+            )}
+          </For>
+          <Show
+            when={saving()}
+            fallback={
+              <button
+                type="button"
+                onClick={() => {
+                  setSaving(true);
+                  queueMicrotask(() => nameEl?.focus());
+                }}
+                title="Save this board as a named view"
+                class="flex h-6 items-center gap-1 rounded px-1.5 text-[11.5px] text-muted/70 transition-colors hover:bg-hover hover:text-fg"
+              >
+                <PlusIcon class="h-3 w-3" />
+                Board
+              </button>
+            }
+          >
+            <span class="inline-flex h-7 items-center gap-1 rounded-md border border-border bg-surface pl-2">
+              <input
+                ref={(el) => (nameEl = el)}
+                placeholder="Board name"
+                aria-label="Board name"
+                class="w-28 bg-transparent text-[12.5px] outline-none placeholder:text-muted/60"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void saveBoard();
+                  if (e.key === "Escape") setSaving(false);
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => void saveBoard()}
+                class="h-full px-2 text-[12px] text-accent-ink hover:text-fg"
+              >
+                Save
+              </button>
+            </span>
+          </Show>
+        </div>
+        <div class="flex-1" />
+        <button
+          type="button"
+          onClick={() => setSettingsOpen(true)}
+          title="Project settings — lanes and folder"
+          class="flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-hover hover:text-fg"
+        >
+          <SettingsIcon class="h-4 w-4" />
+        </button>
       </header>
       <div class="flex min-h-0 flex-1 flex-col">
         <Show
@@ -51,7 +161,21 @@ export default function BoardPage() {
             </div>
           }
         >
-          {(p) => <Board project={p()} />}
+          {(p) => (
+            <>
+              <Board
+                project={p()}
+                filters={active()?.filters as IssueFilters | undefined}
+              />
+              <Show when={settingsOpen()}>
+                <ProjectSettings
+                  project={p()}
+                  onClose={() => setSettingsOpen(false)}
+                  onSaved={() => refetchProject()}
+                />
+              </Show>
+            </>
+          )}
         </Show>
       </div>
     </div>

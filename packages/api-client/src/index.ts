@@ -38,6 +38,10 @@ export type PendingReviewItem = NonNullable<
   paths["/api/me/reviews"]["get"]["responses"]["200"]["content"]["application/json"]["reviews"]
 >[number];
 export type WebhookSubscription = components["schemas"]["WebhookSubscription"];
+export type StatusDef = components["schemas"]["StatusDef"];
+export type SavedFilter = components["schemas"]["SavedFilter"];
+export type Board = components["schemas"]["Board"];
+export type FileEntry = components["schemas"]["FileEntry"];
 export type WebhookDelivery = components["schemas"]["WebhookDelivery"];
 
 export interface LinkedRepo {
@@ -158,12 +162,15 @@ export function createClient(baseUrl: string, token?: string) {
     token || crossOrigin ? "omit" : "include";
 
   async function request<T>(path: string, init?: RequestInit): Promise<T> {
-    const headers = new Headers(init?.headers);
-    if (token) headers.set("Authorization", `Bearer ${token}`);
+    // Keep headers undefined when empty so FormData requests let the browser
+    // set its own multipart boundary.
+    const headers =
+      token || init?.headers ? new Headers(init?.headers) : undefined;
+    if (token) headers!.set("Authorization", `Bearer ${token}`);
     const res = await fetch(`${baseUrl}${path}`, {
       ...init,
       credentials,
-      headers,
+      ...(headers ? { headers } : {}),
     });
     if (!res.ok) {
       const body = (await res.json().catch(() => null)) as ApiError | null;
@@ -558,6 +565,81 @@ export function createClient(baseUrl: string, token?: string) {
       ),
     mentions: () =>
       request<{ mentions: Mention[] }>(`/api/me/mentions`),
+
+    // Statuses / local folder / saved views / boards
+    setProjectStatuses: (projectId: string, statuses: StatusDef[] | null) =>
+      put<{ statuses: StatusDef[] }>(
+        `/api/projects/${projectId}/statuses`,
+        { statuses },
+      ),
+    setProjectLocalPath: (projectId: string, path: string | null) =>
+      put<{ local_path: string | null }>(
+        `/api/projects/${projectId}/local_path`,
+        { path },
+      ),
+    listProjectFiles: (projectId: string, path = "", recursive = false) =>
+      request<{ entries: FileEntry[]; truncated: boolean }>(
+        `/api/projects/${projectId}/files?path=${encodeURIComponent(path)}${recursive ? "&recursive=1" : ""}`,
+      ),
+    readProjectFile: (projectId: string, path: string) =>
+      request<{ path: string; content: string; size: number }>(
+        `/api/projects/${projectId}/files/read?path=${encodeURIComponent(path)}`,
+      ),
+    listSavedFilters: (projectId: string) =>
+      request<{ filters: SavedFilter[] }>(
+        `/api/projects/${projectId}/filters`,
+      ),
+    createSavedFilter: (
+      projectId: string,
+      input: { name: string; filters: Record<string, unknown> },
+    ) =>
+      post<SavedFilter>(`/api/projects/${projectId}/filters`, input),
+    deleteSavedFilter: (projectId: string, filterId: string) =>
+      request<{ deleted: boolean }>(
+        `/api/projects/${projectId}/filters/${filterId}`,
+        { method: "DELETE" },
+      ),
+    listBoards: (projectId: string) =>
+      request<{ boards: Board[] }>(`/api/projects/${projectId}/boards`),
+    createBoard: (
+      projectId: string,
+      input: { name: string; filters: Record<string, unknown> },
+    ) => post<Board>(`/api/projects/${projectId}/boards`, input),
+    deleteBoard: (projectId: string, boardId: string) =>
+      request<{ deleted: boolean }>(
+        `/api/projects/${projectId}/boards/${boardId}`,
+        { method: "DELETE" },
+      ),
+
+    // Linked-repo file browsing (file mentions)
+    repoFileTree: (projectId: string, repo: string) =>
+      request<{
+        entries: { path: string; dir: boolean }[];
+        truncated: boolean;
+        repo: string;
+        branch: string;
+      }>(`/api/projects/${projectId}/github/files?repo=${encodeURIComponent(repo)}`),
+    repoFileRead: (projectId: string, repo: string, path: string) =>
+      request<{ path: string; content: string; size: number; repo: string }>(
+        `/api/projects/${projectId}/github/files/read?repo=${encodeURIComponent(repo)}&path=${encodeURIComponent(path)}`,
+      ),
+
+    // Web push
+    pushVapid: () =>
+      request<{ enabled: boolean; public_key?: string; ephemeral?: boolean }>(
+        `/api/push/vapid`,
+      ),
+    pushSubscribe: (endpoint: string, keys: { p256dh: string; auth: string }) =>
+      put<{ subscribed: boolean }>(`/api/push/subscriptions`, {
+        endpoint,
+        keys,
+      }),
+    pushUnsubscribe: (endpoint: string) =>
+      request<{ subscribed: boolean }>(`/api/push/subscriptions`, {
+        method: "DELETE",
+        body: JSON.stringify({ endpoint }),
+        headers: { "Content-Type": "application/json" },
+      }),
 
     // Attachments
     uploadAttachment: (projectId: string, file: File) => {

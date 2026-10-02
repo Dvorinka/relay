@@ -32,7 +32,7 @@ import { Conversation } from "../conversations/Conversation";
 import { DevelopmentPanel, markGitHub } from "../github/GitHub";
 import { PullRequestList } from "../github/PullRequestList";
 import { IssueList } from "../issues/IssueList";
-import { isClosed, StatusDot } from "../issues/meta";
+import { isClosed, statusDefs, StatusDot } from "../issues/meta";
 import { Reviews } from "../reviews/Reviews";
 import { WebhooksSection } from "../webhooks/Webhooks";
 
@@ -133,7 +133,11 @@ function MiniIssue(props: { project: Project; issue: Issue }) {
         </span>
       </div>
       <div class="mt-1 flex items-center gap-2 text-[11px] text-muted">
-        <StatusDot status={props.issue.status} class="h-1.5 w-1.5" />
+        <StatusDot
+          status={props.issue.status}
+          defs={statusDefs(props.project)}
+          class="h-1.5 w-1.5"
+        />
         <Show when={props.issue.assignee}>
           {(a) => <span class="truncate">{a().name}</span>}
         </Show>
@@ -317,7 +321,7 @@ function ContextRail(props: {
   onCleanup(unsub);
 
   const openIssues = createMemo(() =>
-    (issues() ?? []).filter((i) => !isClosed(i.status)).slice(0, 5),
+    (issues() ?? []).filter((i) => !isClosed(i.status, statusDefs(props.project))).slice(0, 5),
   );
 
   return (

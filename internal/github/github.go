@@ -66,6 +66,8 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup, pub *gin.RouterGroup) {
 	g.PUT("/projects/:id/github/repo", s.projectAdminOnly, s.handleLinkRepo)
 	g.DELETE("/projects/:id/github/repo/:repoId", s.projectAdminOnly, s.handleUnlinkRepo)
 	g.GET("/projects/:id/development", s.projectMemberOnly, s.handleDevelopment)
+	g.GET("/projects/:id/github/files", s.projectMemberOnly, s.handleRepoTree)
+	g.GET("/projects/:id/github/files/read", s.projectMemberOnly, s.handleRepoFile)
 	g.POST("/projects/:id/github/import", s.projectAdminOnly, s.handleImport)
 	// browser redirect targets / webhook entry
 	pub.GET("/github/callback", s.handleCallback)
@@ -1003,3 +1005,85 @@ func (s *Service) projectGate(c *gin.Context, admin bool) {
 
 func (s *Service) projectMemberOnly(c *gin.Context) { s.projectGate(c, false) }
 func (s *Service) projectAdminOnly(c *gin.Context)  { s.projectGate(c, true) }
+
+// --- repo file browsing (feeds chat file mentions) ---
+
+// repoForQuery resolves ?repo=owner/name against the project's linked repos.
+func (s *Service) repoForQuery(c *gin.Context) (db.Repository, bool) {
+	var zero db.Repository
+	p := c.MustGet("relay.project").(db.GetProjectByIDRow)
+	full := c.Query("repo")
+	if full == "" {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "repo=owner/name required")
+		return zero, false
+	}
+	repos, err := s.q.ListProjectRepos(c.Request.Context(), p.ID)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return zero, false
+	}
+	for _, r := range repos {
+		if r.Owner+"/"+r.Name == full {
+			return r, true
+		}
+	}
+	httpx.Error(c, http.StatusNotFound, "not_found", "repo not linked to this project")
+	return zero, false
+}
+
+func (s *Service) handleRepoTree(c *gin.Context) {
+	repo, ok := s.repoForQuery(c)
+	if !ok {
+		return
+	}
+	client, err := s.Client(c.Request.Context())
+	if err != nil {
+		httpx.Error(c, http.StatusServiceUnavailable, "github_unavailable", "github app not configured")
+		return
+	}
+	tree, truncated, err := client.RepoTree(c.Request.Context(),
+		repo.InstallationID, repo.Owner, repo.Name, repo.DefaultBranch)
+	if err != nil {
+		httpx.Error(c, http.StatusBadGateway, "github_error", "tree fetch failed")
+		return
+	}
+	type entry struct {
+		Path string `json:"path"`
+		Dir  bool   `json:"dir"`
+	}
+	out := make([]entry, 0, len(tree))
+	for _, t := range tree {
+		out = append(out, entry{Path: t.Path, Dir: t.Type == "tree"})
+		if len(out) >= 5000 {
+			truncated = true
+			break
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"entries": out, "truncated": truncated,
+		"repo": repo.Owner + "/" + repo.Name, "branch": repo.DefaultBranch})
+}
+
+func (s *Service) handleRepoFile(c *gin.Context) {
+	repo, ok := s.repoForQuery(c)
+	if !ok {
+		return
+	}
+	path := c.Query("path")
+	if path == "" || strings.Contains(path, "..") {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "path required")
+		return
+	}
+	client, err := s.Client(c.Request.Context())
+	if err != nil {
+		httpx.Error(c, http.StatusServiceUnavailable, "github_unavailable", "github app not configured")
+		return
+	}
+	content, size, err := client.RepoFile(c.Request.Context(),
+		repo.InstallationID, repo.Owner, repo.Name, path, repo.DefaultBranch)
+	if err != nil {
+		httpx.Error(c, http.StatusBadGateway, "github_error", "file fetch failed")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"path": path, "content": content, "size": size,
+		"repo": repo.Owner + "/" + repo.Name})
+}
