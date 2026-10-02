@@ -404,6 +404,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/issues/{issueId}/github": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create a GitHub issue for this Relay issue on the project's linked repo */
+        post: operations["pushIssueToGitHub"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/issues/{issueId}/reviews": {
         parameters: {
             query?: never;
@@ -878,6 +895,77 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{projectId}/webhooks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Webhook subscriptions on this project (secrets are hinted, not shown) */
+        get: operations["listWebhooks"];
+        put?: never;
+        /** Subscribe a URL to project events (workspace admin). Returns the signing secret once. */
+        post: operations["createWebhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/webhooks/{webhookId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One webhook subscription */
+        get: operations["getWebhook"];
+        put?: never;
+        post?: never;
+        /** Remove a subscription (workspace admin) */
+        delete: operations["deleteWebhook"];
+        options?: never;
+        head?: never;
+        /** Update url/events/active (workspace admin) */
+        patch: operations["updateWebhook"];
+        trace?: never;
+    };
+    "/api/webhooks/{webhookId}/deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Recent delivery attempts (newest 50) */
+        get: operations["webhookDeliveries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/webhooks/{webhookId}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Queue a synthetic webhook.test delivery through the real pipeline */
+        post: operations["testWebhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/unread": {
         parameters: {
             query?: never;
@@ -1255,6 +1343,36 @@ export interface components {
             /** Format: date-time */
             created_at: string;
         };
+        /** @description Outbound event subscription. POSTs an HMAC-SHA256 signed JSON envelope (X-Relay-Signature-256) to url for each matching project event. */
+        WebhookSubscription: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            project_id: string;
+            /** Format: uri */
+            url: string;
+            events: string[];
+            active: boolean;
+            /** @description whsec_... — only present on create */
+            secret?: string;
+            /** @description whsec_…XXXX shown on list/get */
+            secret_hint?: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        WebhookDelivery: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            delivery_id: string;
+            event_type: string;
+            status_code?: number | null;
+            attempts: number;
+            duration_ms: number;
+            success: boolean;
+            /** Format: date-time */
+            created_at: string;
+        };
         McpTokenMeta: {
             /** Format: uuid */
             id: string;
@@ -1345,6 +1463,7 @@ export interface components {
         IssueId: string;
         AgentId: string;
         TokenId: string;
+        WebhookId: string;
     };
     requestBodies: never;
     headers: never;
@@ -2134,6 +2253,61 @@ export interface operations {
             };
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    pushIssueToGitHub: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                issueId: components["parameters"]["IssueId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /**
+                     * Format: uuid
+                     * @description Required when the project links multiple repos
+                     */
+                    repo_id?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Issue, now with a github link block */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Issue"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Already linked, or the project has no linked repo */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description GitHub rejected the issue */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description GitHub app not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     listIssueReviews: {
@@ -3013,6 +3187,198 @@ export interface operations {
                     };
                 };
             };
+        };
+    };
+    listWebhooks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Subscription list + selectable event catalog */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        webhooks: components["schemas"]["WebhookSubscription"][];
+                        catalog: string[];
+                    };
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    createWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uri */
+                    url: string;
+                    /** @description Event names from the catalog, 'prefix.*' wildcards, or '*' */
+                    events: string[];
+                    active?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Created - the `secret` field is included only in this response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookSubscription"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                webhookId: components["parameters"]["WebhookId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The subscription (no secret) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        webhook?: components["schemas"]["WebhookSubscription"];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                webhookId: components["parameters"]["WebhookId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                webhookId: components["parameters"]["WebhookId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uri */
+                    url?: string;
+                    events?: string[];
+                    active?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated subscription */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        webhook?: components["schemas"]["WebhookSubscription"];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    webhookDeliveries: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                webhookId: components["parameters"]["WebhookId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Delivery log */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        deliveries: components["schemas"]["WebhookDelivery"][];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    testWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                webhookId: components["parameters"]["WebhookId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Delivery queued */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     unreadCounts: {

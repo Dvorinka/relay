@@ -207,7 +207,8 @@ func (q *Queries) GetIssueConversation(ctx context.Context, issueID pgtype.UUID)
 
 const getIssueForUser = `-- name: GetIssueForUser :one
 select i.id, i.project_id, i.number, i.title, i.description, i.status, i.priority, i.assignee_id, i.agent_id, i.created_by, i.created_at, i.updated_at, i.github_node_id, i.github_repo_id, i.github_number, i.origin, u.name as assignee_name, u.avatar_key as assignee_avatar,
-       gr.owner as github_repo_owner, gr.name as github_repo_name
+       gr.owner as github_repo_owner, gr.name as github_repo_name,
+       gr.installation_id as github_installation_id
 from issues i
 join projects p on p.id = i.project_id
 join workspace_members wm on wm.workspace_id = p.workspace_id and wm.user_id = $1
@@ -222,26 +223,27 @@ type GetIssueForUserParams struct {
 }
 
 type GetIssueForUserRow struct {
-	ID              pgtype.UUID        `json:"id"`
-	ProjectID       pgtype.UUID        `json:"project_id"`
-	Number          int32              `json:"number"`
-	Title           string             `json:"title"`
-	Description     string             `json:"description"`
-	Status          string             `json:"status"`
-	Priority        string             `json:"priority"`
-	AssigneeID      pgtype.UUID        `json:"assignee_id"`
-	AgentID         pgtype.UUID        `json:"agent_id"`
-	CreatedBy       pgtype.UUID        `json:"created_by"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
-	GithubNodeID    pgtype.Text        `json:"github_node_id"`
-	GithubRepoID    pgtype.UUID        `json:"github_repo_id"`
-	GithubNumber    pgtype.Int4        `json:"github_number"`
-	Origin          string             `json:"origin"`
-	AssigneeName    pgtype.Text        `json:"assignee_name"`
-	AssigneeAvatar  pgtype.Text        `json:"assignee_avatar"`
-	GithubRepoOwner pgtype.Text        `json:"github_repo_owner"`
-	GithubRepoName  pgtype.Text        `json:"github_repo_name"`
+	ID                   pgtype.UUID        `json:"id"`
+	ProjectID            pgtype.UUID        `json:"project_id"`
+	Number               int32              `json:"number"`
+	Title                string             `json:"title"`
+	Description          string             `json:"description"`
+	Status               string             `json:"status"`
+	Priority             string             `json:"priority"`
+	AssigneeID           pgtype.UUID        `json:"assignee_id"`
+	AgentID              pgtype.UUID        `json:"agent_id"`
+	CreatedBy            pgtype.UUID        `json:"created_by"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	GithubNodeID         pgtype.Text        `json:"github_node_id"`
+	GithubRepoID         pgtype.UUID        `json:"github_repo_id"`
+	GithubNumber         pgtype.Int4        `json:"github_number"`
+	Origin               string             `json:"origin"`
+	AssigneeName         pgtype.Text        `json:"assignee_name"`
+	AssigneeAvatar       pgtype.Text        `json:"assignee_avatar"`
+	GithubRepoOwner      pgtype.Text        `json:"github_repo_owner"`
+	GithubRepoName       pgtype.Text        `json:"github_repo_name"`
+	GithubInstallationID pgtype.Int8        `json:"github_installation_id"`
 }
 
 func (q *Queries) GetIssueForUser(ctx context.Context, arg GetIssueForUserParams) (GetIssueForUserRow, error) {
@@ -268,6 +270,7 @@ func (q *Queries) GetIssueForUser(ctx context.Context, arg GetIssueForUserParams
 		&i.AssigneeAvatar,
 		&i.GithubRepoOwner,
 		&i.GithubRepoName,
+		&i.GithubInstallationID,
 	)
 	return i, err
 }
@@ -640,6 +643,33 @@ type SetIssueAssigneeParams struct {
 
 func (q *Queries) SetIssueAssignee(ctx context.Context, arg SetIssueAssigneeParams) error {
 	_, err := q.db.Exec(ctx, setIssueAssignee, arg.AssigneeID, arg.ID)
+	return err
+}
+
+const setIssueGitHub = `-- name: SetIssueGitHub :exec
+update issues set
+    github_repo_id = $1,
+    github_number = $2,
+    github_node_id = $3,
+    updated_at = now()
+where id = $4
+`
+
+type SetIssueGitHubParams struct {
+	GithubRepoID pgtype.UUID `json:"github_repo_id"`
+	GithubNumber pgtype.Int4 `json:"github_number"`
+	GithubNodeID pgtype.Text `json:"github_node_id"`
+	ID           pgtype.UUID `json:"id"`
+}
+
+// link a relay issue to its GitHub counterpart (write-back)
+func (q *Queries) SetIssueGitHub(ctx context.Context, arg SetIssueGitHubParams) error {
+	_, err := q.db.Exec(ctx, setIssueGitHub,
+		arg.GithubRepoID,
+		arg.GithubNumber,
+		arg.GithubNodeID,
+		arg.ID,
+	)
 	return err
 }
 

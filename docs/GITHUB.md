@@ -38,6 +38,26 @@ personal access tokens are needed in production.
 The app's webhook URL is set to `<PUBLIC_URL>/api/github/webhook` during
 manifest registration, so expose that path publicly.
 
+## Relay → GitHub write-back
+
+Issue pages offer **Push to GitHub** when the project links repos and the
+issue isn't mirrored: `POST /api/issues/:id/github` creates the GitHub
+issue (`repo_id` picks the repo when several are linked) and stores the
+link. Afterwards, status changes sync best-effort — `done`/`cancelled`
+close the GitHub issue, other statuses reopen it. Inbound webhook events
+keep flowing the other direction, so the two converge.
+
+## Outbound webhooks (agents → Relay events)
+
+Project **Settings → Outbound webhooks**: subscribe an HTTPS endpoint to
+project events (`issue.*`, `message.created`, `review.*`, `*` …). Relay
+POSTs `{id, type, project_id, occurred_at, data}` with
+`X-Relay-Signature-256` (`sha256=` + HMAC of the body with the
+subscription secret, shown once at creation). Deliveries retry with
+1s/5s backoff and are inspectable under the subscription's delivery log;
+`POST /api/webhooks/:id/test` sends a `webhook.test` event through the
+same path.
+
 ## Development fallback
 
 Setting `GITHUB_TOKEN` (any PAT/fine-grained token, or

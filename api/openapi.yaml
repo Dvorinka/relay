@@ -25,6 +25,7 @@ tags:
   - name: github
   - name: todos
   - name: reviews
+  - name: webhooks
   - name: realtime
 paths:
   /api/health:
@@ -613,6 +614,31 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/issues/{issueId}/github:
+    post:
+      operationId: pushIssueToGitHub
+      summary: Create a GitHub issue for this Relay issue on the project's linked repo
+      tags: [issues]
+      parameters: [ { $ref: "#/components/parameters/IssueId" } ]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                repo_id: { type: string, format: uuid, description: "Required when the project links multiple repos" }
+      responses:
+        "200":
+          description: Issue, now with a github link block
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Issue" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: "Already linked, or the project has no linked repo" }
+        "502": { description: "GitHub rejected the issue" }
+        "503": { description: "GitHub app not configured" }
+
   /api/issues/{issueId}/reviews:
     get:
       operationId: listIssueReviews
@@ -1169,6 +1195,142 @@ paths:
                         project_name: { type: string }
                         created_at: { type: string, format: date-time }
 
+  /api/projects/{projectId}/webhooks:
+    get:
+      operationId: listWebhooks
+      summary: Webhook subscriptions on this project (secrets are hinted, not shown)
+      tags: [webhooks]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      responses:
+        "200":
+          description: Subscription list + selectable event catalog
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [webhooks, catalog]
+                properties:
+                  webhooks:
+                    type: array
+                    items: { $ref: "#/components/schemas/WebhookSubscription" }
+                  catalog:
+                    type: array
+                    items: { type: string }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: createWebhook
+      summary: Subscribe a URL to project events (workspace admin). Returns the signing secret once.
+      tags: [webhooks]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, events]
+              properties:
+                url: { type: string, format: uri }
+                events:
+                  type: array
+                  items: { type: string }
+                  description: "Event names from the catalog, 'prefix.*' wildcards, or '*'"
+                active: { type: boolean }
+      responses:
+        "201":
+          description: Created - the `secret` field is included only in this response
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WebhookSubscription" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/webhooks/{webhookId}:
+    get:
+      operationId: getWebhook
+      summary: One webhook subscription
+      tags: [webhooks]
+      parameters: [ { $ref: "#/components/parameters/WebhookId" } ]
+      responses:
+        "200":
+          description: The subscription (no secret)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  webhook: { $ref: "#/components/schemas/WebhookSubscription" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateWebhook
+      summary: Update url/events/active (workspace admin)
+      tags: [webhooks]
+      parameters: [ { $ref: "#/components/parameters/WebhookId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url: { type: string, format: uri }
+                events: { type: array, items: { type: string } }
+                active: { type: boolean }
+      responses:
+        "200":
+          description: Updated subscription
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  webhook: { $ref: "#/components/schemas/WebhookSubscription" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: deleteWebhook
+      summary: Remove a subscription (workspace admin)
+      tags: [webhooks]
+      parameters: [ { $ref: "#/components/parameters/WebhookId" } ]
+      responses:
+        "204": { description: "Deleted" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/webhooks/{webhookId}/deliveries:
+    get:
+      operationId: webhookDeliveries
+      summary: Recent delivery attempts (newest 50)
+      tags: [webhooks]
+      parameters: [ { $ref: "#/components/parameters/WebhookId" } ]
+      responses:
+        "200":
+          description: Delivery log
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deliveries]
+                properties:
+                  deliveries:
+                    type: array
+                    items: { $ref: "#/components/schemas/WebhookDelivery" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/webhooks/{webhookId}/test:
+    post:
+      operationId: testWebhook
+      summary: Queue a synthetic webhook.test delivery through the real pipeline
+      tags: [webhooks]
+      parameters: [ { $ref: "#/components/parameters/WebhookId" } ]
+      responses:
+        "202": { description: "Delivery queued" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /api/me/unread:
     get:
       operationId: unreadCounts
@@ -1321,6 +1483,11 @@ components:
       schema: { type: string, format: uuid }
     TokenId:
       name: tokenId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    WebhookId:
+      name: webhookId
       in: path
       required: true
       schema: { type: string, format: uuid }
@@ -1676,6 +1843,37 @@ components:
             avatar_url: { type: ["string", "null"] }
         response: { type: string }
         responded_at: { type: ["string", "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+
+    WebhookSubscription:
+      type: object
+      description: >-
+        Outbound event subscription. POSTs an HMAC-SHA256 signed JSON envelope
+        (X-Relay-Signature-256) to url for each matching project event.
+      required: [id, project_id, url, events, active, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        url: { type: string, format: uri }
+        events:
+          type: array
+          items: { type: string }
+        active: { type: boolean }
+        secret: { type: string, description: "whsec_... — only present on create" }
+        secret_hint: { type: string, description: "whsec_…XXXX shown on list/get" }
+        created_at: { type: string, format: date-time }
+
+    WebhookDelivery:
+      type: object
+      required: [id, delivery_id, event_type, attempts, duration_ms, success, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        delivery_id: { type: string, format: uuid }
+        event_type: { type: string }
+        status_code: { type: ["integer", "null"] }
+        attempts: { type: integer }
+        duration_ms: { type: integer }
+        success: { type: boolean }
         created_at: { type: string, format: date-time }
 
     McpTokenMeta:

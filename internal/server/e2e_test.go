@@ -7,6 +7,9 @@ package server
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -284,5 +287,115 @@ func TestCanonicalFlow(t *testing.T) {
 	_, unread = c.call("GET", "/api/me/unread", "")
 	if rv, _ := unread["reviews"].(map[string]any); len(rv) != 0 {
 		t.Fatalf("reviews still pending: %v", rv)
+	}
+
+	// webhooks: subscribe a local receiver, fire a real event, verify the
+	// HMAC signature over the delivered body
+	type delivery struct {
+		sig, typ, id string
+		body         []byte
+	}
+	received := make(chan delivery, 4)
+	hookReceiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		received <- delivery{
+			sig:  r.Header.Get("X-Relay-Signature-256"),
+			typ:  r.Header.Get("X-Relay-Event"),
+			id:   r.Header.Get("X-Relay-Delivery"),
+			body: body,
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer hookReceiver.Close()
+
+	code, wh := c.call("POST", "/api/projects/"+projID+"/webhooks",
+		fmt.Sprintf(`{"url":%q,"events":["issue.*"]}`, hookReceiver.URL))
+	if code != 201 {
+		t.Fatalf("webhook create: %d %v", code, wh)
+	}
+	secret, _ := wh["secret"].(string)
+	if !strings.HasPrefix(secret, "whsec_") {
+		t.Fatalf("secret = %v", wh["secret"])
+	}
+	whID := wh["id"].(string)
+
+	// list shows the subscription but only a secret hint
+	code, whl := c.call("GET", "/api/projects/"+projID+"/webhooks", "")
+	if code != 200 || len(whl["webhooks"].([]any)) != 1 {
+		t.Fatalf("webhook list: %d %v", code, whl)
+	}
+	listed := whl["webhooks"].([]any)[0].(map[string]any)
+	if listed["secret"] != nil || !strings.HasPrefix(listed["secret_hint"].(string), "whsec_") {
+		t.Fatalf("list leaks/hides secret wrongly: %v", listed)
+	}
+
+	// creating an issue dispatches issue.created to the receiver
+	code, issue := c.call("POST", "/api/projects/"+projID+"/issues",
+		`{"title":"E2E webhook issue"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("issue create: %d %v", code, issue)
+	}
+	issueID := issue["id"].(string)
+
+	var d delivery
+	select {
+	case d = <-received:
+	case <-time.After(10 * time.Second):
+		t.Fatal("no webhook delivery within 10s")
+	}
+	if d.typ != "issue.created" || d.id == "" {
+		t.Fatalf("delivery headers: %q %q", d.typ, d.id)
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(d.body)
+	if want := "sha256=" + hex.EncodeToString(mac.Sum(nil)); d.sig != want {
+		t.Fatalf("signature %q != %q", d.sig, want)
+	}
+	var env2 struct {
+		ID        string `json:"id"`
+		Type      string `json:"type"`
+		ProjectID string `json:"project_id"`
+	}
+	if err := json.Unmarshal(d.body, &env2); err != nil || env2.Type != "issue.created" {
+		t.Fatalf("envelope: %v %s", err, d.body[:min(200, len(d.body))])
+	}
+
+	// delivery log records the successful attempt
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_, dl := c.call("GET", "/api/webhooks/"+whID+"/deliveries", "")
+		rows, _ := dl["deliveries"].([]any)
+		if len(rows) > 0 {
+			row := rows[0].(map[string]any)
+			if row["success"] != true || row["status_code"].(float64) != 200 {
+				t.Fatalf("delivery row: %v", row)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("delivery never recorded")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	// synthetic test event queues through the same path
+	code, tst := c.call("POST", "/api/webhooks/"+whID+"/test", "")
+	if code != 202 || tst["queued"] != true {
+		t.Fatalf("test delivery: %d %v", code, tst)
+	}
+	select {
+	case d = <-received:
+		if d.typ != "webhook.test" {
+			t.Fatalf("test event type = %q", d.typ)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("no test delivery within 10s")
+	}
+
+	// GitHub push: no linked repo on the project -> 409 (503 needs a linked
+	// repo plus an unconfigured GitHub app, unreachable in this fixture)
+	code, gh := c.call("POST", "/api/issues/"+issueID+"/github", `{}`)
+	if code != 409 {
+		t.Fatalf("push to github: %d %v", code, gh)
 	}
 }

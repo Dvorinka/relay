@@ -33,6 +33,8 @@ export type ReviewStatus = NonNullable<AgentReview["status"]>;
 export type PendingReviewItem = NonNullable<
   paths["/api/me/reviews"]["get"]["responses"]["200"]["content"]["application/json"]["reviews"]
 >[number];
+export type WebhookSubscription = components["schemas"]["WebhookSubscription"];
+export type WebhookDelivery = components["schemas"]["WebhookDelivery"];
 
 export interface LinkedRepo {
   id: string;
@@ -447,6 +449,35 @@ export function createClient(baseUrl: string) {
       request<{ reviews: PendingReviewItem[] }>(`/api/me/reviews`),
     issueReviews: (issueId: string) =>
       request<{ reviews: AgentReview[] }>(`/api/issues/${issueId}/reviews`),
+    pushIssueToGitHub: (issueId: string, repoId?: string) =>
+      post<Issue>(`/api/issues/${issueId}/github`, repoId ? { repo_id: repoId } : {}),
+
+    // Outbound webhooks — project event subscriptions for external agents
+    listWebhooks: (projectId: string) =>
+      request<{ webhooks: WebhookSubscription[]; catalog: string[] }>(
+        `/api/projects/${projectId}/webhooks`,
+      ),
+    createWebhook: (
+      projectId: string,
+      body: { url: string; events: string[]; active?: boolean },
+    ) =>
+      post<WebhookSubscription>(`/api/projects/${projectId}/webhooks`, body),
+    updateWebhook: (
+      webhookId: string,
+      body: { url?: string; events?: string[]; active?: boolean },
+    ) =>
+      request<{ webhook: WebhookSubscription }>(`/api/webhooks/${webhookId}`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      }),
+    deleteWebhook: (webhookId: string) =>
+      request<void>(`/api/webhooks/${webhookId}`, { method: "DELETE" }),
+    webhookDeliveries: (webhookId: string) =>
+      request<{ deliveries: WebhookDelivery[] }>(
+        `/api/webhooks/${webhookId}/deliveries`,
+      ),
+    testWebhook: (webhookId: string) =>
+      post<{ queued: boolean }>(`/api/webhooks/${webhookId}/test`, {}),
 
     // Avatars — same FormData trick as uploadAttachment
     uploadAvatar: (file: File) => {

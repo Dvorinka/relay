@@ -174,11 +174,34 @@ tap-to-advance status, agent work list.
 - CI backend job runs a Postgres service so `TestCanonicalFlow` executes
   in CI; the test clears the DB-backed rate limiter for rerunnability
 
+## Phase 14 - GitHub write-back & outbound webhooks ☑
+
+- `POST /api/issues/:id/github` — creates a GitHub issue on the project's
+  linked repo (optional `repo_id` when several are linked), stores
+  `github_repo/number/node_id`, maps Relay `done`/`cancelled` to closed.
+  Duplicate pushes and unlinked projects return 409; no GitHub app → 503
+- Status sync: flipping a linked issue to `done`/`cancelled` closes the
+  GitHub issue, any other status reopens it — best-effort, async, 15s cap
+- Outbound webhooks: `webhook_subscriptions` + `webhook_deliveries`,
+  project-scoped, admin-managed. A hub-fed worker POSTs a signed envelope
+  (`X-Relay-Signature-256`, `X-Relay-Event`, `X-Relay-Delivery`), 3
+  attempts with 1s/5s backoff, delivery log trimmed to 200 rows
+- Event matching: exact names, `prefix.*` wildcards, `*` — against a
+  fixed server-side catalog (`message.*`, `issue.*`, `todo.*`,
+  `review.*`, `attachment.*`)
+- REST: subscription CRUD, delivery history (50), `POST .../test` queues
+  a synthetic `webhook.test` through the real pipeline. Secrets are shown
+  once at creation; list/get expose only a `whsec_…` hint
+- Project **Settings** tab: subscription list, create form with catalog
+  chips, enable/disable, send-test, expandable delivery log, one-time
+  secret banner. Issue pages show a **Push to GitHub** action when the
+  project links repos and the issue isn't mirrored yet
+- Canonical E2E extended: signed delivery verified against a local
+  receiver (HMAC over the body), delivery log, test event, 409 no-repo
+
 ## Post-1.0 ideas (not committed)
 
-- Relay → GitHub issue write-back and bi-directional sync
 - Custom statuses, saved filters, issue boards
-- Webhooks + outbound event subscriptions for agents
 - Relay Cloud (hosted offering) - self-hosting stays first-class
 - iOS build of the mobile app
 - DragonflyDB cache layer if hot paths need it

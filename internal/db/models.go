@@ -256,6 +256,31 @@ type User struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
+type WebhookDelivery struct {
+	ID             pgtype.UUID        `json:"id"`
+	SubscriptionID pgtype.UUID        `json:"subscription_id"`
+	DeliveryID     pgtype.UUID        `json:"delivery_id"`
+	EventType      string             `json:"event_type"`
+	Payload        []byte             `json:"payload"`
+	StatusCode     pgtype.Int4        `json:"status_code"`
+	Attempts       int32              `json:"attempts"`
+	DurationMs     int32              `json:"duration_ms"`
+	Success        bool               `json:"success"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type WebhookSubscription struct {
+	ID        pgtype.UUID        `json:"id"`
+	ProjectID pgtype.UUID        `json:"project_id"`
+	Url       string             `json:"url"`
+	Secret    string             `json:"secret"`
+	Events    []string           `json:"events"`
+	Active    bool               `json:"active"`
+	CreatedBy pgtype.UUID        `json:"created_by"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Workspace struct {
 	ID        pgtype.UUID        `json:"id"`
 	Name      string             `json:"name"`

@@ -14,7 +14,8 @@ returning *;
 
 -- name: GetIssueForUser :one
 select i.*, u.name as assignee_name, u.avatar_key as assignee_avatar,
-       gr.owner as github_repo_owner, gr.name as github_repo_name
+       gr.owner as github_repo_owner, gr.name as github_repo_name,
+       gr.installation_id as github_installation_id
 from issues i
 join projects p on p.id = i.project_id
 join workspace_members wm on wm.workspace_id = p.workspace_id and wm.user_id = sqlc.arg(user_id)
@@ -63,6 +64,15 @@ where id = sqlc.arg(id);
 
 -- name: TouchIssue :exec
 update issues set updated_at = now() where id = sqlc.arg(id);
+
+-- name: SetIssueGitHub :exec
+-- link a relay issue to its GitHub counterpart (write-back)
+update issues set
+    github_repo_id = sqlc.arg(github_repo_id),
+    github_number = sqlc.arg(github_number),
+    github_node_id = sqlc.arg(github_node_id),
+    updated_at = now()
+where id = sqlc.arg(id);
 
 -- name: UserInProjectWorkspace :one
 select exists (
