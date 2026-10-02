@@ -14,8 +14,10 @@ import (
 	"github.com/Dvorinka/relay/internal/auth"
 	"github.com/Dvorinka/relay/internal/conversations"
 	"github.com/Dvorinka/relay/internal/db"
+	"github.com/Dvorinka/relay/internal/events"
 	"github.com/Dvorinka/relay/internal/httpx"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -35,6 +37,8 @@ var (
 type Service struct {
 	q   *db.Queries
 	log *zap.Logger
+	// Bus publishes domain events for SSE subscribers. Optional.
+	Bus *events.Hub
 }
 
 func NewService(log *zap.Logger, pool *pgxpool.Pool) *Service {
@@ -214,7 +218,9 @@ func (s *Service) handleCreate(c *gin.Context) {
 	s.linkLabels(c, row.ID, labelIDs)
 	s.record(c, row.ID, user.ID, "created", gin.H{"status": req.Status})
 	s.log.Info("issue created", zap.String("issue", p.Key+"-"+strconv.Itoa(int(num))))
-	c.JSON(http.StatusCreated, issueJSON(row, pgtype.Text{}, pgtype.Text{}, s.issueLabels(c, row.ID), p.Key, pgtype.Text{}, pgtype.Text{}))
+	out := issueJSON(row, pgtype.Text{}, pgtype.Text{}, s.issueLabels(c, row.ID), p.Key, pgtype.Text{}, pgtype.Text{})
+	s.publish(p.ID, "issue.created", out)
+	c.JSON(http.StatusCreated, out)
 }
 
 // --- issue-scoped handlers ---
@@ -345,7 +351,9 @@ func (s *Service) handleUpdate(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
-	c.JSON(http.StatusOK, issueJSON(byIDRowToIssue(fresh), fresh.AssigneeName, fresh.AssigneeAvatar, s.issueLabels(c, fresh.ID), s.projectKey(c, fresh.ProjectID), fresh.GithubRepoOwner, fresh.GithubRepoName))
+	out := issueJSON(byIDRowToIssue(fresh), fresh.AssigneeName, fresh.AssigneeAvatar, s.issueLabels(c, fresh.ID), s.projectKey(c, fresh.ProjectID), fresh.GithubRepoOwner, fresh.GithubRepoName)
+	s.publish(fresh.ProjectID, "issue.updated", out)
+	c.JSON(http.StatusOK, out)
 }
 
 func (s *Service) handleConversation(c *gin.Context) {
@@ -684,4 +692,12 @@ func byIDRowToIssue(r db.GetIssueByIDRow) db.Issue {
 		GithubNumber: r.GithubNumber, Origin: r.Origin,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
+}
+
+func (s *Service) publish(projectID pgtype.UUID, typ string, data gin.H) {
+	if s.Bus == nil {
+		return
+	}
+	pid, _ := uuid.FromBytes(projectID.Bytes[:])
+	s.Bus.Publish(events.Event{Type: typ, ProjectID: pid, Data: map[string]any{"issue": data}})
 }

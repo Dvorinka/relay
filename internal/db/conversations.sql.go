@@ -298,6 +298,76 @@ func (q *Queries) MarkMessageRead(ctx context.Context, arg MarkMessageReadParams
 	return err
 }
 
+const mentionsForUser = `-- name: MentionsForUser :many
+select m.id, m.conversation_id, m.body, m.created_at, m.edited_at,
+       m.author_user_id, m.author_agent_id,
+       coalesce(u.name, a.name, '') as author_name,
+       coalesce(u.avatar_key, a.avatar_key) as author_avatar,
+       c.project_id,
+       (r.message_id is not null) as is_read
+from messages m
+join conversations c on c.id = m.conversation_id
+join projects p on p.id = c.project_id
+join workspace_members wm on wm.workspace_id = p.workspace_id
+  and wm.user_id = $1
+join users me on me.id = $1
+left join users u on u.id = m.author_user_id
+left join agents a on a.id = m.author_agent_id
+left join message_reads r on r.message_id = m.id and r.user_id = $1
+where m.deleted_at is null
+  and (m.author_user_id is null or m.author_user_id <> $1)
+  and position(lower('@' || me.name) in lower(m.body)) > 0
+order by m.created_at desc, m.id desc
+limit 50
+`
+
+type MentionsForUserRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	ConversationID pgtype.UUID        `json:"conversation_id"`
+	Body           string             `json:"body"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	EditedAt       pgtype.Timestamptz `json:"edited_at"`
+	AuthorUserID   pgtype.UUID        `json:"author_user_id"`
+	AuthorAgentID  pgtype.UUID        `json:"author_agent_id"`
+	AuthorName     string             `json:"author_name"`
+	AuthorAvatar   pgtype.Text        `json:"author_avatar"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	IsRead         interface{}        `json:"is_read"`
+}
+
+// messages mentioning the user (@<name>), newest first
+func (q *Queries) MentionsForUser(ctx context.Context, userID pgtype.UUID) ([]MentionsForUserRow, error) {
+	rows, err := q.db.Query(ctx, mentionsForUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []MentionsForUserRow{}
+	for rows.Next() {
+		var i MentionsForUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ConversationID,
+			&i.Body,
+			&i.CreatedAt,
+			&i.EditedAt,
+			&i.AuthorUserID,
+			&i.AuthorAgentID,
+			&i.AuthorName,
+			&i.AuthorAvatar,
+			&i.ProjectID,
+			&i.IsRead,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const recentProjectMessages = `-- name: RecentProjectMessages :many
 select m.id, m.conversation_id, m.body, m.created_at, m.edited_at,
        m.author_user_id, m.author_agent_id,
@@ -344,6 +414,46 @@ func (q *Queries) RecentProjectMessages(ctx context.Context, projectID pgtype.UU
 			&i.AuthorName,
 			&i.AuthorAvatar,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const unreadCounts = `-- name: UnreadCounts :many
+select p.id as project_id, count(m.id)::int as unread
+from projects p
+join workspace_members wm on wm.workspace_id = p.workspace_id
+  and wm.user_id = $1
+join conversations c on c.project_id = p.id
+join messages m on m.conversation_id = c.id and m.deleted_at is null
+where (m.author_user_id is null or m.author_user_id <> $1)
+  and not exists (
+    select 1 from message_reads r
+    where r.message_id = m.id and r.user_id = $1)
+group by p.id
+`
+
+type UnreadCountsRow struct {
+	ProjectID pgtype.UUID `json:"project_id"`
+	Unread    int32       `json:"unread"`
+}
+
+// per-project count of messages the user hasn't read, excluding their own
+func (q *Queries) UnreadCounts(ctx context.Context, userID pgtype.UUID) ([]UnreadCountsRow, error) {
+	rows, err := q.db.Query(ctx, unreadCounts, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []UnreadCountsRow{}
+	for rows.Next() {
+		var i UnreadCountsRow
+		if err := rows.Scan(&i.ProjectID, &i.Unread); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

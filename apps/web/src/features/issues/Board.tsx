@@ -1,4 +1,5 @@
-import { createResource, createSignal, For, Show } from "solid-js";
+import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { subscribe } from "../../lib/events";
 import { A, useParams } from "@solidjs/router";
 import { api } from "../../lib/api";
 import type { Issue, IssueStatus, Project, Todo } from "@relay/api-client";
@@ -21,6 +22,13 @@ export function Board(props: { project: Project }) {
     () => props.project.id,
     async (id) => (await api.listTodos(id)).todos,
   );
+
+  const unsub = subscribe((e) => {
+    if (e.project_id !== props.project.id) return;
+    if (e.type.startsWith("issue.")) refetch();
+    if (e.type === "todo.changed") refetchTodos();
+  });
+  onCleanup(unsub);
 
   const move = async (issue: Issue, status: IssueStatus) => {
     if (issue.status === status) return;

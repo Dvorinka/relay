@@ -29,6 +29,7 @@ import {
   SubmitButton,
 } from "../../components/ui";
 import { api } from "../../lib/api";
+import { subscribe } from "../../lib/events";
 import { Markdown } from "../../lib/markdown";
 import { formatBytes, initials, messagePreview } from "../../lib/text";
 import { timeAgo } from "../../lib/time";
@@ -312,6 +313,15 @@ function ConversationThread(props: {
       void api.markMessageRead(last.id).catch(() => {});
     }
   }
+
+  const unsub = subscribe((e) => {
+    if (e.type !== "message.created") return;
+    if (e.data?.conversation_id !== props.conversationId) return;
+    const m = e.data.message as Message;
+    setMessages((cur) => (cur.some((x) => x.id === m.id) ? cur : [...cur, m]));
+    markLatestRead();
+  });
+  onCleanup(unsub);
 
   let seeded = false;
   createEffect(() => {
