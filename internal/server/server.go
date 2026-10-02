@@ -20,8 +20,9 @@ import (
 	"github.com/Dvorinka/relay/internal/issues"
 	"github.com/Dvorinka/relay/internal/mcpserver"
 	"github.com/Dvorinka/relay/internal/projects"
-	"github.com/Dvorinka/relay/internal/storage"
 	"github.com/Dvorinka/relay/internal/realtime"
+	"github.com/Dvorinka/relay/internal/search"
+	"github.com/Dvorinka/relay/internal/storage"
 	"github.com/Dvorinka/relay/internal/todos"
 	"github.com/Dvorinka/relay/internal/workspaces"
 	"github.com/gin-gonic/gin"
@@ -62,6 +63,7 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	issueSvc.Bus = hub
 	todoSvc.Bus = hub
 	rtSvc := realtime.NewService(hub, pool)
+	searchSvc := search.NewService(pool)
 	mcpHandler := mcpserver.New(db.New(pool), store, log, ghSvc, hub)
 
 	api := r.Group("/api")
@@ -86,6 +88,7 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	ghSvc.RegisterRoutes(priv, api)
 	todoSvc.RegisterRoutes(priv)
 	rtSvc.RegisterRoutes(priv)
+	searchSvc.RegisterRoutes(priv)
 
 	// external agents: bearer-token MCP, not session cookies
 	r.POST("/mcp", mcpHandler)

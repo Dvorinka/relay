@@ -69,6 +69,26 @@ export interface DevRepoPanel {
   error?: string;
 }
 
+export interface SearchResults {
+  projects: { id: string; key: string; name: string }[];
+  issues: {
+    id: string;
+    key: string;
+    title: string;
+    status: string;
+    priority: string;
+    project_id: string;
+  }[];
+  messages: {
+    id: string;
+    body: string;
+    project_id: string;
+    author: string;
+    created_at: string;
+  }[];
+  todos: { id: string; content: string; done: boolean; project_id: string }[];
+}
+
 export interface Mention {
   id: string;
   body: string;
@@ -392,6 +412,10 @@ export function createClient(baseUrl: string) {
       request<{ id: string; key: string }>(
         `/api/projects/${projectId}/issues/key/${encodeURIComponent(key)}`,
       ),
+
+    // Search
+    search: (q: string) =>
+      request<SearchResults>(`/api/search?q=${encodeURIComponent(q)}`),
 
     // Realtime / notifications
     unread: () => request<{ unread: Record<string, number> }>(`/api/me/unread`),
