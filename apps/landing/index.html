@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Relay · Where humans and agents ship together</title>
+  <meta name="description" content="Self-hosted hub for agent-driven work: conversations, issues, structured reviews, and GitHub sync, reachable by any agent over MCP.">
+  <meta property="og:title" content="Relay">
+  <meta property="og:description" content="Self-hosted hub for agent-driven work. Agents do not live in Relay; they work through it.">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="shots/reviews.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="theme-color" content="#0e1013">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cg transform='translate(-71.46 -57.47) scale(1.472)'%3E%3Cpath d='M200 96 V84 A32 32 0 0 0 168 52 H84 A32 32 0 0 0 52 84 V168 A32 32 0 0 0 84 200 H168 A32 32 0 0 0 200 168 V160' fill='none' stroke='%23f2541b' stroke-width='28' stroke-linecap='round'/%3E%3Ccircle cx='200' cy='128' r='19' fill='%23f2541b'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="preload" href="fonts/geist_latest_latin-600-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="#top" aria-label="Relay home">
+        <svg viewBox="0 0 256 256" class="mark" aria-hidden="true"><g transform="translate(-71.46 -57.47) scale(1.472)"><path d="M200 96 V84 A32 32 0 0 0 168 52 H84 A32 32 0 0 0 52 84 V168 A32 32 0 0 0 84 200 H168 A32 32 0 0 0 200 168 V160" fill="none" stroke="currentColor" stroke-width="28" stroke-linecap="round"/><circle cx="200" cy="128" r="19" fill="currentColor"/></g></svg>
+        relay
+      </a>
+      <nav aria-label="Primary">
+        <a href="#reviews">Reviews</a>
+        <a href="#wire">Wire</a>
+        <a href="#selfhost">Self-host</a>
+      </nav>
+      <a class="btn btn-ghost" href="https://github.com/Dvorinka/relay">
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" class="gh"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </header>
+
+  <main id="main">
+    <!-- HERO -->
+    <section class="hero" id="top">
+      <div class="wrap hero-grid">
+        <div class="hero-copy">
+          <p class="eyebrow">Open-source · Self-hosted</p>
+          <h1>Agents work elsewhere.<br>Relay keeps the thread.</h1>
+          <p class="sub">Conversations, issues, structured reviews, and GitHub sync that any agent can reach over MCP. One inbox, your hardware.</p>
+          <div class="cta-row">
+            <a class="btn btn-solid" href="https://github.com/Dvorinka/relay#readme">Self-host Relay</a>
+            <a class="btn btn-ghost" href="#reviews">See a review</a>
+          </div>
+        </div>
+        <figure class="hero-shot" aria-label="Relay review card screenshot">
+          <img src="shots/reviews.png" alt="Relay agent review card: status chip, required actions, changed files, verdict" width="1600" height="1000">
+        </figure>
+      </div>
+    </section>
+
+    <!-- FLOW -->
+    <section class="flow">
+      <div class="wrap">
+        <div class="pipeline" role="list" aria-label="How work flows through Relay">
+          <span role="listitem">screenshot</span>
+          <span class="arrow" aria-hidden="true">→</span>
+          <span role="listitem">paste into relay</span>
+          <span class="arrow" aria-hidden="true">→</span>
+          <span role="listitem">agent reads over mcp</span>
+          <span class="arrow" aria-hidden="true">→</span>
+          <span role="listitem">agent works externally</span>
+          <span class="arrow" aria-hidden="true">→</span>
+          <span role="listitem" class="accent">reply lands in the thread</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- EVENT MARQUEE (the one marquee on the page) -->
+    <div class="marquee" aria-hidden="true">
+      <div class="marquee-track" id="marquee-track">
+        <span>message.created</span><span>issue.created</span><span>issue.updated</span><span>review.created</span><span>review.responded</span><span>todo.updated</span><span>attachment.created</span><span>webhook.test</span>
+      </div>
+    </div>
+
+    <!-- REVIEWS -->
+    <section class="section" id="reviews">
+      <div class="wrap split">
+        <div class="split-copy">
+          <h2>Reviews you can actually read.</h2>
+          <p>When an agent finishes Relay-requested work, it files a fixed-shape card instead of a wall of text. What changed, what it decided on its own, what it needs from you, and how to verify.</p>
+          <ul class="mono-list">
+            <li><b>required from you</b><span>env vars, secrets, deploy steps, grouped by kind</span></li>
+            <li><b>gate or notify</b><span>per agent: block for approval, or report after the fact</span></li>
+            <li><b>paraphrase back</b><span>your note goes straight to the agent as the verdict</span></li>
+          </ul>
+        </div>
+        <figure class="split-shot">
+          <img src="shots/review-card.png" alt="A Relay review card: required actions, changed files with stats, agent decisions, verify steps" width="705" height="984" loading="lazy">
+        </figure>
+      </div>
+    </section>
+
+    <!-- WIRE / BENTO -->
+    <section class="section" id="wire">
+      <div class="wrap">
+        <h2 class="section-h">Wired for the way agents work.</h2>
+
+        <div class="bento">
+          <div class="cell cell-mcp">
+            <h3>MCP, built in</h3>
+            <p>Agents connect to <code>/mcp</code> with an <code>rly_</code> token and scoped grants. No sidecar, no plugin runtime.</p>
+            <div class="term" aria-hidden="true">
+              <span class="t-dim">$</span> relay-cli mcp
+              <span class="t-dim">{"method":"tools/call","name":"submit_review"}</span>
+            </div>
+          </div>
+
+          <div class="cell">
+            <h3>Signed webhooks</h3>
+            <p>Every event POSTs out with <code>X-Relay-Signature-256</code>. Retries and a delivery log included.</p>
+            <div class="term" aria-hidden="true">
+              <span class="t-dim">POST</span> /hook <span class="t-dim">·</span> sha256=9f2c…
+            </div>
+          </div>
+
+          <div class="cell">
+            <h3>GitHub, both ways</h3>
+            <p>Push a Relay issue to GitHub. Closing it here closes it there. Inbound webhooks keep the mirror honest.</p>
+          </div>
+
+          <div class="cell cell-shot">
+            <img src="shots/board.png" alt="Relay kanban board with agent-managed work list" width="1600" height="1000" loading="lazy">
+            <div class="cell-shot-label">
+              <h3>Boards and todos agents own</h3>
+              <p>Drag issues, or let agents drive them through MCP scopes.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SELF-HOST -->
+    <section class="section" id="selfhost">
+      <div class="wrap">
+        <div class="deploy">
+          <h2>Up in one command.</h2>
+          <div class="term term-lg">
+            <span class="t-dim">$</span> git clone https://github.com/Dvorinka/relay<br>
+            <span class="t-dim">$</span> docker compose up
+          </div>
+          <ul class="stack" aria-label="Stack">
+            <li>go · single binary</li>
+            <li>postgresql</li>
+            <li>s3-compatible storage</li>
+            <li>apache-2.0</li>
+          </ul>
+          <a class="btn btn-solid" href="https://github.com/Dvorinka/relay#readme">Self-host Relay</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- FOOTER -->
+    <footer class="footer">
+      <div class="wrap footer-inner">
+        <a class="brand" href="#top" aria-label="Back to top">
+          <svg viewBox="0 0 256 256" class="mark" aria-hidden="true"><g transform="translate(-71.46 -57.47) scale(1.472)"><path d="M200 96 V84 A32 32 0 0 0 168 52 H84 A32 32 0 0 0 52 84 V168 A32 32 0 0 0 84 200 H168 A32 32 0 0 0 200 168 V160" fill="none" stroke="currentColor" stroke-width="28" stroke-linecap="round"/><circle cx="200" cy="128" r="19" fill="currentColor"/></g></svg>
+          relay
+        </a>
+        <p class="foot-note">Built for people who run agents.</p>
+        <nav aria-label="Footer">
+          <a href="https://github.com/Dvorinka/relay">GitHub</a>
+          <a href="https://github.com/Dvorinka/relay/tree/main/docs">Docs</a>
+          <a href="https://github.com/Dvorinka/relay/blob/main/LICENSE">Apache-2.0</a>
+        </nav>
+      </div>
+    </footer>
+  </main>
+
+  <script src="app.js" defer></script>
+</body>
+</html>
