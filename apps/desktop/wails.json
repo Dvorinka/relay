@@ -1,0 +1,19 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "Relay",
+  "outputfilename": "relay-desktop",
+  "frontend:dir": "frontend/dist",
+  "frontend:install": "",
+  "frontend:build": "",
+  "frontend:dev": "",
+  "app": {
+    "withGlobalFileExplorer": true
+  },
+  "info": {
+    "productName": "Relay",
+    "companyName": "Relay",
+    "productVersion": "1.0.0",
+    "copyright": "Apache-2.0",
+    "comments": "Open-source agent communication hub"
+  }
+}
