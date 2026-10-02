@@ -1,0 +1,56 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27"
+          cache: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Build web bundle
+        run: |
+          npm ci --prefix packages/api-client
+          npm ci --prefix apps/web
+          npm run build --prefix apps/web
+
+      - name: Build relay binaries
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 go build -o dist/relay-linux-amd64 ./cmd/relay
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o dist/relay-windows-amd64.exe ./cmd/relay
+          CGO_ENABLED=0 go build -o dist/relay-cli-linux-amd64 ./cmd/relay-cli
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o dist/relay-cli-windows-amd64.exe ./cmd/relay-cli
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o dist/relay-cli-darwin-arm64 ./cmd/relay-cli
+
+      - name: Install desktop toolchain
+        run: |
+          sudo apt-get update && sudo apt-get install -y mingw-w64
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
+
+      - name: Build desktop binaries
+        run: |
+          cd apps/desktop
+          ~/go/bin/wails build -platform windows/amd64 -o relay-desktop-windows-amd64.exe
+          ~/go/bin/wails build -platform linux/amd64 -o relay-desktop-linux-amd64
+          mv build/bin/relay-desktop-* ../../dist/
+          rm -f ../../dist/*.o
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
