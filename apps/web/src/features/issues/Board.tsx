@@ -1,6 +1,6 @@
 import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { subscribe } from "../../lib/events";
-import { A, useParams } from "@solidjs/router";
+import { A } from "@solidjs/router";
 import { api } from "../../lib/api";
 import type { Issue, IssueStatus, Project, Todo } from "@relay/api-client";
 import { GitHubBadge, LabelChip, PriorityGlyph, STATUS_LABEL, StatusDot } from "./meta";
@@ -198,7 +198,7 @@ function TodoStrip(props: {
       </div>
       <form onSubmit={add} class="flex gap-2 border-t border-border p-2">
         <input
-          ref={input}
+          ref={(el) => (input = el)}
           maxlength={500}
           placeholder="Add a work item…"
           class="h-8 flex-1 rounded-md border border-border bg-bg px-2.5 text-[13px] outline-none placeholder:text-muted/60 focus:border-accent"

@@ -23,13 +23,13 @@ goose + sqlc wired, OpenAPI skeleton, health endpoint, brand kit, docs.
   timestamps, read state
 - Layout shell: sidebar, project nav, composer
 
-## Phase 3 - Attachments ☐
+## Phase 3 - Attachments ☑
 
 - S3 upload pipeline (`Ctrl+V` paste, drag & drop, picker)
 - Image preview, multi-attachment, presigned downloads
 - Upload limits + MIME validation
 
-## Phase 4 - Issues ☐
+## Phase 4 - Issues ☑
 
 - Issue model: `MYB-142` keys, statuses, priority, labels, assignee
 - Issue list/detail views, filters, keyboard navigation, `C` quick-create

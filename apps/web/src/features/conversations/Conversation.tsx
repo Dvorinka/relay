@@ -471,7 +471,11 @@ function ConversationThread(props: {
     setSending(true);
     try {
       const message = await api.postMessage(props.conversationId, body, ids);
-      setMessages((cur) => [...cur, message]);
+      // The SSE message.created frame can land before this POST resolves;
+      // skip the local append when it already arrived.
+      setMessages((cur) =>
+        cur.some((x) => x.id === message.id) ? cur : [...cur, message],
+      );
       setDraft("");
       // Drop the attachments that were sent; failed uploads stay listed.
       const sentIds = new Set(ids);
