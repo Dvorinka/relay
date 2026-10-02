@@ -103,11 +103,19 @@ flips a persistent dark/light preference (system-aware default).
 - Dark/light theme toggle persisted in localStorage, a11y labels on icon
   buttons
 
-## Phase 9 - Desktop (Wails) ☐
+## Phase 9 - Desktop (Wails) ☑ (core shell)
 
-- Wails v3 shell embedding the web build - Linux/macOS/Windows
-- System tray, notifications, deep links, global screenshot shortcut,
-  quick project switcher
+`apps/desktop` is a Wails v2 thin shell: all webview requests proxy to the
+configured Relay server (no stale bundles, no CORS, same-origin cookies).
+First launch shows a "connect to server" screen persisted to the user
+config dir. Windows binary cross-builds via mingw-w64 and is produced by
+CI as an artifact; Linux binary verified to launch a real window against
+the local stack.
+
+- Wails v2 shell proxying to the configured server — Linux/Windows
+  (macOS supported by the same code path via `wails build -platform darwin`)
+- System tray, notifications, deep links, global screenshot shortcut:
+  deferred (see apps/desktop/README.md for the honest why)
 
 ## Phase 10 - Android (Expo) ☐
 

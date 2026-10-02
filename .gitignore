@@ -33,3 +33,5 @@ apps/mobile/android/
 # local data
 /tmp/
 *.log
+apps/desktop/build/
+apps/desktop/desktop

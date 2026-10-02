@@ -56,6 +56,27 @@ jobs:
       - run: cp .env.example .env && docker compose config --quiet
       - run: docker build -f deploy/Dockerfile -t relay:ci .
 
+  desktop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27"
+          cache: true
+      - run: sudo apt-get update && sudo apt-get install -y mingw-w64
+      - run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
+      - run: cd apps/desktop && go mod download && go test ./...
+      - name: Cross-build Windows binary
+        run: |
+          cd apps/desktop
+          ~/go/bin/wails build -platform windows/amd64 -o relay-desktop.exe
+          test -f build/bin/relay-desktop.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: relay-desktop-windows
+          path: apps/desktop/build/bin/relay-desktop.exe
+
   security:
     runs-on: ubuntu-latest
     steps:
