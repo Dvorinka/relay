@@ -28,6 +28,8 @@ export type AgentScope = components["schemas"]["AgentScope"];
 export type AgentGrant = components["schemas"]["AgentGrant"];
 export type McpTokenMeta = components["schemas"]["McpTokenMeta"];
 export type MintedToken = components["schemas"]["MintedToken"];
+export type AgentReview = components["schemas"]["AgentReview"];
+export type ReviewStatus = NonNullable<AgentReview["status"]>;
 
 export interface LinkedRepo {
   id: string;
@@ -304,7 +306,12 @@ export function createClient(baseUrl: string) {
       request<{ agents: Agent[] }>(`/api/workspaces/${workspaceId}/agents`),
     createAgent: (
       workspaceId: string,
-      input: { name: string; slug?: string; description?: string },
+      input: {
+        name: string;
+        slug?: string;
+        description?: string;
+        review_mode?: "notify" | "gate";
+      },
     ) => post<Agent>(`/api/workspaces/${workspaceId}/agents`, input),
     getAgent: (agentId: string) =>
       request<{ agent: Agent; tokens: McpTokenMeta[] }>(
@@ -312,7 +319,7 @@ export function createClient(baseUrl: string) {
       ),
     updateAgent: (
       agentId: string,
-      input: { name?: string; description?: string },
+      input: { name?: string; description?: string; review_mode?: "notify" | "gate" },
     ) => patch<Agent>(`/api/agents/${agentId}`, input),
     deleteAgent: (agentId: string) =>
       request<void>(`/api/agents/${agentId}`, { method: "DELETE" }),
@@ -417,8 +424,46 @@ export function createClient(baseUrl: string) {
     search: (q: string) =>
       request<SearchResults>(`/api/search?q=${encodeURIComponent(q)}`),
 
+    // Agent work reviews
+    listReviews: (projectId: string, status?: string) =>
+      request<{ reviews: AgentReview[]; pending: number }>(
+        `/api/projects/${projectId}/reviews${status ? `?status=${status}` : ""}`,
+      ),
+    getReview: (reviewId: string) =>
+      request<{ review: AgentReview }>(`/api/reviews/${reviewId}`),
+    respondToReview: (
+      reviewId: string,
+      status: "approved" | "changes_requested",
+      response?: string,
+    ) =>
+      post<{ review: AgentReview }>(`/api/reviews/${reviewId}/respond`, {
+        status,
+        ...(response ? { response } : {}),
+      }),
+
+    // Avatars — same FormData trick as uploadAttachment
+    uploadAvatar: (file: File) => {
+      const form = new FormData();
+      form.set("file", file);
+      return request<{ avatar_url: string }>(`/api/me/avatar`, {
+        method: "PUT",
+        body: form,
+      });
+    },
+    uploadAgentAvatar: (agentId: string, file: File) => {
+      const form = new FormData();
+      form.set("file", file);
+      return request<{ id: string; avatar_url: string }>(
+        `/api/agents/${agentId}/avatar`,
+        { method: "PUT", body: form },
+      );
+    },
+
     // Realtime / notifications
-    unread: () => request<{ unread: Record<string, number> }>(`/api/me/unread`),
+    unread: () =>
+      request<{ unread: Record<string, number>; reviews?: Record<string, number> }>(
+        `/api/me/unread`,
+      ),
     mentions: () =>
       request<{ mentions: Mention[] }>(`/api/me/mentions`),
 

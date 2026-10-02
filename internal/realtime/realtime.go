@@ -91,7 +91,16 @@ func (s *Service) handleUnread(c *gin.Context) {
 	for _, r := range rows {
 		out[r.ProjectID.String()] = int(r.Unread)
 	}
-	c.JSON(http.StatusOK, gin.H{"unread": out})
+	pending, err := s.q.PendingReviewCounts(c.Request.Context(), user.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"code": "internal", "message": "internal error"}})
+		return
+	}
+	rev := map[string]int{}
+	for _, r := range pending {
+		rev[r.ProjectID.String()] = int(r.Pending)
+	}
+	c.JSON(http.StatusOK, gin.H{"unread": out, "reviews": rev})
 }
 
 func (s *Service) handleMentions(c *gin.Context) {

@@ -137,11 +137,31 @@ tap-to-advance status, agent work list.
   hashed `rly_` tokens, security headers (CSP, nosniff, frame-deny,
   referrer + permissions policy), Trivy in CI
 - Canonical-flow E2E (`RELAY_TEST_DATABASE_URL`) covering
-  register → project → conversation → issue → todo → FTS search
+  register → project → gated agent → MCP submit_review → REST verdict
 - Tag-triggered release workflow: server + CLI binaries, Windows desktop
   exe, checksums
 - Docs: README, ARCHITECTURE, docs/CLI.md, docs/GITHUB.md, CONTRIBUTING,
   SECURITY, CODEOWNERS, per-app READMEs
+
+## Phase 12 - Agent work reviews ☑
+
+- `agent_reviews` table: structured card payload (summary, files with
+  +/-/notes, decisions, required actions by kind, links, verify steps),
+  status `pending → approved | changes_requested | superseded`
+- `agents.review_mode`: `notify` (default) reports after the fact; `gate`
+  makes `submit_review` return `must_wait` and the agent blocks on
+  `await_review` until a human verdict arrives
+- MCP tools `submit_review`, `list_reviews`, `get_review`,
+  `await_review` (long-poll up to 5 min); `get_project` exposes the mode
+- Reviews tab in the web app — whiteboard-style card; pending count badge
+  on the project rail via `/api/me/unread`
+- User + agent avatar upload (`PUT /api/me/avatar`,
+  `PUT /api/agents/:id/avatar`) and the authenticated `/api/files/*`
+  reader for avatar objects
+- Security-headers middleware and the canonical E2E restored after the
+  phase-11 merge dropped them
+- Pattern adapted from devdotfast/whiteboard (MIT); Relay's implementation
+  is native - no Whiteboard code vendored
 
 ## Post-1.0 ideas (not committed)
 

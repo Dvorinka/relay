@@ -25,7 +25,13 @@ import (
 var Scopes = map[string]bool{
 	"project:read": true, "message:read": true, "message:write": true,
 	"attachment:read": true, "issue:read": true, "issue:write": true,
+	"review:read": true, "review:write": true,
 }
+
+// ReviewModes is the valid set for agents.review_mode: 'gate' makes the
+// agent wait for a human verdict on each submitted review; 'notify' posts
+// the review for information only.
+var ReviewModes = map[string]bool{"notify": true, "gate": true}
 
 type Service struct {
 	q   *db.Queries
@@ -135,6 +141,7 @@ func (s *Service) handleCreate(c *gin.Context) {
 	var req struct {
 		Name        string `json:"name" binding:"required"`
 		Description string `json:"description"`
+		ReviewMode  string `json:"review_mode"`
 	}
 	if !httpx.BindJSON(c, &req) {
 		return
@@ -142,6 +149,13 @@ func (s *Service) handleCreate(c *gin.Context) {
 	req.Name = strings.TrimSpace(req.Name)
 	if len(req.Name) == 0 || len(req.Name) > 60 || len(req.Description) > 500 {
 		httpx.Error(c, http.StatusBadRequest, "bad_request", "name 1-60 chars, description <= 500")
+		return
+	}
+	if req.ReviewMode == "" {
+		req.ReviewMode = "notify"
+	}
+	if !ReviewModes[req.ReviewMode] {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "review_mode must be notify or gate")
 		return
 	}
 	slug := slugify(req.Name)
@@ -167,7 +181,8 @@ func (s *Service) handleCreate(c *gin.Context) {
 	}
 	row, err := s.q.CreateAgent(c.Request.Context(), db.CreateAgentParams{
 		WorkspaceID: wsID, Name: req.Name, Slug: slug,
-		Description: req.Description, CreatedBy: auth.CurrentUser(c).ID,
+		Description: req.Description, ReviewMode: req.ReviewMode,
+		CreatedBy: auth.CurrentUser(c).ID,
 	})
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
@@ -196,6 +211,7 @@ func (s *Service) handleUpdate(c *gin.Context) {
 	var req struct {
 		Name        *string `json:"name"`
 		Description *string `json:"description"`
+		ReviewMode  *string `json:"review_mode"`
 	}
 	if !httpx.BindJSON(c, &req) {
 		return
@@ -215,6 +231,13 @@ func (s *Service) handleUpdate(c *gin.Context) {
 			return
 		}
 		params.Description = pgtype.Text{String: *req.Description, Valid: true}
+	}
+	if req.ReviewMode != nil {
+		if !ReviewModes[*req.ReviewMode] {
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "review_mode must be notify or gate")
+			return
+		}
+		params.ReviewMode = pgtype.Text{String: *req.ReviewMode, Valid: true}
 	}
 	row, err := s.q.UpdateAgent(c.Request.Context(), params)
 	if err != nil {
@@ -394,9 +417,14 @@ func agentJSON(a db.Agent, grants []gin.H, lastSeen pgtype.Timestamptz) gin.H {
 		v := lastSeen.Time.Format("2006-01-02T15:04:05Z07:00")
 		seen = &v
 	}
+	var avatar any
+	if a.AvatarKey.Valid {
+		avatar = "/api/files/" + a.AvatarKey.String
+	}
 	return gin.H{
 		"id": a.ID.String(), "workspace_id": a.WorkspaceID.String(),
 		"name": a.Name, "slug": a.Slug, "description": a.Description,
+		"avatar_url": avatar, "review_mode": a.ReviewMode,
 		"grants": grants, "last_seen_at": seen,
 		"created_at": a.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
 	}
@@ -413,7 +441,8 @@ func lastSeenFor(c *gin.Context, q *db.Queries, agentID pgtype.UUID) pgtype.Time
 func agentFromListRow(r db.ListAgentsForWorkspaceRow) db.Agent {
 	return db.Agent{
 		ID: r.ID, WorkspaceID: r.WorkspaceID, Name: r.Name, Slug: r.Slug,
-		Description: r.Description, AvatarKey: r.AvatarKey, CreatedBy: r.CreatedBy,
+		Description: r.Description, AvatarKey: r.AvatarKey, ReviewMode: r.ReviewMode,
+		CreatedBy: r.CreatedBy,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
 }

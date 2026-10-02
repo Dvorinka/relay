@@ -17,6 +17,10 @@
 //	relay-cli gh issues|prs <project_id>
 //	relay-cli gh issue|pr <project_id> <number>
 //	relay-cli search <project_id> "query"
+//	relay-cli reviews <project_id> [--status pending]
+//	relay-cli review <review_id>
+//	relay-cli review-submit <project_id> --file review.json (or - for stdin)
+//	relay-cli review-await <review_id> [--timeout 60]
 //	relay-cli attachment <id> [--out file]  (fetches the presigned URL)
 //
 // Global flags: --url, --token, --json
@@ -35,10 +39,13 @@ import (
 )
 
 var (
-	flagURL   = flag.String("url", envOr("RELAY_URL", "http://localhost:8080"), "Relay base URL")
-	flagToken = flag.String("token", os.Getenv("RELAY_TOKEN"), "rly_ agent token")
-	flagOut   = flag.String("out", "", "attachment output file")
-	flagLimit = flag.Int("limit", 30, "message/issue list size")
+	flagURL     = flag.String("url", envOr("RELAY_URL", "http://localhost:8080"), "Relay base URL")
+	flagToken   = flag.String("token", os.Getenv("RELAY_TOKEN"), "rly_ agent token")
+	flagOut     = flag.String("out", "", "attachment output file")
+	flagLimit   = flag.Int("limit", 30, "message/issue list size")
+	flagFile    = flag.String("file", "", "review payload JSON file (- for stdin)")
+	flagStatus  = flag.String("status", "", "review status filter")
+	flagTimeout = flag.Int("timeout", 60, "review wait timeout in seconds")
 )
 
 var rpcID atomic.Int64
@@ -191,6 +198,25 @@ func emit(v json.RawMessage) {
 func main() {
 	flag.Parse()
 	args := flag.Args()
+	// Go's flag stops at the first positional, but usage documents flags
+	// after commands (`messages $P --limit 5`). Re-parse the tail: tokens
+	// starting with "-" go through the flagset, the rest stay positional.
+	var pos []string
+	for i := 0; i < len(args); i++ {
+		if !strings.HasPrefix(args[i], "-") || args[i] == "-" {
+			pos = append(pos, args[i])
+			continue
+		}
+		end := i + 1
+		if !strings.Contains(args[i], "=") && end < len(args) {
+			end++ // non-bool flag takes the next token as its value
+		}
+		if err := flag.CommandLine.Parse(args[i:end]); err != nil {
+			fail(err)
+		}
+		i = end - 1
+	}
+	args = pos
 	if len(args) == 0 {
 		flag.Usage()
 		os.Exit(2)
@@ -330,6 +356,62 @@ func main() {
 			fail("gh subcommand:", sub)
 		}
 		out, err := s.tool(name, a)
+		if err != nil {
+			fail(err)
+		}
+		emit(out)
+
+	case "reviews":
+		a := map[string]any{"project_id": need(args, 1, "project_id")}
+		if *flagStatus != "" {
+			a["status"] = *flagStatus
+		}
+		out, err := s.tool("list_reviews", a)
+		if err != nil {
+			fail(err)
+		}
+		emit(out)
+
+	case "review":
+		out, err := s.tool("get_review", map[string]any{"review_id": need(args, 1, "review_id")})
+		if err != nil {
+			fail(err)
+		}
+		emit(out)
+
+	case "review-submit":
+		// The structured payload (files/decisions/actions/…) is read as
+		// JSON from --file or stdin; project_id is injected from argv.
+		pid := need(args, 1, "project_id")
+		var raw []byte
+		var err error
+		switch {
+		case *flagFile == "-":
+			raw, err = io.ReadAll(os.Stdin)
+		case *flagFile != "":
+			raw, err = os.ReadFile(*flagFile)
+		default:
+			fail("review-submit needs --file review.json or --file - for stdin")
+		}
+		if err != nil {
+			fail(err)
+		}
+		payload := map[string]any{}
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			fail("bad review JSON:", err)
+		}
+		payload["project_id"] = pid
+		out, err := s.tool("submit_review", payload)
+		if err != nil {
+			fail(err)
+		}
+		emit(out)
+
+	case "review-await":
+		out, err := s.tool("await_review", map[string]any{
+			"review_id":       need(args, 1, "review_id"),
+			"timeout_seconds": *flagTimeout,
+		})
 		if err != nil {
 			fail(err)
 		}

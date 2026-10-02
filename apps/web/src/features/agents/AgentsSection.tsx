@@ -23,6 +23,8 @@ const ALL_SCOPES: AgentScope[] = [
   "attachment:read",
   "issue:read",
   "issue:write",
+  "review:read",
+  "review:write",
 ];
 
 function errorMessage(err: unknown, fallback: string): string {
@@ -98,12 +100,36 @@ function AgentRow(props: {
         class="flex w-full items-center gap-3 text-left"
         onClick={() => props.onToggle()}
       >
+        <Show
+          when={props.agent.avatar_url}
+          fallback={
+            <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-surface font-mono text-[11px] text-muted">
+              {props.agent.name.slice(0, 1).toUpperCase()}
+            </span>
+          }
+        >
+          {(url) => (
+            <img
+              src={url()}
+              alt=""
+              class="h-7 w-7 shrink-0 rounded-md border border-border object-cover"
+            />
+          )}
+        </Show>
         <div class="min-w-0 flex-1">
           <p class="truncate text-[13px] font-medium">{props.agent.name}</p>
           <p class="truncate font-mono text-[11px] text-muted">
             @{props.agent.slug}
           </p>
         </div>
+        <Show when={props.agent.review_mode === "gate"}>
+          <span
+            class="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+            title="Agent must wait for a human verdict on each submitted review"
+          >
+            review-gated
+          </span>
+        </Show>
         <span class="text-[11px] text-muted">
           {props.agent.last_seen_at
             ? `last seen ${timeAgo(props.agent.last_seen_at)}`
@@ -116,6 +142,76 @@ function AgentRow(props: {
           <Show when={detail()} fallback={<p class="text-[13px] text-muted">Loading...</p>}>
             {(d) => (
               <>
+                <Show when={props.canManage}>
+                  <div>
+                    <h3 class="mb-2 text-[12px] font-semibold">Logo</h3>
+                    <div class="flex items-center gap-3">
+                      <Show
+                        when={d().agent.avatar_url}
+                        fallback={
+                          <span class="flex h-9 w-9 items-center justify-center rounded-md border border-dashed border-border font-mono text-[12px] text-muted">
+                            {d().agent.name.slice(0, 1).toUpperCase()}
+                          </span>
+                        }
+                      >
+                        {(url) => (
+                          <img
+                            src={url()}
+                            alt=""
+                            class="h-9 w-9 rounded-md border border-border object-cover"
+                          />
+                        )}
+                      </Show>
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/gif,image/webp"
+                        aria-label="Agent logo"
+                        class="text-[12px] text-muted file:mr-3 file:rounded-md file:border file:border-border file:bg-surface file:px-2.5 file:py-1 file:text-[12px] file:text-fg hover:file:bg-hover"
+                        onChange={(e) => {
+                          const f = e.currentTarget.files?.[0];
+                          if (f) {
+                            void run(() =>
+                              api.uploadAgentAvatar(props.agent.id, f),
+                            );
+                            e.currentTarget.value = "";
+                          }
+                        }}
+                      />
+                    </div>
+                  </div>
+                </Show>
+                <div>
+                  <h3 class="mb-2 text-[12px] font-semibold">Review mode</h3>
+                  <div class="flex items-center gap-2 text-[13px]">
+                    <select
+                      class={inputClass}
+                      value={d().agent.review_mode ?? "notify"}
+                      disabled={!props.canManage}
+                      aria-label="Review mode"
+                      onChange={(e) =>
+                        run(() =>
+                          api.updateAgent(props.agent.id, {
+                            review_mode: e.currentTarget.value as
+                              | "notify"
+                              | "gate",
+                          }),
+                        )
+                      }
+                    >
+                      <option value="notify">
+                        Notify - agent reports after finishing work
+                      </option>
+                      <option value="gate">
+                        Gate - agent waits for approval on each review
+                      </option>
+                    </select>
+                  </div>
+                  <p class="mt-1 text-[11px] text-muted">
+                    Gate makes the agent block on <code>await_review</code>{" "}
+                    until you approve or request changes on the review card.
+                  </p>
+                </div>
+
                 <div>
                   <h3 class="mb-2 text-[12px] font-semibold">Project access</h3>
                   <ul class="mb-2 flex flex-col gap-1.5">
@@ -302,6 +398,10 @@ export default function AgentsSection(props: {
         name: String(data.get("name") ?? "").trim(),
         ...(slug ? { slug } : {}),
         description: String(data.get("description") ?? "").trim(),
+        review_mode:
+          String(data.get("review_mode") ?? "notify") === "gate"
+            ? "gate"
+            : "notify",
       });
       form.reset();
       await refetch();
@@ -366,6 +466,16 @@ export default function AgentsSection(props: {
               <input type="text" name="description" class={inputClass} />
             </Field>
           </div>
+          <Field label="Review mode">
+            <select name="review_mode" class={inputClass}>
+              <option value="notify">
+                Notify - agent reports after finishing work
+              </option>
+              <option value="gate">
+                Gate - agent waits for your approval on each review
+              </option>
+            </select>
+          </Field>
           <FormError message={error()} />
           <div>
             <SubmitButton pending={pending()}>

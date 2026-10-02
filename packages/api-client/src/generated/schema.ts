@@ -720,6 +720,57 @@ export interface paths {
         patch: operations["updateTodo"];
         trace?: never;
     };
+    "/api/projects/{projectId}/reviews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Agent work reviews for the project, newest first */
+        get: operations["listReviews"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reviews/{reviewId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One review with status and human response */
+        get: operations["getReview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reviews/{reviewId}/respond": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve a review or send it back with a note */
+        post: operations["respondToReview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/events": {
         parameters: {
             query?: never;
@@ -734,6 +785,57 @@ export interface paths {
          *     projects the caller can access. Heartbeat comments every 25s.
          */
         get: operations["streamEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/avatar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Upload the caller's avatar image (png/jpeg/gif/webp, <=2 MiB) */
+        put: operations["uploadMyAvatar"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agents/{agentId}/avatar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Upload an agent's logo (owner/admin) */
+        put: operations["uploadAgentAvatar"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/files/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Redirect to a presigned object URL. Serves the avatars/ key prefix only; message attachments use their project-scoped endpoint. */
+        get: operations["readFile"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1024,7 +1126,7 @@ export interface components {
             created_at: string;
         };
         /** @enum {string} */
-        AgentScope: "project:read" | "message:read" | "message:write" | "attachment:read" | "issue:read" | "issue:write";
+        AgentScope: "project:read" | "message:read" | "message:write" | "attachment:read" | "issue:read" | "issue:write" | "review:read" | "review:write";
         AgentGrant: {
             /** Format: uuid */
             project_id: string;
@@ -1040,12 +1142,82 @@ export interface components {
             name: string;
             slug: string;
             description: string;
+            avatar_url?: string | null;
+            /**
+             * @description gate: agent must wait for a human verdict on each review; notify: reviews are informational.
+             * @enum {string}
+             */
+            review_mode: "notify" | "gate";
             grants: components["schemas"]["AgentGrant"][];
             /**
              * Format: date-time
              * @description Last authenticated MCP call; null means never seen.
              */
             last_seen_at?: string | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        /**
+         * @description Structured agent work report. The shape is fixed so every review
+         *     renders the same board: summary, per-file changes, autonomous
+         *     decisions, required human actions, verification, links.
+         */
+        AgentReview: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            project_id: string;
+            /** @enum {string} */
+            status: "pending" | "approved" | "changes_requested" | "superseded";
+            title: string;
+            /** @description Plain-language markdown */
+            summary: string;
+            files: {
+                path?: string;
+                /** @enum {string} */
+                status?: "added" | "modified" | "deleted" | "renamed";
+                additions?: number;
+                deletions?: number;
+                /** @description One-line plain-English description of the change */
+                note?: string;
+                /** @description Optional unified diff hunk */
+                patch?: string;
+            }[];
+            decisions: {
+                decision?: string;
+                rationale?: string;
+            }[];
+            actions: {
+                /** @enum {string} */
+                kind?: "env" | "config" | "deploy" | "ci" | "secret" | "migration" | "other";
+                label?: string;
+                detail?: string;
+            }[];
+            links: {
+                label?: string;
+                url?: string;
+            }[];
+            /** @description Markdown steps to confirm the change works */
+            verify: string;
+            agent: {
+                id?: string;
+                name?: string;
+                avatar_url?: string | null;
+            };
+            issue?: {
+                id?: string;
+                key?: string;
+            } | null;
+            /** Format: uuid */
+            supersedes?: string | null;
+            responder?: {
+                id?: string;
+                name?: string;
+                avatar_url?: string | null;
+            } | null;
+            response?: string;
+            /** Format: date-time */
+            responded_at?: string | null;
             /** Format: date-time */
             created_at: string;
         };
@@ -1969,6 +2141,11 @@ export interface operations {
                 "application/json": {
                     name: string;
                     description?: string;
+                    /**
+                     * @default notify
+                     * @enum {string}
+                     */
+                    review_mode?: "notify" | "gate";
                 };
             };
         };
@@ -2049,6 +2226,8 @@ export interface operations {
                 "application/json": {
                     name?: string;
                     description?: string;
+                    /** @enum {string} */
+                    review_mode?: "notify" | "gate";
                 };
             };
         };
@@ -2524,6 +2703,96 @@ export interface operations {
             };
         };
     };
+    listReviews: {
+        parameters: {
+            query?: {
+                status?: "pending" | "approved" | "changes_requested" | "superseded";
+            };
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Reviews + pending count */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        reviews: components["schemas"]["AgentReview"][];
+                        pending: number;
+                    };
+                };
+            };
+        };
+    };
+    getReview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                reviewId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Review */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        review: components["schemas"]["AgentReview"];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    respondToReview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                reviewId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    status: "approved" | "changes_requested";
+                    /** @description Required when status is changes_requested */
+                    response?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated review */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description Already answered */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     streamEvents: {
         parameters: {
             query?: never;
@@ -2542,6 +2811,110 @@ export interface operations {
                     "text/event-stream": unknown;
                 };
             };
+        };
+    };
+    uploadMyAvatar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated user with avatar_url */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description Exceeds the avatar size cap */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Object storage not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    uploadAgentAvatar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agentId: components["parameters"]["AgentId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated agent with avatar_url */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            /** @description Exceeds the avatar size cap */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Object storage not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Redirect to the presigned URL */
+            302: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
         };
     };
     unreadCounts: {

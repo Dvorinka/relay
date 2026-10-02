@@ -24,6 +24,7 @@ tags:
   - name: mcp
   - name: github
   - name: todos
+  - name: reviews
   - name: realtime
 paths:
   /api/health:
@@ -646,6 +647,7 @@ paths:
               properties:
                 name: { type: string, minLength: 1, maxLength: 60 }
                 description: { type: string, maxLength: 500 }
+                review_mode: { type: string, enum: [notify, gate], default: notify }
       responses:
         "201":
           description: Created
@@ -690,6 +692,7 @@ paths:
               properties:
                 name: { type: string, minLength: 1, maxLength: 60 }
                 description: { type: string, maxLength: 500 }
+                review_mode: { type: string, enum: [notify, gate] }
       responses:
         "200":
           description: Updated
@@ -977,6 +980,70 @@ paths:
       responses:
         "204": { description: "Deleted" }
 
+  /api/projects/{projectId}/reviews:
+    get:
+      operationId: listReviews
+      summary: Agent work reviews for the project, newest first
+      tags: [reviews]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - { name: status, in: query, schema: { type: string, enum: [pending, approved, changes_requested, superseded] } }
+      responses:
+        "200":
+          description: Reviews + pending count
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reviews, pending]
+                properties:
+                  reviews:
+                    type: array
+                    items: { $ref: "#/components/schemas/AgentReview" }
+                  pending: { type: integer }
+
+  /api/reviews/{reviewId}:
+    get:
+      operationId: getReview
+      summary: One review with status and human response
+      tags: [reviews]
+      parameters:
+        - { name: reviewId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Review
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [review]
+                properties:
+                  review: { $ref: "#/components/schemas/AgentReview" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/reviews/{reviewId}/respond:
+    post:
+      operationId: respondToReview
+      summary: Approve a review or send it back with a note
+      tags: [reviews]
+      parameters:
+        - { name: reviewId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [approved, changes_requested] }
+                response: { type: string, description: "Required when status is changes_requested" }
+      responses:
+        "200": { description: "Updated review" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { description: "Already answered" }
+
   /api/events:
     get:
       operationId: streamEvents
@@ -991,6 +1058,61 @@ paths:
           description: "text/event-stream"
           content:
             text/event-stream: {}
+
+  /api/me/avatar:
+    put:
+      operationId: uploadMyAvatar
+      summary: Upload the caller's avatar image (png/jpeg/gif/webp, <=2 MiB)
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "200": { description: "Updated user with avatar_url" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "413": { description: "Exceeds the avatar size cap" }
+        "503": { description: "Object storage not configured" }
+
+  /api/agents/{agentId}/avatar:
+    put:
+      operationId: uploadAgentAvatar
+      summary: Upload an agent's logo (owner/admin)
+      tags: [agents]
+      parameters: [ { $ref: "#/components/parameters/AgentId" } ]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "200": { description: "Updated agent with avatar_url" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "413": { description: "Exceeds the avatar size cap" }
+        "503": { description: "Object storage not configured" }
+
+  /api/files/{key}:
+    get:
+      operationId: readFile
+      summary: >-
+        Redirect to a presigned object URL. Serves the avatars/ key prefix
+        only; message attachments use their project-scoped endpoint.
+      tags: [attachments]
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      responses:
+        "302": { description: "Redirect to the presigned URL" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /api/me/unread:
     get:
@@ -1395,6 +1517,8 @@ components:
         - attachment:read
         - issue:read
         - issue:write
+        - review:read
+        - review:write
 
     AgentGrant:
       type: object
@@ -1409,13 +1533,18 @@ components:
 
     Agent:
       type: object
-      required: [id, workspace_id, name, slug, description, grants, created_at]
+      required: [id, workspace_id, name, slug, description, grants, review_mode, created_at]
       properties:
         id: { type: string, format: uuid }
         workspace_id: { type: string, format: uuid }
         name: { type: string }
         slug: { type: string }
         description: { type: string }
+        avatar_url: { type: ["string", "null"] }
+        review_mode:
+          type: string
+          enum: [notify, gate]
+          description: "gate: agent must wait for a human verdict on each review; notify: reviews are informational."
         grants:
           type: array
           items: { $ref: "#/components/schemas/AgentGrant" }
@@ -1423,6 +1552,75 @@ components:
           type: ["string", "null"]
           format: date-time
           description: Last authenticated MCP call; null means never seen.
+        created_at: { type: string, format: date-time }
+
+    AgentReview:
+      type: object
+      description: |
+        Structured agent work report. The shape is fixed so every review
+        renders the same board: summary, per-file changes, autonomous
+        decisions, required human actions, verification, links.
+      required: [id, project_id, status, title, summary, files, decisions, actions, links, verify, agent, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, approved, changes_requested, superseded] }
+        title: { type: string }
+        summary: { type: string, description: Plain-language markdown }
+        files:
+          type: array
+          items:
+            type: object
+            properties:
+              path: { type: string }
+              status: { type: string, enum: [added, modified, deleted, renamed] }
+              additions: { type: integer }
+              deletions: { type: integer }
+              note: { type: string, description: One-line plain-English description of the change }
+              patch: { type: string, description: Optional unified diff hunk }
+        decisions:
+          type: array
+          items:
+            type: object
+            properties:
+              decision: { type: string }
+              rationale: { type: string }
+        actions:
+          type: array
+          items:
+            type: object
+            properties:
+              kind: { type: string, enum: [env, config, deploy, ci, secret, migration, other] }
+              label: { type: string }
+              detail: { type: string }
+        links:
+          type: array
+          items:
+            type: object
+            properties:
+              label: { type: string }
+              url: { type: string }
+        verify: { type: string, description: Markdown steps to confirm the change works }
+        agent:
+          type: object
+          properties:
+            id: { type: string }
+            name: { type: string }
+            avatar_url: { type: ["string", "null"] }
+        issue:
+          type: ["object", "null"]
+          properties:
+            id: { type: string }
+            key: { type: string }
+        supersedes: { type: ["string", "null"], format: uuid }
+        responder:
+          type: ["object", "null"]
+          properties:
+            id: { type: string }
+            name: { type: string }
+            avatar_url: { type: ["string", "null"] }
+        response: { type: string }
+        responded_at: { type: ["string", "null"], format: date-time }
         created_at: { type: string, format: date-time }
 
     McpTokenMeta:

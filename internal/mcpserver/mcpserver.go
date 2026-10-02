@@ -36,10 +36,11 @@ const agentKey ctxKey = iota
 
 // Agent is the authenticated caller carried through the request context.
 type Agent struct {
-	ID        pgtype.UUID
-	TokenID   pgtype.UUID
-	Name      string
-	AvatarKey pgtype.Text
+	ID         pgtype.UUID
+	TokenID    pgtype.UUID
+	Name       string
+	AvatarKey  pgtype.Text
+	ReviewMode string
 }
 
 // Service wires tools to the database and object storage.
@@ -112,7 +113,8 @@ func (s *Service) authenticate(c *gin.Context) (*Agent, error) {
 	if err != nil {
 		return nil, errors.New("invalid or revoked token")
 	}
-	return &Agent{ID: row.ID, TokenID: row.TokenID, Name: row.Name, AvatarKey: row.AvatarKey}, nil
+	return &Agent{ID: row.ID, TokenID: row.TokenID, Name: row.Name, AvatarKey: row.AvatarKey,
+		ReviewMode: row.ReviewMode}, nil
 }
 
 // allow implements a fixed 1-minute window per token. Cheap and correct;
@@ -312,6 +314,54 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithDescription("Mark a message as read by this agent."),
 		mcp.WithString("message_id", mcp.Required()),
 	), s.markRead)
+
+	// --- work reviews ---
+	// Review payloads follow a fixed schema so the web UI can render a
+	// consistent board: summary, per-file changes, autonomous decisions,
+	// required human actions, verification steps, links.
+
+	srv.AddTool(mcp.NewTool("submit_review",
+		mcp.WithDescription("Submit a structured review of completed work for human approval. "+
+			"Required fields: project_id, title, summary. Provide files as [{path,status,additions,deletions,note}] "+
+			"(status: added|modified|deleted|renamed; optional patch), decisions as [{decision,rationale}], "+
+			"actions as [{kind: env|config|deploy|ci|secret|migration|other, label, detail}] for anything the human "+
+			"must change (new env vars, deploy steps, CI tweaks), links as [{label,url}], and a short 'verify' "+
+			"markdown explaining how to confirm the change works. The response includes review_mode: when 'gate', "+
+			"call await_review and wait for the verdict before continuing; when 'notify', the review is informational."),
+		mcp.WithString("project_id", mcp.Required()),
+		mcp.WithString("issue_id", mcp.Description("Linked Relay issue UUID")),
+		mcp.WithString("title", mcp.Required(), mcp.Description("One-line title, <= 200 chars")),
+		mcp.WithString("summary", mcp.Required(), mcp.Description("Plain-language markdown summary of what changed and why")),
+		mcp.WithArray("files", mcp.Items(map[string]any{"type": "object"}),
+			mcp.Description("[{path, status, additions, deletions, note, patch?}]")),
+		mcp.WithArray("decisions", mcp.Items(map[string]any{"type": "object"}),
+			mcp.Description("[{decision, rationale}] - choices made autonomously")),
+		mcp.WithArray("actions", mcp.Items(map[string]any{"type": "object"}),
+			mcp.Description("[{kind: env|config|deploy|ci|secret|migration|other, label, detail}] - required human follow-ups")),
+		mcp.WithArray("links", mcp.Items(map[string]any{"type": "object"}),
+			mcp.Description("[{label, url}] - PRs, commits, CI runs")),
+		mcp.WithString("verify", mcp.Description("Markdown: how to verify the change works")),
+		mcp.WithString("supersedes", mcp.Description("Review UUID this revision replaces")),
+	), s.submitReview)
+
+	srv.AddTool(mcp.NewTool("get_review",
+		mcp.WithDescription("Get one review with its status and any human response."),
+		mcp.WithString("review_id", mcp.Required()),
+	), s.getReview)
+
+	srv.AddTool(mcp.NewTool("list_reviews",
+		mcp.WithDescription("List reviews in a granted project, newest first."),
+		mcp.WithString("project_id", mcp.Required()),
+		mcp.WithString("status", mcp.Description("Filter: pending|approved|changes_requested|superseded")),
+	), s.listReviews)
+
+	srv.AddTool(mcp.NewTool("await_review",
+		mcp.WithDescription("Block until a review gets a human verdict (approved or changes_requested), "+
+			"or timeout_s elapses. Use after submit_review when review_mode is 'gate'. Returns the review "+
+			"with its final status and the responder's note."),
+		mcp.WithString("review_id", mcp.Required()),
+		mcp.WithNumber("timeout_s", mcp.Description("Max wait, default 60, cap 300")),
+	), s.awaitReview)
 }
 
 func messageJSON(m db.GetMessageFullRow) gin.H {
@@ -383,6 +433,7 @@ func (s *Service) getProject(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	return jsonResult(gin.H{
 		"id": p.ID, "key": p.Key, "name": p.Name,
 		"description": p.Description, "workspace_id": p.WorkspaceID,
+		"review_mode": agent(ctx).ReviewMode,
 	})
 }
 
@@ -1009,4 +1060,248 @@ func (s *Service) publishPID(pid pgtype.UUID, typ string, data map[string]any) {
 	}
 	id, _ := uuid.FromBytes(pid.Bytes[:])
 	s.Bus.Publish(events.Event{Type: typ, ProjectID: id, Data: data})
+}
+
+// --- work review tools ---
+
+// maxReviewJSON caps each structured field so a runaway agent cannot
+// bloat a row (and every SSE fan-out of it).
+const maxReviewJSON = 256 * 1024
+
+// jsonbArg re-marshals a raw tool argument into a jsonb-ready []byte and
+// validates it decodes as an array of objects. Missing keys become '[]'.
+func jsonbArg(req mcp.CallToolRequest, name string) ([]byte, error) {
+	v, ok := req.GetArguments()[name]
+	if !ok || v == nil {
+		return []byte("[]"), nil
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil, errors.New(name + ": not JSON-marshalable")
+	}
+	if len(raw) > maxReviewJSON {
+		return nil, errors.New(name + ": exceeds 256KB")
+	}
+	var arr []map[string]any
+	if err := json.Unmarshal(raw, &arr); err != nil {
+		return nil, errors.New(name + " must be an array of objects")
+	}
+	return raw, nil
+}
+
+func mcpReviewJSON(r db.GetReviewRow) gin.H {
+	raw := func(b []byte) json.RawMessage {
+		if len(b) == 0 {
+			return json.RawMessage("[]")
+		}
+		return json.RawMessage(b)
+	}
+	var respondedAt, supersedes, issueID any
+	if r.RespondedAt.Valid {
+		respondedAt = r.RespondedAt.Time
+	}
+	if r.Supersedes.Valid {
+		supersedes = r.Supersedes.String()
+	}
+	if r.IssueID.Valid {
+		issueID = r.IssueID.String()
+	}
+	var responder any
+	if r.RespondedBy.Valid {
+		responder = r.ResponderName.String
+	}
+	return gin.H{
+		"id": r.ID.String(), "project_id": r.ProjectID.String(),
+		"status": r.Status, "title": r.Title, "summary": r.Summary,
+		"files": raw(r.Files), "decisions": raw(r.Decisions),
+		"actions": raw(r.Actions), "links": raw(r.Links), "verify": r.Verify,
+		"issue_id": issueID, "supersedes": supersedes,
+		"response": r.Response, "responder": responder, "responded_at": respondedAt,
+		"created_at": r.CreatedAt.Time,
+	}
+}
+
+func (s *Service) submitReview(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pid, err := uuidArg(req, "project_id")
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "review:write"); err != nil {
+		return errResult(err)
+	}
+	title, err := req.RequireString("title")
+	if err != nil {
+		return errResult(err)
+	}
+	title = strings.TrimSpace(title)
+	if len(title) == 0 || len(title) > 200 {
+		return errResult(errors.New("title must be 1-200 chars"))
+	}
+	summary, err := req.RequireString("summary")
+	if err != nil {
+		return errResult(err)
+	}
+	if len(summary) > 20000 {
+		return errResult(errors.New("summary exceeds 20KB"))
+	}
+	var issueID, supersedes pgtype.UUID
+	if v := req.GetString("issue_id", ""); v != "" {
+		if err := issueID.Scan(v); err != nil || !issueID.Valid {
+			return errResult(errors.New("invalid issue_id"))
+		}
+	}
+	if v := req.GetString("supersedes", ""); v != "" {
+		if err := supersedes.Scan(v); err != nil || !supersedes.Valid {
+			return errResult(errors.New("invalid supersedes"))
+		}
+	}
+	files, err := jsonbArg(req, "files")
+	if err != nil {
+		return errResult(err)
+	}
+	decisions, err := jsonbArg(req, "decisions")
+	if err != nil {
+		return errResult(err)
+	}
+	actions, err := jsonbArg(req, "actions")
+	if err != nil {
+		return errResult(err)
+	}
+	links, err := jsonbArg(req, "links")
+	if err != nil {
+		return errResult(err)
+	}
+	verify := req.GetString("verify", "")
+	if len(verify) > 10000 {
+		return errResult(errors.New("verify exceeds 10KB"))
+	}
+	if supersedes.Valid {
+		prev, err := s.q.ReviewAgentProject(ctx, supersedes)
+		if err != nil {
+			return errResult(errors.New("supersedes: review not found"))
+		}
+		if prev.ProjectID != pid {
+			return errResult(errors.New("supersedes: review belongs to another project"))
+		}
+		if err := s.q.SupersedeReview(ctx, supersedes); err != nil {
+			return errResult(err)
+		}
+	}
+	row, err := s.q.CreateReview(ctx, db.CreateReviewParams{
+		ProjectID: pid, IssueID: issueID, AgentID: agent(ctx).ID,
+		Title: title, Summary: summary,
+		Files: files, Decisions: decisions, Actions: actions, Links: links,
+		Verify: verify, Supersedes: supersedes,
+	})
+	if err != nil {
+		return errResult(err)
+	}
+	s.publishPID(pid, "review.created", map[string]any{
+		"review_id": row.ID.String(), "title": row.Title, "agent": agent(ctx).Name,
+	})
+	return jsonResult(gin.H{
+		"id": row.ID.String(), "status": row.Status,
+		"created_at":  row.CreatedAt.Time,
+		"review_mode": agent(ctx).ReviewMode,
+		"must_wait":   agent(ctx).ReviewMode == "gate",
+	})
+}
+
+// reviewForAgent loads a review after verifying the caller holds
+// review:read on its project.
+func (s *Service) reviewForAgent(ctx context.Context, req mcp.CallToolRequest) (db.GetReviewRow, error) {
+	rid, err := uuidArg(req, "review_id")
+	if err != nil {
+		return db.GetReviewRow{}, err
+	}
+	rp, err := s.q.ReviewAgentProject(ctx, rid)
+	if err != nil {
+		return db.GetReviewRow{}, errors.New("review not found")
+	}
+	if err := s.scope(ctx, rp.ProjectID, "review:read"); err != nil {
+		return db.GetReviewRow{}, err
+	}
+	return s.q.GetReview(ctx, rid)
+}
+
+func (s *Service) getReview(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	r, err := s.reviewForAgent(ctx, req)
+	if err != nil {
+		return errResult(err)
+	}
+	return jsonResult(mcpReviewJSON(r))
+}
+
+func (s *Service) listReviews(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pid, err := uuidArg(req, "project_id")
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "review:read"); err != nil {
+		return errResult(err)
+	}
+	var status pgtype.Text
+	if v := req.GetString("status", ""); v != "" {
+		status = pgtype.Text{String: v, Valid: true}
+	}
+	rows, err := s.q.ListProjectReviews(ctx, db.ListProjectReviewsParams{
+		ProjectID: pid, Status: status, Lim: 100,
+	})
+	if err != nil {
+		return errResult(err)
+	}
+	out := make([]gin.H, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, mcpReviewJSON(listRowAsGet(r)))
+	}
+	return jsonResult(out)
+}
+
+// awaitReview blocks on the event hub until the review leaves 'pending'.
+// Gated agents call this after submit_review to get the human verdict.
+func (s *Service) awaitReview(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	r, err := s.reviewForAgent(ctx, req)
+	if err != nil {
+		return errResult(err)
+	}
+	if r.Status != "pending" {
+		return jsonResult(mcpReviewJSON(r))
+	}
+	if s.Bus == nil {
+		return errResult(errors.New("event hub unavailable; poll get_review instead"))
+	}
+	timeout := clampInt(req.GetInt("timeout_s", 60), 1, 300)
+	rid := r.ID.String()
+	sub, ch := s.Bus.Subscribe()
+	defer s.Bus.Unsubscribe(sub)
+	timer := time.NewTimer(time.Duration(timeout) * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case e, ok := <-ch:
+			if !ok {
+				return errResult(errors.New("event hub closed"))
+			}
+			if e.Type == "review.responded" && e.Data["review_id"] == rid {
+				fresh, err := s.q.GetReview(ctx, r.ID)
+				if err != nil {
+					return errResult(err)
+				}
+				return jsonResult(mcpReviewJSON(fresh))
+			}
+		case <-ctx.Done():
+			return errResult(errors.New("request cancelled"))
+		case <-timer.C:
+			fresh, err := s.q.GetReview(ctx, r.ID)
+			if err != nil {
+				return errResult(err)
+			}
+			return jsonResult(mcpReviewJSON(fresh))
+		}
+	}
+}
+
+// listRowAsGet bridges the two joined row types - identical fields.
+func listRowAsGet(r db.ListProjectReviewsRow) db.GetReviewRow {
+	return db.GetReviewRow(r)
 }

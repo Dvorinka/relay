@@ -12,3 +12,7 @@ where lower(email) = lower($1);
 select id, email, name, avatar_key, created_at
 from users
 where id = $1;
+
+-- name: UpdateUserAvatar :one
+update users set avatar_key = $2 where id = $1
+returning id, email, name, avatar_key, created_at;

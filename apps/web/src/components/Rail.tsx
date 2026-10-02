@@ -14,7 +14,11 @@ import { subscribe } from "../lib/events";
 import { deriveKey } from "../lib/text";
 import { useProjects } from "../stores/projects";
 import { useSession } from "../stores/session";
-import { refreshUnread, useUnread } from "../stores/unread";
+import {
+  refreshUnread,
+  usePendingReviews,
+  useUnread,
+} from "../stores/unread";
 import { InboxIcon, PlusIcon, SettingsIcon } from "./icons";
 import { FormError, inputClass, SubmitButton } from "./ui";
 
@@ -56,7 +60,9 @@ function HealthStatus() {
 
 function ProjectRow(props: { project: Project }) {
   const { unread } = useUnread();
+  const { pendingReviews } = usePendingReviews();
   const n = () => unread()[props.project.id] ?? 0;
+  const pending = () => pendingReviews()[props.project.id] ?? 0;
   return (
     <NavItem href={`/app/p/${props.project.id}`}>
       <span
@@ -69,8 +75,18 @@ function ProjectRow(props: { project: Project }) {
         {props.project.key}
       </span>
       <span class="truncate">{props.project.name}</span>
+      <Show when={pending() > 0}>
+        <span
+          class="ml-auto rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-medium leading-none text-amber-600 dark:text-amber-400"
+          title={`${pending()} agent review(s) awaiting a verdict`}
+        >
+          {pending()}
+        </span>
+      </Show>
       <Show when={n() > 0}>
-        <span class="ml-auto rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-medium leading-none text-white">
+        <span
+          class={`rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-medium leading-none text-white ${pending() > 0 ? "" : "ml-auto"}`}
+        >
           {n() > 99 ? "99+" : n()}
         </span>
       </Show>
@@ -176,6 +192,9 @@ export function Rail() {
   onMount(refreshUnread);
   const unsub = subscribe((e) => {
     if (e.type === "message.created") void refreshUnread();
+    if (e.type === "review.created" || e.type === "review.responded") {
+      void refreshUnread();
+    }
   });
   onCleanup(unsub);
   const workspaceName = () => session.workspaces()[0]?.name;
