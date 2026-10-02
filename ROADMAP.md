@@ -163,6 +163,17 @@ tap-to-advance status, agent work list.
 - Pattern adapted from devdotfast/whiteboard (MIT); Relay's implementation
   is native - no Whiteboard code vendored
 
+## Phase 13 - Review surfacing ☑
+
+- `GET /api/me/reviews`: pending reviews across all member workspaces —
+  powers the Inbox "Awaiting your verdict" section
+- `GET /api/issues/:id/reviews`: compact review block on issue pages
+- `?tab=` deep links on project pages (`useSearchParams`), so Inbox items
+  land directly on the Reviews tab
+- Status filter chips on the Reviews tab; filter-aware empty state
+- CI backend job runs a Postgres service so `TestCanonicalFlow` executes
+  in CI; the test clears the DB-backed rate limiter for rerunnability
+
 ## Post-1.0 ideas (not committed)
 
 - Relay → GitHub issue write-back and bi-directional sync

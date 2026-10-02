@@ -85,3 +85,16 @@ join workspace_members wm on wm.workspace_id = p.workspace_id
   and wm.user_id = $1
 join agent_reviews r on r.project_id = p.id and r.status = 'pending'
 group by p.id;
+
+-- name: ListMyPendingReviews :many
+-- reviews awaiting a human verdict across every workspace the user belongs to
+select r.id, r.project_id, r.title, r.created_at,
+       a.id as agent_id, a.name as agent_name, a.slug as agent_slug, a.avatar_key as agent_avatar,
+       p.key as project_key, p.name as project_name
+from agent_reviews r
+join agents a on a.id = r.agent_id
+join projects p on p.id = r.project_id
+join workspace_members wm on wm.workspace_id = p.workspace_id and wm.user_id = $1
+where r.status = 'pending'
+order by r.created_at desc
+limit 50;

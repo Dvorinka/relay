@@ -72,6 +72,18 @@ const FILE_STATUS: Record<string, { letter: string; cls: string }> = {
   renamed: { letter: "R", cls: "text-sky-500" },
 };
 
+/** Shared status chip — also used by the issue page's review list. */
+export function ReviewStatusChip(props: { status?: string | null }) {
+  const st = () => STATUS_STYLE[props.status ?? "pending"] ?? STATUS_FALLBACK;
+  return (
+    <span
+      class={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${st().cls}`}
+    >
+      {st().label}
+    </span>
+  );
+}
+
 function Avatar(props: { name: string; url?: string | null; size?: string }) {
   return (
     <Show
@@ -154,8 +166,6 @@ function ReviewCard(props: { review: AgentReview; onResponded: () => void }) {
     }
   };
 
-  const st = () => STATUS_STYLE[r().status ?? "pending"] ?? STATUS_FALLBACK;
-
   return (
     <article class="rounded-lg border border-border bg-surface">
       {/* header */}
@@ -183,11 +193,7 @@ function ReviewCard(props: { review: AgentReview; onResponded: () => void }) {
             </Show>
           </p>
         </div>
-        <span
-          class={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${st().cls}`}
-        >
-          {st().label}
-        </span>
+        <ReviewStatusChip status={r().status} />
       </header>
 
       <div class="px-4 pb-4">
@@ -409,10 +415,19 @@ function ReviewCard(props: { review: AgentReview; onResponded: () => void }) {
   );
 }
 
+const FILTERS: { id: string; label: string }[] = [
+  { id: "", label: "All" },
+  { id: "pending", label: "Awaiting" },
+  { id: "approved", label: "Approved" },
+  { id: "changes_requested", label: "Changes requested" },
+  { id: "superseded", label: "Superseded" },
+];
+
 export function Reviews(props: { project: Project }) {
+  const [filter, setFilter] = createSignal("");
   const [data, { refetch }] = createResource(
-    () => props.project.id,
-    async (id) => api.listReviews(id),
+    () => [props.project.id, filter()] as const,
+    async ([id, status]) => api.listReviews(id, status || undefined),
   );
 
   const unsub = subscribe((e) => {
@@ -434,31 +449,56 @@ export function Reviews(props: { project: Project }) {
         >
           {(d) => (
             <>
-              <div class="mb-4 flex items-baseline justify-between">
-                <h2 class="text-[13px] font-semibold">
-                  Agent reviews
-                  <Show when={d().pending > 0}>
-                    <span class="ml-2 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
-                      {d().pending} awaiting
-                    </span>
-                  </Show>
-                </h2>
-                <p class="text-[11.5px] text-muted">
-                  Agents submit these after finishing work via MCP
-                </p>
+              <div class="mb-4">
+                <div class="flex flex-wrap items-baseline justify-between gap-2">
+                  <h2 class="text-[13px] font-semibold">
+                    Agent reviews
+                    <Show when={d().pending > 0}>
+                      <span class="ml-2 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                        {d().pending} awaiting
+                      </span>
+                    </Show>
+                  </h2>
+                  <p class="text-[11.5px] text-muted">
+                    Agents submit these after finishing work via MCP
+                  </p>
+                </div>
+                <div class="mt-2 inline-flex rounded-md border border-border p-0.5">
+                  <For each={FILTERS}>
+                    {(f) => (
+                      <button
+                        type="button"
+                        onClick={() => setFilter(f.id)}
+                        class={`whitespace-nowrap rounded-sm px-2 py-0.5 text-[11.5px] transition-colors ${
+                          filter() === f.id
+                            ? "bg-hover font-medium text-fg"
+                            : "text-muted hover:text-fg"
+                        }`}
+                      >
+                        {f.label}
+                      </button>
+                    )}
+                  </For>
+                </div>
               </div>
               <div class="space-y-4">
                 <For
                   each={d().reviews}
                   fallback={
                     <div class="rounded-lg border border-dashed border-border px-6 py-12 text-center">
-                      <p class="text-[13px] font-medium">No reviews yet</p>
-                      <p class="mt-1 text-[12.5px] text-muted">
-                        When an agent finishes work it submits a structured
-                        report here - what changed, which files, what it
-                        decided on its own, and what you need to do (new env
-                        vars, deploy steps) before it breaks CI.
+                      <p class="text-[13px] font-medium">
+                        {filter()
+                          ? "Nothing in this state"
+                          : "No reviews yet"}
                       </p>
+                      <Show when={!filter()}>
+                        <p class="mt-1 text-[12.5px] text-muted">
+                          When an agent finishes work it submits a structured
+                          report here - what changed, which files, what it
+                          decided on its own, and what you need to do (new env
+                          vars, deploy steps) before it breaks CI.
+                        </p>
+                      </Show>
                     </div>
                   }
                 >

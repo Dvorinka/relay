@@ -241,6 +241,64 @@ func (q *Queries) ListIssueReviews(ctx context.Context, issueID pgtype.UUID) ([]
 	return items, nil
 }
 
+const listMyPendingReviews = `-- name: ListMyPendingReviews :many
+select r.id, r.project_id, r.title, r.created_at,
+       a.id as agent_id, a.name as agent_name, a.slug as agent_slug, a.avatar_key as agent_avatar,
+       p.key as project_key, p.name as project_name
+from agent_reviews r
+join agents a on a.id = r.agent_id
+join projects p on p.id = r.project_id
+join workspace_members wm on wm.workspace_id = p.workspace_id and wm.user_id = $1
+where r.status = 'pending'
+order by r.created_at desc
+limit 50
+`
+
+type ListMyPendingReviewsRow struct {
+	ID          pgtype.UUID        `json:"id"`
+	ProjectID   pgtype.UUID        `json:"project_id"`
+	Title       string             `json:"title"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	AgentID     pgtype.UUID        `json:"agent_id"`
+	AgentName   string             `json:"agent_name"`
+	AgentSlug   string             `json:"agent_slug"`
+	AgentAvatar pgtype.Text        `json:"agent_avatar"`
+	ProjectKey  string             `json:"project_key"`
+	ProjectName string             `json:"project_name"`
+}
+
+// reviews awaiting a human verdict across every workspace the user belongs to
+func (q *Queries) ListMyPendingReviews(ctx context.Context, userID pgtype.UUID) ([]ListMyPendingReviewsRow, error) {
+	rows, err := q.db.Query(ctx, listMyPendingReviews, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListMyPendingReviewsRow{}
+	for rows.Next() {
+		var i ListMyPendingReviewsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Title,
+			&i.CreatedAt,
+			&i.AgentID,
+			&i.AgentName,
+			&i.AgentSlug,
+			&i.AgentAvatar,
+			&i.ProjectKey,
+			&i.ProjectName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProjectReviews = `-- name: ListProjectReviews :many
 select r.id, r.project_id, r.issue_id, r.agent_id, r.status, r.title, r.summary, r.files, r.decisions, r.actions, r.links, r.verify, r.supersedes, r.responded_by, r.response, r.responded_at, r.created_at, r.updated_at, a.name as agent_name, a.slug as agent_slug, a.avatar_key as agent_avatar,
        p.key as project_key, i.number as issue_number,

@@ -1,4 +1,5 @@
 import type {
+  AgentReview,
   Issue,
   IssueActivity,
   UpdateIssueRequest,
@@ -10,6 +11,7 @@ import { api } from "../../lib/api";
 import { Markdown } from "../../lib/markdown";
 import { timeAgo } from "../../lib/time";
 import { Conversation } from "../conversations/Conversation";
+import { ReviewStatusChip } from "../reviews/Reviews";
 import { AssigneeSelect, LabelsPicker, PrioritySelect, StatusSelect } from "./fields";
 import { GitHubBadge, LabelChip, statusLabel } from "./meta";
 
@@ -38,6 +40,42 @@ function activityText(a: IssueActivity): string {
     default:
       return a.kind.replaceAll("_", " ");
   }
+}
+
+// Compact list of agent work reviews linked to this issue; clicking through
+// lands on the project's Reviews tab.
+function IssueReviews(props: { issueId: string; projectId: string }) {
+  const [data] = createResource(
+    () => props.issueId,
+    (id) => api.issueReviews(id).then((r) => r.reviews),
+  );
+  return (
+    <Show when={(data() ?? []).length > 0}>
+      <h2 class="mb-2 mt-8 text-[13px] font-semibold">
+        Agent reviews ({data()!.length})
+      </h2>
+      <ul class="flex flex-col gap-1.5">
+        <For each={data() ?? []}>
+          {(r: AgentReview) => (
+            <li>
+              <A
+                href={`/app/p/${props.projectId}?tab=reviews`}
+                class="flex items-center gap-2.5 rounded-md border border-border px-3 py-2 transition-colors hover:bg-hover"
+              >
+                <ReviewStatusChip status={r.status} />
+                <span class="min-w-0 flex-1 truncate text-[13px]">
+                  {r.title}
+                </span>
+                <span class="shrink-0 text-[11px] text-muted">
+                  {r.agent?.name} · {timeAgo(r.created_at)}
+                </span>
+              </A>
+            </li>
+          )}
+        </For>
+      </ul>
+    </Show>
+  );
 }
 
 function ActivityFeed(props: { activity: IssueActivity[] }) {
@@ -230,6 +268,11 @@ export default function IssuePage() {
                     projectId={params.projectId}
                   />
                 </Show>
+
+                <IssueReviews
+                  issueId={params.issueId}
+                  projectId={params.projectId}
+                />
 
                 <h2 class="mb-3 mt-8 text-[13px] font-semibold">Activity</h2>
                 <ActivityFeed activity={detail()?.activity ?? []} />

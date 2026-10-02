@@ -613,6 +613,27 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/issues/{issueId}/reviews:
+    get:
+      operationId: listIssueReviews
+      summary: Agent work reviews linked to this issue, newest first
+      tags: [reviews]
+      parameters: [ { $ref: "#/components/parameters/IssueId" } ]
+      responses:
+        "200":
+          description: Review list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reviews]
+                properties:
+                  reviews:
+                    type: array
+                    items: { $ref: "#/components/schemas/AgentReview" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /api/workspaces/{workspaceId}/agents:
     get:
       operationId: listAgents
@@ -1113,6 +1134,40 @@ paths:
       responses:
         "302": { description: "Redirect to the presigned URL" }
         "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/me/reviews:
+    get:
+      operationId: myPendingReviews
+      summary: Reviews awaiting a verdict across all of the caller's workspaces
+      tags: [reviews]
+      responses:
+        "200":
+          description: Inbox feed of pending reviews
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reviews]
+                properties:
+                  reviews:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, project_id, title, agent, project_key, project_name, created_at]
+                      properties:
+                        id: { type: string, format: uuid }
+                        project_id: { type: string, format: uuid }
+                        title: { type: string }
+                        agent:
+                          type: object
+                          required: [id, name, avatar_url]
+                          properties:
+                            id: { type: ["string", "null"], format: uuid }
+                            name: { type: string }
+                            avatar_url: { type: ["string", "null"] }
+                        project_key: { type: string }
+                        project_name: { type: string }
+                        created_at: { type: string, format: date-time }
 
   /api/me/unread:
     get:
