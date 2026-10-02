@@ -542,10 +542,23 @@
   }
   .themepanel .swatch {
     width: 20px; height: 20px; border-radius: 50%; border: 2px solid transparent;
-    cursor: pointer; padding: 0;
+    cursor: pointer; padding: 0; flex-shrink: 0;
   }
   .themepanel .swatch.on { border-color: var(--fg); box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
   .themepanel .vsep { width: 1px; height: 18px; background: var(--border); }
+  .themepanel .wheel {
+    width: 22px; height: 22px; border-radius: 50%; cursor: pointer; flex-shrink: 0;
+    background: conic-gradient(#f43f5e, #f59e0b, #84cc16, #0dbd8b, #06b6d4, #3b82f6, #8b5cf6, #ec4899, #f43f5e);
+    border: 2px solid var(--surface); outline: 1px solid var(--border-hi);
+    position: relative; display: block;
+  }
+  .themepanel .wheel input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
+  .themepanel .hex {
+    font-family: var(--mono); font-size: 10.5px; color: var(--muted);
+    cursor: pointer; padding: 3px 6px; border-radius: 6px;
+    min-width: 58px; text-align: center; user-select: all;
+  }
+  .themepanel .hex:hover { background: var(--rail); color: var(--fg); }
   .themepanel .tbtn {
     width: 30px; height: 30px; border-radius: 9px; border: 0;
     background: transparent; color: var(--muted); cursor: pointer;
@@ -870,12 +883,21 @@
 
 <!-- mockup controls: brand accent + theme -->
 <div class="themepanel" title="Pick brand color / theme">
-  <button class="swatch on" data-a="ember"  style="background:#f2541b" title="Ember (default)"></button>
-  <button class="swatch" data-a="green"  style="background:#0dbd8b" title="Green"></button>
-  <button class="swatch" data-a="blue"   style="background:#3b82f6" title="Blue"></button>
-  <button class="swatch" data-a="violet" style="background:#8b5cf6" title="Violet"></button>
-  <button class="swatch" data-a="rose"   style="background:#f43f5e" title="Rose"></button>
-  <button class="swatch" data-a="teal"   style="background:#0d9488" title="Teal"></button>
+  <button class="swatch on" data-h="#f2541b" style="background:#f2541b" title="Ember"></button>
+  <button class="swatch" data-h="#e11d48" style="background:#e11d48" title="Crimson"></button>
+  <button class="swatch" data-h="#f43f5e" style="background:#f43f5e" title="Rose"></button>
+  <button class="swatch" data-h="#ec4899" style="background:#ec4899" title="Pink"></button>
+  <button class="swatch" data-h="#8b5cf6" style="background:#8b5cf6" title="Violet"></button>
+  <button class="swatch" data-h="#3b82f6" style="background:#3b82f6" title="Blue"></button>
+  <button class="swatch" data-h="#06b6d4" style="background:#06b6d4" title="Cyan"></button>
+  <button class="swatch" data-h="#0d9488" style="background:#0d9488" title="Teal"></button>
+  <button class="swatch" data-h="#0dbd8b" style="background:#0dbd8b" title="Green"></button>
+  <button class="swatch" data-h="#84cc16" style="background:#84cc16" title="Lime"></button>
+  <button class="swatch" data-h="#f59e0b" style="background:#f59e0b" title="Amber"></button>
+  <label class="wheel" title="Custom color">
+    <input type="color" id="wheel" value="#f2541b" />
+  </label>
+  <code class="hex" id="hexout" title="Click to copy">#F2541B</code>
   <span class="vsep"></span>
   <button class="tbtn" id="themetoggle" title="Toggle dark mode">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -884,10 +906,53 @@
 
 <script>
   const root = document.documentElement;
-  document.querySelectorAll('.swatch').forEach(b => b.addEventListener('click', () => {
-    root.setAttribute('data-accent', b.dataset.a);
-    document.querySelectorAll('.swatch').forEach(s => s.classList.toggle('on', s === b));
-  }));
+  const hexout = document.getElementById('hexout');
+  const swatches = document.querySelectorAll('.swatch');
+
+  function hexToHsl(h) {
+    const n = parseInt(h.slice(1), 16);
+    const r = (n >> 16) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+    let hue = 0;
+    if (d) {
+      if (mx === r) hue = ((g - b) / d) % 6;
+      else if (mx === g) hue = (b - r) / d + 2;
+      else hue = (r - g) / d + 4;
+      hue = (hue * 60 + 360) % 360;
+    }
+    const l = (mx + mn) / 2;
+    const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+    return [hue, s * 100, l * 100];
+  }
+  function hslToHex(h, s, l) {
+    s /= 100; l /= 100;
+    const c = (1 - Math.abs(2 * l - 1)) * s, x = c * (1 - Math.abs((h / 60) % 2 - 1)), m = l - c / 2;
+    let r = 0, g = 0, b = 0;
+    if (h < 60) [r, g, b] = [c, x, 0]; else if (h < 120) [r, g, b] = [x, c, 0];
+    else if (h < 180) [r, g, b] = [0, c, x]; else if (h < 240) [r, g, b] = [0, x, c];
+    else if (h < 300) [r, g, b] = [x, 0, c]; else [r, g, b] = [c, 0, x];
+    const v = n => Math.round((n + m) * 255).toString(16).padStart(2, '0');
+    return '#' + v(r) + v(g) + v(b);
+  }
+
+  function setAccent(hex, mark) {
+    const [h, s, l] = hexToHsl(hex);
+    const ink = hslToHex(h, Math.min(100, s * 1.05), Math.max(12, l - 14));
+    root.style.setProperty('--accent', hex);
+    root.style.setProperty('--accent-ink', ink);
+    root.style.setProperty('--accent-soft', `color-mix(in srgb, ${hex} 12%, transparent)`);
+    root.style.setProperty('--accent-glow', `color-mix(in srgb, ${hex} 30%, transparent)`);
+    hexout.textContent = hex.toUpperCase();
+    swatches.forEach(s => s.classList.toggle('on', s === mark));
+    document.getElementById('wheel').value = hex;
+  }
+
+  swatches.forEach(b => b.addEventListener('click', () => setAccent(b.dataset.h, b)));
+  document.getElementById('wheel').addEventListener('input', e => setAccent(e.target.value, null));
+  hexout.addEventListener('click', () => {
+    const t = hexout.textContent;
+    if (navigator.clipboard) navigator.clipboard.writeText(t).catch(() => {});
+  });
   document.getElementById('themetoggle').addEventListener('click', () => {
     root.setAttribute('data-theme', root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
   });
