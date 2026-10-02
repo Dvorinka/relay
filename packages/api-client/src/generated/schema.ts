@@ -334,6 +334,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{projectId}/attachments/{attachmentId}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream the attachment bytes through the API
+         * @description Same-origin download for browsers. Prefer this over the presigned redirect when the client cannot reach the storage endpoint directly (LAN dev environments, private-network access rules).
+         */
+        get: operations["downloadAttachment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/messages/{messageId}/read": {
         parameters: {
             query?: never;
@@ -522,6 +542,64 @@ export interface paths {
         post?: never;
         /** Revoke an MCP token (owner/admin) */
         delete: operations["revokeAgentToken"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspaceId}/agent-invites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List invites and their redemption state (owner/admin) */
+        get: operations["listAgentInvites"];
+        put?: never;
+        /**
+         * Mint a one-shot agent invite; the rli_ token is returned once (owner/admin)
+         * @description The user invites; the agent registers itself by redeeming the token at POST /api/agent-invites/redeem. Empty project_ids means every workspace project at redeem time; empty scopes means the default full set.
+         */
+        post: operations["createAgentInvite"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspaceId}/agent-invites/{inviteId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke an unused invite (owner/admin) */
+        delete: operations["deleteAgentInvite"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-invites/redeem": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Agent self-registration - redeems an rli_ invite, returns a live rly_ token
+         * @description Public endpoint; the invite token is the credential. The agent supplies its own name, receives its agent identity, grants, and a working MCP token in one response.
+         */
+        post: operations["redeemAgentInvite"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1413,6 +1491,29 @@ export interface components {
             /** @description rly_... - shown once */
             token: string;
         };
+        AgentInvite: {
+            /** Format: uuid */
+            id: string;
+            /** @description Empty = every workspace project at redeem time. */
+            project_ids: string[];
+            scopes: components["schemas"]["AgentScope"][];
+            /** Format: date-time */
+            expires_at: string;
+            used_by: {
+                /** Format: uuid */
+                agent_id?: string;
+                name?: string;
+            } | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        AgentRedeemResult: {
+            agent: components["schemas"]["Agent"];
+            /** @description rly_... - shown once */
+            token: string;
+            mcp_url: string;
+            api_url: string;
+        };
         ProjectOverview: {
             project: components["schemas"]["Project"];
             counts: {
@@ -2037,6 +2138,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @description May be empty when attachment_ids is non-empty. */
                     body: string;
                     attachment_ids?: string[];
                 };
@@ -2113,6 +2215,31 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    downloadAttachment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+                attachmentId: components["parameters"]["AttachmentId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Attachment bytes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
             };
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
@@ -2628,6 +2755,131 @@ export interface operations {
             };
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    listAgentInvites: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Invites */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        invites: components["schemas"]["AgentInvite"][];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createAgentInvite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    project_ids?: string[];
+                    scopes?: components["schemas"]["AgentScope"][];
+                    /** @default 72 */
+                    expires_hours?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Invite created; `token` shown only in this response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentInvite"] & {
+                        /** @description rli_... - shown once */
+                        token: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    deleteAgentInvite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["WorkspaceId"];
+                inviteId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    redeemAgentInvite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description rli_... */
+                    token: string;
+                    name: string;
+                    description?: string;
+                    /**
+                     * @default notify
+                     * @enum {string}
+                     */
+                    review_mode?: "notify" | "gate";
+                };
+            };
+        };
+        responses: {
+            /** @description Registered; `token` shown only in this response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentRedeemResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description Invite invalid, used, or expired */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     mcpEndpoint: {

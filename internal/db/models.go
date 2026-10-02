@@ -21,6 +21,18 @@ type Agent struct {
 	ReviewMode  string             `json:"review_mode"`
 }
 
+type AgentInvite struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	TokenHash   []byte             `json:"token_hash"`
+	ProjectIds  []pgtype.UUID      `json:"project_ids"`
+	Scopes      []string           `json:"scopes"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	UsedBy      pgtype.UUID        `json:"used_by"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type AgentProjectPermission struct {
 	AgentID   pgtype.UUID        `json:"agent_id"`
 	ProjectID pgtype.UUID        `json:"project_id"`

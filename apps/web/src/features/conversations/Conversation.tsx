@@ -226,37 +226,102 @@ function ConvertToIssueDialog(props: {
   );
 }
 
-function MessageRow(props: { projectId: string; message: Message }) {
+// Author palette: deterministic hue per name, Element-style. Token-safe in
+// both themes because these stay readable on bg/surface.
+const AUTHOR_COLORS = [
+  "#2dd4bf", "#60a5fa", "#a78bfa", "#f472b6",
+  "#fbbf24", "#34d399", "#fb7185", "#38bdf8",
+] as const;
+
+function authorColor(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return AUTHOR_COLORS[h % AUTHOR_COLORS.length] ?? "#2dd4bf";
+}
+
+function shortTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function dayLabel(iso: string): string {
+  const d = new Date(iso);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (d.toDateString() === today.toDateString()) return "Today";
+  if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
+  return d.toLocaleDateString([], {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  });
+}
+
+function MessageRow(props: {
+  projectId: string;
+  message: Message;
+  grouped: boolean;
+}) {
   const m = () => props.message;
   const [convertOpen, setConvertOpen] = createSignal(false);
   return (
-    <div class="group relative flex gap-3 px-4 py-2">
-      <Avatar.Root class="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-surface">
-        <Avatar.Fallback class="text-[11px] font-medium text-muted">
-          {initials(m().author.name)}
-        </Avatar.Fallback>
-        <Avatar.Image
-          src={m().author.avatar_url ?? undefined}
-          alt=""
-          class="h-full w-full rounded-full object-cover"
-        />
-      </Avatar.Root>
-      <div class="min-w-0 flex-1">
-        <div class="flex items-baseline gap-2">
-          <span class="text-[13px] font-medium">{m().author.name}</span>
-          <Show when={m().author.kind === "agent"}>
-            <span class="rounded border border-border px-1 font-mono text-[10px] leading-4 text-muted">
-              agent
+    <div
+      class={`group relative flex gap-3 rounded-md px-4 hover:bg-hover ${
+        props.grouped ? "py-0.5" : "mt-3 py-1"
+      }`}
+    >
+      <Show
+        when={!props.grouped}
+        fallback={
+          <div class="w-8 shrink-0 text-right">
+            <span
+              class="text-[10px] leading-[22px] text-muted opacity-0 transition-opacity group-hover:opacity-100"
+              title={new Date(m().created_at).toLocaleString()}
+            >
+              {shortTime(m().created_at)}
             </span>
-          </Show>
-          <span
-            class="text-[11px] text-muted"
-            title={new Date(m().created_at).toLocaleString()}
-          >
-            {timeAgo(m().created_at)}
-          </span>
-        </div>
-        <Markdown body={m().body} projectId={props.projectId} />
+          </div>
+        }
+      >
+        <Avatar.Root class="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-surface">
+          <Avatar.Fallback class="text-[11px] font-semibold text-muted">
+            {initials(m().author.name)}
+          </Avatar.Fallback>
+          <Avatar.Image
+            src={m().author.avatar_url ?? undefined}
+            alt=""
+            class="h-full w-full rounded-lg object-cover"
+          />
+        </Avatar.Root>
+      </Show>
+      <div class="min-w-0 flex-1">
+        <Show when={!props.grouped}>
+          <div class="flex items-baseline gap-2">
+            <span
+              class="text-[13.5px] font-semibold"
+              style={{ color: authorColor(m().author.name) }}
+            >
+              {m().author.name}
+            </span>
+            <Show when={m().author.kind === "agent"}>
+              <span class="rounded bg-accent/10 px-1 py-px font-mono text-[9.5px] font-semibold uppercase tracking-wide text-accent">
+                agent
+              </span>
+            </Show>
+            <span
+              class="text-[11px] text-muted"
+              title={new Date(m().created_at).toLocaleString()}
+            >
+              {timeAgo(m().created_at)}
+            </span>
+          </div>
+        </Show>
+        <Show when={m().body.trim().length > 0}>
+          <Markdown body={m().body} projectId={props.projectId} />
+        </Show>
         <Show when={m().attachments.length > 0}>
           <div class="mt-1.5 flex flex-wrap items-center gap-2">
             <For each={m().attachments}>
@@ -272,7 +337,7 @@ function MessageRow(props: { projectId: string; message: Message }) {
         onClick={() => setConvertOpen(true)}
         title="Convert to issue"
         aria-label="Convert message to issue"
-        class="absolute right-3 top-1.5 rounded p-1 text-muted opacity-0 transition-opacity hover:bg-hover hover:text-fg focus-visible:opacity-100 group-hover:opacity-100"
+        class="absolute right-3 top-1.5 rounded-md border border-border bg-surface p-1.5 text-muted opacity-0 shadow-sm transition-opacity hover:text-fg focus-visible:opacity-100 group-hover:opacity-100"
       >
         <IssueIcon class="h-3.5 w-3.5" />
       </button>
@@ -419,9 +484,14 @@ function ConversationThread(props: {
     }
   }
 
+  // crypto.randomUUID requires a secure context; LAN dev origins are not.
+  const newLocalId = () =>
+    crypto.randomUUID?.() ??
+    `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+
   function addFiles(files: readonly File[]) {
     for (const file of files) {
-      const localId = crypto.randomUUID();
+      const localId = newLocalId();
       let entry: PendingAttachment;
       if (file.size > MAX_FILE_BYTES) {
         entry = {
@@ -459,14 +529,22 @@ function ConversationThread(props: {
     }
   }
 
-  async function send() {
-    const body = draft().trim();
-    if (!body || sending() || hasUploading()) {
-      return;
-    }
-    const ids = pending().flatMap((p) =>
+  const readyIds = () =>
+    pending().flatMap((p) =>
       p.attachmentId === undefined ? [] : [p.attachmentId],
     );
+
+  const canSend = () =>
+    !sending() &&
+    !hasUploading() &&
+    (draft().trim().length > 0 || readyIds().length > 0);
+
+  async function send() {
+    const body = draft().trim();
+    if (!canSend()) {
+      return;
+    }
+    const ids = readyIds();
     setSendError(null);
     setSending(true);
     try {
@@ -536,7 +614,7 @@ function ConversationThread(props: {
           </p>
         </Show>
 
-        <div class="flex flex-col py-2">
+        <div class="flex flex-col px-2 py-2">
           <For
             each={messages()}
             fallback={
@@ -547,15 +625,51 @@ function ConversationThread(props: {
               </Show>
             }
           >
-            {(m) => <MessageRow projectId={props.projectId} message={m} />}
+            {(m, i) => {
+              // Group under the same avatar when the author repeats within
+              // 5 minutes on the same day; insert a day separator otherwise.
+              const prev = () => (i() > 0 ? messages()[i() - 1] : undefined);
+              const grouped = () => {
+                const p = prev();
+                if (!p) return false;
+                const a = new Date(p.created_at).getTime();
+                const b = new Date(m.created_at).getTime();
+                return (
+                  p.author.id === m.author.id &&
+                  p.author.kind === m.author.kind &&
+                  b - a < 5 * 60 * 1000 &&
+                  dayLabel(p.created_at) === dayLabel(m.created_at)
+                );
+              };
+              const newDay = () => {
+                const p = prev();
+                return !p || dayLabel(p.created_at) !== dayLabel(m.created_at);
+              };
+              return (
+                <>
+                  <Show when={newDay()}>
+                    <div class="mx-2 my-3 flex items-center gap-3">
+                      <span class="h-px flex-1 bg-border" />
+                      <span class="text-[11px] font-semibold tracking-wide text-muted">
+                        {dayLabel(m.created_at)}
+                      </span>
+                      <span class="h-px flex-1 bg-border" />
+                    </div>
+                  </Show>
+                  <MessageRow
+                    projectId={props.projectId}
+                    message={m}
+                    grouped={grouped()}
+                  />
+                </>
+              );
+            }}
           </For>
         </div>
       </div>
 
       <div
-        class={`shrink-0 border-t px-4 py-3 transition-colors ${
-          dragging() ? "border-accent bg-hover" : "border-border"
-        }`}
+        class="shrink-0 px-4 pb-4 pt-1"
         onDragOver={(e) => {
           e.preventDefault();
           setDragging(true);
@@ -575,70 +689,82 @@ function ConversationThread(props: {
         }}
       >
         <FormError message={sendError()} />
-        <Show when={pending().length > 0}>
-          <ul class="mb-2 flex flex-wrap gap-2">
-            <For each={pending()}>
-              {(p) => (
-                <PendingChip
-                  item={p}
-                  onRemove={() => removePending(p.localId)}
-                />
-              )}
-            </For>
-          </ul>
-        </Show>
-        <textarea
-          ref={(el) => {
-            inputEl = el;
-          }}
-          rows={1}
-          value={draft()}
-          placeholder="Write a message..."
-          aria-label="Message"
-          disabled={sending()}
-          onInput={(e) => {
-            setDraft(e.currentTarget.value);
-            autogrow();
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              void send();
-            }
-          }}
-          onPaste={(e) => {
-            const files = e.clipboardData?.files;
-            if (files && files.length > 0) {
-              e.preventDefault();
-              addFiles(Array.from(files));
-            }
-          }}
-          class="w-full resize-none rounded-md border border-border bg-bg px-3 py-2 text-[13px] outline-none transition-colors placeholder:text-muted/60 focus:border-accent disabled:opacity-50"
-        />
-        <div class="mt-1.5 flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => fileEl?.click()}
-            aria-label="Attach files"
-            title="Attach files"
-            class="rounded-md p-1.5 text-muted transition-colors hover:bg-hover hover:text-fg"
-          >
-            <PaperclipIcon class="h-4 w-4" />
-          </button>
-          <p class="flex-1 text-[11px] text-muted/60">
-            Enter to send · Shift+Enter for a new line · drop or paste files to
-            attach
-          </p>
-          <button
-            type="button"
-            onClick={() => void send()}
-            disabled={
-              sending() || hasUploading() || draft().trim().length === 0
-            }
-            class={primaryButtonClass}
-          >
-            Send
-          </button>
+        <div
+          class={`rounded-xl border bg-surface transition-colors ${
+            dragging()
+              ? "border-accent ring-1 ring-accent/40"
+              : "border-border focus-within:border-accent/60"
+          }`}
+        >
+          <Show when={pending().length > 0}>
+            <ul class="flex flex-wrap gap-2 px-2 pt-2">
+              <For each={pending()}>
+                {(p) => (
+                  <PendingChip
+                    item={p}
+                    onRemove={() => removePending(p.localId)}
+                  />
+                )}
+              </For>
+            </ul>
+          </Show>
+          <div class="flex items-end gap-1 p-1.5">
+            <button
+              type="button"
+              onClick={() => fileEl?.click()}
+              aria-label="Attach files"
+              title="Attach files"
+              class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-hover hover:text-fg"
+            >
+              <PaperclipIcon class="h-4.5 w-4.5" />
+            </button>
+            <textarea
+              ref={(el) => {
+                inputEl = el;
+              }}
+              rows={1}
+              value={draft()}
+              placeholder="Message — paste an image with Ctrl+V"
+              aria-label="Message"
+              disabled={sending()}
+              onInput={(e) => {
+                setDraft(e.currentTarget.value);
+                autogrow();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  void send();
+                }
+              }}
+              onPaste={(e) => {
+                const files = e.clipboardData?.files;
+                if (files && files.length > 0) {
+                  e.preventDefault();
+                  addFiles(Array.from(files));
+                }
+              }}
+              class="max-h-40 flex-1 resize-none bg-transparent px-1.5 py-2 text-[13.5px] leading-6 outline-none placeholder:text-muted/60 disabled:opacity-50"
+            />
+            <button
+              type="button"
+              onClick={() => void send()}
+              disabled={!canSend()}
+              class={`${primaryButtonClass} !h-9 rounded-lg`}
+            >
+              Send
+            </button>
+          </div>
+          <div class="flex items-center gap-3 border-t border-border/60 px-3 py-1.5 text-[10.5px] text-muted/70">
+            <span>Enter to send</span>
+            <span>Shift+Enter newline</span>
+            <span>Ctrl+V pastes an image</span>
+            <Show when={hasUploading()}>
+              <span class="ml-auto flex items-center gap-1.5 text-accent">
+                <Spinner class="h-2.5 w-2.5" /> uploading…
+              </span>
+            </Show>
+          </div>
         </div>
         <input
           ref={(el) => {

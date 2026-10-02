@@ -15,6 +15,9 @@ type Config struct {
 	DatabaseURL     string
 	ListenAddr      string
 	PublicURL       string
+	// LandingURL is the GitHub App's homepage link; defaults to PublicURL so
+	// self-hosted installs point at the app itself.
+	LandingURL      string
 	StaticDir       string
 	LogLevel        string
 	AuthSecret      string
@@ -40,6 +43,7 @@ func Load() (Config, error) {
 		DatabaseURL:     os.Getenv("DATABASE_URL"),
 		ListenAddr:      getEnv("RELAY_LISTEN_ADDR", ":8080"),
 		PublicURL:       getEnv("RELAY_PUBLIC_URL", "http://localhost:8080"),
+		LandingURL:      getEnv("RELAY_LANDING_URL", ""),
 		StaticDir:       getEnv("RELAY_STATIC_DIR", "public"),
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
 		AuthSecret:      os.Getenv("AUTH_SECRET"),

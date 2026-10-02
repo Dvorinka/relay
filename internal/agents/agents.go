@@ -33,6 +33,13 @@ var Scopes = map[string]bool{
 // the review for information only.
 var ReviewModes = map[string]bool{"notify": true, "gate": true}
 
+// DefaultInviteScopes is the scope set a fresh agent gets when an invite
+// doesn't name a narrower one.
+var DefaultInviteScopes = []string{
+	"project:read", "message:read", "message:write", "attachment:read",
+	"issue:read", "issue:write", "review:read", "review:write",
+}
+
 type Service struct {
 	q   *db.Queries
 	log *zap.Logger
@@ -52,6 +59,15 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
 	g.DELETE("/agents/:id/projects/:projectId", s.agentAdminOnly, s.handleRevokeGrant)
 	g.POST("/agents/:id/tokens", s.agentAdminOnly, s.handleMintToken)
 	g.DELETE("/agents/:id/tokens/:tokenId", s.agentAdminOnly, s.handleRevokeToken)
+	g.POST("/workspaces/:id/agent-invites", s.adminOnly, s.handleCreateInvite)
+	g.GET("/workspaces/:id/agent-invites", s.adminOnly, s.handleListInvites)
+	g.DELETE("/workspaces/:id/agent-invites/:inviteId", s.adminOnly, s.handleDeleteInvite)
+}
+
+// RegisterPublicRoutes exposes invite redemption - the agent calls it without
+// a session; the rli_ token is the credential.
+func (s *Service) RegisterPublicRoutes(g *gin.RouterGroup) {
+	g.POST("/agent-invites/redeem", s.handleRedeemInvite)
 }
 
 // --- gates ---
@@ -380,6 +396,255 @@ func (s *Service) handleRevokeToken(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// --- invites ---
+
+// handleCreateInvite mints a one-shot rli_ token an agent redeems itself.
+// project_ids empty = every workspace project at redeem time; scopes empty =
+// DefaultInviteScopes. The plaintext token is returned exactly once.
+func (s *Service) handleCreateInvite(c *gin.Context) {
+	wsID := c.MustGet(ctxWorkspace).(pgtype.UUID)
+	var req struct {
+		ProjectIDs   []string `json:"project_ids"`
+		Scopes       []string `json:"scopes"`
+		ExpiresHours *int     `json:"expires_hours"`
+	}
+	if !httpx.BindJSON(c, &req) {
+		return
+	}
+	hours := 72
+	if req.ExpiresHours != nil {
+		if *req.ExpiresHours < 1 || *req.ExpiresHours > 168 {
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "expires_hours 1-168")
+			return
+		}
+		hours = *req.ExpiresHours
+	}
+	scopes := req.Scopes
+	if len(scopes) == 0 {
+		scopes = DefaultInviteScopes
+	}
+	for _, sc := range scopes {
+		if !Scopes[sc] {
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "unknown scope: "+sc)
+			return
+		}
+	}
+	ids := make([]pgtype.UUID, 0, len(req.ProjectIDs))
+	for _, raw := range req.ProjectIDs {
+		var id pgtype.UUID
+		if err := id.Scan(raw); err != nil {
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "invalid project id: "+raw)
+			return
+		}
+		ids = append(ids, id)
+	}
+	if len(ids) > 0 {
+		allowed, err := s.q.ListWorkspaceProjectIDs(c.Request.Context(), wsID)
+		if err != nil {
+			httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
+		set := map[pgtype.UUID]bool{}
+		for _, p := range allowed {
+			set[p] = true
+		}
+		for _, p := range ids {
+			if !set[p] {
+				httpx.Error(c, http.StatusBadRequest, "bad_request", "project not in this workspace")
+				return
+			}
+		}
+	}
+	token, hash, err := mintInviteToken()
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	row, err := s.q.CreateAgentInvite(c.Request.Context(), db.CreateAgentInviteParams{
+		WorkspaceID: wsID,
+		TokenHash:   hash,
+		ProjectIds:  ids,
+		Scopes:      scopes,
+		ExpiresAt: pgtype.Timestamptz{
+			Time: time.Now().Add(time.Duration(hours) * time.Hour), Valid: true,
+		},
+		CreatedBy: auth.CurrentUser(c).ID,
+	})
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	out := inviteJSON(row, "")
+	out["token"] = token
+	c.JSON(http.StatusCreated, out)
+}
+
+func (s *Service) handleListInvites(c *gin.Context) {
+	wsID := c.MustGet(ctxWorkspace).(pgtype.UUID)
+	rows, err := s.q.ListAgentInvites(c.Request.Context(), wsID)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	out := make([]gin.H, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, inviteJSON(db.AgentInvite{
+			ID: r.ID, WorkspaceID: r.WorkspaceID, ProjectIds: r.ProjectIds,
+			Scopes: r.Scopes, ExpiresAt: r.ExpiresAt, UsedBy: r.UsedBy,
+			CreatedBy: r.CreatedBy, CreatedAt: r.CreatedAt,
+		}, r.UsedByName.String))
+	}
+	c.JSON(http.StatusOK, gin.H{"invites": out})
+}
+
+func (s *Service) handleDeleteInvite(c *gin.Context) {
+	id, ok := httpx.PathUUID(c, "inviteId")
+	if !ok {
+		return
+	}
+	if err := s.q.DeleteAgentInvite(c.Request.Context(), id); err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// handleRedeemInvite is the agent's self-registration: it presents the rli_
+// token plus its own identity and gets back a working rly_ MCP token. The
+// plaintext token appears exactly once in this response.
+func (s *Service) handleRedeemInvite(c *gin.Context) {
+	var req struct {
+		Token       string `json:"token" binding:"required"`
+		Name        string `json:"name" binding:"required"`
+		Description string `json:"description"`
+		ReviewMode  string `json:"review_mode"`
+	}
+	if !httpx.BindJSON(c, &req) {
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if len(req.Name) == 0 || len(req.Name) > 60 || len(req.Description) > 500 {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "name 1-60 chars, description <= 500")
+		return
+	}
+	if req.ReviewMode == "" {
+		req.ReviewMode = "notify"
+	}
+	if !ReviewModes[req.ReviewMode] {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "review_mode must be notify or gate")
+		return
+	}
+	sum := sha256.Sum256([]byte(req.Token))
+	inv, err := s.q.GetAgentInviteByHash(c.Request.Context(), sum[:])
+	if err != nil {
+		httpx.Error(c, http.StatusUnauthorized, "unauthorized", "invite is invalid, used, or expired")
+		return
+	}
+	slug := slugify(req.Name)
+	if slug == "" {
+		slug = "agent"
+	}
+	for i := 0; ; i++ {
+		candidate := slug
+		if i > 0 {
+			candidate = slug + "-" + strconv.Itoa(i+1)
+		}
+		exists, err := s.q.AgentSlugExists(c.Request.Context(), db.AgentSlugExistsParams{
+			WorkspaceID: inv.WorkspaceID, Slug: candidate,
+		})
+		if err != nil {
+			httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
+		if !exists {
+			slug = candidate
+			break
+		}
+	}
+	agent, err := s.q.CreateAgent(c.Request.Context(), db.CreateAgentParams{
+		WorkspaceID: inv.WorkspaceID, Name: req.Name, Slug: slug,
+		Description: req.Description, ReviewMode: req.ReviewMode,
+		CreatedBy: inv.CreatedBy,
+	})
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	projects := inv.ProjectIds
+	if len(projects) == 0 {
+		projects, err = s.q.ListWorkspaceProjectIDs(c.Request.Context(), inv.WorkspaceID)
+		if err != nil {
+			httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
+	}
+	for _, pid := range projects {
+		if _, err := s.q.UpsertAgentGrant(c.Request.Context(), db.UpsertAgentGrantParams{
+			AgentID: agent.ID, ProjectID: pid, Scopes: inv.Scopes,
+		}); err != nil {
+			httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
+	}
+	token, hash, err := mintToken()
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	if _, err := s.q.CreateMcpToken(c.Request.Context(), db.CreateMcpTokenParams{
+		AgentID: agent.ID, TokenHash: hash, Name: "self-registered",
+	}); err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	if _, err := s.q.RedeemAgentInvite(c.Request.Context(), db.RedeemAgentInviteParams{
+		ID: inv.ID, UsedBy: agent.ID,
+	}); err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	scheme := "http"
+	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	base := scheme + "://" + c.Request.Host
+	c.JSON(http.StatusCreated, gin.H{
+		"agent":   agentJSON(agent, s.grantJSONs(c, agent.ID), pgtype.Timestamptz{}),
+		"token":   token,
+		"mcp_url": base + "/mcp",
+		"api_url": base + "/api",
+	})
+}
+
+// mintInviteToken mirrors mintToken but prefixes rli_ so ops can tell invite
+// tokens from live MCP tokens at a glance.
+func mintInviteToken() (string, []byte, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", nil, err
+	}
+	token := "rli_" + base64.RawURLEncoding.EncodeToString(raw)
+	sum := sha256.Sum256([]byte(token))
+	return token, sum[:], nil
+}
+
+func inviteJSON(r db.AgentInvite, usedByName string) gin.H {
+	var used any
+	if r.UsedBy.Valid {
+		used = gin.H{"agent_id": r.UsedBy.String(), "name": usedByName}
+	}
+	projs := make([]string, 0, len(r.ProjectIds))
+	for _, p := range r.ProjectIds {
+		projs = append(projs, p.String())
+	}
+	return gin.H{
+		"id": r.ID.String(), "project_ids": projs, "scopes": r.Scopes,
+		"expires_at": r.ExpiresAt.Time.Format("2006-01-02T15:04:05Z07:00"),
+		"used_by":    used,
+		"created_at": r.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
+	}
 }
 
 // --- wire shapes ---

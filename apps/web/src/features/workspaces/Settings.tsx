@@ -81,7 +81,6 @@ function ChangePasswordForm() {
           type="password"
           name="new_password"
           required
-          minlength={8}
           autocomplete="new-password"
           class={inputClass}
         />

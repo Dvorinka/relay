@@ -154,14 +154,14 @@ func (s *Service) handleListMessages(c *gin.Context) {
 func (s *Service) handlePostMessage(c *gin.Context) {
 	conv := c.MustGet(ctxConversation).(db.Conversation)
 	var req struct {
-		Body          string   `json:"body" binding:"required"`
+		Body          string   `json:"body"`
 		AttachmentIDs []string `json:"attachment_ids"`
 	}
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	if len(req.Body) == 0 || len(req.Body) > 20000 {
-		httpx.Error(c, http.StatusBadRequest, "bad_request", "body must be 1-20000 characters")
+	if len(req.Body) > 20000 || (len(req.Body) == 0 && len(req.AttachmentIDs) == 0) {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "body must be <= 20000 characters; an empty body needs at least one attachment")
 		return
 	}
 	if len(req.AttachmentIDs) > 20 {

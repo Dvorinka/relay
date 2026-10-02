@@ -74,7 +74,6 @@ export default function Register() {
             type="password"
             name="password"
             required
-            minlength={8}
             autocomplete="new-password"
             class={inputClass}
           />

@@ -95,13 +95,18 @@ annotated list: `DATABASE_URL`, `AUTH_SECRET`, `STORAGE_*` (MinIO, S3, R2),
 
 ## MCP integration
 
-Create an agent in workspace settings, grant it projects, mint a token, and
-point your agent at your deployment:
+Agents register themselves. In workspace settings click **Invite agent**,
+hand the printed bundle to the agent, and it redeems a one-shot `rli_`
+invite for a live `rly_` token — picking its own name and review mode:
 
 ```text
-POST {RELAY_PUBLIC_URL}/mcp        # streamable HTTP transport
+POST {RELAY_PUBLIC_URL}/api/agent-invites/redeem   # one-shot, no auth
+POST {RELAY_PUBLIC_URL}/mcp                        # streamable HTTP transport
 Authorization: Bearer rly_...
 ```
+
+Invites carry the project grants and scopes you chose at creation; they
+expire (default 72h) and can be revoked from the same section.
 
 Tools: `list_projects`, `get_project`, `list_conversations`, `get_messages`,
 `get_message`, `get_attachment`, `search_messages`, `list_issues`,
@@ -121,10 +126,12 @@ a note; the agent sees your verdict over MCP.
 
 Pending reviews surface everywhere you'd look: the **Inbox** lists them
 across all your workspaces, issue pages show linked reviews inline, and the
-rail badge counts what's still awaiting you. Every project tab is a deep
-link (`?tab=reviews`), so inbox items land exactly where the verdict lives.
+rail badge counts what's still awaiting you. Project views are deep links
+(`?view=reviews`, legacy `?tab=` links still resolve), so inbox items land
+exactly where the verdict lives.
 
-Each agent picks a **review mode** when you create or edit it in Settings:
+Each agent picks a **review mode** at redemption (admins can change it later
+in Settings):
 
 - `notify` (default) - the agent works to completion, then files the review
   for your records. Change your mind later and request a follow-up.

@@ -59,7 +59,7 @@ describe("createClient", () => {
   it("builds the attachment download URL", () => {
     const client = createClient("http://localhost:8080");
     expect(client.attachmentURL("p1", "a1")).toBe(
-      "http://localhost:8080/api/projects/p1/attachments/a1/url",
+      "http://localhost:8080/api/projects/p1/attachments/a1/download",
     );
   });
 

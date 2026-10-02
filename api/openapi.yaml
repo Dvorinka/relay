@@ -416,7 +416,10 @@ paths:
               type: object
               required: [body]
               properties:
-                body: { type: string, minLength: 1, maxLength: 20000 }
+                body:
+                  type: string
+                  maxLength: 20000
+                  description: "May be empty when attachment_ids is non-empty."
                 attachment_ids:
                   type: array
                   items: { type: string, format: uuid }
@@ -468,6 +471,27 @@ paths:
           description: Redirect to the presigned object URL
           headers:
             Location: { schema: { type: string, format: uri } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/projects/{projectId}/attachments/{attachmentId}/download:
+    get:
+      operationId: downloadAttachment
+      summary: Stream the attachment bytes through the API
+      description: >-
+        Same-origin download for browsers. Prefer this over the presigned
+        redirect when the client cannot reach the storage endpoint directly
+        (LAN dev environments, private-network access rules).
+      tags: [attachments]
+      parameters:
+        - { $ref: "#/components/parameters/ProjectId" }
+        - { $ref: "#/components/parameters/AttachmentId" }
+      responses:
+        "200":
+          description: Attachment bytes
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
@@ -840,6 +864,115 @@ paths:
         "204": { description: Revoked }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/workspaces/{workspaceId}/agent-invites:
+    post:
+      operationId: createAgentInvite
+      summary: Mint a one-shot agent invite; the rli_ token is returned once (owner/admin)
+      description: >-
+        The user invites; the agent registers itself by redeeming the token at
+        POST /api/agent-invites/redeem. Empty project_ids means every workspace
+        project at redeem time; empty scopes means the default full set.
+      tags: [agents]
+      parameters: [ { $ref: "#/components/parameters/WorkspaceId" } ]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                project_ids:
+                  type: array
+                  items: { type: string, format: uuid }
+                scopes:
+                  type: array
+                  items: { $ref: "#/components/schemas/AgentScope" }
+                expires_hours:
+                  type: integer
+                  minimum: 1
+                  maximum: 168
+                  default: 72
+      responses:
+        "201":
+          description: Invite created; `token` shown only in this response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/AgentInvite"
+                  - type: object
+                    required: [token]
+                    properties:
+                      token: { type: string, description: "rli_... - shown once" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    get:
+      operationId: listAgentInvites
+      summary: List invites and their redemption state (owner/admin)
+      tags: [agents]
+      parameters: [ { $ref: "#/components/parameters/WorkspaceId" } ]
+      responses:
+        "200":
+          description: Invites
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [invites]
+                properties:
+                  invites:
+                    type: array
+                    items: { $ref: "#/components/schemas/AgentInvite" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/workspaces/{workspaceId}/agent-invites/{inviteId}:
+    delete:
+      operationId: deleteAgentInvite
+      summary: Revoke an unused invite (owner/admin)
+      tags: [agents]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - name: inviteId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/agent-invites/redeem:
+    post:
+      operationId: redeemAgentInvite
+      summary: Agent self-registration - redeems an rli_ invite, returns a live rly_ token
+      description: >-
+        Public endpoint; the invite token is the credential. The agent supplies
+        its own name, receives its agent identity, grants, and a working MCP
+        token in one response.
+      tags: [agents]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, name]
+              properties:
+                token: { type: string, description: "rli_..." }
+                name: { type: string, minLength: 1, maxLength: 60 }
+                description: { type: string, maxLength: 500 }
+                review_mode:
+                  type: string
+                  enum: [notify, gate]
+                  default: notify
+      responses:
+        "201":
+          description: Registered; `token` shown only in this response
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentRedeemResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { description: "Invite invalid, used, or expired" }
 
   /mcp:
     post:
@@ -1948,6 +2081,35 @@ components:
           required: [token]
           properties:
             token: { type: string, description: "rly_... - shown once" }
+
+    AgentInvite:
+      type: object
+      required: [id, project_ids, scopes, expires_at, used_by, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        project_ids:
+          type: array
+          items: { type: string, format: uuid }
+          description: "Empty = every workspace project at redeem time."
+        scopes:
+          type: array
+          items: { $ref: "#/components/schemas/AgentScope" }
+        expires_at: { type: string, format: date-time }
+        used_by:
+          type: ["object", "null"]
+          properties:
+            agent_id: { type: string, format: uuid }
+            name: { type: string }
+        created_at: { type: string, format: date-time }
+
+    AgentRedeemResult:
+      type: object
+      required: [agent, token, mcp_url, api_url]
+      properties:
+        agent: { $ref: "#/components/schemas/Agent" }
+        token: { type: string, description: "rly_... - shown once" }
+        mcp_url: { type: string }
+        api_url: { type: string }
 
     ProjectOverview:
       type: object

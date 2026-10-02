@@ -1,20 +1,15 @@
 import {
-  ApiClientError,
   type Agent,
+  type AgentInvite,
   type AgentScope,
   type McpTokenMeta,
   type MintedToken,
   type Project,
 } from "@relay/api-client";
 import { createResource, createSignal, For, Show } from "solid-js";
-import {
-  Field,
-  FormError,
-  SubmitButton,
-  inputClass,
-} from "../../components/ui";
+import { FormError, SubmitButton, inputClass } from "../../components/ui";
 import { api } from "../../lib/api";
-import { timeAgo } from "../../lib/time";
+import { timeAgo, timeUntil } from "../../lib/time";
 
 const ALL_SCOPES: AgentScope[] = [
   "project:read",
@@ -336,7 +331,9 @@ function AgentRow(props: {
                         <button
                           type="button"
                           class="mt-1 text-[11px] text-accent"
-                          onClick={() => navigator.clipboard.writeText(t().token)}
+                          onClick={(e) =>
+                            copyText(t().token, e.currentTarget)
+                          }
                         >
                           copy
                         </button>
@@ -367,6 +364,125 @@ function AgentRow(props: {
   );
 }
 
+function copyText(text: string, el: HTMLButtonElement) {
+  // navigator.clipboard is secure-context only; LAN origins need the
+  // execCommand fallback.
+  const done = () => {
+    el.textContent = "copied";
+    setTimeout(() => {
+      el.textContent = "copy";
+    }, 1500);
+  };
+  if (navigator.clipboard?.writeText) {
+    void navigator.clipboard.writeText(text).then(done, () => fallback());
+  } else {
+    fallback();
+  }
+  function fallback() {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.cssText = "position:fixed;opacity:0";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    ta.remove();
+    done();
+  }
+}
+
+// A fresh invite renders as a complete setup bundle the user can paste to the
+// agent: the redeem call, then the MCP config with the returned token.
+function InviteCard(props: {
+  invite: AgentInvite & { token: string };
+  apiBase: string;
+  workspaceId: string;
+  onRevoked: () => void;
+}) {
+  const redeem = () =>
+    `curl -sS -X POST ${props.apiBase}/api/agent-invites/redeem \\
+  -H "Content-Type: application/json" \\
+  -d '{"token":"${props.invite.token}","name":"my-agent","review_mode":"notify"}'`;
+
+  const mcpConfig = () =>
+    `{
+  "mcpServers": {
+    "relay": {
+      "url": "${props.apiBase}/mcp",
+      "headers": { "Authorization": "Bearer <token from the redeem response>" }
+    }
+  }
+}`;
+
+  return (
+    <div class="rounded-md border border-accent bg-surface p-3">
+      <div class="mb-2 flex items-center justify-between">
+        <p class="text-[12px] font-semibold">
+          Invite created - send this bundle to your agent
+        </p>
+        <p class="text-[11px] text-muted">
+          expires {timeUntil(props.invite.expires_at)}
+        </p>
+      </div>
+      <ol class="mb-3 flex list-decimal flex-col gap-2.5 pl-4 text-[12px]">
+        <li>
+          <p class="mb-1 text-muted">
+            The agent registers itself - no console setup needed:
+          </p>
+          <div class="relative">
+            <pre class="overflow-x-auto rounded-md border border-border bg-bg p-2 font-mono text-[11px] leading-relaxed">
+              {redeem()}
+            </pre>
+            <button
+              type="button"
+              class="absolute right-1.5 top-1.5 text-[11px] text-accent"
+              onClick={(e) => copyText(redeem(), e.currentTarget)}
+            >
+              copy
+            </button>
+          </div>
+        </li>
+        <li>
+          <p class="mb-1 text-muted">
+            The response returns a live <code>rly_</code> token. Wire it into
+            the agent's MCP config:
+          </p>
+          <div class="relative">
+            <pre class="overflow-x-auto rounded-md border border-border bg-bg p-2 font-mono text-[11px] leading-relaxed">
+              {mcpConfig()}
+            </pre>
+            <button
+              type="button"
+              class="absolute right-1.5 top-1.5 text-[11px] text-accent"
+              onClick={(e) => copyText(mcpConfig(), e.currentTarget)}
+            >
+              copy
+            </button>
+          </div>
+        </li>
+      </ol>
+      <p class="mb-2 text-[11px] text-muted">
+        Scopes: <span class="font-mono">{props.invite.scopes.join(", ")}</span>
+        {props.invite.project_ids.length === 0
+          ? " on every project in this workspace."
+          : ` on ${props.invite.project_ids.length} project(s).`}
+      </p>
+      <button
+        type="button"
+        class="text-[11px] text-muted hover:text-red-600 dark:hover:text-red-400"
+        onClick={async (e) => {
+          e.preventDefault();
+          await api
+            .deleteAgentInvite(props.workspaceId, props.invite.id)
+            .catch(() => {});
+          props.onRevoked();
+        }}
+      >
+        revoke invite
+      </button>
+    </div>
+  );
+}
+
 export default function AgentsSection(props: {
   workspaceId: string;
   canManage: boolean;
@@ -374,6 +490,11 @@ export default function AgentsSection(props: {
   const [agents, { refetch }] = createResource(
     () => props.workspaceId,
     async (id) => (await api.listAgents(id)).agents,
+  );
+  const [invites, { refetch: refetchInvites }] = createResource(
+    () => props.workspaceId,
+    async (id) =>
+      props.canManage ? (await api.listAgentInvites(id)).invites : [],
   );
   const [projects] = createResource(
     () => props.workspaceId,
@@ -385,36 +506,29 @@ export default function AgentsSection(props: {
   const [mintedTokens, setMintedTokens] = createSignal<
     Record<string, MintedToken>
   >({});
+  const [freshInvite, setFreshInvite] = createSignal<
+    (AgentInvite & { token: string }) | null
+  >(null);
 
-  async function onCreate(e: SubmitEvent) {
-    e.preventDefault();
-    const form = e.currentTarget as HTMLFormElement;
-    const data = new FormData(form);
+  const apiBase = () => window.location.origin;
+
+  async function onInvite() {
     setError(null);
     setPending(true);
     try {
-      const slug = String(data.get("slug") ?? "").trim();
-      await api.createAgent(props.workspaceId, {
-        name: String(data.get("name") ?? "").trim(),
-        ...(slug ? { slug } : {}),
-        description: String(data.get("description") ?? "").trim(),
-        review_mode:
-          String(data.get("review_mode") ?? "notify") === "gate"
-            ? "gate"
-            : "notify",
-      });
-      form.reset();
-      await refetch();
+      setFreshInvite(await api.createAgentInvite(props.workspaceId, {}));
+      await refetchInvites();
     } catch (err) {
-      setError(
-        err instanceof ApiClientError && err.status === 409
-          ? "That slug is taken in this workspace"
-          : errorMessage(err, "Could not create agent"),
-      );
+      setError(errorMessage(err, "Could not create invite"));
     } finally {
       setPending(false);
     }
   }
+
+  const pendingInvites = () =>
+    (invites() ?? []).filter(
+      (i) => !i.used_by && new Date(i.expires_at) > new Date(),
+    );
 
   return (
     <div class="flex flex-col gap-4">
@@ -425,7 +539,7 @@ export default function AgentsSection(props: {
             <li class="px-3 py-2.5 text-[13px] text-muted">
               {agents.state === "errored"
                 ? "Could not load agents"
-                : "No agents yet. Agents connect through MCP with scoped tokens."}
+                : "No agents yet. Invite one below - it registers itself."}
             </li>
           }
         >
@@ -449,40 +563,54 @@ export default function AgentsSection(props: {
       </ul>
 
       <Show when={props.canManage}>
-        <form onSubmit={onCreate} class="flex max-w-sm flex-col gap-3">
-          <Field label="Agent name">
-            <input type="text" name="name" required class={inputClass} />
-          </Field>
-          <div class="flex gap-2">
-            <Field label="Slug (optional)">
-              <input
-                type="text"
-                name="slug"
-                pattern="[a-z0-9-]+"
-                class={inputClass}
-              />
-            </Field>
-            <Field label="Description">
-              <input type="text" name="description" class={inputClass} />
-            </Field>
-          </div>
-          <Field label="Review mode">
-            <select name="review_mode" class={inputClass}>
-              <option value="notify">
-                Notify - agent reports after finishing work
-              </option>
-              <option value="gate">
-                Gate - agent waits for your approval on each review
-              </option>
-            </select>
-          </Field>
-          <FormError message={error()} />
+        <Show when={freshInvite()}>
+          {(inv) => (
+            <InviteCard
+              invite={inv()}
+              apiBase={apiBase()}
+              workspaceId={props.workspaceId}
+              onRevoked={() => {
+                setFreshInvite(null);
+                void refetchInvites();
+              }}
+            />
+          )}
+        </Show>
+
+        <Show when={pendingInvites().length > 0}>
           <div>
-            <SubmitButton pending={pending()}>
-              {pending() ? "Creating..." : "New agent"}
-            </SubmitButton>
+            <h3 class="mb-1.5 text-[12px] font-semibold">Open invites</h3>
+            <ul class="flex flex-col gap-1">
+              <For each={pendingInvites()}>
+                {(i) => (
+                  <li class="flex items-center gap-2 text-[12px] text-muted">
+                    <span class="font-mono">
+                      {i.project_ids.length === 0
+                        ? "all projects"
+                        : `${i.project_ids.length} project(s)`}
+                    </span>
+                    <span>expires {timeUntil(i.expires_at)}</span>
+                  </li>
+                )}
+              </For>
+            </ul>
           </div>
-        </form>
+        </Show>
+
+        <div class="max-w-sm">
+          <SubmitButton
+            type="button"
+            pending={pending()}
+            onClick={() => void onInvite()}
+          >
+            {pending() ? "Creating invite..." : "Invite agent"}
+          </SubmitButton>
+          <p class="mt-1.5 text-[11px] text-muted">
+            The agent registers itself with the invite - it picks its own name
+            and receives a working MCP token. No manual setup on your side.
+          </p>
+          <FormError message={error()} />
+        </div>
       </Show>
     </div>
   );

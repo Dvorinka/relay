@@ -48,6 +48,10 @@ goose + sqlc wired, OpenAPI skeleton, health endpoint, brand kit, docs.
 - Scoped, revocable `rly_` MCP tokens, per-project permissions
 - MCP server (streamable HTTP): full tool list from the spec
 - Project settings: agent access management
+- Self-registration: admins mint one-shot `rli_` invites (scoped +
+  project-granted, 72h default TTL); the agent redeems via
+  `POST /api/agent-invites/redeem` with its own name/review mode and gets
+  back a live `rly_` token + MCP URL
 
 ## Phase 5.5 - Agent workflow ☑
 

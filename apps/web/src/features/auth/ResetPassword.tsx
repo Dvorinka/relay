@@ -81,7 +81,6 @@ export default function ResetPassword() {
                 type="password"
                 name="password"
                 required
-                minlength={8}
                 autocomplete="new-password"
                 class={inputClass}
               />
@@ -91,7 +90,6 @@ export default function ResetPassword() {
                 type="password"
                 name="confirm"
                 required
-                minlength={8}
                 autocomplete="new-password"
                 class={inputClass}
               />

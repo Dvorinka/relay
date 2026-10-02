@@ -121,3 +121,32 @@ order by p.name;
 -- name: UpdateAgentAvatar :one
 update agents set avatar_key = sqlc.arg(avatar_key), updated_at = now() where id = sqlc.arg(id)
 returning *;
+
+-- name: CreateAgentInvite :one
+insert into agent_invites (workspace_id, token_hash, project_ids, scopes, expires_at, created_by)
+values (sqlc.arg(workspace_id), sqlc.arg(token_hash), sqlc.arg(project_ids)::uuid[],
+        sqlc.arg(scopes)::text[], sqlc.arg(expires_at), sqlc.arg(created_by))
+returning *;
+
+-- name: ListAgentInvites :many
+select i.*, a.name as used_by_name from agent_invites i
+left join agents a on a.id = i.used_by
+where i.workspace_id = sqlc.arg(workspace_id)
+order by i.created_at desc;
+
+-- name: GetAgentInviteByHash :one
+select * from agent_invites
+where token_hash = sqlc.arg(token_hash)
+  and used_by is null
+  and expires_at > now();
+
+-- name: RedeemAgentInvite :one
+update agent_invites set used_by = sqlc.arg(used_by)
+where id = sqlc.arg(id) and used_by is null
+returning *;
+
+-- name: DeleteAgentInvite :exec
+delete from agent_invites where id = sqlc.arg(id);
+
+-- name: ListWorkspaceProjectIDs :many
+select id from projects where workspace_id = sqlc.arg(workspace_id);

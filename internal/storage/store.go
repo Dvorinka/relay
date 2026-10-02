@@ -81,6 +81,13 @@ func (s *Store) Remove(ctx context.Context, key string) error {
 	return s.put.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{})
 }
 
+// Get fetches an object for streaming through the API. Used when the
+// browser cannot reach the public endpoint directly (LAN dev, private
+// network access rules).
+func (s *Store) Get(ctx context.Context, key string) (*minio.Object, error) {
+	return s.put.GetObject(ctx, s.bucket, key, minio.GetObjectOptions{})
+}
+
 // PresignGet mints a short-lived GET URL. Images are dispositioned inline
 // so <img src> renders; everything else downloads as an attachment. The
 // content-type allowlist in internal/attachments keeps stored HTML/SVG out,

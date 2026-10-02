@@ -96,14 +96,19 @@ func (s *Service) handleGetApp(c *gin.Context) {
 func (s *Service) handleManifest(c *gin.Context) {
 	ws := c.Query("workspace")
 	name := c.DefaultQuery("name", "relay")
+	homepage := s.cfg.LandingURL
+	if homepage == "" {
+		homepage = s.cfg.PublicURL
+	}
 	manifest := gin.H{
 		"name": "Relay (" + name + ")",
-		"url":  s.cfg.PublicURL,
+		"url":  homepage,
 		"hook_attributes": gin.H{
 			"url":    s.cfg.PublicURL + "/api/github/webhook",
 			"active": true,
 		},
 		"redirect_url": s.cfg.PublicURL + "/api/github/callback?ws=" + url.QueryEscape(ws),
+		"setup_url":    s.cfg.PublicURL + "/app/settings",
 		"public":       false,
 		"default_permissions": gin.H{
 			"issues":        "write",
@@ -111,7 +116,9 @@ func (s *Service) handleManifest(c *gin.Context) {
 			"contents":      "read",
 			"metadata":      "read",
 		},
-		"default_events": []string{"issues", "pull_request", "push", "installation"},
+		// "installation" is not a valid default_events entry - GitHub delivers
+		// it to the app webhook automatically.
+		"default_events": []string{"issues", "pull_request", "push"},
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"manifest": manifest,

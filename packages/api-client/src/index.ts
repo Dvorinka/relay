@@ -28,6 +28,8 @@ export type AgentScope = components["schemas"]["AgentScope"];
 export type AgentGrant = components["schemas"]["AgentGrant"];
 export type McpTokenMeta = components["schemas"]["McpTokenMeta"];
 export type MintedToken = components["schemas"]["MintedToken"];
+export type AgentInvite = components["schemas"]["AgentInvite"];
+export type AgentRedeemResult = components["schemas"]["AgentRedeemResult"];
 export type AgentReview = components["schemas"]["AgentReview"];
 export type ReviewStatus = NonNullable<AgentReview["status"]>;
 export type PendingReviewItem = NonNullable<
@@ -348,6 +350,26 @@ export function createClient(baseUrl: string) {
       request<void>(`/api/agents/${agentId}/tokens/${tokenId}`, {
         method: "DELETE",
       }),
+    createAgentInvite: (
+      workspaceId: string,
+      input: {
+        project_ids?: string[];
+        scopes?: AgentScope[];
+        expires_hours?: number;
+      } = {},
+    ) =>
+      post<AgentInvite & { token: string }>(
+        `/api/workspaces/${workspaceId}/agent-invites`,
+        input,
+      ),
+    listAgentInvites: (workspaceId: string) =>
+      request<{ invites: AgentInvite[] }>(
+        `/api/workspaces/${workspaceId}/agent-invites`,
+      ),
+    deleteAgentInvite: (workspaceId: string, inviteId: string) =>
+      request<void>(`/api/workspaces/${workspaceId}/agent-invites/${inviteId}`, {
+        method: "DELETE",
+      }),
 
     // GitHub
     getGitHubApp: () =>
@@ -528,7 +550,7 @@ export function createClient(baseUrl: string) {
     // Redirect endpoint; use the returned path directly as img src / link
     // href — the session cookie rides along on the 302.
     attachmentURL: (projectId: string, attachmentId: string) =>
-      `${baseUrl}/api/projects/${projectId}/attachments/${attachmentId}/url`,
+      `${baseUrl}/api/projects/${projectId}/attachments/${attachmentId}/download`,
   };
 }
 
