@@ -4,17 +4,20 @@
 package issues
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Dvorinka/relay/internal/auth"
 	"github.com/Dvorinka/relay/internal/conversations"
 	"github.com/Dvorinka/relay/internal/db"
 	"github.com/Dvorinka/relay/internal/events"
+	"github.com/Dvorinka/relay/internal/github"
 	"github.com/Dvorinka/relay/internal/httpx"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -39,6 +42,8 @@ type Service struct {
 	log *zap.Logger
 	// Bus publishes domain events for SSE subscribers. Optional.
 	Bus *events.Hub
+	// GH enables GitHub write-back (issue push + status sync). Optional.
+	GH *github.Service
 }
 
 func NewService(log *zap.Logger, pool *pgxpool.Pool) *Service {
@@ -52,6 +57,7 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
 	g.POST("/projects/:id/labels", s.projectGate, s.handleCreateLabel)
 	g.GET("/issues/:id", s.issueGate, s.handleGet)
 	g.PATCH("/issues/:id", s.issueGate, s.handleUpdate)
+	g.POST("/issues/:id/github", s.issueGate, s.handlePushToGitHub)
 	g.GET("/issues/:id/conversation", s.issueGate, s.handleConversation)
 	g.POST("/messages/:id/issue", s.handleFromMessage)
 }
@@ -343,6 +349,9 @@ func (s *Service) handleUpdate(c *gin.Context) {
 		kind := "field_changed"
 		if a["field"] == "status" {
 			kind = "status_changed"
+			if st, _ := a["to"].(string); st != "" {
+				s.syncGitHubState(old, st)
+			}
 		}
 		s.record(c, old.ID, user.ID, kind, a)
 	}
@@ -354,6 +363,112 @@ func (s *Service) handleUpdate(c *gin.Context) {
 	out := issueJSON(byIDRowToIssue(fresh), fresh.AssigneeName, fresh.AssigneeAvatar, s.issueLabels(c, fresh.ID), s.projectKey(c, fresh.ProjectID), fresh.GithubRepoOwner, fresh.GithubRepoName)
 	s.publish(fresh.ProjectID, "issue.updated", out)
 	c.JSON(http.StatusOK, out)
+}
+
+// handlePushToGitHub creates a GitHub issue for a Relay issue on the
+// project's linked repository and records the linkage.
+func (s *Service) handlePushToGitHub(c *gin.Context) {
+	i := c.MustGet(ctxIssueKey).(db.GetIssueForUserRow)
+	if i.GithubNumber.Valid {
+		httpx.Error(c, http.StatusConflict, "conflict", "issue is already linked to GitHub")
+		return
+	}
+	if s.GH == nil {
+		httpx.Error(c, http.StatusServiceUnavailable, "unavailable", "GitHub is not configured")
+		return
+	}
+	repos, err := s.q.ListProjectRepos(c.Request.Context(), i.ProjectID)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	if len(repos) == 0 {
+		httpx.Error(c, http.StatusConflict, "no_repo", "project has no linked GitHub repository")
+		return
+	}
+	repo := repos[0]
+	if len(repos) > 1 {
+		var req struct {
+			RepoID string `json:"repo_id"`
+		}
+		if httpx.BindJSON(c, &req) {
+			matched := false
+			for _, r := range repos {
+				if r.ID.String() == req.RepoID {
+					repo, matched = r, true
+				}
+			}
+			if !matched {
+				httpx.Error(c, http.StatusBadRequest, "bad_request", "repo_id is not linked to this project")
+				return
+			}
+		} else {
+			return
+		}
+	}
+	client, err := s.GH.Client(c.Request.Context())
+	if err != nil {
+		httpx.Error(c, http.StatusServiceUnavailable, "unavailable", "GitHub is not configured")
+		return
+	}
+	body := i.Description
+	if body != "" {
+		body += "\n\n---\n"
+	}
+	body += "*Tracked in Relay*"
+	gh, err := client.CreateIssue(c.Request.Context(), repo.InstallationID, repo.Owner, repo.Name, i.Title, body)
+	if err != nil {
+		s.log.Warn("github create issue failed", zap.Error(err))
+		httpx.Error(c, http.StatusBadGateway, "github_error", "GitHub rejected the issue")
+		return
+	}
+	if err := s.q.SetIssueGitHub(c.Request.Context(), db.SetIssueGitHubParams{
+		ID:           i.ID,
+		GithubRepoID: repo.ID,
+		GithubNumber: pgtype.Int4{Int32: int32(gh.Number), Valid: true},
+		GithubNodeID: pgtype.Text{String: gh.NodeID, Valid: true},
+	}); err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	// a relay-side closed state maps onto the fresh GitHub issue too
+	if i.Status == "done" || i.Status == "cancelled" {
+		go s.closeOnGitHub(repo.InstallationID, repo.Owner, repo.Name, gh.Number, "closed")
+	}
+	fresh, err := s.q.GetIssueByID(c.Request.Context(), i.ID)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	out := issueJSON(byIDRowToIssue(fresh), fresh.AssigneeName, fresh.AssigneeAvatar, s.issueLabels(c, fresh.ID), s.projectKey(c, fresh.ProjectID), fresh.GithubRepoOwner, fresh.GithubRepoName)
+	s.publish(fresh.ProjectID, "issue.updated", out)
+	c.JSON(http.StatusOK, out)
+}
+
+// syncGitHubState mirrors a Relay status flip onto the linked GitHub
+// issue: done/cancelled -> closed, anything else -> open. Best-effort; the
+// GitHub webhook echo then converges any drift back on the Relay side.
+func (s *Service) syncGitHubState(i db.GetIssueForUserRow, status string) {
+	if s.GH == nil || !i.GithubNumber.Valid || !i.GithubRepoOwner.Valid || !i.GithubRepoName.Valid {
+		return
+	}
+	state := "open"
+	if status == "done" || status == "cancelled" {
+		state = "closed"
+	}
+	go s.closeOnGitHub(i.GithubInstallationID.Int64, i.GithubRepoOwner.String, i.GithubRepoName.String, int(i.GithubNumber.Int32), state)
+}
+
+func (s *Service) closeOnGitHub(installID int64, owner, repo string, number int, state string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	client, err := s.GH.Client(ctx)
+	if err != nil {
+		return
+	}
+	if err := client.SetIssueState(ctx, installID, owner, repo, number, state); err != nil {
+		s.log.Warn("github state sync failed", zap.String("state", state), zap.Error(err))
+	}
 }
 
 func (s *Service) handleConversation(c *gin.Context) {

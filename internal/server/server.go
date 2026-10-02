@@ -26,6 +26,7 @@ import (
 	"github.com/Dvorinka/relay/internal/search"
 	"github.com/Dvorinka/relay/internal/storage"
 	"github.com/Dvorinka/relay/internal/todos"
+	"github.com/Dvorinka/relay/internal/webhooks"
 	"github.com/Dvorinka/relay/internal/workspaces"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -59,6 +60,7 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	issueSvc := issues.NewService(log, pool)
 	agentSvc := agents.NewService(log, pool)
 	ghSvc := github.NewService(cfg, log, pool)
+	issueSvc.GH = ghSvc
 	todoSvc := todos.NewService(log, pool)
 	reviewSvc := reviews.NewService(log, pool)
 	avSvc := avatars.NewService(log, pool, store)
@@ -69,6 +71,8 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	reviewSvc.Bus = hub
 	rtSvc := realtime.NewService(hub, pool)
 	searchSvc := search.NewService(pool)
+	hookSvc := webhooks.NewService(log, pool)
+	hookSvc.Start(context.Background(), hub)
 	mcpHandler := mcpserver.New(db.New(pool), store, log, ghSvc, hub)
 
 	api := r.Group("/api")
@@ -93,6 +97,7 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	ghSvc.RegisterRoutes(priv, api)
 	todoSvc.RegisterRoutes(priv)
 	reviewSvc.RegisterRoutes(priv)
+	hookSvc.RegisterRoutes(priv)
 	avSvc.RegisterRoutes(priv)
 	rtSvc.RegisterRoutes(priv)
 	searchSvc.RegisterRoutes(priv)

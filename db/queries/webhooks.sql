@@ -1,0 +1,55 @@
+-- name: CreateWebhookSubscription :one
+insert into webhook_subscriptions (project_id, url, secret, events, active, created_by)
+values (sqlc.arg(project_id), sqlc.arg(url), sqlc.arg(secret), sqlc.arg(events)::text[], sqlc.arg(active), sqlc.arg(created_by))
+returning *;
+
+-- name: ListProjectWebhooks :many
+select * from webhook_subscriptions where project_id = sqlc.arg(project_id) order by created_at desc;
+
+-- name: GetWebhookForUser :one
+-- subscription + owning project, only when the caller is a workspace member
+select s.*, p.workspace_id
+from webhook_subscriptions s
+join projects p on p.id = s.project_id
+join workspace_members wm on wm.workspace_id = p.workspace_id and wm.user_id = sqlc.arg(user_id)
+where s.id = sqlc.arg(id);
+
+-- name: GetWebhookByID :one
+select s.*, p.workspace_id
+from webhook_subscriptions s
+join projects p on p.id = s.project_id
+where s.id = sqlc.arg(id);
+
+-- name: UpdateWebhook :one
+update webhook_subscriptions set
+    url = coalesce(sqlc.narg(url), url),
+    events = coalesce(sqlc.narg(events)::text[], events),
+    active = coalesce(sqlc.narg(active), active),
+    updated_at = now()
+where id = sqlc.arg(id)
+returning *;
+
+-- name: DeleteWebhook :exec
+delete from webhook_subscriptions where id = sqlc.arg(id);
+
+-- name: ActiveWebhooksForProject :many
+select * from webhook_subscriptions where project_id = sqlc.arg(project_id) and active;
+
+-- name: RecordWebhookDelivery :one
+insert into webhook_deliveries (subscription_id, event_type, payload, status_code, attempts, duration_ms, success)
+values (sqlc.arg(subscription_id), sqlc.arg(event_type), sqlc.arg(payload)::jsonb, sqlc.narg(status_code), sqlc.arg(attempts), sqlc.arg(duration_ms), sqlc.arg(success))
+returning *;
+
+-- name: ListWebhookDeliveries :many
+select * from webhook_deliveries where subscription_id = sqlc.arg(subscription_id)
+order by created_at desc limit 50;
+
+-- name: TrimWebhookDeliveries :exec
+-- keep the newest 200 rows per subscription
+delete from webhook_deliveries d
+where d.subscription_id = sqlc.arg(subscription_id)
+  and d.id not in (
+    select id from webhook_deliveries
+    where subscription_id = sqlc.arg(subscription_id)
+    order by created_at desc limit 200
+  );

@@ -1,6 +1,7 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -219,6 +220,32 @@ func (c *Client) ListIssues(ctx context.Context, installID int64, owner, repo st
 		}
 	}
 	return issues, nil
+}
+
+// CreateIssue opens a new GitHub issue (write-back from Relay).
+func (c *Client) CreateIssue(ctx context.Context, installID int64, owner, repo, title, body string) (*GHIssue, error) {
+	tok, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return nil, err
+	}
+	payload, _ := json.Marshal(map[string]string{"title": title, "body": body})
+	var out GHIssue
+	err = c.do(ctx, "POST",
+		fmt.Sprintf("%s/repos/%s/%s/issues", apiBase, owner, repo),
+		tok, bytes.NewReader(payload), &out)
+	return &out, err
+}
+
+// SetIssueState closes or reopens a GitHub issue ("closed" | "open").
+func (c *Client) SetIssueState(ctx context.Context, installID int64, owner, repo string, number int, state string) error {
+	tok, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return err
+	}
+	payload, _ := json.Marshal(map[string]string{"state": state})
+	return c.do(ctx, "PATCH",
+		fmt.Sprintf("%s/repos/%s/%s/issues/%d", apiBase, owner, repo, number),
+		tok, bytes.NewReader(payload), nil)
 }
 
 func (c *Client) GetIssue(ctx context.Context, installID int64, owner, repo string, number int) (*GHIssue, error) {

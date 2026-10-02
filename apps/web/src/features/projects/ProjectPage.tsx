@@ -15,6 +15,7 @@ import { DevelopmentPanel } from "../github/GitHub";
 import { Board } from "../issues/Board";
 import { IssueList } from "../issues/IssueList";
 import { Reviews } from "../reviews/Reviews";
+import { WebhooksSection } from "../webhooks/Webhooks";
 
 type Tab =
   | "overview"
@@ -22,7 +23,8 @@ type Tab =
   | "board"
   | "conversation"
   | "reviews"
-  | "development";
+  | "development"
+  | "settings";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "overview", label: "Overview" },
@@ -31,6 +33,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "conversation", label: "Conversation" },
   { id: "reviews", label: "Reviews" },
   { id: "development", label: "Development" },
+  { id: "settings", label: "Settings" },
 ];
 
 function ProjectDot(props: { color?: string | null; class?: string }) {
@@ -206,6 +209,9 @@ export default function ProjectPage() {
             workspaceId={p.workspace_id}
           />
         )}
+      </Show>
+      <Show when={tab() === "settings" ? project() : undefined} keyed>
+        {(p) => <WebhooksSection projectId={p.id} />}
       </Show>
     </div>
   );
