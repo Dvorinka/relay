@@ -3,10 +3,10 @@ import { A, useNavigate } from "@solidjs/router";
 import { Portal } from "solid-js/web";
 import { initials } from "../lib/text";
 import { useSession } from "../stores/session";
+import { useNav } from "../stores/nav";
 import { toggleTheme, useTheme } from "../stores/theme";
-import { openPalette } from "./CommandPalette";
-import { MoonIcon, SunIcon } from "./icons";
-import { RelayMark, SearchIcon } from "./icons";
+import { MenuIcon, MoonIcon, SunIcon } from "./icons";
+import { RelayMark } from "./icons";
 
 function AccountMenu() {
   const session = useSession();
@@ -69,26 +69,23 @@ function AccountMenu() {
 
 export function TopBar() {
   const { theme } = useTheme();
+  const { toggleNav } = useNav();
   return (
-    <header class="flex h-12 shrink-0 items-center gap-3 border-b border-border px-4">
+    <header class="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3 sm:gap-3 sm:px-4">
+      <button
+        type="button"
+        onClick={toggleNav}
+        aria-label="Open navigation"
+        class="flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-hover hover:text-fg md:hidden"
+      >
+        <MenuIcon class="h-4 w-4" />
+      </button>
       <A href="/app" class="flex items-center gap-2">
         <RelayMark class="h-5 w-5" />
         <span class="text-[15px] font-semibold tracking-tight">relay</span>
       </A>
 
       <div class="flex-1" />
-
-      <button
-        type="button"
-        onClick={openPalette}
-        class="flex h-7 w-64 items-center gap-2 rounded-md border border-border bg-surface px-2.5 text-[13px] text-muted transition-colors hover:bg-hover"
-      >
-        <SearchIcon class="h-3.5 w-3.5" />
-        <span class="flex-1 text-left">Search</span>
-        <kbd class="rounded border border-border px-1 font-mono text-[10px] leading-4 text-muted">
-          ⌘K
-        </kbd>
-      </button>
 
       <button
         type="button"

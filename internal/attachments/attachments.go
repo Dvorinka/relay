@@ -49,6 +49,7 @@ func NewService(log *zap.Logger, pool *pgxpool.Pool, store *storage.Store, cfg c
 func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
 	g.POST("/projects/:id/attachments", s.projectMemberOnly, s.handleUpload)
 	g.GET("/projects/:id/attachments/:attachmentId/url", s.projectMemberOnly, s.handleURL)
+	g.GET("/projects/:id/attachments/:attachmentId/download", s.projectMemberOnly, s.handleDownload)
 }
 
 // --- access gate ---
@@ -169,6 +170,48 @@ func (s *Service) handleURL(c *gin.Context) {
 		return
 	}
 	c.Redirect(http.StatusFound, url)
+}
+
+// handleDownload streams the object through the API. Same-origin, so it
+// works wherever the app is browsed from - unlike the presigned URL, which
+// requires the client to reach the storage host directly.
+func (s *Service) handleDownload(c *gin.Context) {
+	if s.store == nil {
+		httpx.Error(c, http.StatusServiceUnavailable, "storage_disabled", "object storage is not configured")
+		return
+	}
+	p := c.MustGet(ctxProject).(db.GetProjectForUserRow)
+	aid, ok := httpx.PathUUID(c, "attachmentId")
+	if !ok {
+		return
+	}
+	a, err := s.q.GetAttachmentInProjectForUser(c.Request.Context(), db.GetAttachmentInProjectForUserParams{
+		ID: aid, ProjectID: p.ID, UserID: auth.CurrentUser(c).ID,
+	})
+	if err != nil {
+		httpx.Error(c, http.StatusNotFound, "not_found", "attachment not found")
+		return
+	}
+	obj, err := s.store.Get(c.Request.Context(), a.StorageKey)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	defer func() { _ = obj.Close() }()
+	if _, err := obj.Stat(); err != nil {
+		httpx.Error(c, http.StatusNotFound, "not_found", "file missing from storage")
+		return
+	}
+	kind := "attachment"
+	if strings.HasPrefix(a.ContentType, "image/") {
+		kind = "inline"
+	}
+	safe := strings.NewReplacer("\\", "_", "\"", "_").Replace(a.Filename)
+	c.Header("Content-Type", a.ContentType)
+	c.Header("Content-Disposition", kind+"; filename=\""+safe+"\"")
+	c.Header("Cache-Control", "private, max-age=60")
+	c.Status(http.StatusOK)
+	_, _ = io.Copy(c.Writer, obj)
 }
 
 // --- helpers ---

@@ -125,14 +125,14 @@ func (a *App) setupPage(w http.ResponseWriter, r *http.Request) {
 <meta charset="utf-8">
 <title>Relay — connect</title>
 <style>
-  body{background:#101318;color:#e7e8ea;font:14px/1.5 system-ui;display:flex;
+  body{background:#0a0a0b;color:#e9e9eb;font:14px/1.5 system-ui;display:flex;
        align-items:center;justify-content:center;min-height:100vh;margin:0}
   form{display:flex;flex-direction:column;gap:10px;width:320px}
   h2{margin:0;font-size:18px}
-  input,button{font:inherit;padding:10px 12px;border-radius:8px;border:1px solid #232830}
-  input{background:#161a20;color:#e7e8ea}
-  button{background:#f2541b;color:#fff;border:0;cursor:pointer}
-  small{color:#8a919c}
+  input,button{font:inherit;padding:10px 12px;border-radius:8px;border:1px solid #232427}
+  input{background:#131416;color:#e9e9eb}
+  button{background:#06b6d4;color:#062a30;font-weight:600;border:0;cursor:pointer}
+  small{color:#9c9fa7}
 </style>
 <form method="post" onsubmit="event.preventDefault();fetch(location.pathname,{method:'post',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({server_url:this.server_url.value})}).then(r=>r.ok?location.reload():r.text().then(alert))">
   <h2>Connect to a Relay server</h2>

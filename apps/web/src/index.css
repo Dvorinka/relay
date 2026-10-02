@@ -8,32 +8,56 @@
     ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
 
   --color-bg: var(--bg);
+  --color-rail: var(--rail);
   --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
   --color-fg: var(--fg);
   --color-muted: var(--muted);
+  --color-faint: var(--faint);
   --color-border: var(--border);
+  --color-border-hi: var(--border-hi);
   --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
   --color-hover: var(--hover);
 }
 
+/* Warm light - design/design.html reference */
 :root {
   --bg: #fafaf8;
+  --rail: #f4f2ee;
   --surface: #ffffff;
-  --fg: #101318;
+  --surface-2: #f4f2ee;
+  --fg: #1a1c20;
   --muted: #5c6470;
-  --border: #e4e2dc;
-  --accent: #f2541b;
+  --faint: #9aa0aa;
+  --border: #e6e3dc;
+  --border-hi: #d5d2ca;
+  --accent: #06b6d4;
+  --accent-ink: #0891b2;
+  --accent-soft: rgb(6 182 212 / 0.1);
   --hover: rgb(16 19 24 / 0.05);
+  --code-bg: #f4f2ee;
+  color-scheme: light;
 }
 
+/* Neutral near-black - not blue-tinted */
 .dark {
-  --bg: #101318;
-  --surface: #161a20;
-  --fg: #e7e8ea;
-  --muted: #8a919c;
-  --border: #232830;
-  --accent: #f2541b;
+  --bg: #0a0a0b;
+  --rail: #0e0e10;
+  --surface: #131416;
+  --surface-2: #1a1b1f;
+  --fg: #e9e9eb;
+  --muted: #9c9fa7;
+  --faint: #61646d;
+  --border: #232427;
+  --border-hi: #33363d;
+  --accent: #06b6d4;
+  --accent-ink: #22d3ee;
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
   --hover: rgb(255 255 255 / 0.05);
+  --code-bg: #060607;
+  color-scheme: dark;
 }
 
 html,
@@ -51,8 +75,8 @@ body {
 
 /* Rendered markdown (see src/lib/markdown.tsx) */
 .md {
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: 14px;
+  line-height: 1.55;
   overflow-wrap: break-word;
 }
 .md > :first-child {
@@ -62,7 +86,7 @@ body {
   margin-bottom: 0;
 }
 .md p {
-  margin: 0.5em 0;
+  margin: 0.45em 0;
 }
 .md h1,
 .md h2,
@@ -75,23 +99,49 @@ body {
   line-height: 1.3;
 }
 .md h1 {
-  font-size: 15px;
+  font-size: 17px;
 }
 .md h2 {
-  font-size: 14px;
+  font-size: 15.5px;
 }
 .md h3,
 .md h4,
 .md h5,
 .md h6 {
-  font-size: 13px;
+  font-size: 14px;
 }
 .md a {
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 .md a:hover {
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+/* mention chips: @user:, @agent:, KEY-1, owner/repo#1, @file:, @gh: */
+.md .md-ref {
+  display: inline;
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border: none;
+  border-radius: 4px;
+  padding: 0 0.25em;
+  cursor: pointer;
+}
+.md a.md-ref {
+  text-decoration: none;
+}
+.md .md-ref:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.md .md-person {
+  font-weight: 500;
+}
+.md .md-person[data-kind="agent"]::before {
+  content: "◆ ";
+  font-size: 0.8em;
 }
 .md ul,
 .md ol {
@@ -115,24 +165,55 @@ body {
 }
 .md code {
   font-family: var(--font-mono);
-  font-size: 0.88em;
+  font-size: 0.87em;
   background-color: var(--hover);
   border-radius: 4px;
   padding: 0.1em 0.35em;
 }
+/* fenced blocks render inside .md-pre (lang header + copy live in .md-pre-head) */
 .md pre {
-  margin: 0.6em 0;
-  padding: 0.75em;
-  background-color: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  margin: 0;
+  padding: 10px 12px;
   overflow-x: auto;
 }
 .md pre code {
   background: none;
   border-radius: 0;
   padding: 0;
-  font-size: 12px;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.md-pre {
+  margin: 0.55em 0;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  overflow: hidden;
+}
+
+.md-pre-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 10px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.md-pre-copy {
+  font: inherit;
+  color: var(--faint);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-transform: none;
+}
+.md-pre-copy:hover {
+  color: var(--fg);
 }
 .md hr {
   margin: 1em 0;
@@ -142,3 +223,4 @@ body {
 .md img {
   max-width: 100%;
 }
+

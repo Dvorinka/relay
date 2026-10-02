@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useState, useMemo} from "react";
 import {
   FlatList,
   RefreshControl,
@@ -8,9 +8,11 @@ import {
 } from "react-native";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { api, type Todo } from "../../../lib/api";
-import { C } from "../../../lib/theme";
+import { useTheme, type Palette } from "../../../lib/theme";
 
 export default function TodosScreen() {
+  const C = useTheme();
+  const s = useMemo(() => themedStyles(C), [C]);
   const { id } = useLocalSearchParams<{ id: string }>();
   const [items, setItems] = useState<Todo[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -58,7 +60,7 @@ export default function TodosScreen() {
   );
 }
 
-const s = StyleSheet.create({
+const themedStyles = (C: Palette) => StyleSheet.create({
   card: {
     flexDirection: "row",
     alignItems: "center",

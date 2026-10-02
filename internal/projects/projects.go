@@ -14,6 +14,7 @@ import (
 	"github.com/Dvorinka/relay/internal/conversations"
 	"github.com/Dvorinka/relay/internal/db"
 	"github.com/Dvorinka/relay/internal/httpx"
+	"github.com/Dvorinka/relay/internal/statuses"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -36,6 +37,16 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
 	g.GET("/projects/:id", s.memberOnly, s.handleGet)
 	g.PATCH("/projects/:id", s.memberOnly, s.handleUpdate)
 	g.GET("/projects/:id/overview", s.memberOnly, s.handleOverview)
+	g.PUT("/projects/:id/statuses", s.memberOnly, s.handleSetStatuses)
+	g.PUT("/projects/:id/local_path", s.memberOnly, s.handleSetLocalPath)
+	g.GET("/projects/:id/files", s.memberOnly, s.handleFiles)
+	g.GET("/projects/:id/files/read", s.memberOnly, s.handleReadFile)
+	g.GET("/projects/:id/filters", s.memberOnly, s.handleListFilters)
+	g.POST("/projects/:id/filters", s.memberOnly, s.handleCreateFilter)
+	g.DELETE("/projects/:id/filters/:filterID", s.memberOnly, s.handleDeleteFilter)
+	g.GET("/projects/:id/boards", s.memberOnly, s.handleListBoards)
+	g.POST("/projects/:id/boards", s.memberOnly, s.handleCreateBoard)
+	g.DELETE("/projects/:id/boards/:boardID", s.memberOnly, s.handleDeleteBoard)
 }
 
 const ctxProject = "relay.project"
@@ -86,9 +97,12 @@ func projectJSON(p db.GetProjectByIDRow) gin.H {
 	return gin.H{
 		"id": p.ID.String(), "workspace_id": p.WorkspaceID.String(),
 		"key": p.Key, "name": p.Name, "description": p.Description,
-		"icon":       textOrNil(p.Icon),
-		"color":      textOrNil(p.Color),
-		"created_at": p.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
+		"icon":         textOrNil(p.Icon),
+		"color":        textOrNil(p.Color),
+		"statuses":     statuses.Parse(p.Statuses),
+		"local_path":   textOrNil(p.LocalPath),
+		"brief_policy": p.BriefPolicy,
+		"created_at":   p.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
 	}
 }
 
@@ -113,7 +127,10 @@ func (s *Service) handleList(c *gin.Context) {
 			"id": r.ID.String(), "workspace_id": r.WorkspaceID.String(),
 			"key": r.Key, "name": r.Name, "description": r.Description,
 			"icon": textOrNil(r.Icon), "color": textOrNil(r.Color),
-			"created_at": r.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
+			"statuses":     statuses.Parse(r.Statuses),
+			"local_path":   textOrNil(r.LocalPath),
+			"brief_policy": r.BriefPolicy,
+			"created_at":   r.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"projects": out})
@@ -240,8 +257,14 @@ func (s *Service) handleOverview(c *gin.Context) {
 	recent, _ := s.q.RecentProjectMessages(c.Request.Context(), p.ID)
 	msgs := make([]gin.H, 0, len(recent))
 	for _, m := range recent {
-		msgs = append(msgs, conversations.MessageJSON(m.ID, m.ConversationID, m.Body, m.CreatedAt, m.EditedAt,
-			m.AuthorUserID, m.AuthorAgentID, m.AuthorName, m.AuthorAvatar, nil))
+		msgs = append(msgs, conversations.MessageJSON(conversations.MessageView{
+			ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
+			Body: m.Body, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+			AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
+			AuthorName: m.AuthorName, AuthorAvatar: m.AuthorAvatar,
+			ParentAuthorName: m.ParentAuthorName, ParentBody: m.ParentBody,
+			ParentDeleted: m.ParentDeleted,
+		}))
 	}
 	acts, _ := s.q.ListProjectIssueActivity(c.Request.Context(), p.ID)
 	activity := make([]gin.H, 0, len(acts))

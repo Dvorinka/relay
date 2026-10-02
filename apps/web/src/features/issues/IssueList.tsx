@@ -1,4 +1,4 @@
-import type { Issue, Project } from "@relay/api-client";
+import type { Issue, Project, SavedFilter, StatusDef } from "@relay/api-client";
 import { A, useNavigate } from "@solidjs/router";
 import {
   createMemo,
@@ -10,7 +10,7 @@ import {
   Show,
 } from "solid-js";
 import { Avatar } from "@ark-ui/solid";
-import { PlusIcon, SearchIcon } from "../../components/icons";
+import { XIcon, PlusIcon, SearchIcon } from "../../components/icons";
 import { Spinner } from "../../components/ui";
 import { api } from "../../lib/api";
 import { subscribe } from "../../lib/events";
@@ -22,7 +22,8 @@ import {
   LabelChip,
   PRIORITY_LABEL,
   PriorityGlyph,
-  STATUS_LABEL,
+  statusDefs,
+  statusLabel,
   StatusDot,
 } from "./meta";
 import { NewIssueDialog } from "./NewIssueDialog";
@@ -41,6 +42,7 @@ function IssueRow(props: {
   issue: Issue;
   selected: boolean;
   onHover: () => void;
+  defs: StatusDef[];
 }) {
   const i = () => props.issue;
   return (
@@ -75,8 +77,8 @@ function IssueRow(props: {
           </Show>
         </span>
         <span class="flex w-20 shrink-0 items-center gap-1.5 text-[11px] text-muted">
-          <StatusDot status={i().status} />
-          <span class="truncate">{STATUS_LABEL[i().status]}</span>
+          <StatusDot status={i().status} defs={props.defs} />
+          <span class="truncate">{statusLabel(i().status, props.defs)}</span>
         </span>
         <span class="flex w-24 shrink-0 items-center gap-1.5 text-[12px] text-muted">
           <Show
@@ -114,10 +116,44 @@ export function IssueList(props: { project: Project }) {
   const [dialogOpen, setDialogOpen] = createSignal(false);
   let listEl: HTMLUListElement | undefined;
 
+  const defs = () => statusDefs(props.project);
+
   const [issues, { refetch }] = createResource(
     () => props.project.id,
     async (id) => (await api.listIssues(id)).issues,
   );
+
+  const [savedFilters, { refetch: refetchSaved }] = createResource(
+    () => props.project.id,
+    async (id) => (await api.listSavedFilters(id)).filters,
+  );
+  const [savingView, setSavingView] = createSignal(false);
+  let filterNameEl: HTMLInputElement | undefined;
+
+  const applySaved = (f: SavedFilter) => {
+    const fl = f.filters as { chip?: Chip; q?: string };
+    if (fl.chip === "all" || fl.chip === "open" || fl.chip === "mine" || fl.chip === "done") {
+      setChip(fl.chip);
+    }
+    if (typeof fl.q === "string") {
+      setQ(fl.q);
+    }
+    setSelIdx(0);
+  };
+
+  const saveView = async () => {
+    const name = filterNameEl?.value.trim();
+    if (!name) {
+      return;
+    }
+    await api.createSavedFilter(props.project.id, {
+      name,
+      filters: { chip: chip(), q: q() },
+    });
+    if (filterNameEl) filterNameEl.value = "";
+    setSavingView(false);
+    refetchSaved();
+  };
 
   const unsub = subscribe((e) => {
     if (e.project_id === props.project.id && e.type.startsWith("issue.")) {
@@ -132,7 +168,7 @@ export function IssueList(props: { project: Project }) {
     return (issues() ?? []).filter((i) => {
       switch (chip()) {
         case "open":
-          if (isClosed(i.status)) {
+          if (isClosed(i.status, defs())) {
             return false;
           }
           break;
@@ -142,7 +178,7 @@ export function IssueList(props: { project: Project }) {
           }
           break;
         case "done":
-          if (!isClosed(i.status)) {
+          if (!isClosed(i.status, defs())) {
             return false;
           }
           break;
@@ -236,7 +272,76 @@ export function IssueList(props: { project: Project }) {
             class="h-8 w-48 rounded-md border border-border bg-bg pl-8 pr-2.5 text-[13px] outline-none transition-colors placeholder:text-muted/60 focus:border-accent"
           />
         </div>
+        <For each={savedFilters() ?? []}>
+          {(f) => (
+            <span class="inline-flex items-center gap-0.5 rounded-full border border-border bg-surface pl-2.5 pr-1 text-[12px]">
+              <button
+                type="button"
+                onClick={() => applySaved(f)}
+                class="py-0.5 text-muted transition-colors hover:text-fg"
+                title="Apply saved view"
+              >
+                {f.name}
+              </button>
+              <button
+                type="button"
+                aria-label={`Delete filter ${f.name}`}
+                onClick={async () => {
+                  await api.deleteSavedFilter(props.project.id, f.id);
+                  refetchSaved();
+                }}
+                class="rounded p-0.5 text-muted/60 transition-colors hover:text-fg"
+              >
+                <XIcon class="h-3 w-3" />
+              </button>
+            </span>
+          )}
+        </For>
         <div class="flex-1" />
+        <Show
+          when={savingView()}
+          fallback={
+            <button
+              type="button"
+              onClick={() => {
+                setSavingView(true);
+                queueMicrotask(() => filterNameEl?.focus());
+              }}
+              title="Save current filters as a view"
+              class="h-8 rounded-md border border-border px-2.5 text-[13px] text-muted transition-colors hover:bg-hover hover:text-fg"
+            >
+              Save view
+            </button>
+          }
+        >
+          <span class="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-surface pl-2">
+            <input
+              ref={(el) => (filterNameEl = el)}
+              placeholder="View name"
+              aria-label="Saved view name"
+              class="w-28 bg-transparent text-[13px] outline-none placeholder:text-muted/60"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void saveView();
+                if (e.key === "Escape") setSavingView(false);
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => void saveView()}
+              class="h-full px-2 text-[12px] text-accent-ink transition-colors hover:text-fg"
+            >
+              Save
+            </button>
+            <button
+              type="button"
+              aria-label="Cancel"
+              onClick={() => setSavingView(false)}
+              class="h-full px-1.5 text-muted/60 transition-colors hover:text-fg"
+            >
+              <XIcon class="h-3 w-3" />
+            </button>
+          </span>
+        </Show>
         <button
           type="button"
           onClick={() => setDialogOpen(true)}
@@ -279,6 +384,7 @@ export function IssueList(props: { project: Project }) {
                   issue={i}
                   selected={idx() === selIdx()}
                   onHover={() => setSelIdx(idx())}
+                  defs={defs()}
                 />
               )}
             </For>

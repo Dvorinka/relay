@@ -23,17 +23,17 @@ function PendingReviews() {
       <section class="mb-6">
         <h2 class="mb-2 flex items-center gap-2 text-[12px] font-semibold uppercase tracking-wider text-muted">
           Awaiting your verdict
-          <span class="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+          <span class="rounded-full bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-400">
             {reviews()!.length}
           </span>
         </h2>
-        <ul class="divide-y divide-border overflow-hidden rounded-md border border-amber-500/30">
+        <ul class="divide-y divide-border overflow-hidden rounded-md border border-violet-500/30">
           <For each={reviews()}>
             {(r) => (
               <li>
                 <A
                   href={`/app/p/${r.project_id}?tab=reviews`}
-                  class="flex items-start gap-3 bg-amber-500/[0.04] px-4 py-3 transition-colors hover:bg-amber-500/[0.08]"
+                  class="flex items-start gap-3 bg-violet-500/[0.04] px-4 py-3 transition-colors hover:bg-violet-500/[0.08]"
                 >
                   <Avatar.Root class="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-surface">
                     <Avatar.Fallback class="text-[10px] font-medium text-muted">

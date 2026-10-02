@@ -1,5 +1,5 @@
-/* Relay landing: dark-tech, one accent (#f2541b), Geist + Geist Mono.
-   Radius rule: buttons/chips pill, panels 10px. One theme (dark) throughout. */
+/* Relay landing: dark-tech, one accent (#06b6d4 cyan), Geist + Geist Mono.
+   Matches apps/web neutral near-black palette. Radius: buttons pill, panels 10px. */
 
 @font-face {
   font-family: "Geist";
@@ -39,16 +39,16 @@
 }
 
 :root {
-  --bg: #0e1013;
-  --panel: #15181d;
-  --panel-2: #1a1e24;
+  --bg: #0a0a0b;
+  --panel: #131416;
+  --panel-2: #1a1b1f;
   --line: rgba(255, 255, 255, 0.08);
   --line-strong: rgba(255, 255, 255, 0.14);
   --fg: #f2f4f7;
   --muted: #9aa3ad;
   --faint: #5d6670;
-  --accent: #f2541b;
-  --accent-dim: rgba(242, 84, 27, 0.14);
+  --accent: #06b6d4;
+  --accent-dim: rgb(6 182 212 / 0.12);
   --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
   --sans: "Geist", -apple-system, "Segoe UI", system-ui, sans-serif;
 }
@@ -73,7 +73,7 @@ body {
 
 .skip {
   position: absolute; left: -9999px; top: 0;
-  background: var(--accent); color: #fff; padding: 8px 16px; z-index: 50;
+  background: var(--accent); color: #04282f; padding: 8px 16px; z-index: 50;
 }
 .skip:focus { left: 8px; top: 8px; }
 
@@ -119,9 +119,9 @@ body {
 }
 .btn:active { transform: translateY(1px); }
 .btn-solid {
-  background: var(--accent); color: #fff;
+  background: var(--accent); color: #04282f; font-weight: 600;
 }
-.btn-solid:hover { background: #ff6428; }
+.btn-solid:hover { background: #22d3ee; color: #06262b; }
 .btn-ghost {
   color: var(--fg);
   border: 1px solid var(--line-strong);
@@ -181,7 +181,7 @@ body {
   box-shadow:
     0 0 0 1px rgba(14, 16, 19, 0.6),
     0 24px 70px -18px rgba(0, 0, 0, 0.75),
-    0 0 90px -30px rgba(242, 84, 27, 0.22);
+    0 0 90px -30px rgb(6 182 212 / 0.18);
 }
 
 /* ---------- flow strip ---------- */
@@ -206,7 +206,7 @@ body {
   color: var(--muted);
 }
 .pipeline .accent {
-  border-color: rgba(242, 84, 27, 0.45);
+  border-color: rgb(6 182 212 / 0.45);
   color: var(--accent);
   background: var(--accent-dim);
 }
@@ -343,7 +343,7 @@ body {
   font-size: 12px;
   line-height: 1.8;
   color: var(--fg);
-  background: #0a0c0f;
+  background: #060607;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 14px 18px;
@@ -358,7 +358,7 @@ body {
   border: 1px solid var(--line);
   border-radius: 10px;
   background:
-    radial-gradient(120% 160% at 50% -40%, rgba(242, 84, 27, 0.10), transparent 60%),
+    radial-gradient(120% 160% at 50% -40%, rgb(6 182 212 / 0.09), transparent 60%),
     var(--panel);
   padding: 64px 48px;
   text-align: center;

@@ -8,11 +8,18 @@ import ResetPassword from "./features/auth/ResetPassword";
 import Settings from "./features/workspaces/Settings";
 import IssueKeyRedirect from "./features/issues/IssueKeyRedirect";
 import IssuePage from "./features/issues/IssuePage";
+import BoardPage from "./features/issues/BoardPage";
 import ProjectPage from "./features/projects/ProjectPage";
 import "./index.css";
 import Home from "./pages/Home";
 import Inbox from "./pages/Inbox";
 import { SessionProvider } from "./stores/session";
+
+// Push notifications ride this worker; harmless when the server has no
+// VAPID keys (the subscribe call then reports disabled).
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+}
 
 render(
   () => (
@@ -27,6 +34,7 @@ render(
           <Route path="/" component={Home} />
           <Route path="/inbox" component={Inbox} />
           <Route path="/p/:projectId" component={ProjectPage} />
+          <Route path="/p/:projectId/board" component={BoardPage} />
           <Route path="/p/:projectId/i/:issueId" component={IssuePage} />
           <Route path="/p/:projectId/k/:key" component={IssueKeyRedirect} />
           <Route path="/settings" component={Settings} />

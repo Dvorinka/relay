@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { Redirect } from "expo-router";
 import { ActivityIndicator, View } from "react-native";
 import { api, hydrate } from "../lib/api";
-import { C } from "../lib/theme";
+import { useTheme } from "../lib/theme";
 
 export default function Gate() {
+  const C = useTheme();
   const [state, setState] = useState<"loading" | "authed" | "anon">("loading");
   useEffect(() => {
     hydrate()

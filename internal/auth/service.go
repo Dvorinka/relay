@@ -53,8 +53,8 @@ func (s *Service) Register(ctx context.Context, email, password, name, ip, ua st
 	if _, err := mail.ParseAddress(email); err != nil {
 		return creds, "", errors.New("invalid email")
 	}
-	if len(password) < 10 {
-		return creds, "", errors.New("password must be at least 10 characters")
+	if len(password) == 0 {
+		return creds, "", errors.New("password is required")
 	}
 	if name == "" {
 		return creds, "", errors.New("name is required")
@@ -162,8 +162,8 @@ func (s *Service) ForgotPassword(ctx context.Context, email string) error {
 }
 
 func (s *Service) ResetPassword(ctx context.Context, token, password string) error {
-	if len(password) < 10 {
-		return errors.New("password must be at least 10 characters")
+	if len(password) == 0 {
+		return errors.New("password is required")
 	}
 	row, err := s.q.GetPasswordResetUser(ctx, hashToken(token))
 	if err != nil {
@@ -185,8 +185,8 @@ func (s *Service) ResetPassword(ctx context.Context, token, password string) err
 
 // ChangePassword keeps the current session alive, revokes the rest.
 func (s *Service) ChangePassword(ctx context.Context, userID pgtype.UUID, tokenHash, current, next string) error {
-	if len(next) < 10 {
-		return errors.New("password must be at least 10 characters")
+	if len(next) == 0 {
+		return errors.New("password is required")
 	}
 	user, err := s.q.GetUserByID(ctx, userID)
 	if err != nil {

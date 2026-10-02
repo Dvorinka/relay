@@ -13,6 +13,7 @@ import (
 	"github.com/Dvorinka/relay/internal/attachments"
 	"github.com/Dvorinka/relay/internal/auth"
 	"github.com/Dvorinka/relay/internal/avatars"
+	"github.com/Dvorinka/relay/internal/briefs"
 	"github.com/Dvorinka/relay/internal/config"
 	"github.com/Dvorinka/relay/internal/conversations"
 	"github.com/Dvorinka/relay/internal/db"
@@ -21,6 +22,7 @@ import (
 	"github.com/Dvorinka/relay/internal/issues"
 	"github.com/Dvorinka/relay/internal/mcpserver"
 	"github.com/Dvorinka/relay/internal/projects"
+	"github.com/Dvorinka/relay/internal/push"
 	"github.com/Dvorinka/relay/internal/realtime"
 	"github.com/Dvorinka/relay/internal/reviews"
 	"github.com/Dvorinka/relay/internal/search"
@@ -72,10 +74,18 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	rtSvc := realtime.NewService(hub, pool)
 	searchSvc := search.NewService(pool)
 	hookSvc := webhooks.NewService(log, pool)
+	pushSvc := push.NewService(log, pool, cfg)
+	briefSvc := briefs.NewService(log, pool)
+	convSvc.Push = pushSvc
 	hookSvc.Start(context.Background(), hub)
-	mcpHandler := mcpserver.New(db.New(pool), store, log, ghSvc, hub)
+	mcpHandler := mcpserver.New(db.New(pool), store, log, ghSvc, hub, pushSvc)
 
-	api := r.Group("/api")
+	api := r.Group("/api", corsForTokenClients())
+	// Gin 404s unmatched methods before group middleware — handle CORS
+	// preflights explicitly.
+	api.OPTIONS("/*path", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
 	api.GET("/health", func(c *gin.Context) {
 		if err := pool.Ping(c.Request.Context()); err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{
@@ -94,6 +104,7 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	attSvc.RegisterRoutes(priv)
 	issueSvc.RegisterRoutes(priv)
 	agentSvc.RegisterRoutes(priv)
+	agentSvc.RegisterPublicRoutes(api)
 	ghSvc.RegisterRoutes(priv, api)
 	todoSvc.RegisterRoutes(priv)
 	reviewSvc.RegisterRoutes(priv)
@@ -101,6 +112,8 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	avSvc.RegisterRoutes(priv)
 	rtSvc.RegisterRoutes(priv)
 	searchSvc.RegisterRoutes(priv)
+	pushSvc.RegisterRoutes(priv)
+	briefSvc.RegisterRoutes(priv)
 
 	// external agents: bearer-token MCP, not session cookies
 	r.POST("/mcp", mcpHandler)
@@ -121,8 +134,32 @@ func securityHeaders() gin.HandlerFunc {
 		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		h.Set("Content-Security-Policy",
 			"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
-				"img-src 'self' data: blob: https:; connect-src 'self'; font-src 'self'; "+
+				"img-src 'self' data: blob: https:; connect-src 'self' http: https:; font-src 'self'; "+
 				"object-src 'none'; base-uri 'self'; frame-ancestors 'none'")
+		c.Next()
+	}
+}
+
+// corsForTokenClients lets browser clients hosted off-origin (the offline/
+// local-mode SPA) call the API. "*" is safe because cross-origin requests
+// authenticate via Authorization bearer, not ambient cookies - browsers do
+// not attach cookies without credentials:include.
+func corsForTokenClients() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.GetHeader("Origin") == "" {
+			c.Next()
+			return
+		}
+		h := c.Writer.Header()
+		h.Set("Access-Control-Allow-Origin", "*")
+		h.Set("Vary", "Origin")
+		h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		h.Set("Access-Control-Max-Age", "600")
+		if c.Request.Method == http.MethodOptions {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
 		c.Next()
 	}
 }

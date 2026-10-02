@@ -3,6 +3,7 @@ import type {
   DevRepoPanel,
   LinkedRepo,
 } from "@relay/api-client";
+import { A } from "@solidjs/router";
 import type { JSX } from "solid-js";
 import {
   createMemo,
@@ -57,11 +58,13 @@ function RepoLinker(props: {
   }
 
   const [installUrl, setInstallUrl] = createSignal<string>();
+  const [installCount, setInstallCount] = createSignal<number>();
   createResource(
     () => props.workspaceId,
     async (ws) => {
       const inst = await api.listGitHubInstallations(ws);
       setInstallUrl(inst.install_url);
+      setInstallCount(inst.installations.length);
       return inst.installations.length;
     },
   );
@@ -124,14 +127,52 @@ function RepoLinker(props: {
         </Match>
         <Match when={repos.state === "errored"}>
           <div class="mt-2">
-            <p class="text-[12px] text-muted">Could not list repositories.</p>
-            <button
-              type="button"
-              onClick={() => refetch()}
-              class="mt-2 rounded-md border border-border px-2.5 py-1 text-[12px] hover:bg-hover"
+            <Show
+              when={installUrl()}
+              fallback={
+                <>
+                  <p class="text-[12px] text-muted">
+                    GitHub is not connected for this workspace.
+                  </p>
+                  <A
+                    href="/app/settings"
+                    class="mt-2 inline-block rounded-md border border-border px-2.5 py-1 text-[12px] hover:bg-hover"
+                  >
+                    Connect in Settings
+                  </A>
+                </>
+              }
             >
-              Retry
-            </button>
+              <Show
+                when={(installCount() ?? 0) === 0}
+                fallback={
+                  <>
+                    <p class="text-[12px] text-muted">
+                      Could not list repositories.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => refetch()}
+                      class="mt-2 rounded-md border border-border px-2.5 py-1 text-[12px] hover:bg-hover"
+                    >
+                      Retry
+                    </button>
+                  </>
+                }
+              >
+                <p class="text-[12px] text-muted">
+                  No repositories available. Install the Relay GitHub App on
+                  the repositories you want to connect.
+                </p>
+                <a
+                  href={installUrl()}
+                  class="mt-3 inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white"
+                >
+                  {markGitHub("", "h-3.5 w-3.5")}
+                  Install the GitHub App
+                </a>
+              </Show>
+            </Show>
           </div>
         </Match>
         <Match when={true}>

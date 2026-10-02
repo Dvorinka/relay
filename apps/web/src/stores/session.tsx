@@ -6,14 +6,16 @@ import {
   type ParentProps,
   type Resource,
 } from "solid-js";
-import type {
-  AuthSession,
-  LoginRequest,
-  RegisterRequest,
-  User,
-  WorkspaceWithRole,
+import {
+  createClient,
+  type AuthSession,
+  type LoginRequest,
+  type RegisterRequest,
+  type User,
+  type WorkspaceWithRole,
 } from "@relay/api-client";
 import { api } from "../lib/api";
+import { net } from "../lib/net";
 
 export interface SessionStore {
   session: Resource<AuthSession | null>;
@@ -21,8 +23,10 @@ export interface SessionStore {
   workspaces: Accessor<WorkspaceWithRole[]>;
   /** True only during the initial session fetch, not background refetches. */
   loading: Accessor<boolean>;
-  login: (input: LoginRequest) => Promise<void>;
-  register: (input: RegisterRequest) => Promise<void>;
+  login: (input: LoginRequest, serverUrl?: string) => Promise<void>;
+  register: (input: RegisterRequest, serverUrl?: string) => Promise<void>;
+  /** Enter local mode: no server, all data on this device. */
+  enterLocal: () => Promise<void>;
   logout: () => Promise<void>;
   /** Re-fetch /api/auth/session (e.g. after creating a workspace). */
   refresh: () => Promise<void>;
@@ -44,16 +48,31 @@ export function SessionProvider(props: ParentProps) {
     user,
     workspaces,
     loading,
-    login: async (input) => {
-      mutate(await api.login(input));
+    login: async (input, serverUrl) => {
+      const res = await createClient(serverUrl ?? net.serverUrl()).login(
+        input,
+      );
+      // Persist the bearer so off-origin deployments keep working; the
+      // cookie still rides along same-origin.
+      net.connect(serverUrl ?? net.serverUrl(), res.token ?? "");
+      mutate(res);
     },
-    register: async (input) => {
-      mutate(await api.register(input));
+    register: async (input, serverUrl) => {
+      const res = await createClient(serverUrl ?? net.serverUrl()).register(
+        input,
+      );
+      net.connect(serverUrl ?? net.serverUrl(), res.token ?? "");
+      mutate(res);
+    },
+    enterLocal: async () => {
+      net.enterLocal();
+      await refetch(); // api.session resolves the local workspace
     },
     logout: async () => {
       try {
         await api.logout();
       } finally {
+        net.disconnect();
         mutate(null);
       }
     },

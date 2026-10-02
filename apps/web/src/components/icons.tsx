@@ -156,6 +156,45 @@ export function IssueIcon(props: IconProps): JSX.Element {
   );
 }
 
+export function GitPullRequestIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      class={props.class}
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="4.5" cy="4" r="2" />
+      <circle cx="4.5" cy="12" r="2" />
+      <circle cx="11.5" cy="12" r="2" />
+      <path d="M4.5 6v4M11.5 10V6.5a2 2 0 0 0-2-2h-1" />
+    </svg>
+  );
+}
+
+export function BriefsIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      class={props.class}
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="1.5" y="2.5" width="9" height="7" rx="1.5" />
+      <path d="M6 9.5v3.5a1 1 0 0 0 1 1h6.5a1 1 0 0 0 1-1V8.5a1 1 0 0 0-1-1h-3" />
+      <path d="M4 6h4" />
+    </svg>
+  );
+}
+
 export function XIcon(props: IconProps): JSX.Element {
   return (
     <svg
@@ -175,17 +214,17 @@ export function XIcon(props: IconProps): JSX.Element {
 export function SettingsIcon(props: IconProps): JSX.Element {
   return (
     <svg
-      viewBox="0 0 16 16"
+      viewBox="0 0 24 24"
       class={props.class}
       fill="none"
       stroke="currentColor"
-      stroke-width="1.5"
+      stroke-width="1.8"
       stroke-linecap="round"
       stroke-linejoin="round"
       aria-hidden="true"
     >
-      <circle cx="8" cy="8" r="2" />
-      <path d="M8 1.5v1.7M8 12.8v1.7M14.5 8h-1.7M3.2 8H1.5M12.6 3.4l-1.2 1.2M4.6 11.4 3.4 12.6M12.6 12.6l-1.2-1.2M4.6 4.6 3.4 3.4" />
+      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+      <circle cx="12" cy="12" r="3" />
     </svg>
   );
 }
@@ -217,6 +256,92 @@ export function MoonIcon(props: IconProps): JSX.Element {
       aria-hidden="true"
     >
       <path d="M13.5 9.5A5.5 5.5 0 0 1 6.5 2.5a5.5 5.5 0 1 0 7 7Z" />
+    </svg>
+  );
+}
+
+export function MenuIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <path d="M2.5 4h11M2.5 8h11M2.5 12h11" />
+    </svg>
+  );
+}
+
+export function ReplyIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <path d="M6.5 3 2.5 7l4 4" />
+      <path d="M2.5 7h6a4 4 0 0 1 4 4v2" />
+    </svg>
+  );
+}
+
+export function PencilIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <path d="M10.8 2.7a1.6 1.6 0 0 1 2.5 2.5l-8 8L2 14l.8-3.3 8-8Z" />
+    </svg>
+  );
+}
+
+export function SmileIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <circle cx="8" cy="8" r="6.5" />
+      <path d="M5.5 9.5a3.4 3.4 0 0 0 5 0" />
+      <path d="M5.7 6.3h.01M10.3 6.3h.01" stroke-width="2" />
+    </svg>
+  );
+}
+
+export function LockIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <rect x="3.5" y="7" width="9" height="6.5" rx="1.5" />
+      <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />
     </svg>
   );
 }

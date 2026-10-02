@@ -146,8 +146,9 @@ func (s *Service) handleAgentAvatar(c *gin.Context) {
 }
 
 // handleFile streams avatar objects only. Attachment keys stay behind
-// their project-scoped presign endpoint; anything outside the prefix is
-// a 404 rather than an authorization puzzle.
+// their project-scoped download endpoint; anything outside the prefix is
+// a 404 rather than an authorization puzzle. Streaming (not presign
+// redirect) keeps avatars same-origin, which LAN/insecure origins require.
 func (s *Service) handleFile(c *gin.Context) {
 	if s.store == nil {
 		httpx.Error(c, http.StatusServiceUnavailable, "storage_disabled", "object storage is not configured")
@@ -158,10 +159,19 @@ func (s *Service) handleFile(c *gin.Context) {
 		httpx.Error(c, http.StatusNotFound, "not_found", "file not found")
 		return
 	}
-	url, err := s.store.PresignGet(c.Request.Context(), key, "avatar", "image/png")
+	obj, err := s.store.Get(c.Request.Context(), key)
 	if err != nil {
 		httpx.Error(c, http.StatusNotFound, "not_found", "file not found")
 		return
 	}
-	c.Redirect(http.StatusFound, url)
+	defer func() { _ = obj.Close() }()
+	st, err := obj.Stat()
+	if err != nil {
+		httpx.Error(c, http.StatusNotFound, "not_found", "file not found")
+		return
+	}
+	c.Header("Content-Type", st.ContentType)
+	c.Header("Cache-Control", "private, max-age=300")
+	c.Status(http.StatusOK)
+	_, _ = io.Copy(c.Writer, obj)
 }

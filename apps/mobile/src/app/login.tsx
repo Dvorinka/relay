@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo} from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -10,9 +10,11 @@ import {
 } from "react-native";
 import { router } from "expo-router";
 import { api, getServer, setServer } from "../lib/api";
-import { C } from "../lib/theme";
+import { useTheme, type Palette } from "../lib/theme";
 
 export default function Login() {
+  const C = useTheme();
+  const s = useMemo(() => themedStyles(C), [C]);
   const [server, setServerVal] = useState(getServer());
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -69,7 +71,7 @@ export default function Login() {
       {err ? <Text style={s.err}>{err}</Text> : null}
       <Pressable style={s.btn} onPress={submit} disabled={busy}>
         {busy ? (
-          <ActivityIndicator color="#fff" />
+          <ActivityIndicator color={C.onAccent} />
         ) : (
           <Text style={s.btnText}>Sign in</Text>
         )}
@@ -78,7 +80,7 @@ export default function Login() {
   );
 }
 
-const s = StyleSheet.create({
+const themedStyles = (C: Palette) => StyleSheet.create({
   wrap: { flex: 1, backgroundColor: C.bg, justifyContent: "center", padding: 24 },
   logo: {
     color: C.accent,
@@ -106,5 +108,5 @@ const s = StyleSheet.create({
     alignItems: "center",
     marginTop: 4,
   },
-  btnText: { color: "#fff", fontWeight: "600", fontSize: 16 },
+  btnText: { color: C.onAccent, fontWeight: "600", fontSize: 16 },
 });

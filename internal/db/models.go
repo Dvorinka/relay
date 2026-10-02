@@ -21,6 +21,18 @@ type Agent struct {
 	ReviewMode  string             `json:"review_mode"`
 }
 
+type AgentInvite struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	TokenHash   []byte             `json:"token_hash"`
+	ProjectIds  []pgtype.UUID      `json:"project_ids"`
+	Scopes      []string           `json:"scopes"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	UsedBy      pgtype.UUID        `json:"used_by"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type AgentProjectPermission struct {
 	AgentID   pgtype.UUID        `json:"agent_id"`
 	ProjectID pgtype.UUID        `json:"project_id"`
@@ -73,12 +85,36 @@ type Attachment struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type Board struct {
+	ID        pgtype.UUID        `json:"id"`
+	ProjectID pgtype.UUID        `json:"project_id"`
+	Name      string             `json:"name"`
+	Filters   []byte             `json:"filters"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type Brief struct {
+	ID             pgtype.UUID        `json:"id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	IssueID        pgtype.UUID        `json:"issue_id"`
+	ConversationID pgtype.UUID        `json:"conversation_id"`
+	Title          string             `json:"title"`
+	Summary        string             `json:"summary"`
+	Scene          []byte             `json:"scene"`
+	Status         string             `json:"status"`
+	CreatedByUser  pgtype.UUID        `json:"created_by_user"`
+	CreatedByAgent pgtype.UUID        `json:"created_by_agent"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Conversation struct {
 	ID        pgtype.UUID        `json:"id"`
 	ProjectID pgtype.UUID        `json:"project_id"`
 	Kind      string             `json:"kind"`
 	IssueID   pgtype.UUID        `json:"issue_id"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	BriefID   pgtype.UUID        `json:"brief_id"`
 }
 
 type GithubApp struct {
@@ -173,12 +209,22 @@ type Message struct {
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	EditedAt       pgtype.Timestamptz `json:"edited_at"`
 	DeletedAt      pgtype.Timestamptz `json:"deleted_at"`
+	ParentID       pgtype.UUID        `json:"parent_id"`
+	Mentions       []byte             `json:"mentions"`
 }
 
 type MessageAttachment struct {
 	MessageID    pgtype.UUID `json:"message_id"`
 	AttachmentID pgtype.UUID `json:"attachment_id"`
 	Position     int32       `json:"position"`
+}
+
+type MessageReaction struct {
+	MessageID pgtype.UUID        `json:"message_id"`
+	UserID    pgtype.UUID        `json:"user_id"`
+	AgentID   pgtype.UUID        `json:"agent_id"`
+	Emoji     string             `json:"emoji"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
 type MessageRead struct {
@@ -208,6 +254,9 @@ type Project struct {
 	CreatedBy   pgtype.UUID        `json:"created_by"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	Statuses    []byte             `json:"statuses"`
+	LocalPath   pgtype.Text        `json:"local_path"`
+	BriefPolicy string             `json:"brief_policy"`
 }
 
 type ProjectCounter struct {
@@ -219,6 +268,17 @@ type ProjectMember struct {
 	ProjectID pgtype.UUID        `json:"project_id"`
 	UserID    pgtype.UUID        `json:"user_id"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type PushSubscription struct {
+	ID        pgtype.UUID        `json:"id"`
+	UserID    pgtype.UUID        `json:"user_id"`
+	Endpoint  string             `json:"endpoint"`
+	Auth      string             `json:"auth"`
+	Keys      []byte             `json:"keys"`
+	UserAgent pgtype.Text        `json:"user_agent"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	LastSeen  pgtype.Timestamptz `json:"last_seen"`
 }
 
 type RateLimit struct {
@@ -236,6 +296,15 @@ type Repository struct {
 	DefaultBranch  string             `json:"default_branch"`
 	LinkedBy       pgtype.UUID        `json:"linked_by"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type SavedFilter struct {
+	ID        pgtype.UUID        `json:"id"`
+	ProjectID pgtype.UUID        `json:"project_id"`
+	UserID    pgtype.UUID        `json:"user_id"`
+	Name      string             `json:"name"`
+	Filters   []byte             `json:"filters"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
 type Session struct {

@@ -3,17 +3,56 @@ import type {
   IssuePriority,
   IssueStatus,
   Label,
+  StatusDef,
 } from "@relay/api-client";
 import { Show } from "solid-js";
 
-export const ISSUE_STATUSES: IssueStatus[] = [
-  "backlog",
-  "todo",
-  "in_progress",
-  "review",
-  "done",
-  "cancelled",
+// Built-in lanes — mirrors internal/statuses.Defaults(). Custom project
+// lanes arrive on Project.statuses.
+export const DEFAULT_STATUSES: StatusDef[] = [
+  { id: "backlog", label: "Backlog", color: "#78716c" },
+  { id: "todo", label: "To do", color: "#0891b2" },
+  { id: "in_progress", label: "In progress", color: "#d97706" },
+  { id: "review", label: "In review", color: "#7c3aed" },
+  { id: "done", label: "Done", color: "#059669", closed: true },
+  { id: "cancelled", label: "Cancelled", color: "#dc2626", closed: true },
 ];
+
+export const ISSUE_STATUSES: IssueStatus[] = DEFAULT_STATUSES.map(
+  (s) => s.id,
+);
+
+/** The project's lanes; defaults when the project carries none. */
+export function statusDefs(p?: {
+  statuses?: StatusDef[] | null;
+}): StatusDef[] {
+  return p?.statuses && p.statuses.length > 0
+    ? p.statuses
+    : DEFAULT_STATUSES;
+}
+
+/** Resolve a status id to its def; unknown ids get a neutral placeholder. */
+export function statusDef(defs: StatusDef[], id: string): StatusDef {
+  return (
+    defs.find((d) => d.id === id) ?? {
+      id,
+      label: id.replace(/[_-]/g, " "),
+      color: "#78716c",
+    }
+  );
+}
+
+export function statusLabel(id: string, defs?: StatusDef[]): string {
+  return statusDef(defs ?? DEFAULT_STATUSES, id).label;
+}
+
+export function statusColor(id: string, defs?: StatusDef[]): string {
+  return statusDef(defs ?? DEFAULT_STATUSES, id).color;
+}
+
+export function isClosed(id: string, defs?: StatusDef[]): boolean {
+  return statusDef(defs ?? DEFAULT_STATUSES, id).closed === true;
+}
 
 export const ISSUE_PRIORITIES: IssuePriority[] = [
   "none",
@@ -23,15 +62,6 @@ export const ISSUE_PRIORITIES: IssuePriority[] = [
   "low",
 ];
 
-export const STATUS_LABEL: Record<IssueStatus, string> = {
-  backlog: "Backlog",
-  todo: "To do",
-  in_progress: "In progress",
-  review: "Review",
-  done: "Done",
-  cancelled: "Cancelled",
-};
-
 export const PRIORITY_LABEL: Record<IssuePriority, string> = {
   none: "None",
   urgent: "Urgent",
@@ -40,36 +70,18 @@ export const PRIORITY_LABEL: Record<IssuePriority, string> = {
   low: "Low",
 };
 
-const STATUS_DOT_CLASS: Record<IssueStatus, string> = {
-  backlog: "bg-muted/50",
-  todo: "bg-sky-500",
-  in_progress: "bg-amber-500",
-  review: "bg-violet-500",
-  done: "bg-emerald-500",
-  cancelled: "bg-muted",
-};
-
-export function isClosed(status: IssueStatus): boolean {
-  return status === "done" || status === "cancelled";
-}
-
-/** Label for a status string that may come from an untyped payload. */
-export function statusLabel(s: string): string {
-  if ((ISSUE_STATUSES as readonly string[]).includes(s)) {
-    // SAFETY: guarded by the includes() check above.
-    return STATUS_LABEL[s as IssueStatus];
-  }
-  return s;
-}
-
-export function StatusDot(props: { status: IssueStatus; class?: string }) {
+export function StatusDot(props: {
+  status: string;
+  defs?: StatusDef[];
+  class?: string;
+}) {
   return (
     <span
-      class={`inline-block rounded-full ${STATUS_DOT_CLASS[props.status]} ${props.class ?? "h-2 w-2"}`}
+      class={`inline-block rounded-full ${props.class ?? "h-2 w-2"}`}
+      style={{ "background-color": statusColor(props.status, props.defs) }}
     />
   );
 }
-
 const PRIORITY_BARS: Record<IssuePriority, number> = {
   none: 0,
   low: 1,

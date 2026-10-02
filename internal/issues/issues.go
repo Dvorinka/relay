@@ -19,6 +19,7 @@ import (
 	"github.com/Dvorinka/relay/internal/events"
 	"github.com/Dvorinka/relay/internal/github"
 	"github.com/Dvorinka/relay/internal/httpx"
+	"github.com/Dvorinka/relay/internal/statuses"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -27,15 +28,18 @@ import (
 	"go.uber.org/zap"
 )
 
-var (
-	statusSet = map[string]bool{
-		"backlog": true, "todo": true, "in_progress": true,
-		"review": true, "done": true, "cancelled": true,
+var prioritySet = map[string]bool{
+	"none": true, "urgent": true, "high": true, "medium": true, "low": true,
+}
+
+// defsFor resolves a project's status lanes; falls back to the built-ins.
+func (s *Service) defsFor(ctx context.Context, projectID pgtype.UUID) []statuses.Def {
+	meta, err := s.q.ProjectMeta(ctx, projectID)
+	if err != nil {
+		return statuses.Defaults()
 	}
-	prioritySet = map[string]bool{
-		"none": true, "urgent": true, "high": true, "medium": true, "low": true,
-	}
-)
+	return statuses.Parse(meta.Statuses)
+}
 
 type Service struct {
 	q   *db.Queries
@@ -110,8 +114,9 @@ func (s *Service) issueGate(c *gin.Context) {
 func (s *Service) handleList(c *gin.Context) {
 	p := c.MustGet(ctxProjectKey).(db.GetProjectForUserRow)
 	params := db.ListIssuesForUserParams{ProjectID: p.ID, UserID: auth.CurrentUser(c).ID}
+	defs := s.defsFor(c.Request.Context(), p.ID)
 	if v := c.Query("status"); v != "" {
-		if !statusSet[v] {
+		if !statuses.Contains(defs, v) {
 			httpx.Error(c, http.StatusBadRequest, "bad_request", "unknown status")
 			return
 		}
@@ -142,7 +147,7 @@ func (s *Service) handleList(c *gin.Context) {
 	labelsByIssue := s.labelsFor(c, issueIDs(rows))
 	out := make([]gin.H, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, issueJSON(listRowToIssue(r), r.AssigneeName, r.AssigneeAvatar, labelsByIssue[r.ID.String()], p.Key, r.GithubRepoOwner, r.GithubRepoName))
+		out = append(out, issueJSON(listRowToIssue(r), r.AssigneeName, r.AssigneeAvatar, labelsByIssue[r.ID.String()], p.Key, r.GithubRepoOwner, r.GithubRepoName, defs))
 	}
 	c.JSON(http.StatusOK, gin.H{"issues": out})
 }
@@ -175,7 +180,8 @@ func (s *Service) handleCreate(c *gin.Context) {
 	if req.Priority == "" {
 		req.Priority = "none"
 	}
-	if !statusSet[req.Status] || !prioritySet[req.Priority] {
+	defs := s.defsFor(c.Request.Context(), p.ID)
+	if !statuses.Contains(defs, req.Status) || !prioritySet[req.Priority] {
 		httpx.Error(c, http.StatusBadRequest, "bad_request", "unknown status or priority")
 		return
 	}
@@ -224,7 +230,7 @@ func (s *Service) handleCreate(c *gin.Context) {
 	s.linkLabels(c, row.ID, labelIDs)
 	s.record(c, row.ID, user.ID, "created", gin.H{"status": req.Status})
 	s.log.Info("issue created", zap.String("issue", p.Key+"-"+strconv.Itoa(int(num))))
-	out := issueJSON(row, pgtype.Text{}, pgtype.Text{}, s.issueLabels(c, row.ID), p.Key, pgtype.Text{}, pgtype.Text{})
+	out := issueJSON(row, pgtype.Text{}, pgtype.Text{}, s.issueLabels(c, row.ID), p.Key, pgtype.Text{}, pgtype.Text{}, defs)
 	s.publish(p.ID, "issue.created", out)
 	c.JSON(http.StatusCreated, out)
 }
@@ -236,7 +242,7 @@ func (s *Service) handleGet(c *gin.Context) {
 	pkey := s.projectKey(c, row.ProjectID)
 	activity := s.activityJSON(c, row.ID)
 	c.JSON(http.StatusOK, gin.H{
-		"issue":    issueJSON(forUserRowToIssue(row), row.AssigneeName, row.AssigneeAvatar, s.issueLabels(c, row.ID), pkey, row.GithubRepoOwner, row.GithubRepoName),
+		"issue":    issueJSON(forUserRowToIssue(row), row.AssigneeName, row.AssigneeAvatar, s.issueLabels(c, row.ID), pkey, row.GithubRepoOwner, row.GithubRepoName, s.defsFor(c.Request.Context(), row.ProjectID)),
 		"activity": activity,
 	})
 }
@@ -269,7 +275,7 @@ func (s *Service) handleUpdate(c *gin.Context) {
 	}
 	if v, ok := raw["status"]; ok {
 		var st string
-		if json.Unmarshal(v, &st) != nil || !statusSet[st] {
+		if json.Unmarshal(v, &st) != nil || !statuses.Contains(s.defsFor(c.Request.Context(), old.ProjectID), st) {
 			httpx.Error(c, http.StatusBadRequest, "bad_request", "unknown status")
 			return
 		}
@@ -360,7 +366,7 @@ func (s *Service) handleUpdate(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
-	out := issueJSON(byIDRowToIssue(fresh), fresh.AssigneeName, fresh.AssigneeAvatar, s.issueLabels(c, fresh.ID), s.projectKey(c, fresh.ProjectID), fresh.GithubRepoOwner, fresh.GithubRepoName)
+	out := issueJSON(byIDRowToIssue(fresh), fresh.AssigneeName, fresh.AssigneeAvatar, s.issueLabels(c, fresh.ID), s.projectKey(c, fresh.ProjectID), fresh.GithubRepoOwner, fresh.GithubRepoName, s.defsFor(c.Request.Context(), fresh.ProjectID))
 	s.publish(fresh.ProjectID, "issue.updated", out)
 	c.JSON(http.StatusOK, out)
 }
@@ -432,7 +438,7 @@ func (s *Service) handlePushToGitHub(c *gin.Context) {
 		return
 	}
 	// a relay-side closed state maps onto the fresh GitHub issue too
-	if i.Status == "done" || i.Status == "cancelled" {
+	if statuses.IsClosed(s.defsFor(c.Request.Context(), i.ProjectID), i.Status) {
 		go s.closeOnGitHub(repo.InstallationID, repo.Owner, repo.Name, gh.Number, "closed")
 	}
 	fresh, err := s.q.GetIssueByID(c.Request.Context(), i.ID)
@@ -440,7 +446,7 @@ func (s *Service) handlePushToGitHub(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
-	out := issueJSON(byIDRowToIssue(fresh), fresh.AssigneeName, fresh.AssigneeAvatar, s.issueLabels(c, fresh.ID), s.projectKey(c, fresh.ProjectID), fresh.GithubRepoOwner, fresh.GithubRepoName)
+	out := issueJSON(byIDRowToIssue(fresh), fresh.AssigneeName, fresh.AssigneeAvatar, s.issueLabels(c, fresh.ID), s.projectKey(c, fresh.ProjectID), fresh.GithubRepoOwner, fresh.GithubRepoName, s.defsFor(c.Request.Context(), fresh.ProjectID))
 	s.publish(fresh.ProjectID, "issue.updated", out)
 	c.JSON(http.StatusOK, out)
 }
@@ -453,7 +459,7 @@ func (s *Service) syncGitHubState(i db.GetIssueForUserRow, status string) {
 		return
 	}
 	state := "open"
-	if status == "done" || status == "cancelled" {
+	if statuses.IsClosed(s.defsFor(context.Background(), i.ProjectID), status) {
 		state = "closed"
 	}
 	go s.closeOnGitHub(i.GithubInstallationID.Int64, i.GithubRepoOwner.String, i.GithubRepoName.String, int(i.GithubNumber.Int32), state)
@@ -556,7 +562,7 @@ func (s *Service) handleFromMessage(c *gin.Context) {
 			}
 		}
 	}
-	c.JSON(http.StatusCreated, issueJSON(row, pgtype.Text{}, pgtype.Text{}, nil, proj.Key, pgtype.Text{}, pgtype.Text{}))
+	c.JSON(http.StatusCreated, issueJSON(row, pgtype.Text{}, pgtype.Text{}, nil, proj.Key, pgtype.Text{}, pgtype.Text{}, s.defsFor(c.Request.Context(), proj.ID)))
 }
 
 // --- labels ---
@@ -737,7 +743,7 @@ func authorJSON(kind string, id pgtype.UUID, name, avatar pgtype.Text) gin.H {
 
 // issueJSON renders an issue; assignee fields come from the optional users
 // join on the read queries.
-func issueJSON(i db.Issue, assigneeName, assigneeAvatar pgtype.Text, labels []gin.H, projectKey string, ghOwner, ghRepo pgtype.Text) gin.H {
+func issueJSON(i db.Issue, assigneeName, assigneeAvatar pgtype.Text, labels []gin.H, projectKey string, ghOwner, ghRepo pgtype.Text, defs []statuses.Def) gin.H {
 	var assignee gin.H
 	if i.AssigneeID.Valid {
 		assignee = authorJSON("user", i.AssigneeID, assigneeName, assigneeAvatar)
@@ -757,7 +763,7 @@ func issueJSON(i db.Issue, assigneeName, assigneeAvatar pgtype.Text, labels []gi
 		state := "open"
 		if i.GithubState.Valid && i.GithubState.String != "" {
 			state = i.GithubState.String
-		} else if i.Status == "done" || i.Status == "cancelled" {
+		} else if statuses.IsClosed(defs, i.Status) {
 			state = "closed"
 		}
 		url := i.GithubUrl.String

@@ -3,6 +3,7 @@ import type {
   IssuePriority,
   IssueStatus,
   Label,
+  StatusDef,
   WorkspaceMember,
 } from "@relay/api-client";
 import { createMemo, createSignal, For, Show } from "solid-js";
@@ -12,11 +13,10 @@ import { inputClass } from "../../components/ui";
 import { api } from "../../lib/api";
 import {
   ISSUE_PRIORITIES,
-  ISSUE_STATUSES,
+  DEFAULT_STATUSES,
   LabelChip,
   PRIORITY_LABEL,
   PriorityGlyph,
-  STATUS_LABEL,
   StatusDot,
 } from "./meta";
 
@@ -49,9 +49,13 @@ export function StatusSelect(props: {
   onChange: (v: IssueStatus) => void;
   disabled?: boolean;
   label?: string;
+  defs?: StatusDef[];
 }) {
   const collection = createListCollection({
-    items: ISSUE_STATUSES.map((s) => ({ value: s, label: STATUS_LABEL[s] })),
+    items: (props.defs ?? DEFAULT_STATUSES).map((d) => ({
+      value: d.id,
+      label: d.label,
+    })),
   });
   return (
     <Select.Root
@@ -60,8 +64,7 @@ export function StatusSelect(props: {
       onValueChange={(d) => {
         const v = d.value[0];
         if (v !== undefined && v !== props.value) {
-          // SAFETY: item values are built from ISSUE_STATUSES.
-          props.onChange(v as IssueStatus);
+          props.onChange(v);
         }
       }}
       positioning={{ placement: "bottom-start", sameWidth: true }}
@@ -71,7 +74,7 @@ export function StatusSelect(props: {
       <Select.Control>
         <Select.Trigger class={triggerClass} aria-label="Status">
           <span class="flex min-w-0 items-center gap-2">
-            <StatusDot status={props.value} />
+            <StatusDot status={props.value} defs={props.defs} />
             <Select.ValueText />
           </span>
           <Chevron />
@@ -83,7 +86,7 @@ export function StatusSelect(props: {
             <For each={collection.items}>
               {(item) => (
                 <Select.Item item={item} class={itemClass}>
-                  <StatusDot status={item.value} />
+                  <StatusDot status={item.value} defs={props.defs} />
                   <Select.ItemText class="min-w-0 flex-1 truncate">
                     {item.label}
                   </Select.ItemText>
@@ -247,7 +250,7 @@ export function LabelsPicker(props: {
     }),
   );
   const [newName, setNewName] = createSignal("");
-  const [newColor, setNewColor] = createSignal("#f2541b");
+  const [newColor, setNewColor] = createSignal("#06b6d4");
   const [creating, setCreating] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
 

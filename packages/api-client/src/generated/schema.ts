@@ -265,6 +265,283 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{projectId}/statuses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Replace the project's issue status lanes (null resets to built-ins) */
+        put: operations["setProjectStatuses"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/local_path": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Link a local folder on the server host (null clears) */
+        put: operations["setProjectLocalPath"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List one directory level of the linked local folder */
+        get: operations["listProjectFiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/files/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read a UTF-8 file (<=256KB) from the linked folder */
+        get: operations["readProjectFile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/filters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's saved issue filters for this project */
+        get: operations["listSavedFilters"];
+        put?: never;
+        /** Save a named filter */
+        post: operations["createSavedFilter"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/filters/{filterId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete one of the caller's saved filters */
+        delete: operations["deleteSavedFilter"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/boards": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Named board views for this project */
+        get: operations["listBoards"];
+        put?: never;
+        /** Save a named board view */
+        post: operations["createBoard"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/boards/{boardId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a named board */
+        delete: operations["deleteBoard"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/briefs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List visual briefs in this project */
+        get: operations["listBriefs"];
+        put?: never;
+        /** Create a visual brief */
+        post: operations["createBrief"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/brief-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Set the project's brief policy */
+        post: operations["setBriefPolicy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/briefs/{briefId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one brief with its scene */
+        get: operations["getBrief"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update a brief's title, summary, scene, or status */
+        patch: operations["updateBrief"];
+        trace?: never;
+    };
+    "/api/briefs/{briefId}/conversation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The brief's comment thread (creates it on first access) */
+        get: operations["briefConversation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/github/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Recursive file tree of a linked GitHub repo */
+        get: operations["repoFileTree"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/github/files/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read a file from a linked GitHub repo */
+        get: operations["repoFileRead"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/push/vapid": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Web-push application server key (enabled=false when unconfigured) */
+        get: operations["pushVapidKey"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/push/subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Register (or refresh) a push subscription for the caller */
+        put: operations["pushSubscribe"];
+        post?: never;
+        /** Remove a push subscription */
+        delete: operations["pushUnsubscribe"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{projectId}/conversation": {
         parameters: {
             query?: never;
@@ -274,6 +551,26 @@ export interface paths {
         };
         /** The project's main conversation (created on first access) */
         get: operations["projectConversation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/mentionables": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Everything the composer can @-mention in this project
+         * @description Workspace members, agents, issues (including GitHub-mirrored issues and PRs), and linked repos for owner/repo#N refs.
+         */
+        get: operations["mentionables"];
         put?: never;
         post?: never;
         delete?: never;
@@ -294,6 +591,40 @@ export interface paths {
         put?: never;
         /** Send a markdown message as the current user */
         post: operations["postMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/messages/{messageId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Edit a message's body - author only, locked once any agent has read it */
+        patch: operations["editMessage"];
+        trace?: never;
+    };
+    "/api/messages/{messageId}/reactions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Toggle the caller's emoji reaction on a message */
+        put: operations["toggleReaction"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -326,6 +657,26 @@ export interface paths {
         };
         /** Redirect to a short-lived presigned download URL */
         get: operations["getAttachmentURL"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/attachments/{attachmentId}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream the attachment bytes through the API
+         * @description Same-origin download for browsers. Prefer this over the presigned redirect when the client cannot reach the storage endpoint directly (LAN dev environments, private-network access rules).
+         */
+        get: operations["downloadAttachment"];
         put?: never;
         post?: never;
         delete?: never;
@@ -522,6 +873,64 @@ export interface paths {
         post?: never;
         /** Revoke an MCP token (owner/admin) */
         delete: operations["revokeAgentToken"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspaceId}/agent-invites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List invites and their redemption state (owner/admin) */
+        get: operations["listAgentInvites"];
+        put?: never;
+        /**
+         * Mint a one-shot agent invite; the rli_ token is returned once (owner/admin)
+         * @description The user invites; the agent registers itself by redeeming the token at POST /api/agent-invites/redeem. Empty project_ids means every workspace project at redeem time; empty scopes means the default full set.
+         */
+        post: operations["createAgentInvite"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspaceId}/agent-invites/{inviteId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke an unused invite (owner/admin) */
+        delete: operations["deleteAgentInvite"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-invites/redeem": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Agent self-registration - redeems an rli_ invite, returns a live rly_ token
+         * @description Public endpoint; the invite token is the credential. The agent supplies its own name, receives its agent identity, grants, and a working MCP token in one response.
+         */
+        post: operations["redeemAgentInvite"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1123,6 +1532,8 @@ export interface components {
         AuthSession: {
             user: components["schemas"]["User"];
             workspaces: components["schemas"]["WorkspaceWithRole"][];
+            /** @description Session bearer token, returned by login/register only. Clients hosted off-origin (local-mode SPA syncing to a server) send it as `Authorization: Bearer <token>` since cookies are same-origin. */
+            token?: string;
         };
         Workspace: {
             /** Format: uuid */
@@ -1151,8 +1562,75 @@ export interface components {
             description: string;
             icon?: string | null;
             color?: string | null;
+            /** @description Issue lanes for this project; built-in six when unset */
+            statuses?: components["schemas"]["StatusDef"][];
+            /** @description Linked local folder on the server host */
+            local_path?: string | null;
+            brief_policy?: components["schemas"]["BriefPolicy"];
             /** Format: date-time */
             created_at: string;
+        };
+        /**
+         * @description When agents should produce visual briefs. 'never' forbids them,
+         *     'on_request' creates only when asked, 'pre_merge' expects one before
+         *     merge-worthy reviews are approved.
+         * @enum {string}
+         */
+        BriefPolicy: "never" | "on_request" | "pre_merge";
+        Brief: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            project_id: string;
+            /** Format: uuid */
+            issue_id?: string | null;
+            /**
+             * Format: uuid
+             * @description Comment thread; messages via /conversations/{id}/messages
+             */
+            conversation_id?: string | null;
+            title: string;
+            summary: string;
+            /** @description Excalidraw-compatible scene JSON */
+            scene: {
+                [key: string]: unknown;
+            };
+            /** @enum {string} */
+            status: "open" | "resolved" | "archived";
+            author_name?: string;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
+        };
+        StatusDef: {
+            id: string;
+            label: string;
+            color: string;
+            /** @description Terminal state (maps to GitHub closed) */
+            closed?: boolean;
+        };
+        SavedFilter: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            filters: {
+                [key: string]: unknown;
+            };
+        };
+        Board: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            filters: {
+                [key: string]: unknown;
+            };
+        };
+        FileEntry: {
+            name: string;
+            path: string;
+            dir: boolean;
+            size?: number;
         };
         CreateProjectRequest: {
             /** Format: uuid */
@@ -1196,6 +1674,22 @@ export interface components {
             /** Format: date-time */
             created_at: string;
         };
+        MessageParent: {
+            /** Format: uuid */
+            id: string;
+            author: string;
+            /** @description Plain-text snippet; empty when deleted */
+            preview: string;
+            deleted: boolean;
+        };
+        Reaction: {
+            emoji: string;
+            count: number;
+            /** @description The caller reacted with this emoji */
+            mine: boolean;
+            /** @description Up to 8 reactor display names, oldest first */
+            names: string[];
+        };
         Message: {
             /** Format: uuid */
             id: string;
@@ -1204,14 +1698,34 @@ export interface components {
             author: components["schemas"]["MessageAuthor"];
             /** @description Markdown */
             body: string;
+            /** @description Structured entity references extracted from the body */
+            mentions?: components["schemas"]["MentionRef"][];
+            parent?: components["schemas"]["MessageParent"] | null;
             attachments: components["schemas"]["Attachment"][];
+            reactions: components["schemas"]["Reaction"][];
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
             edited_at?: string | null;
+            /** @description True once at least one agent has read the message; edits are then rejected with 409 */
+            agent_read: boolean;
         };
-        /** @enum {string} */
-        IssueStatus: "backlog" | "todo" | "in_progress" | "review" | "done" | "cancelled";
+        MentionRef: {
+            /**
+             * @description user|agent|issue|gh|file — @user:, @agent:, KEY-N, owner/repo#N, @file:/@gh:
+             * @enum {string}
+             */
+            kind: "user" | "agent" | "issue" | "gh" | "file";
+            /** @description slug | KEY-1 | owner/repo#1 | path */
+            ref: string;
+            label: string;
+            /** @description resolved entity uuid when found */
+            id?: string;
+            url?: string;
+            found?: boolean;
+        };
+        /** @description Built-in lane id or a project's custom status id */
+        IssueStatus: string;
         /** @enum {string} */
         IssuePriority: "none" | "urgent" | "high" | "medium" | "low";
         Label: {
@@ -1273,7 +1787,7 @@ export interface components {
             created_at: string;
         };
         /** @enum {string} */
-        AgentScope: "project:read" | "message:read" | "message:write" | "attachment:read" | "issue:read" | "issue:write" | "review:read" | "review:write";
+        AgentScope: "project:read" | "message:read" | "message:write" | "attachment:read" | "issue:read" | "issue:write" | "review:read" | "review:write" | "file:read" | "brief:read" | "brief:write";
         AgentGrant: {
             /** Format: uuid */
             project_id: string;
@@ -1412,6 +1926,29 @@ export interface components {
         MintedToken: components["schemas"]["McpTokenMeta"] & {
             /** @description rly_... - shown once */
             token: string;
+        };
+        AgentInvite: {
+            /** Format: uuid */
+            id: string;
+            /** @description Empty = every workspace project at redeem time. */
+            project_ids: string[];
+            scopes: components["schemas"]["AgentScope"][];
+            /** Format: date-time */
+            expires_at: string;
+            used_by: {
+                /** Format: uuid */
+                agent_id?: string;
+                name?: string;
+            } | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        AgentRedeemResult: {
+            agent: components["schemas"]["Agent"];
+            /** @description rly_... - shown once */
+            token: string;
+            mcp_url: string;
+            api_url: string;
         };
         ProjectOverview: {
             project: components["schemas"]["Project"];
@@ -1972,6 +2509,619 @@ export interface operations {
             403: components["responses"]["Forbidden"];
         };
     };
+    setProjectStatuses: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    statuses?: components["schemas"]["StatusDef"][] | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Active status list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        statuses?: components["schemas"]["StatusDef"][];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    setProjectLocalPath: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    path?: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Linked path */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        local_path?: string | null;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listProjectFiles: {
+        parameters: {
+            query?: {
+                path?: string;
+                /** @description Flatten the whole tree into a file-path list (autocomplete) */
+                recursive?: "1";
+            };
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Directory entries (dirs first) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        entries?: components["schemas"]["FileEntry"][];
+                        truncated?: boolean;
+                    };
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    readProjectFile: {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description File content */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        path?: string;
+                        content?: string;
+                        size?: number;
+                    };
+                };
+            };
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["BadRequest"];
+        };
+    };
+    listSavedFilters: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Saved filters */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        filters?: components["schemas"]["SavedFilter"][];
+                    };
+                };
+            };
+        };
+    };
+    createSavedFilter: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    name: string;
+                    filters?: {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Created filter */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedFilter"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    deleteSavedFilter: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+                filterId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        deleted?: boolean;
+                    };
+                };
+            };
+        };
+    };
+    listBoards: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Boards */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        boards?: components["schemas"]["Board"][];
+                    };
+                };
+            };
+        };
+    };
+    createBoard: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    name: string;
+                    filters?: {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Created board */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Board"];
+                };
+            };
+        };
+    };
+    deleteBoard: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+                boardId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        deleted?: boolean;
+                    };
+                };
+            };
+        };
+    };
+    listBriefs: {
+        parameters: {
+            query?: {
+                issue_id?: string;
+            };
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Briefs */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        briefs?: components["schemas"]["Brief"][];
+                        policy?: components["schemas"]["BriefPolicy"];
+                    };
+                };
+            };
+        };
+    };
+    createBrief: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    title: string;
+                    summary?: string;
+                    /** Format: uuid */
+                    issue_id?: string;
+                    /** @description Excalidraw-compatible scene */
+                    scene?: {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Created brief */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Brief"];
+                };
+            };
+        };
+    };
+    setBriefPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    policy: components["schemas"]["BriefPolicy"];
+                };
+            };
+        };
+        responses: {
+            /** @description Policy set */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        policy?: components["schemas"]["BriefPolicy"];
+                    };
+                };
+            };
+        };
+    };
+    getBrief: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                briefId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Brief */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Brief"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateBrief: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                briefId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    title?: string;
+                    summary?: string;
+                    /** @enum {string} */
+                    status?: "open" | "resolved" | "archived";
+                    scene?: {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Updated brief */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Brief"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    briefConversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                briefId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Conversation id usable with /conversations/{id}/messages */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        id?: string;
+                    };
+                };
+            };
+        };
+    };
+    repoFileTree: {
+        parameters: {
+            query: {
+                /** @description owner/name */
+                repo: string;
+            };
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Tree entries */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        entries?: {
+                            path?: string;
+                            dir?: boolean;
+                        }[];
+                        truncated?: boolean;
+                        repo?: string;
+                        branch?: string;
+                    };
+                };
+            };
+            404: components["responses"]["NotFound"];
+            502: components["responses"]["BadRequest"];
+        };
+    };
+    repoFileRead: {
+        parameters: {
+            query: {
+                repo: string;
+                path: string;
+            };
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description File content */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        path?: string;
+                        content?: string;
+                        size?: number;
+                        repo?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            502: components["responses"]["BadRequest"];
+        };
+    };
+    pushVapidKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Key info */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        enabled?: boolean;
+                        public_key?: string;
+                        ephemeral?: boolean;
+                    };
+                };
+            };
+        };
+    };
+    pushSubscribe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    endpoint: string;
+                    keys: {
+                        p256dh: string;
+                        auth: string;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Subscribed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        subscribed?: boolean;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["BadRequest"];
+        };
+    };
+    pushUnsubscribe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    endpoint: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Unsubscribed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        subscribed?: boolean;
+                    };
+                };
+            };
+        };
+    };
     projectConversation: {
         parameters: {
             query?: never;
@@ -1990,6 +3140,56 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Conversation"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    mentionables: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Mentionable entities */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        users: {
+                            /** Format: uuid */
+                            id?: string;
+                            name?: string;
+                            avatar_url?: string | null;
+                        }[];
+                        agents: {
+                            /** Format: uuid */
+                            id?: string;
+                            name?: string;
+                            slug?: string;
+                            description?: string;
+                        }[];
+                        issues: {
+                            /** Format: uuid */
+                            id?: string;
+                            key?: string;
+                            title?: string;
+                            status?: string;
+                            /** @enum {string} */
+                            kind?: "issue" | "github_issue" | "pull_request";
+                            repo?: string;
+                            github_number?: number;
+                            url?: string;
+                        }[];
+                        repos: string[];
+                    };
                 };
             };
             403: components["responses"]["Forbidden"];
@@ -2037,8 +3237,14 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @description May be empty when attachment_ids is non-empty. */
                     body: string;
                     attachment_ids?: string[];
+                    /**
+                     * Format: uuid
+                     * @description Message this reply threads under (same conversation)
+                     */
+                    parent_id?: string;
                 };
             };
         };
@@ -2050,6 +3256,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Message"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    editMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                messageId: components["parameters"]["MessageId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    body: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated message */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Message"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            /** @description An agent has read the message; editing is locked */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    toggleReaction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                messageId: components["parameters"]["MessageId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    emoji: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Aggregated reactions for the message */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        reactions: components["schemas"]["Reaction"][];
+                    };
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -2113,6 +3390,31 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    downloadAttachment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+                attachmentId: components["parameters"]["AttachmentId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Attachment bytes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
             };
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
@@ -2628,6 +3930,131 @@ export interface operations {
             };
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    listAgentInvites: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Invites */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        invites: components["schemas"]["AgentInvite"][];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createAgentInvite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    project_ids?: string[];
+                    scopes?: components["schemas"]["AgentScope"][];
+                    /** @default 72 */
+                    expires_hours?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Invite created; `token` shown only in this response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentInvite"] & {
+                        /** @description rli_... - shown once */
+                        token: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    deleteAgentInvite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["WorkspaceId"];
+                inviteId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    redeemAgentInvite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description rli_... */
+                    token: string;
+                    name: string;
+                    description?: string;
+                    /**
+                     * @default notify
+                     * @enum {string}
+                     */
+                    review_mode?: "notify" | "gate";
+                };
+            };
+        };
+        responses: {
+            /** @description Registered; `token` shown only in this response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentRedeemResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description Invite invalid, used, or expired */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     mcpEndpoint: {

@@ -22,6 +22,11 @@ interface RelayToken {
   href?: string;
   key?: string;
   text: string;
+  fileSrc?: "local" | "github";
+  fileRepo?: string;
+  filePath?: string;
+  personKind?: string;
+  personName?: string;
 }
 
 function linkifyExtension(projectId?: string) {
@@ -31,9 +36,45 @@ function linkifyExtension(projectId?: string) {
         name: "relayLink",
         level: "inline" as const,
         start(src: string) {
-          return src.match(/[A-Za-z]/)?.index;
+          return src.match(/[@A-Za-z0-9]/)?.index;
         },
         tokenizer(src: string): RelayToken | undefined {
+          // @gh:owner/repo:path — linked-repo file mention
+          const ghFile = src.match(
+            /^@gh:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+):([^\s]+)/,
+          );
+          if (ghFile) {
+            return {
+              type: "relayLink",
+              raw: ghFile[0],
+              text: ghFile[2] ?? ghFile[0],
+              fileSrc: "github",
+              fileRepo: ghFile[1] ?? "",
+              filePath: ghFile[2] ?? "",
+            };
+          }
+          // @file:path — linked local folder mention
+          const localFile = src.match(/^@file:([^\s]+)/);
+          if (localFile) {
+            return {
+              type: "relayLink",
+              raw: localFile[0],
+              text: localFile[1] ?? "",
+              fileSrc: "local",
+              filePath: localFile[1] ?? "",
+            };
+          }
+          // @agent:slug / @user:name — person mentions
+          const person = src.match(/^@(agent|user):([A-Za-z0-9][\w.-]{0,59})/);
+          if (person) {
+            return {
+              type: "relayLink",
+              raw: person[0],
+              text: person[0],
+              personKind: person[1] ?? "",
+              personName: person[2] ?? "",
+            };
+          }
           const gh = src.match(
             /^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#(\d+)(?![\d\w])/,
           );
@@ -58,6 +99,24 @@ function linkifyExtension(projectId?: string) {
           return undefined;
         },
         renderer(token: RelayToken) {
+          if (token.fileSrc && token.filePath) {
+            const name = escapeHtml(
+              token.filePath.split("/").pop() ?? token.filePath,
+            );
+            const repo = escapeHtml(token.fileRepo ?? "");
+            const path = escapeHtml(token.filePath);
+            return (
+              `<button type="button" class="md-ref md-file" ` +
+              `data-file-src="${token.fileSrc}" data-repo="${repo}" ` +
+              `data-path="${path}" title="${path}">${name}</button>`
+            );
+          }
+          if (token.personKind) {
+            return (
+              `<span class="md-ref md-person" data-kind="${token.personKind}">` +
+              `@${escapeHtml(token.personName ?? "")}</span>`
+            );
+          }
           if (token.href) {
             return `<a href="${token.href}" target="_blank" rel="noreferrer" class="md-ref">${token.text}</a>`;
           }
@@ -73,6 +132,19 @@ function linkifyExtension(projectId?: string) {
 
 const parsers = new Map<string, Marked>();
 
+// Fenced code blocks render with a language header and a copy affordance,
+// Discord-style. The copy button's handler is delegated in <Markdown> -
+// DOMPurify strips inline handlers.
+function codeRenderer(token: { text: string; lang?: string }): string {
+  const lang = (token.lang ?? "").trim().split(/\s/)[0] ?? "";
+  const label = lang === "" ? "text" : escapeHtml(lang);
+  return (
+    `<div class="md-pre"><div class="md-pre-head"><span>${label}</span>` +
+    `<button type="button" class="md-pre-copy">copy</button></div>` +
+    `<pre><code>${escapeHtml(token.text)}</code></pre></div>`
+  );
+}
+
 function parserFor(projectId?: string): Marked {
   const cacheKey = projectId ?? "";
   let p = parsers.get(cacheKey);
@@ -87,6 +159,7 @@ function parserFor(projectId?: string): Marked {
       },
       ...linkifyExtension(projectId),
     });
+    p.use({ renderer: { code: codeRenderer } });
     parsers.set(cacheKey, p);
   }
   return p;
@@ -105,6 +178,49 @@ export function Markdown(props: {
 }) {
   const html = createMemo(() => renderMarkdown(props.body, props.projectId));
   return (
-    <div class={`md ${props.class ?? ""}`} innerHTML={html()} />
+    <div
+      class={`md ${props.class ?? ""}`}
+      innerHTML={html()}
+      onClick={(e) => {
+        const file = (e.target as HTMLElement).closest(".md-file");
+        if (file) {
+          e.preventDefault();
+          window.dispatchEvent(
+            new CustomEvent("relay:open-file", {
+              detail: {
+                src: file.getAttribute("data-file-src"),
+                repo: file.getAttribute("data-repo") || undefined,
+                path: file.getAttribute("data-path"),
+                projectId: props.projectId,
+              },
+            }),
+          );
+          return;
+        }
+        const btn = (e.target as HTMLElement).closest(".md-pre-copy");
+        const code = btn?.parentElement?.nextElementSibling?.textContent;
+        if (!btn || code == null) return;
+        const done = () => {
+          btn.textContent = "copied";
+          setTimeout(() => {
+            btn.textContent = "copy";
+          }, 1200);
+        };
+        if (navigator.clipboard?.writeText) {
+          void navigator.clipboard.writeText(code).then(done, () => {});
+        } else {
+          // insecure-context fallback (LAN dev origins)
+          const ta = document.createElement("textarea");
+          ta.value = code;
+          ta.style.position = "fixed";
+          ta.style.opacity = "0";
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand("copy");
+          ta.remove();
+          done();
+        }
+      }}
+    />
   );
 }

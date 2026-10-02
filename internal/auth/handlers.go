@@ -45,6 +45,7 @@ type workspaceOut struct {
 type sessionOut struct {
 	User       userOut        `json:"user"`
 	Workspaces []workspaceOut `json:"workspaces"`
+	Token      string         `json:"token,omitempty"`
 }
 
 type userOut struct {
@@ -99,7 +100,9 @@ func (s *Service) handleRegister(c *gin.Context) {
 		return
 	}
 	s.setCookie(c, token)
-	c.JSON(http.StatusCreated, toSessionOut(creds))
+	out := toSessionOut(creds)
+	out.Token = token
+	c.JSON(http.StatusCreated, out)
 }
 
 func (s *Service) handleLogin(c *gin.Context) {
@@ -118,7 +121,9 @@ func (s *Service) handleLogin(c *gin.Context) {
 		return
 	}
 	s.setCookie(c, token)
-	c.JSON(http.StatusOK, toSessionOut(creds))
+	out := toSessionOut(creds)
+	out.Token = token
+	c.JSON(http.StatusOK, out)
 }
 
 func (s *Service) handleLogout(c *gin.Context) {

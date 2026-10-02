@@ -17,6 +17,24 @@ export type ProjectOverview = components["schemas"]["ProjectOverview"];
 export type Conversation = components["schemas"]["Conversation"];
 export type Message = components["schemas"]["Message"];
 export type MessageAuthor = components["schemas"]["MessageAuthor"];
+export type MessageParent = components["schemas"]["MessageParent"];
+export type MentionRef = components["schemas"]["MentionRef"];
+export interface Mentionables {
+  users: { id: string; name: string; avatar_url?: string | null }[];
+  agents: { id: string; name: string; slug: string; description?: string }[];
+  issues: {
+    id: string;
+    key: string;
+    title: string;
+    status: string;
+    kind: "issue" | "github_issue" | "pull_request";
+    repo: string;
+    github_number: number;
+    url: string;
+  }[];
+  repos: string[];
+}
+export type Reaction = components["schemas"]["Reaction"];
 export type Attachment = components["schemas"]["Attachment"];
 export type Issue = components["schemas"]["Issue"];
 export type IssueStatus = components["schemas"]["IssueStatus"];
@@ -28,12 +46,20 @@ export type AgentScope = components["schemas"]["AgentScope"];
 export type AgentGrant = components["schemas"]["AgentGrant"];
 export type McpTokenMeta = components["schemas"]["McpTokenMeta"];
 export type MintedToken = components["schemas"]["MintedToken"];
+export type AgentInvite = components["schemas"]["AgentInvite"];
+export type AgentRedeemResult = components["schemas"]["AgentRedeemResult"];
 export type AgentReview = components["schemas"]["AgentReview"];
 export type ReviewStatus = NonNullable<AgentReview["status"]>;
 export type PendingReviewItem = NonNullable<
   paths["/api/me/reviews"]["get"]["responses"]["200"]["content"]["application/json"]["reviews"]
 >[number];
 export type WebhookSubscription = components["schemas"]["WebhookSubscription"];
+export type StatusDef = components["schemas"]["StatusDef"];
+export type SavedFilter = components["schemas"]["SavedFilter"];
+export type Brief = components["schemas"]["Brief"];
+export type BriefPolicy = components["schemas"]["BriefPolicy"];
+export type Board = components["schemas"]["Board"];
+export type FileEntry = components["schemas"]["FileEntry"];
 export type WebhookDelivery = components["schemas"]["WebhookDelivery"];
 
 export interface LinkedRepo {
@@ -143,11 +169,26 @@ export class ApiClientError extends Error {
   }
 }
 
-export function createClient(baseUrl: string) {
+export function createClient(baseUrl: string, token?: string) {
+  // Cross-origin and bearer-token clients carry no cookies: CORS '*' stays
+  // valid and SameSite never bites. Same-origin keeps cookie sessions.
+  const crossOrigin =
+    baseUrl !== "" &&
+    typeof window !== "undefined" &&
+    new URL(baseUrl, window.location.href).origin !== window.location.origin;
+  const credentials: RequestCredentials =
+    token || crossOrigin ? "omit" : "include";
+
   async function request<T>(path: string, init?: RequestInit): Promise<T> {
+    // Keep headers undefined when empty so FormData requests let the browser
+    // set its own multipart boundary.
+    const headers =
+      token || init?.headers ? new Headers(init?.headers) : undefined;
+    if (token) headers!.set("Authorization", `Bearer ${token}`);
     const res = await fetch(`${baseUrl}${path}`, {
-      credentials: "include",
       ...init,
+      credentials,
+      ...(headers ? { headers } : {}),
     });
     if (!res.ok) {
       const body = (await res.json().catch(() => null)) as ApiError | null;
@@ -234,6 +275,8 @@ export function createClient(baseUrl: string) {
       request<ProjectOverview>(`/api/projects/${projectId}/overview`),
     projectConversation: (projectId: string) =>
       request<Conversation>(`/api/projects/${projectId}/conversation`),
+    mentionables: (projectId: string) =>
+      request<Mentionables>(`/api/projects/${projectId}/mentionables`),
 
     // Conversations
     listMessages: (
@@ -256,10 +299,18 @@ export function createClient(baseUrl: string) {
       conversationId: string,
       body: string,
       attachmentIds?: string[],
+      parentId?: string,
     ) =>
       post<Message>(`/api/conversations/${conversationId}/messages`, {
         body,
         attachment_ids: attachmentIds,
+        parent_id: parentId,
+      }),
+    editMessage: (messageId: string, body: string) =>
+      patch<Message>(`/api/messages/${messageId}`, { body }),
+    toggleReaction: (messageId: string, emoji: string) =>
+      put<{ reactions: Reaction[] }>(`/api/messages/${messageId}/reactions`, {
+        emoji,
       }),
     markMessageRead: (messageId: string) =>
       post<void>(`/api/messages/${messageId}/read`),
@@ -346,6 +397,26 @@ export function createClient(baseUrl: string) {
     ) => post<MintedToken>(`/api/agents/${agentId}/tokens`, input),
     revokeAgentToken: (agentId: string, tokenId: string) =>
       request<void>(`/api/agents/${agentId}/tokens/${tokenId}`, {
+        method: "DELETE",
+      }),
+    createAgentInvite: (
+      workspaceId: string,
+      input: {
+        project_ids?: string[];
+        scopes?: AgentScope[];
+        expires_hours?: number;
+      } = {},
+    ) =>
+      post<AgentInvite & { token: string }>(
+        `/api/workspaces/${workspaceId}/agent-invites`,
+        input,
+      ),
+    listAgentInvites: (workspaceId: string) =>
+      request<{ invites: AgentInvite[] }>(
+        `/api/workspaces/${workspaceId}/agent-invites`,
+      ),
+    deleteAgentInvite: (workspaceId: string, inviteId: string) =>
+      request<void>(`/api/workspaces/${workspaceId}/agent-invites/${inviteId}`, {
         method: "DELETE",
       }),
 
@@ -515,6 +586,113 @@ export function createClient(baseUrl: string) {
     mentions: () =>
       request<{ mentions: Mention[] }>(`/api/me/mentions`),
 
+    // Statuses / local folder / saved views / boards
+    setProjectStatuses: (projectId: string, statuses: StatusDef[] | null) =>
+      put<{ statuses: StatusDef[] }>(
+        `/api/projects/${projectId}/statuses`,
+        { statuses },
+      ),
+    setProjectLocalPath: (projectId: string, path: string | null) =>
+      put<{ local_path: string | null }>(
+        `/api/projects/${projectId}/local_path`,
+        { path },
+      ),
+    listProjectFiles: (projectId: string, path = "", recursive = false) =>
+      request<{ entries: FileEntry[]; truncated: boolean }>(
+        `/api/projects/${projectId}/files?path=${encodeURIComponent(path)}${recursive ? "&recursive=1" : ""}`,
+      ),
+    readProjectFile: (projectId: string, path: string) =>
+      request<{ path: string; content: string; size: number }>(
+        `/api/projects/${projectId}/files/read?path=${encodeURIComponent(path)}`,
+      ),
+    listSavedFilters: (projectId: string) =>
+      request<{ filters: SavedFilter[] }>(
+        `/api/projects/${projectId}/filters`,
+      ),
+    createSavedFilter: (
+      projectId: string,
+      input: { name: string; filters: Record<string, unknown> },
+    ) =>
+      post<SavedFilter>(`/api/projects/${projectId}/filters`, input),
+    deleteSavedFilter: (projectId: string, filterId: string) =>
+      request<{ deleted: boolean }>(
+        `/api/projects/${projectId}/filters/${filterId}`,
+        { method: "DELETE" },
+      ),
+    listBoards: (projectId: string) =>
+      request<{ boards: Board[] }>(`/api/projects/${projectId}/boards`),
+    createBoard: (
+      projectId: string,
+      input: { name: string; filters: Record<string, unknown> },
+    ) => post<Board>(`/api/projects/${projectId}/boards`, input),
+    deleteBoard: (projectId: string, boardId: string) =>
+      request<{ deleted: boolean }>(
+        `/api/projects/${projectId}/boards/${boardId}`,
+        { method: "DELETE" },
+      ),
+
+    // Visual briefs
+    listBriefs: (projectId: string, issueId?: string) =>
+      request<{ briefs: Brief[]; policy: BriefPolicy }>(
+        `/api/projects/${projectId}/briefs${issueId ? `?issue_id=${issueId}` : ""}`,
+      ),
+    createBrief: (
+      projectId: string,
+      input: {
+        title: string;
+        summary?: string;
+        issue_id?: string;
+        scene?: Record<string, unknown>;
+      },
+    ) => post<Brief>(`/api/projects/${projectId}/briefs`, input),
+    getBrief: (briefId: string) => request<Brief>(`/api/briefs/${briefId}`),
+    updateBrief: (
+      briefId: string,
+      input: {
+        title?: string;
+        summary?: string;
+        status?: "open" | "resolved" | "archived";
+        scene?: Record<string, unknown>;
+      },
+    ) => patch<Brief>(`/api/briefs/${briefId}`, input),
+    briefConversation: (briefId: string) =>
+      request<{ id: string }>(`/api/briefs/${briefId}/conversation`),
+    setBriefPolicy: (projectId: string, policy: BriefPolicy) =>
+      post<{ policy: BriefPolicy }>(
+        `/api/projects/${projectId}/brief-policy`,
+        { policy },
+      ),
+
+    // Linked-repo file browsing (file mentions)
+    repoFileTree: (projectId: string, repo: string) =>
+      request<{
+        entries: { path: string; dir: boolean }[];
+        truncated: boolean;
+        repo: string;
+        branch: string;
+      }>(`/api/projects/${projectId}/github/files?repo=${encodeURIComponent(repo)}`),
+    repoFileRead: (projectId: string, repo: string, path: string) =>
+      request<{ path: string; content: string; size: number; repo: string }>(
+        `/api/projects/${projectId}/github/files/read?repo=${encodeURIComponent(repo)}&path=${encodeURIComponent(path)}`,
+      ),
+
+    // Web push
+    pushVapid: () =>
+      request<{ enabled: boolean; public_key?: string; ephemeral?: boolean }>(
+        `/api/push/vapid`,
+      ),
+    pushSubscribe: (endpoint: string, keys: { p256dh: string; auth: string }) =>
+      put<{ subscribed: boolean }>(`/api/push/subscriptions`, {
+        endpoint,
+        keys,
+      }),
+    pushUnsubscribe: (endpoint: string) =>
+      request<{ subscribed: boolean }>(`/api/push/subscriptions`, {
+        method: "DELETE",
+        body: JSON.stringify({ endpoint }),
+        headers: { "Content-Type": "application/json" },
+      }),
+
     // Attachments
     uploadAttachment: (projectId: string, file: File) => {
       const form = new FormData();
@@ -528,7 +706,7 @@ export function createClient(baseUrl: string) {
     // Redirect endpoint; use the returned path directly as img src / link
     // href — the session cookie rides along on the 302.
     attachmentURL: (projectId: string, attachmentId: string) =>
-      `${baseUrl}/api/projects/${projectId}/attachments/${attachmentId}/url`,
+      `${baseUrl}/api/projects/${projectId}/attachments/${attachmentId}/download`,
   };
 }
 

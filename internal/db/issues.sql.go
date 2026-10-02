@@ -85,7 +85,7 @@ func (q *Queries) CreateIssue(ctx context.Context, arg CreateIssueParams) (Issue
 const createIssueConversation = `-- name: CreateIssueConversation :one
 insert into conversations (project_id, kind, issue_id)
 values ($1, 'issue', $2)
-returning id, project_id, kind, issue_id, created_at
+returning id, project_id, kind, issue_id, created_at, brief_id
 `
 
 type CreateIssueConversationParams struct {
@@ -102,6 +102,7 @@ func (q *Queries) CreateIssueConversation(ctx context.Context, arg CreateIssueCo
 		&i.Kind,
 		&i.IssueID,
 		&i.CreatedAt,
+		&i.BriefID,
 	)
 	return i, err
 }
@@ -198,7 +199,7 @@ func (q *Queries) GetIssueByID(ctx context.Context, id pgtype.UUID) (GetIssueByI
 }
 
 const getIssueConversation = `-- name: GetIssueConversation :one
-select id, project_id, kind, issue_id, created_at from conversations where issue_id = $1 and kind = 'issue'
+select id, project_id, kind, issue_id, created_at, brief_id from conversations where issue_id = $1 and kind = 'issue'
 `
 
 func (q *Queries) GetIssueConversation(ctx context.Context, issueID pgtype.UUID) (Conversation, error) {
@@ -210,6 +211,7 @@ func (q *Queries) GetIssueConversation(ctx context.Context, issueID pgtype.UUID)
 		&i.Kind,
 		&i.IssueID,
 		&i.CreatedAt,
+		&i.BriefID,
 	)
 	return i, err
 }

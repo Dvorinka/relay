@@ -23,13 +23,13 @@ goose + sqlc wired, OpenAPI skeleton, health endpoint, brand kit, docs.
   timestamps, read state
 - Layout shell: sidebar, project nav, composer
 
-## Phase 3 - Attachments ☐
+## Phase 3 - Attachments ☑
 
 - S3 upload pipeline (`Ctrl+V` paste, drag & drop, picker)
 - Image preview, multi-attachment, presigned downloads
 - Upload limits + MIME validation
 
-## Phase 4 - Issues ☐
+## Phase 4 - Issues ☑
 
 - Issue model: `MYB-142` keys, statuses, priority, labels, assignee
 - Issue list/detail views, filters, keyboard navigation, `C` quick-create
@@ -48,6 +48,10 @@ goose + sqlc wired, OpenAPI skeleton, health endpoint, brand kit, docs.
 - Scoped, revocable `rly_` MCP tokens, per-project permissions
 - MCP server (streamable HTTP): full tool list from the spec
 - Project settings: agent access management
+- Self-registration: admins mint one-shot `rli_` invites (scoped +
+  project-granted, 72h default TTL); the agent redeems via
+  `POST /api/agent-invites/redeem` with its own name/review mode and gets
+  back a live `rly_` token + MCP URL
 
 ## Phase 5.5 - Agent workflow ☑
 
@@ -222,9 +226,115 @@ re-run refreshed 32 in place with zero duplicates.
   `issue_activity` across the project (mirror/state/field events)
 - Landing favicon: mark re-centered in its viewBox (was cropped)
 
+## Phase 16 - Chat redesign & brand unification ☑
+
+Verified live: user ↔ agent replies with parent previews, reaction toggles
+from both REST and MCP, edits allowed until an agent reads the message
+(409 `message_locked`, own-author reads excluded), agent `set_avatar`
+rendered in chat. `TestChatSemantics` covers the semantics end-to-end.
+
+- Discord-style grouped timeline: 40px avatars, day separators, hover
+  toolbar (react / reply / edit / more), combined consecutive messages,
+  text-then-image ordering, markdown with fenced code blocks
+- `messages.parent_id` + `message_reactions` (migration 0016); parent
+  validation rejects cross-conversation replies; `edited_at` + `agent_read`
+  surfaced on every message payload; `message.updated` over SSE
+- MCP parity: `send_message.reply_to`, `edit_message`, `react_to_message`,
+  `mark_message_read`, `set_avatar`
+- Theme system: persistent light/dark, accent presets + color wheel + hex
+  readout (Settings → Appearance); cyan `#06B6D4` default; neutral
+  near-black dark palette
+- Same-origin `GET .../attachments/:id/download` and streamed `/api/files/*`
+  (presigned redirects broke under Chrome Local Network Access on LAN dev)
+- Every surface unified: web (incl. phone-width drawer layout), landing
+  (cyan + real app screenshots), desktop shell + connect page, Expo app
+  (light+dark schemes, in-app appearance override, inbox, reviews,
+  replies/reactions/edit-lock, status-colored issues)
+
+## Phase 17 - Navigation rework & local mode ☑
+
+Verified live: local mode entered from the login screen, project + message +
+issue + reaction created with no server, data persisted across reload, and
+"Sync to server" replayed the workspace onto `localhost:8080` cross-origin
+(bearer token + CORS). Board renders as its own page; PR sheet lists linked
+repos' open PRs; rail search filters this project inline.
+
+- Kanban is a dedicated page (`/app/p/:id/board`) reachable from the chat
+  header; legacy `?view=board`/`?tab=board` links redirect
+- PR button next to Issues opens the pull-requests sheet (linked-repo PRs
+  with state, draft flag, head→base, author)
+- Search moved into the project rail above Open issues (Discord-style):
+  project-scoped results for issues/messages/todos, Esc/✕ clears; global
+  ⌘K palette unchanged via keyboard
+- **Local mode**: `lib/local.ts` is a localStorage-backed adapter behind the
+  same `api.*` surface - projects, conversations, messages (replies, edits,
+  reactions, data-URL attachments), issues, labels, todos, avatar, search.
+  Agents/reviews/GitHub return empty and read-only surfaces degrade cleanly
+- **Connection model**: login/register return a session token; `RequireAuth`
+  accepts `Authorization: Bearer` and `?access_token=` (SSE); `/api` answers
+  CORS `*` since bearer-auth requests carry no ambient credentials
+- **Sync**: `syncToServer(url,email,password)` replays local projects →
+  messages (with reply links and attachment re-upload) → issues → todos,
+  preserving order and statuses
+- Settings → Connection card shows mode, offers "Work locally", sync form,
+  and connect-to-server; Rail marks the workspace `local`
+- CSP `connect-src` widened to `http:`/`https:` so a hosted SPA can reach
+  arbitrary servers
+
 ## Post-1.0 ideas (not committed)
 
-- Custom statuses, saved filters, issue boards
 - Relay Cloud (hosted offering) - self-hosting stays first-class
 - iOS build of the mobile app
 - DragonflyDB cache layer if hot paths need it
+
+## Phase 18 — project states, boards, push, local folders, mobile outbox
+
+- **Custom statuses**: `projects.statuses` JSONB definitions (id, label,
+  color, closed flag) editable in project settings; the DB CHECK constraint
+  is gone — the server validates against project defs. Issues, lists, board
+  lanes, and filters all honor custom lanes.
+- **Saved filters & named boards**: `saved_filters` + `boards` tables;
+  "Save view" in the issues panel and named board tabs on the board page
+  persist per project.
+- **Web Push**: VAPID (`RELAY_VAPID_*`), subscription endpoints, service
+  worker (`sw.js`), Settings → Notifications card. Mentions, replies and
+  review requests push to subscribed browsers.
+- **Linked project folder**: `projects.local_path` — a local directory can
+  stand beside (or instead of) GitHub; file tree/read endpoints with
+  traversal + sensitive-file (`.env`, keys) protection. `@file:path` and
+  `@gh:repo:path` composer mentions autocomplete and open an inline preview.
+- **MCP `file:read` scope**: `list_project_files` / `read_project_file`
+  tools serve the linked folder and GitHub trees to agents.
+- **Mobile outbox**: messages and picked images queue in AsyncStorage when
+  the server is unreachable; a successful poll drains them in order. Full
+  local-mode remains a desktop/web feature by design.
+
+## Phase 19 — mentions, briefs, IndexedDB, CLI polish
+
+- **Structured mentions**: `messages.mentions` jsonb stores resolved
+  references (`user`, `agent`, `issue`, `gh`, `file`, `repo`). `@name`,
+  `@user:x`, `@agent:x`, `KEY-1`, `owner/repo#42`, `@file:p`, `@gh:r:p`
+  extract server-side on REST and MCP posts; unresolved refs persist with
+  `found:false`. `/api/projects/:id/mentionables` feeds the unified `@`/`#`
+  composer menu (users, agents, issues incl. mirrored GitHub items, files).
+- **Visual briefs**: `briefs` table + `kind='brief'` conversations.
+  Excalidraw-compatible scene JSON rendered as SVG in the app; comment
+  thread via the normal messages API. `projects.brief_policy`
+  (never|on_request|pre_merge) — read by agents through the
+  `get_brief_policy` MCP tool; `create_brief` is refused under `never`.
+  New `brief:read`/`brief:write` scopes, backfilled onto `issue:write`
+  grants.
+- **Local `gh` provider**: when no app is registered and `GITHUB_TOKEN` is
+  unset, Relay sources a PAT from `gh auth token` — same REST surface, zero
+  GitHub App setup for self-hosters.
+- **IndexedDB local mode**: the local adapter persists to IndexedDB — doc
+  state in `kv`, attachment/avatar bytes in `blobs`. Legacy localStorage
+  data migrates once; object URLs rehydrate on boot. Storage ceiling moves
+  from ~5 MB to available disk quota.
+- **CLI v2**: human-readable output by default, `--json` for machines,
+  full command surface (messages/read/say/react/msg-edit, issues, todos,
+  files, gh, reviews, briefs, attachments, shell completions), `--reply`,
+  ambiguous project/conversation id handling, `--file` for JSON payloads.
+- **Brand lock**: `#06b6d4` is the only accent; the Settings accent picker
+  is gone (`relay.accent` pref purged); favicon is the white mark on brand
+  black with a cyan dot, shared by web and landing.

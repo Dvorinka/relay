@@ -1,5 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256"><title>Relay logo</title><g transform="translate(-71.46 -57.47) scale(1.472)">
-  
-  <path d="M200 96 V84 A32 32 0 0 0 168 52 H84 A32 32 0 0 0 52 84 V168 A32 32 0 0 0 84 200 H168 A32 32 0 0 0 200 168 V160" fill="none" stroke="#101318" stroke-width="28" stroke-linecap="round"/>
-  <circle cx="200" cy="128" r="19" fill="#101318"/>
-</g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256"><title>Relay logo</title>
+  <rect width="256" height="256" rx="56" fill="#0a0a0b"/>
+  <g transform="translate(37.6 38.7) scale(0.72)" fill="none" stroke="#ffffff" stroke-width="30" stroke-linecap="round">
+    <path d="M196 96 V82 A30 30 0 0 0 166 52 H82 A30 30 0 0 0 52 82 V166 A30 30 0 0 0 82 196 H166 A30 30 0 0 0 196 166 V160"/>
+  </g>
+  <circle cx="178.7" cy="130.9" r="17.5" fill="#06b6d4"/>
+</svg>

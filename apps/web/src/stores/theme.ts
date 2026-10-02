@@ -16,7 +16,7 @@ function apply(t: Theme) {
   document.documentElement.classList.toggle("dark", t === "dark");
   document
     .querySelector('meta[name="theme-color"]')
-    ?.setAttribute("content", t === "dark" ? "#101318" : "#fafaf8");
+    ?.setAttribute("content", t === "dark" ? "#0a0a0b" : "#fafaf8");
 }
 
 export function useTheme() {
@@ -28,7 +28,26 @@ export function toggleTheme() {
   setThemeSignal(next);
   localStorage.setItem("relay.theme", next);
   apply(next);
+  applyAccent(); // accent-soft mix is theme-dependent
 }
 
-// apply once at module load — index.html defaults to .dark
+// --- accent ---
+// The accent is the brand color, not a preference — cyan everywhere.
+
+export const BRAND_ACCENT = "#06b6d4";
+const BRAND_ACCENT_INK = "#0891b2";
+
+function applyAccent() {
+  const el = document.documentElement;
+  el.style.setProperty("--accent", BRAND_ACCENT);
+  el.style.setProperty("--accent-ink", BRAND_ACCENT_INK);
+  el.style.setProperty(
+    "--accent-soft",
+    `color-mix(in srgb, ${BRAND_ACCENT} ${theme() === "dark" ? 14 : 10}%, transparent)`,
+  );
+}
+
+// apply once at module load - index.html defaults to .dark
 apply(initial);
+applyAccent();
+localStorage.removeItem("relay.accent"); // dropped pref — brand is fixed

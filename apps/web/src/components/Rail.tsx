@@ -1,6 +1,7 @@
 import type { Project } from "@relay/api-client";
 import { A, useNavigate } from "@solidjs/router";
 import {
+  createEffect,
   createResource,
   createSignal,
   For,
@@ -10,8 +11,10 @@ import {
   type ParentProps,
 } from "solid-js";
 import { api } from "../lib/api";
+import { net } from "../lib/net";
 import { subscribe } from "../lib/events";
 import { deriveKey } from "../lib/text";
+import { useNav } from "../stores/nav";
 import { useProjects } from "../stores/projects";
 import { useSession } from "../stores/session";
 import {
@@ -26,8 +29,14 @@ const navClass =
   "flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-muted transition-colors hover:bg-hover hover:text-fg";
 
 function NavItem(props: ParentProps<{ href: string }>) {
+  const { closeNav } = useNav();
   return (
-    <A href={props.href} class={navClass} activeClass="bg-hover text-fg">
+    <A
+      href={props.href}
+      class={navClass}
+      activeClass="bg-hover text-fg"
+      onClick={closeNav}
+    >
       {props.children}
     </A>
   );
@@ -103,6 +112,13 @@ function NewProjectForm(props: { onDone: () => void }) {
   const [keyEdited, setKeyEdited] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [pending, setPending] = createSignal(false);
+  const [repo, setRepo] = createSignal("");
+  // null = GitHub not connected (API 400s); resolved list = app installed
+  const [repos] = createResource(
+    () => session.workspaces()[0]?.id,
+    (ws) => api.listAvailableRepos(ws).catch(() => null),
+  );
+  const repoList = () => repos()?.repos ?? [];
 
   async function onSubmit(e: SubmitEvent) {
     e.preventDefault();
@@ -119,6 +135,19 @@ function NewProjectForm(props: { onDone: () => void }) {
         name: name().trim(),
         key: key().trim(),
       });
+      const selected = repoList().find((r) => r.full_name === repo());
+      if (selected) {
+        // best effort — the link can always be redone from the project's
+        // Development tab; don't lose the created project over it
+        await api
+          .linkRepo(project.id, {
+            installation_id: selected.installation_id,
+            owner: selected.owner,
+            name: selected.name,
+            default_branch: selected.default_branch,
+          })
+          .catch(() => {});
+      }
       props.onDone();
       navigate(`/app/p/${project.id}`);
     } catch (err) {
@@ -168,6 +197,36 @@ function NewProjectForm(props: { onDone: () => void }) {
         }}
         class={`${inputClass} font-mono uppercase`}
       />
+      <Show when={repoList().length > 0}>
+        <select
+          aria-label="GitHub repository"
+          value={repo()}
+          onChange={(e) => setRepo(e.currentTarget.value)}
+          class={`${inputClass} font-mono`}
+        >
+          <option value="">Link GitHub repo (optional)</option>
+          <For each={repoList()}>
+            {(r) => <option value={r.full_name}>{r.full_name}</option>}
+          </For>
+        </select>
+      </Show>
+      <Show when={repos() === null}>
+        <p class="px-0.5 text-[11.5px] text-muted">
+          <A href="/app/settings" class="text-accent hover:underline">
+            Connect GitHub
+          </A>{" "}
+          in Settings to link a repository.
+        </p>
+      </Show>
+      <Show when={repos() !== null && repos() !== undefined && repoList().length === 0}>
+        <p class="px-0.5 text-[11.5px] text-muted">
+          GitHub connected — install the app on repositories from{" "}
+          <A href="/app/settings" class="text-accent hover:underline">
+            Settings
+          </A>
+          .
+        </p>
+      </Show>
       <FormError message={error()} />
       <div class="flex gap-1.5">
         <SubmitButton pending={pending()} class="h-7 px-2.5">
@@ -188,6 +247,7 @@ function NewProjectForm(props: { onDone: () => void }) {
 export function Rail() {
   const session = useSession();
   const projects = useProjects();
+  const { navOpen, closeNav } = useNav();
   const [creating, setCreating] = createSignal(false);
   onMount(refreshUnread);
   const unsub = subscribe((e) => {
@@ -197,15 +257,45 @@ export function Rail() {
     }
   });
   onCleanup(unsub);
+  createEffect(() => {
+    if (!navOpen()) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeNav();
+    };
+    window.addEventListener("keydown", onKey);
+    onCleanup(() => window.removeEventListener("keydown", onKey));
+  });
   const workspaceName = () => session.workspaces()[0]?.name;
   const list = () => projects.projects() ?? [];
 
   return (
-    <aside class="flex w-56 shrink-0 flex-col border-r border-border">
+    <>
+      <Show when={navOpen()}>
+        <button
+          type="button"
+          aria-label="Close navigation"
+          onClick={closeNav}
+          class="fixed inset-0 z-30 bg-black/40 md:hidden"
+        />
+      </Show>
+      <aside
+        class={`flex w-64 shrink-0 flex-col border-r border-border bg-rail md:w-56 ${
+          navOpen()
+            ? "fixed inset-y-0 left-0 z-40 shadow-2xl"
+            : "hidden md:flex"
+        }`}
+      >
       <Show when={workspaceName()}>
         {(name) => (
           <div class="border-b border-border px-4 py-2.5">
-            <p class="truncate text-[13px] font-medium">{name()}</p>
+            <p class="flex items-center gap-2 truncate text-[13px] font-medium">
+              <span class="truncate">{name()}</span>
+              <Show when={net.isLocal()}>
+                <span class="shrink-0 rounded border border-border px-1 py-px font-mono text-[9.5px] uppercase tracking-wide text-muted">
+                  local
+                </span>
+              </Show>
+            </p>
           </div>
         )}
       </Show>
@@ -270,6 +360,7 @@ export function Rail() {
           Settings
         </NavItem>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }

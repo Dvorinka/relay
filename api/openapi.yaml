@@ -361,6 +361,467 @@ paths:
               schema: { $ref: "#/components/schemas/ProjectOverview" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /api/projects/{projectId}/statuses:
+    put:
+      operationId: setProjectStatuses
+      summary: Replace the project's issue status lanes (null resets to built-ins)
+      tags: [projects]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                statuses:
+                  type: ["array", "null"]
+                  items: { $ref: "#/components/schemas/StatusDef" }
+      responses:
+        "200":
+          description: Active status list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  statuses:
+                    type: array
+                    items: { $ref: "#/components/schemas/StatusDef" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/projects/{projectId}/local_path:
+    put:
+      operationId: setProjectLocalPath
+      summary: Link a local folder on the server host (null clears)
+      tags: [projects]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path: { type: ["string", "null"] }
+      responses:
+        "200":
+          description: Linked path
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  local_path: { type: ["string", "null"] }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/projects/{projectId}/files:
+    get:
+      operationId: listProjectFiles
+      summary: List one directory level of the linked local folder
+      tags: [projects]
+      parameters:
+        - { $ref: "#/components/parameters/ProjectId" }
+        - { name: path, in: query, schema: { type: string, default: "" } }
+        - { name: recursive, in: query, schema: { type: string, enum: ["1"] },
+            description: "Flatten the whole tree into a file-path list (autocomplete)" }
+      responses:
+        "200":
+          description: Directory entries (dirs first)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries:
+                    type: array
+                    items: { $ref: "#/components/schemas/FileEntry" }
+                  truncated: { type: boolean }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/projects/{projectId}/files/read:
+    get:
+      operationId: readProjectFile
+      summary: Read a UTF-8 file (<=256KB) from the linked folder
+      tags: [projects]
+      parameters:
+        - { $ref: "#/components/parameters/ProjectId" }
+        - { name: path, in: query, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: File content
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  path: { type: string }
+                  content: { type: string }
+                  size: { type: integer }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413": { $ref: "#/components/responses/BadRequest" }
+
+  /api/projects/{projectId}/filters:
+    get:
+      operationId: listSavedFilters
+      summary: The caller's saved issue filters for this project
+      tags: [projects]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      responses:
+        "200":
+          description: Saved filters
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  filters:
+                    type: array
+                    items: { $ref: "#/components/schemas/SavedFilter" }
+    post:
+      operationId: createSavedFilter
+      summary: Save a named filter
+      tags: [projects]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 60 }
+                filters: { type: object, additionalProperties: true }
+      responses:
+        "201":
+          description: Created filter
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SavedFilter" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /api/projects/{projectId}/filters/{filterId}:
+    delete:
+      operationId: deleteSavedFilter
+      summary: Delete one of the caller's saved filters
+      tags: [projects]
+      parameters:
+        - { $ref: "#/components/parameters/ProjectId" }
+        - { name: filterId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { deleted: { type: boolean } }
+
+  /api/projects/{projectId}/boards:
+    get:
+      operationId: listBoards
+      summary: Named board views for this project
+      tags: [projects]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      responses:
+        "200":
+          description: Boards
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  boards:
+                    type: array
+                    items: { $ref: "#/components/schemas/Board" }
+    post:
+      operationId: createBoard
+      summary: Save a named board view
+      tags: [projects]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 60 }
+                filters: { type: object, additionalProperties: true }
+      responses:
+        "201":
+          description: Created board
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Board" }
+
+  /api/projects/{projectId}/boards/{boardId}:
+    delete:
+      operationId: deleteBoard
+      summary: Delete a named board
+      tags: [projects]
+      parameters:
+        - { $ref: "#/components/parameters/ProjectId" }
+        - { name: boardId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { deleted: { type: boolean } }
+
+  /api/projects/{projectId}/briefs:
+    get:
+      operationId: listBriefs
+      summary: List visual briefs in this project
+      tags: [briefs]
+      parameters:
+        - { $ref: "#/components/parameters/ProjectId" }
+        - { name: issue_id, in: query, required: false, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Briefs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  briefs:
+                    type: array
+                    items: { $ref: "#/components/schemas/Brief" }
+                  policy: { $ref: "#/components/schemas/BriefPolicy" }
+    post:
+      operationId: createBrief
+      summary: Create a visual brief
+      tags: [briefs]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string, minLength: 1, maxLength: 200 }
+                summary: { type: string }
+                issue_id: { type: string, format: uuid }
+                scene: { type: object, additionalProperties: true, description: "Excalidraw-compatible scene" }
+      responses:
+        "201":
+          description: Created brief
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Brief" }
+
+  /api/projects/{projectId}/brief-policy:
+    post:
+      operationId: setBriefPolicy
+      summary: Set the project's brief policy
+      tags: [briefs]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [policy]
+              properties:
+                policy: { $ref: "#/components/schemas/BriefPolicy" }
+      responses:
+        "200":
+          description: Policy set
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  policy: { $ref: "#/components/schemas/BriefPolicy" }
+
+  /api/briefs/{briefId}:
+    get:
+      operationId: getBrief
+      summary: Get one brief with its scene
+      tags: [briefs]
+      parameters:
+        - { name: briefId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Brief
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Brief" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateBrief
+      summary: Update a brief's title, summary, scene, or status
+      tags: [briefs]
+      parameters:
+        - { name: briefId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string, minLength: 1, maxLength: 200 }
+                summary: { type: string }
+                status: { type: string, enum: [open, resolved, archived] }
+                scene: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: Updated brief
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Brief" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/briefs/{briefId}/conversation:
+    get:
+      operationId: briefConversation
+      summary: The brief's comment thread (creates it on first access)
+      tags: [briefs]
+      parameters:
+        - { name: briefId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Conversation id usable with /conversations/{id}/messages
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { id: { type: string, format: uuid } }
+
+  /api/projects/{projectId}/github/files:
+    get:
+      operationId: repoFileTree
+      summary: Recursive file tree of a linked GitHub repo
+      tags: [github]
+      parameters:
+        - { $ref: "#/components/parameters/ProjectId" }
+        - { name: repo, in: query, required: true, schema: { type: string }, description: "owner/name" }
+      responses:
+        "200":
+          description: Tree entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        path: { type: string }
+                        dir: { type: boolean }
+                  truncated: { type: boolean }
+                  repo: { type: string }
+                  branch: { type: string }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502": { $ref: "#/components/responses/BadRequest" }
+
+  /api/projects/{projectId}/github/files/read:
+    get:
+      operationId: repoFileRead
+      summary: Read a file from a linked GitHub repo
+      tags: [github]
+      parameters:
+        - { $ref: "#/components/parameters/ProjectId" }
+        - { name: repo, in: query, required: true, schema: { type: string } }
+        - { name: path, in: query, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: File content
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  path: { type: string }
+                  content: { type: string }
+                  size: { type: integer }
+                  repo: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "502": { $ref: "#/components/responses/BadRequest" }
+
+  /api/push/vapid:
+    get:
+      operationId: pushVapidKey
+      summary: Web-push application server key (enabled=false when unconfigured)
+      tags: [push]
+      responses:
+        "200":
+          description: Key info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean }
+                  public_key: { type: string }
+                  ephemeral: { type: boolean }
+
+  /api/push/subscriptions:
+    put:
+      operationId: pushSubscribe
+      summary: Register (or refresh) a push subscription for the caller
+      tags: [push]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [endpoint, keys]
+              properties:
+                endpoint: { type: string }
+                keys:
+                  type: object
+                  required: [p256dh, auth]
+                  properties:
+                    p256dh: { type: string }
+                    auth: { type: string }
+      responses:
+        "200":
+          description: Subscribed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { subscribed: { type: boolean } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "503": { $ref: "#/components/responses/BadRequest" }
+    delete:
+      operationId: pushUnsubscribe
+      summary: Remove a push subscription
+      tags: [push]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [endpoint]
+              properties:
+                endpoint: { type: string }
+      responses:
+        "200":
+          description: Unsubscribed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { subscribed: { type: boolean } }
+
   /api/projects/{projectId}/conversation:
     get:
       operationId: projectConversation
@@ -373,6 +834,59 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Conversation" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/projects/{projectId}/mentionables:
+    get:
+      operationId: mentionables
+      summary: Everything the composer can @-mention in this project
+      description: "Workspace members, agents, issues (including GitHub-mirrored issues and PRs), and linked repos for owner/repo#N refs."
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      responses:
+        "200":
+          description: Mentionable entities
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [users, agents, issues, repos]
+                properties:
+                  users:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        name: { type: string }
+                        avatar_url: { type: ["string", "null"] }
+                  agents:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        name: { type: string }
+                        slug: { type: string }
+                        description: { type: string }
+                  issues:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        key: { type: string }
+                        title: { type: string }
+                        status: { type: string }
+                        kind:
+                          type: string
+                          enum: [issue, github_issue, pull_request]
+                        repo: { type: string }
+                        github_number: { type: integer }
+                        url: { type: string }
+                  repos:
+                    type: array
+                    items: { type: string }
         "403": { $ref: "#/components/responses/Forbidden" }
 
   /api/conversations/{conversationId}/messages:
@@ -416,17 +930,83 @@ paths:
               type: object
               required: [body]
               properties:
-                body: { type: string, minLength: 1, maxLength: 20000 }
+                body:
+                  type: string
+                  maxLength: 20000
+                  description: "May be empty when attachment_ids is non-empty."
                 attachment_ids:
                   type: array
                   items: { type: string, format: uuid }
                   maxItems: 20
+                parent_id:
+                  type: string
+                  format: uuid
+                  description: Message this reply threads under (same conversation)
       responses:
         "201":
           description: Posted
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Message" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/messages/{messageId}:
+    patch:
+      operationId: editMessage
+      summary: Edit a message's body - author only, locked once any agent has read it
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/MessageId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string, minLength: 1, maxLength: 20000 }
+      responses:
+        "200":
+          description: Updated message
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: An agent has read the message; editing is locked
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/messages/{messageId}/reactions:
+    put:
+      operationId: toggleReaction
+      summary: Toggle the caller's emoji reaction on a message
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/MessageId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [emoji]
+              properties:
+                emoji: { type: string, maxLength: 32 }
+      responses:
+        "200":
+          description: Aggregated reactions for the message
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reactions]
+                properties:
+                  reactions:
+                    type: array
+                    items: { $ref: "#/components/schemas/Reaction" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
@@ -468,6 +1048,27 @@ paths:
           description: Redirect to the presigned object URL
           headers:
             Location: { schema: { type: string, format: uri } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/projects/{projectId}/attachments/{attachmentId}/download:
+    get:
+      operationId: downloadAttachment
+      summary: Stream the attachment bytes through the API
+      description: >-
+        Same-origin download for browsers. Prefer this over the presigned
+        redirect when the client cannot reach the storage endpoint directly
+        (LAN dev environments, private-network access rules).
+      tags: [attachments]
+      parameters:
+        - { $ref: "#/components/parameters/ProjectId" }
+        - { $ref: "#/components/parameters/AttachmentId" }
+      responses:
+        "200":
+          description: Attachment bytes
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
@@ -840,6 +1441,115 @@ paths:
         "204": { description: Revoked }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/workspaces/{workspaceId}/agent-invites:
+    post:
+      operationId: createAgentInvite
+      summary: Mint a one-shot agent invite; the rli_ token is returned once (owner/admin)
+      description: >-
+        The user invites; the agent registers itself by redeeming the token at
+        POST /api/agent-invites/redeem. Empty project_ids means every workspace
+        project at redeem time; empty scopes means the default full set.
+      tags: [agents]
+      parameters: [ { $ref: "#/components/parameters/WorkspaceId" } ]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                project_ids:
+                  type: array
+                  items: { type: string, format: uuid }
+                scopes:
+                  type: array
+                  items: { $ref: "#/components/schemas/AgentScope" }
+                expires_hours:
+                  type: integer
+                  minimum: 1
+                  maximum: 168
+                  default: 72
+      responses:
+        "201":
+          description: Invite created; `token` shown only in this response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/AgentInvite"
+                  - type: object
+                    required: [token]
+                    properties:
+                      token: { type: string, description: "rli_... - shown once" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    get:
+      operationId: listAgentInvites
+      summary: List invites and their redemption state (owner/admin)
+      tags: [agents]
+      parameters: [ { $ref: "#/components/parameters/WorkspaceId" } ]
+      responses:
+        "200":
+          description: Invites
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [invites]
+                properties:
+                  invites:
+                    type: array
+                    items: { $ref: "#/components/schemas/AgentInvite" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/workspaces/{workspaceId}/agent-invites/{inviteId}:
+    delete:
+      operationId: deleteAgentInvite
+      summary: Revoke an unused invite (owner/admin)
+      tags: [agents]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+        - name: inviteId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/agent-invites/redeem:
+    post:
+      operationId: redeemAgentInvite
+      summary: Agent self-registration - redeems an rli_ invite, returns a live rly_ token
+      description: >-
+        Public endpoint; the invite token is the credential. The agent supplies
+        its own name, receives its agent identity, grants, and a working MCP
+        token in one response.
+      tags: [agents]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, name]
+              properties:
+                token: { type: string, description: "rli_..." }
+                name: { type: string, minLength: 1, maxLength: 60 }
+                description: { type: string, maxLength: 500 }
+                review_mode:
+                  type: string
+                  enum: [notify, gate]
+                  default: notify
+      responses:
+        "201":
+          description: Registered; `token` shown only in this response
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentRedeemResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { description: "Invite invalid, used, or expired" }
 
   /mcp:
     post:
@@ -1621,6 +2331,12 @@ components:
         workspaces:
           type: array
           items: { $ref: "#/components/schemas/WorkspaceWithRole" }
+        token:
+          type: string
+          description: >-
+            Session bearer token, returned by login/register only. Clients
+            hosted off-origin (local-mode SPA syncing to a server) send it as
+            `Authorization: Bearer <token>` since cookies are same-origin.
 
     Workspace:
       type: object
@@ -1661,7 +2377,71 @@ components:
         description: { type: string }
         icon: { type: ["string", "null"] }
         color: { type: ["string", "null"], pattern: "^#[0-9a-fA-F]{6}$" }
+        statuses:
+          type: array
+          description: Issue lanes for this project; built-in six when unset
+          items: { $ref: "#/components/schemas/StatusDef" }
+        local_path: { type: ["string", "null"], description: "Linked local folder on the server host" }
+        brief_policy: { $ref: "#/components/schemas/BriefPolicy" }
         created_at: { type: string, format: date-time }
+
+    BriefPolicy:
+      type: string
+      enum: [never, on_request, pre_merge]
+      description: |
+        When agents should produce visual briefs. 'never' forbids them,
+        'on_request' creates only when asked, 'pre_merge' expects one before
+        merge-worthy reviews are approved.
+
+    Brief:
+      type: object
+      required: [id, project_id, title, summary, scene, status]
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        issue_id: { type: ["string", "null"], format: uuid }
+        conversation_id: { type: ["string", "null"], format: uuid, description: "Comment thread; messages via /conversations/{id}/messages" }
+        title: { type: string }
+        summary: { type: string }
+        scene: { type: object, additionalProperties: true, description: "Excalidraw-compatible scene JSON" }
+        status: { type: string, enum: [open, resolved, archived] }
+        author_name: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    StatusDef:
+      type: object
+      required: [id, label, color]
+      properties:
+        id: { type: string, pattern: "^[a-z0-9_-]{1,32}$" }
+        label: { type: string, minLength: 1, maxLength: 40 }
+        color: { type: string, pattern: "^#[0-9a-fA-F]{6}$" }
+        closed: { type: boolean, description: "Terminal state (maps to GitHub closed)" }
+
+    SavedFilter:
+      type: object
+      required: [id, name, filters]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        filters: { type: object, additionalProperties: true }
+
+    Board:
+      type: object
+      required: [id, name, filters]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        filters: { type: object, additionalProperties: true }
+
+    FileEntry:
+      type: object
+      required: [name, path, dir]
+      properties:
+        name: { type: string }
+        path: { type: string }
+        dir: { type: boolean }
+        size: { type: integer }
 
     CreateProjectRequest:
       type: object
@@ -1707,23 +2487,72 @@ components:
         size_bytes: { type: integer, format: int64 }
         created_at: { type: string, format: date-time }
 
+    MessageParent:
+      type: object
+      required: [id, author, preview, deleted]
+      properties:
+        id: { type: string, format: uuid }
+        author: { type: string }
+        preview: { type: string, description: "Plain-text snippet; empty when deleted" }
+        deleted: { type: boolean }
+
+    Reaction:
+      type: object
+      required: [emoji, count, mine, names]
+      properties:
+        emoji: { type: string }
+        count: { type: integer }
+        mine: { type: boolean, description: "The caller reacted with this emoji" }
+        names:
+          type: array
+          items: { type: string }
+          description: "Up to 8 reactor display names, oldest first"
+
     Message:
       type: object
-      required: [id, conversation_id, author, body, attachments, created_at]
+      required: [id, conversation_id, author, body, attachments, reactions, created_at, agent_read]
       properties:
         id: { type: string, format: uuid }
         conversation_id: { type: string, format: uuid }
         author: { $ref: "#/components/schemas/MessageAuthor" }
         body: { type: string, description: Markdown }
+        mentions:
+          type: array
+          description: "Structured entity references extracted from the body"
+          items: { $ref: "#/components/schemas/MentionRef" }
+        parent:
+          anyOf:
+            - $ref: "#/components/schemas/MessageParent"
+            - type: "null"
         attachments:
           type: array
           items: { $ref: "#/components/schemas/Attachment" }
+        reactions:
+          type: array
+          items: { $ref: "#/components/schemas/Reaction" }
         created_at: { type: string, format: date-time }
         edited_at: { type: ["string", "null"], format: date-time }
+        agent_read:
+          type: boolean
+          description: "True once at least one agent has read the message; edits are then rejected with 409"
+
+    MentionRef:
+      type: object
+      required: [kind, ref, label]
+      properties:
+        kind:
+          type: string
+          enum: [user, agent, issue, gh, file]
+          description: "user|agent|issue|gh|file — @user:, @agent:, KEY-N, owner/repo#N, @file:/@gh:"
+        ref: { type: string, description: "slug | KEY-1 | owner/repo#1 | path" }
+        label: { type: string }
+        id: { type: string, description: "resolved entity uuid when found" }
+        url: { type: string }
+        found: { type: boolean }
 
     IssueStatus:
       type: string
-      enum: [backlog, todo, in_progress, review, done, cancelled]
+      description: "Built-in lane id or a project's custom status id"
 
     IssuePriority:
       type: string
@@ -1796,6 +2625,9 @@ components:
         - issue:write
         - review:read
         - review:write
+        - file:read
+        - brief:read
+        - brief:write
 
     AgentGrant:
       type: object
@@ -1948,6 +2780,35 @@ components:
           required: [token]
           properties:
             token: { type: string, description: "rly_... - shown once" }
+
+    AgentInvite:
+      type: object
+      required: [id, project_ids, scopes, expires_at, used_by, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        project_ids:
+          type: array
+          items: { type: string, format: uuid }
+          description: "Empty = every workspace project at redeem time."
+        scopes:
+          type: array
+          items: { $ref: "#/components/schemas/AgentScope" }
+        expires_at: { type: string, format: date-time }
+        used_by:
+          type: ["object", "null"]
+          properties:
+            agent_id: { type: string, format: uuid }
+            name: { type: string }
+        created_at: { type: string, format: date-time }
+
+    AgentRedeemResult:
+      type: object
+      required: [agent, token, mcp_url, api_url]
+      properties:
+        agent: { $ref: "#/components/schemas/Agent" }
+        token: { type: string, description: "rly_... - shown once" }
+        mcp_url: { type: string }
+        api_url: { type: string }
 
     ProjectOverview:
       type: object

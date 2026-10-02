@@ -1,12 +1,13 @@
 import { A } from "@solidjs/router";
 import { ApiClientError } from "@relay/api-client";
-import { createSignal } from "solid-js";
+import { createSignal, Show } from "solid-js";
 import {
   Field,
   FormError,
   SubmitButton,
   inputClass,
 } from "../../components/ui";
+import { net } from "../../lib/net";
 import { useSession } from "../../stores/session";
 import { AuthLayout } from "./AuthLayout";
 
@@ -14,6 +15,7 @@ export default function Login() {
   const session = useSession();
   const [error, setError] = createSignal<string | null>(null);
   const [pending, setPending] = createSignal(false);
+  const [showServer, setShowServer] = createSignal(!!net.serverUrl());
 
   async function onSubmit(e: SubmitEvent) {
     e.preventDefault();
@@ -22,10 +24,13 @@ export default function Login() {
     setPending(true);
     try {
       // On success the store updates and RequireAnon redirects to /.
-      await session.login({
-        email: String(data.get("email") ?? ""),
-        password: String(data.get("password") ?? ""),
-      });
+      await session.login(
+        {
+          email: String(data.get("email") ?? ""),
+          password: String(data.get("password") ?? ""),
+        },
+        String(data.get("server_url") ?? "").trim() || undefined,
+      );
     } catch (err) {
       setError(
         err instanceof ApiClientError && err.status === 401
@@ -70,7 +75,25 @@ export default function Login() {
             class={inputClass}
           />
         </Field>
-        <div class="flex justify-end">
+        <Show when={showServer()}>
+          <Field label="Server URL">
+            <input
+              type="url"
+              name="server_url"
+              placeholder={window.location.origin}
+              value={net.serverUrl()}
+              class={inputClass}
+            />
+          </Field>
+        </Show>
+        <div class="flex items-center justify-between">
+          <button
+            type="button"
+            class="text-[13px] text-muted underline-offset-2 hover:text-fg hover:underline"
+            onClick={() => setShowServer((v) => !v)}
+          >
+            {showServer() ? "This server" : "Different server"}
+          </button>
           <A
             href="/forgot"
             class="text-[13px] text-muted underline-offset-2 hover:text-fg hover:underline"
@@ -83,6 +106,15 @@ export default function Login() {
           {pending() ? "Signing in..." : "Sign in"}
         </SubmitButton>
       </form>
+      <div class="mt-5 border-t border-border pt-4">
+        <button
+          type="button"
+          class="w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-muted transition-colors hover:bg-hover hover:text-fg"
+          onClick={() => session.enterLocal()}
+        >
+          Work locally on this device — no server needed
+        </button>
+      </div>
     </AuthLayout>
   );
 }

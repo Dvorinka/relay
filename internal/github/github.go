@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"sort"
 	"strings"
 	"sync"
@@ -66,6 +67,8 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup, pub *gin.RouterGroup) {
 	g.PUT("/projects/:id/github/repo", s.projectAdminOnly, s.handleLinkRepo)
 	g.DELETE("/projects/:id/github/repo/:repoId", s.projectAdminOnly, s.handleUnlinkRepo)
 	g.GET("/projects/:id/development", s.projectMemberOnly, s.handleDevelopment)
+	g.GET("/projects/:id/github/files", s.projectMemberOnly, s.handleRepoTree)
+	g.GET("/projects/:id/github/files/read", s.projectMemberOnly, s.handleRepoFile)
 	g.POST("/projects/:id/github/import", s.projectAdminOnly, s.handleImport)
 	// browser redirect targets / webhook entry
 	pub.GET("/github/callback", s.handleCallback)
@@ -96,14 +99,19 @@ func (s *Service) handleGetApp(c *gin.Context) {
 func (s *Service) handleManifest(c *gin.Context) {
 	ws := c.Query("workspace")
 	name := c.DefaultQuery("name", "relay")
+	homepage := s.cfg.LandingURL
+	if homepage == "" {
+		homepage = s.cfg.PublicURL
+	}
 	manifest := gin.H{
 		"name": "Relay (" + name + ")",
-		"url":  s.cfg.PublicURL,
+		"url":  homepage,
 		"hook_attributes": gin.H{
 			"url":    s.cfg.PublicURL + "/api/github/webhook",
 			"active": true,
 		},
 		"redirect_url": s.cfg.PublicURL + "/api/github/callback?ws=" + url.QueryEscape(ws),
+		"setup_url":    s.cfg.PublicURL + "/app/settings",
 		"public":       false,
 		"default_permissions": gin.H{
 			"issues":        "write",
@@ -111,7 +119,9 @@ func (s *Service) handleManifest(c *gin.Context) {
 			"contents":      "read",
 			"metadata":      "read",
 		},
-		"default_events": []string{"issues", "pull_request", "push", "installation"},
+		// "installation" is not a valid default_events entry - GitHub delivers
+		// it to the app webhook automatically.
+		"default_events": []string{"issues", "pull_request", "push"},
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"manifest": manifest,
@@ -203,6 +213,16 @@ func (s *Service) githubClient(ctx context.Context) (*Client, error) {
 		s.mu.Unlock()
 		return c, nil
 	}
+	// Local-gh fallback: self-hosted/dev installs without an app use the
+	// operator's `gh auth token` as a PAT — same REST surface, zero setup.
+	if tok, err := ghCLIToken(ctx); err == nil && tok != "" {
+		c := NewPATClient(tok)
+		s.mu.Lock()
+		s.client = c
+		s.mu.Unlock()
+		s.log.Info("github auth via local gh CLI")
+		return c, nil
+	}
 	app, err := s.q.GetGitHubApp(ctx)
 	if err != nil {
 		return nil, errors.New("github app not registered")
@@ -222,6 +242,17 @@ func (s *Service) resetClient() {
 	s.mu.Lock()
 	s.client = nil
 	s.mu.Unlock()
+}
+
+// ghCLIToken shells out to the GitHub CLI for a token. Returns "" when gh is
+// absent or unauthenticated — callers treat that as "no provider".
+func ghCLIToken(ctx context.Context) (string, error) {
+	cmd := exec.CommandContext(ctx, "gh", "auth", "token")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // --- installations & repos ---
@@ -326,7 +357,10 @@ func (s *Service) handleLinkRepo(c *gin.Context) {
 		req.DefaultBranch = "main"
 	}
 	if req.InstallationID == 0 {
-		if s.cfg.GitHubToken == "" {
+		// Personal-token modes (GITHUB_TOKEN or local `gh`) have no real
+		// installation — a synthetic id-0 row groups their repo links.
+		cli, cerr := s.githubClient(c.Request.Context())
+		if cerr != nil || !cli.IsPAT() {
 			httpx.Error(c, http.StatusBadRequest, "bad_request", "unknown installation")
 			return
 		}
@@ -996,3 +1030,85 @@ func (s *Service) projectGate(c *gin.Context, admin bool) {
 
 func (s *Service) projectMemberOnly(c *gin.Context) { s.projectGate(c, false) }
 func (s *Service) projectAdminOnly(c *gin.Context)  { s.projectGate(c, true) }
+
+// --- repo file browsing (feeds chat file mentions) ---
+
+// repoForQuery resolves ?repo=owner/name against the project's linked repos.
+func (s *Service) repoForQuery(c *gin.Context) (db.Repository, bool) {
+	var zero db.Repository
+	p := c.MustGet("relay.project").(db.GetProjectByIDRow)
+	full := c.Query("repo")
+	if full == "" {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "repo=owner/name required")
+		return zero, false
+	}
+	repos, err := s.q.ListProjectRepos(c.Request.Context(), p.ID)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return zero, false
+	}
+	for _, r := range repos {
+		if r.Owner+"/"+r.Name == full {
+			return r, true
+		}
+	}
+	httpx.Error(c, http.StatusNotFound, "not_found", "repo not linked to this project")
+	return zero, false
+}
+
+func (s *Service) handleRepoTree(c *gin.Context) {
+	repo, ok := s.repoForQuery(c)
+	if !ok {
+		return
+	}
+	client, err := s.Client(c.Request.Context())
+	if err != nil {
+		httpx.Error(c, http.StatusServiceUnavailable, "github_unavailable", "github app not configured")
+		return
+	}
+	tree, truncated, err := client.RepoTree(c.Request.Context(),
+		repo.InstallationID, repo.Owner, repo.Name, repo.DefaultBranch)
+	if err != nil {
+		httpx.Error(c, http.StatusBadGateway, "github_error", "tree fetch failed")
+		return
+	}
+	type entry struct {
+		Path string `json:"path"`
+		Dir  bool   `json:"dir"`
+	}
+	out := make([]entry, 0, len(tree))
+	for _, t := range tree {
+		out = append(out, entry{Path: t.Path, Dir: t.Type == "tree"})
+		if len(out) >= 5000 {
+			truncated = true
+			break
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"entries": out, "truncated": truncated,
+		"repo": repo.Owner + "/" + repo.Name, "branch": repo.DefaultBranch})
+}
+
+func (s *Service) handleRepoFile(c *gin.Context) {
+	repo, ok := s.repoForQuery(c)
+	if !ok {
+		return
+	}
+	path := c.Query("path")
+	if path == "" || strings.Contains(path, "..") {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "path required")
+		return
+	}
+	client, err := s.Client(c.Request.Context())
+	if err != nil {
+		httpx.Error(c, http.StatusServiceUnavailable, "github_unavailable", "github app not configured")
+		return
+	}
+	content, size, err := client.RepoFile(c.Request.Context(),
+		repo.InstallationID, repo.Owner, repo.Name, path, repo.DefaultBranch)
+	if err != nil {
+		httpx.Error(c, http.StatusBadGateway, "github_error", "file fetch failed")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"path": path, "content": content, "size": size,
+		"repo": repo.Owner + "/" + repo.Name})
+}

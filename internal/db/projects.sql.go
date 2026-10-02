@@ -26,10 +26,35 @@ func (q *Queries) AddProjectMember(ctx context.Context, arg AddProjectMemberPara
 	return err
 }
 
+const createBoard = `-- name: CreateBoard :one
+insert into boards (project_id, name, filters)
+values ($1, $2, coalesce($3, '{}'::jsonb))
+returning id, project_id, name, filters, created_at
+`
+
+type CreateBoardParams struct {
+	ProjectID pgtype.UUID `json:"project_id"`
+	Name      string      `json:"name"`
+	Filters   interface{} `json:"filters"`
+}
+
+func (q *Queries) CreateBoard(ctx context.Context, arg CreateBoardParams) (Board, error) {
+	row := q.db.QueryRow(ctx, createBoard, arg.ProjectID, arg.Name, arg.Filters)
+	var i Board
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Filters,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createProject = `-- name: CreateProject :one
 insert into projects (workspace_id, key, name, description, icon, color, created_by)
 values ($1, $2, $3, $4, $5, $6, $7)
-returning id, workspace_id, key, name, description, icon, color, created_at
+returning id, workspace_id, key, name, description, icon, color, statuses, local_path, brief_policy, created_at
 `
 
 type CreateProjectParams struct {
@@ -50,6 +75,9 @@ type CreateProjectRow struct {
 	Description string             `json:"description"`
 	Icon        pgtype.Text        `json:"icon"`
 	Color       pgtype.Text        `json:"color"`
+	Statuses    []byte             `json:"statuses"`
+	LocalPath   pgtype.Text        `json:"local_path"`
+	BriefPolicy string             `json:"brief_policy"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
@@ -72,13 +100,85 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (C
 		&i.Description,
 		&i.Icon,
 		&i.Color,
+		&i.Statuses,
+		&i.LocalPath,
+		&i.BriefPolicy,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
+const createSavedFilter = `-- name: CreateSavedFilter :one
+insert into saved_filters (project_id, user_id, name, filters)
+values ($1, $2, $3, $4)
+returning id, project_id, user_id, name, filters, created_at
+`
+
+type CreateSavedFilterParams struct {
+	ProjectID pgtype.UUID `json:"project_id"`
+	UserID    pgtype.UUID `json:"user_id"`
+	Name      string      `json:"name"`
+	Filters   []byte      `json:"filters"`
+}
+
+func (q *Queries) CreateSavedFilter(ctx context.Context, arg CreateSavedFilterParams) (SavedFilter, error) {
+	row := q.db.QueryRow(ctx, createSavedFilter,
+		arg.ProjectID,
+		arg.UserID,
+		arg.Name,
+		arg.Filters,
+	)
+	var i SavedFilter
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.UserID,
+		&i.Name,
+		&i.Filters,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const deleteBoard = `-- name: DeleteBoard :exec
+delete from boards where id = $1
+`
+
+func (q *Queries) DeleteBoard(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteBoard, id)
+	return err
+}
+
+const deletePushSubscription = `-- name: DeletePushSubscription :exec
+delete from push_subscriptions where endpoint = $1 and user_id = $2
+`
+
+type DeletePushSubscriptionParams struct {
+	Endpoint string      `json:"endpoint"`
+	UserID   pgtype.UUID `json:"user_id"`
+}
+
+func (q *Queries) DeletePushSubscription(ctx context.Context, arg DeletePushSubscriptionParams) error {
+	_, err := q.db.Exec(ctx, deletePushSubscription, arg.Endpoint, arg.UserID)
+	return err
+}
+
+const deleteSavedFilter = `-- name: DeleteSavedFilter :exec
+delete from saved_filters where id = $1 and user_id = $2
+`
+
+type DeleteSavedFilterParams struct {
+	ID     pgtype.UUID `json:"id"`
+	UserID pgtype.UUID `json:"user_id"`
+}
+
+func (q *Queries) DeleteSavedFilter(ctx context.Context, arg DeleteSavedFilterParams) error {
+	_, err := q.db.Exec(ctx, deleteSavedFilter, arg.ID, arg.UserID)
+	return err
+}
+
 const getProjectByID = `-- name: GetProjectByID :one
-select id, workspace_id, key, name, description, icon, color, created_at
+select id, workspace_id, key, name, description, icon, color, statuses, local_path, brief_policy, created_at
 from projects
 where id = $1
 `
@@ -91,6 +191,9 @@ type GetProjectByIDRow struct {
 	Description string             `json:"description"`
 	Icon        pgtype.Text        `json:"icon"`
 	Color       pgtype.Text        `json:"color"`
+	Statuses    []byte             `json:"statuses"`
+	LocalPath   pgtype.Text        `json:"local_path"`
+	BriefPolicy string             `json:"brief_policy"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
@@ -105,13 +208,71 @@ func (q *Queries) GetProjectByID(ctx context.Context, id pgtype.UUID) (GetProjec
 		&i.Description,
 		&i.Icon,
 		&i.Color,
+		&i.Statuses,
+		&i.LocalPath,
+		&i.BriefPolicy,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
+const listBoards = `-- name: ListBoards :many
+select id, project_id, name, filters, created_at
+from boards where project_id = $1 order by name
+`
+
+func (q *Queries) ListBoards(ctx context.Context, projectID pgtype.UUID) ([]Board, error) {
+	rows, err := q.db.Query(ctx, listBoards, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Board{}
+	for rows.Next() {
+		var i Board
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Name,
+			&i.Filters,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProjectMemberIDs = `-- name: ListProjectMemberIDs :many
+select user_id from project_members where project_id = $1
+`
+
+func (q *Queries) ListProjectMemberIDs(ctx context.Context, projectID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listProjectMemberIDs, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var user_id pgtype.UUID
+		if err := rows.Scan(&user_id); err != nil {
+			return nil, err
+		}
+		items = append(items, user_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProjectsForUser = `-- name: ListProjectsForUser :many
-select p.id, p.workspace_id, p.key, p.name, p.description, p.icon, p.color, p.created_at
+select p.id, p.workspace_id, p.key, p.name, p.description, p.icon, p.color, p.statuses, p.local_path, p.brief_policy, p.created_at
 from projects p
 join workspace_members wm on wm.workspace_id = p.workspace_id
 where wm.user_id = $1
@@ -126,6 +287,9 @@ type ListProjectsForUserRow struct {
 	Description string             `json:"description"`
 	Icon        pgtype.Text        `json:"icon"`
 	Color       pgtype.Text        `json:"color"`
+	Statuses    []byte             `json:"statuses"`
+	LocalPath   pgtype.Text        `json:"local_path"`
+	BriefPolicy string             `json:"brief_policy"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
@@ -146,11 +310,117 @@ func (q *Queries) ListProjectsForUser(ctx context.Context, userID pgtype.UUID) (
 			&i.Description,
 			&i.Icon,
 			&i.Color,
+			&i.Statuses,
+			&i.LocalPath,
+			&i.BriefPolicy,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPushSubscriptions = `-- name: ListPushSubscriptions :many
+select endpoint, keys from push_subscriptions where user_id = $1
+`
+
+type ListPushSubscriptionsRow struct {
+	Endpoint string `json:"endpoint"`
+	Keys     []byte `json:"keys"`
+}
+
+func (q *Queries) ListPushSubscriptions(ctx context.Context, userID pgtype.UUID) ([]ListPushSubscriptionsRow, error) {
+	rows, err := q.db.Query(ctx, listPushSubscriptions, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPushSubscriptionsRow{}
+	for rows.Next() {
+		var i ListPushSubscriptionsRow
+		if err := rows.Scan(&i.Endpoint, &i.Keys); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSavedFilters = `-- name: ListSavedFilters :many
+select id, project_id, user_id, name, filters, created_at
+from saved_filters
+where project_id = $1 and user_id = $2
+order by name
+`
+
+type ListSavedFiltersParams struct {
+	ProjectID pgtype.UUID `json:"project_id"`
+	UserID    pgtype.UUID `json:"user_id"`
+}
+
+func (q *Queries) ListSavedFilters(ctx context.Context, arg ListSavedFiltersParams) ([]SavedFilter, error) {
+	rows, err := q.db.Query(ctx, listSavedFilters, arg.ProjectID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SavedFilter{}
+	for rows.Next() {
+		var i SavedFilter
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.UserID,
+			&i.Name,
+			&i.Filters,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const mentionedUserIDs = `-- name: MentionedUserIDs :many
+select u.id
+from workspace_members wm
+join users u on u.id = wm.user_id
+join projects p on p.workspace_id = wm.workspace_id
+where p.id = $1
+  and position('@' || lower(u.name) in lower($2)) > 0
+`
+
+type MentionedUserIDsParams struct {
+	ID    pgtype.UUID `json:"id"`
+	Lower string      `json:"lower"`
+}
+
+// workspace members whose name appears as @name (case-insensitive) in the body
+func (q *Queries) MentionedUserIDs(ctx context.Context, arg MentionedUserIDsParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, mentionedUserIDs, arg.ID, arg.Lower)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -180,6 +450,23 @@ func (q *Queries) ProjectCounts(ctx context.Context, projectID pgtype.UUID) (Pro
 	return i, err
 }
 
+const projectMeta = `-- name: ProjectMeta :one
+select statuses, local_path, brief_policy from projects where id = $1
+`
+
+type ProjectMetaRow struct {
+	Statuses    []byte      `json:"statuses"`
+	LocalPath   pgtype.Text `json:"local_path"`
+	BriefPolicy string      `json:"brief_policy"`
+}
+
+func (q *Queries) ProjectMeta(ctx context.Context, id pgtype.UUID) (ProjectMetaRow, error) {
+	row := q.db.QueryRow(ctx, projectMeta, id)
+	var i ProjectMetaRow
+	err := row.Scan(&i.Statuses, &i.LocalPath, &i.BriefPolicy)
+	return i, err
+}
+
 const projectWorkspaceRole = `-- name: ProjectWorkspaceRole :one
 select cast(coalesce((
     select wm.role from workspace_members wm
@@ -202,6 +489,34 @@ func (q *Queries) ProjectWorkspaceRole(ctx context.Context, arg ProjectWorkspace
 	return role, err
 }
 
+const setProjectLocalPath = `-- name: SetProjectLocalPath :exec
+update projects set local_path = $2, updated_at = now() where id = $1
+`
+
+type SetProjectLocalPathParams struct {
+	ID        pgtype.UUID `json:"id"`
+	LocalPath pgtype.Text `json:"local_path"`
+}
+
+func (q *Queries) SetProjectLocalPath(ctx context.Context, arg SetProjectLocalPathParams) error {
+	_, err := q.db.Exec(ctx, setProjectLocalPath, arg.ID, arg.LocalPath)
+	return err
+}
+
+const setProjectStatuses = `-- name: SetProjectStatuses :exec
+update projects set statuses = $2, updated_at = now() where id = $1
+`
+
+type SetProjectStatusesParams struct {
+	ID       pgtype.UUID `json:"id"`
+	Statuses []byte      `json:"statuses"`
+}
+
+func (q *Queries) SetProjectStatuses(ctx context.Context, arg SetProjectStatusesParams) error {
+	_, err := q.db.Exec(ctx, setProjectStatuses, arg.ID, arg.Statuses)
+	return err
+}
+
 const updateProject = `-- name: UpdateProject :one
 update projects
 set name = coalesce($1, name),
@@ -210,7 +525,7 @@ set name = coalesce($1, name),
     color = coalesce($4, color),
     updated_at = now()
 where id = $5
-returning id, workspace_id, key, name, description, icon, color, created_at
+returning id, workspace_id, key, name, description, icon, color, statuses, local_path, brief_policy, created_at
 `
 
 type UpdateProjectParams struct {
@@ -229,6 +544,9 @@ type UpdateProjectRow struct {
 	Description string             `json:"description"`
 	Icon        pgtype.Text        `json:"icon"`
 	Color       pgtype.Text        `json:"color"`
+	Statuses    []byte             `json:"statuses"`
+	LocalPath   pgtype.Text        `json:"local_path"`
+	BriefPolicy string             `json:"brief_policy"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
@@ -249,7 +567,37 @@ func (q *Queries) UpdateProject(ctx context.Context, arg UpdateProjectParams) (U
 		&i.Description,
 		&i.Icon,
 		&i.Color,
+		&i.Statuses,
+		&i.LocalPath,
+		&i.BriefPolicy,
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const upsertPushSubscription = `-- name: UpsertPushSubscription :exec
+insert into push_subscriptions (user_id, endpoint, auth, keys, user_agent)
+values ($1, $2, $3, $4, $5)
+on conflict (endpoint) do update
+set user_id = excluded.user_id, keys = excluded.keys,
+    user_agent = excluded.user_agent, last_seen = now()
+`
+
+type UpsertPushSubscriptionParams struct {
+	UserID    pgtype.UUID `json:"user_id"`
+	Endpoint  string      `json:"endpoint"`
+	Auth      string      `json:"auth"`
+	Keys      []byte      `json:"keys"`
+	UserAgent pgtype.Text `json:"user_agent"`
+}
+
+func (q *Queries) UpsertPushSubscription(ctx context.Context, arg UpsertPushSubscriptionParams) error {
+	_, err := q.db.Exec(ctx, upsertPushSubscription,
+		arg.UserID,
+		arg.Endpoint,
+		arg.Auth,
+		arg.Keys,
+		arg.UserAgent,
+	)
+	return err
 }

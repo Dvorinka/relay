@@ -29,3 +29,22 @@ export function timeAgo(iso: string): string {
   }
   return date.toLocaleDateString(undefined, opts);
 }
+
+/** "in 5m" / "in 3h" / "in 2d" — future counterpart to timeAgo. */
+export function timeUntil(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) {
+    return "";
+  }
+  const diff = then - Date.now();
+  if (diff <= 0) {
+    return "now";
+  }
+  if (diff < HOUR) {
+    return `in ${Math.max(1, Math.floor(diff / MINUTE))}m`;
+  }
+  if (diff < DAY) {
+    return `in ${Math.floor(diff / HOUR)}h`;
+  }
+  return `in ${Math.floor(diff / DAY)}d`;
+}

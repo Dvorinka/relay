@@ -7,6 +7,8 @@ export interface RelayEvent {
   data?: Record<string, unknown>;
 }
 
+import { net } from "./net";
+
 type Handler = (e: RelayEvent) => void;
 
 const handlers = new Set<Handler>();
@@ -16,7 +18,12 @@ let attempts = 0;
 
 function connect() {
   source?.close();
-  const es = new EventSource("/api/events");
+  // Local mode has no server at all — nothing to subscribe to.
+  if (net.isLocal()) return;
+  const base = net.serverUrl();
+  const token = net.token();
+  const url = `${base}/api/events${token ? `?access_token=${encodeURIComponent(token)}` : ""}`;
+  const es = new EventSource(url);
   source = es;
   es.onopen = () => {
     attempts = 0;

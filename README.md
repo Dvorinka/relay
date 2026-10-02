@@ -37,20 +37,36 @@ thread, thread becomes an issue, issue tracks GitHub state.
 
 > Agents don't live in Relay. They communicate through it.
 
+<p align="center">
+  <img src="docs/shots/chat.png" alt="Project conversation with replies, reactions, and agent replies" width="720">
+</p>
+
+<table>
+  <tr>
+    <td><img src="docs/shots/board.png" alt="Kanban board"></td>
+    <td><img src="docs/shots/reviews.png" alt="Agent work reviews"></td>
+  </tr>
+</table>
+
 ## Features
 
 - **Projects** - Linear-style project organization: overview, issues, conversations, activity, members, settings.
-- **Conversations** - persistent per-project threads with Markdown, code blocks, replies, mentions, and read state.
+- **Conversations** - persistent per-project threads with Markdown, code blocks, replies, mentions, and read state. `@` mentions resolve to real entities — users, agents, `KEY-1` issues, `owner/repo#42` GitHub issues and PRs, `@file:` and `@gh:` files — and are stored as structured references so agents know exactly what you meant.
 - **Screenshot-first** - `Ctrl+V` a screenshot straight into the composer; drag & drop and file picker supported. Attachments stay attached to their message.
-- **Issues** - fast issue tracker with `MYB-142` keys, statuses, priorities, labels, assignees, comments, and an activity timeline.
+- **Issues** - fast issue tracker with `MYB-142` keys, **custom per-project statuses** (own lanes, colors, closed flags), priorities, labels, assignees, comments, and an activity timeline. Kanban board is a full page, one click from chat; **named boards** and **saved filters** persist per project.
 - **Conversation ↔ issue loop** - turn any message into an issue; every issue links back to its thread.
-- **GitHub** - connect repositories through a GitHub App; issues, PRs, and commits mirror into the project with signature-verified webhooks.
+- **Project folder + file mentions** - link a local folder to a project (instead of or alongside GitHub) from project settings, then `@file:path` and `@gh:repo:path` mentions autocomplete in the composer and open a code preview inline. Agents can read linked files through MCP (`file:read` scope). Sensitive files (`.env`, keys, credentials) are never listed or served.
+- **Offline-first local mode** - no server required: pick "Work locally" on the sign-in screen and the whole app (projects, chat, issues, board, search) runs against IndexedDB on-device storage — attachments included as real blobs, far beyond the old ~5 MB localStorage ceiling. Point it at a server later and **Sync to server** replays local data onto it.
+- **Any-server clients** - sign in to any reachable Relay server from the login screen; the API accepts bearer tokens cross-origin (CORS `*`), so the web build works hosted anywhere.
+- **Visual briefs** - agents can attach Excalidraw-style diagrams explaining their work; each brief has its own comment thread so you can iterate on the picture. Per-project policy: never, on request, or expected pre-merge (Settings → Project settings → Visual briefs).
+- **GitHub** - connect repositories three ways: a GitHub App (one-click register + install from workspace settings), a `GITHUB_TOKEN`, or the machine's own `gh` CLI login — Relay picks it up automatically when no app is registered. Issues, PRs, and commits mirror into the project with signature-verified webhooks.
 - **Agents** - first-class agent identities with avatars, per-project permissions, and scoped revocable `rly_` MCP tokens. "Last seen" is real MCP activity - never fabricated presence.
 - **Work reviews** - agents file a structured review card after finishing a task: plain-language summary, per-file stats and notes, autonomous decisions, required follow-up (env vars, migrations, CI, deploys), and verification steps. Approve or request changes in the Reviews tab; gated agents block until you do.
 - **MCP server** - streamable-HTTP endpoint exposing projects, conversations, messages, attachments, and issues as tools for external agents.
 - **Realtime** - SSE event stream for live messages, issue changes, and notifications.
 - **Search** - `Ctrl/Cmd+K` across projects, issues, messages, and GitHub items, backed by Postgres FTS.
-- **Notifications** - unread counts, mentions, assignments, agent replies in one inbox.
+- **Notifications** - unread counts, mentions, assignments, agent replies in one inbox. Optional **Web Push** (VAPID) delivers mentions and review requests to the browser even when the tab is closed - enable in Settings → Notifications.
+- **Mobile outbox** - the Android app queues messages and images when offline and syncs them automatically on reconnect.
 - **Web first** - dark and light mode, keyboard-first, accessible. Desktop (Wails: Linux/macOS/Windows) and Android (Expo) clients consume the same API - see the [roadmap](ROADMAP.md).
 
 ## Architecture
@@ -95,13 +111,18 @@ annotated list: `DATABASE_URL`, `AUTH_SECRET`, `STORAGE_*` (MinIO, S3, R2),
 
 ## MCP integration
 
-Create an agent in workspace settings, grant it projects, mint a token, and
-point your agent at your deployment:
+Agents register themselves. In workspace settings click **Invite agent**,
+hand the printed bundle to the agent, and it redeems a one-shot `rli_`
+invite for a live `rly_` token — picking its own name and review mode:
 
 ```text
-POST {RELAY_PUBLIC_URL}/mcp        # streamable HTTP transport
+POST {RELAY_PUBLIC_URL}/api/agent-invites/redeem   # one-shot, no auth
+POST {RELAY_PUBLIC_URL}/mcp                        # streamable HTTP transport
 Authorization: Bearer rly_...
 ```
+
+Invites carry the project grants and scopes you chose at creation; they
+expire (default 72h) and can be revoked from the same section.
 
 Tools: `list_projects`, `get_project`, `list_conversations`, `get_messages`,
 `get_message`, `get_attachment`, `search_messages`, `list_issues`,
@@ -121,10 +142,12 @@ a note; the agent sees your verdict over MCP.
 
 Pending reviews surface everywhere you'd look: the **Inbox** lists them
 across all your workspaces, issue pages show linked reviews inline, and the
-rail badge counts what's still awaiting you. Every project tab is a deep
-link (`?tab=reviews`), so inbox items land exactly where the verdict lives.
+rail badge counts what's still awaiting you. Project views are deep links
+(`?view=reviews`, legacy `?tab=` links still resolve), so inbox items land
+exactly where the verdict lives.
 
-Each agent picks a **review mode** when you create or edit it in Settings:
+Each agent picks a **review mode** at redemption (admins can change it later
+in Settings):
 
 - `notify` (default) - the agent works to completion, then files the review
   for your records. Change your mind later and request a follow-up.

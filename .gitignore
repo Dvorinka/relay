@@ -37,3 +37,8 @@ apps/desktop/build/
 apps/desktop/desktop
 .vercel
 .env*
+
+# local build outputs
+/relay-cli
+/relay
+apps/desktop/desktop

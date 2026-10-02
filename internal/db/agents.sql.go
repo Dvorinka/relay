@@ -120,6 +120,46 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent
 	return i, err
 }
 
+const createAgentInvite = `-- name: CreateAgentInvite :one
+insert into agent_invites (workspace_id, token_hash, project_ids, scopes, expires_at, created_by)
+values ($1, $2, $3::uuid[],
+        $4::text[], $5, $6)
+returning id, workspace_id, token_hash, project_ids, scopes, expires_at, used_by, created_by, created_at
+`
+
+type CreateAgentInviteParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	TokenHash   []byte             `json:"token_hash"`
+	ProjectIds  []pgtype.UUID      `json:"project_ids"`
+	Scopes      []string           `json:"scopes"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+}
+
+func (q *Queries) CreateAgentInvite(ctx context.Context, arg CreateAgentInviteParams) (AgentInvite, error) {
+	row := q.db.QueryRow(ctx, createAgentInvite,
+		arg.WorkspaceID,
+		arg.TokenHash,
+		arg.ProjectIds,
+		arg.Scopes,
+		arg.ExpiresAt,
+		arg.CreatedBy,
+	)
+	var i AgentInvite
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.TokenHash,
+		&i.ProjectIds,
+		&i.Scopes,
+		&i.ExpiresAt,
+		&i.UsedBy,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createMcpToken = `-- name: CreateMcpToken :one
 insert into mcp_tokens (agent_id, token_hash, name, expires_at)
 values ($1, $2, $3, $4)
@@ -178,6 +218,15 @@ func (q *Queries) DeleteAgentGrant(ctx context.Context, arg DeleteAgentGrantPara
 	return err
 }
 
+const deleteAgentInvite = `-- name: DeleteAgentInvite :exec
+delete from agent_invites where id = $1
+`
+
+func (q *Queries) DeleteAgentInvite(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteAgentInvite, id)
+	return err
+}
+
 const getAgentByID = `-- name: GetAgentByID :one
 select id, workspace_id, name, slug, description, avatar_key, created_by, created_at, updated_at, review_mode from agents where id = $1
 `
@@ -226,6 +275,30 @@ func (q *Queries) GetAgentForUser(ctx context.Context, arg GetAgentForUserParams
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReviewMode,
+	)
+	return i, err
+}
+
+const getAgentInviteByHash = `-- name: GetAgentInviteByHash :one
+select id, workspace_id, token_hash, project_ids, scopes, expires_at, used_by, created_by, created_at from agent_invites
+where token_hash = $1
+  and used_by is null
+  and expires_at > now()
+`
+
+func (q *Queries) GetAgentInviteByHash(ctx context.Context, tokenHash []byte) (AgentInvite, error) {
+	row := q.db.QueryRow(ctx, getAgentInviteByHash, tokenHash)
+	var i AgentInvite
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.TokenHash,
+		&i.ProjectIds,
+		&i.Scopes,
+		&i.ExpiresAt,
+		&i.UsedBy,
+		&i.CreatedBy,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -316,6 +389,57 @@ func (q *Queries) ListAgentGrants(ctx context.Context, agentID pgtype.UUID) ([]L
 	return items, nil
 }
 
+const listAgentInvites = `-- name: ListAgentInvites :many
+select i.id, i.workspace_id, i.token_hash, i.project_ids, i.scopes, i.expires_at, i.used_by, i.created_by, i.created_at, a.name as used_by_name from agent_invites i
+left join agents a on a.id = i.used_by
+where i.workspace_id = $1
+order by i.created_at desc
+`
+
+type ListAgentInvitesRow struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	TokenHash   []byte             `json:"token_hash"`
+	ProjectIds  []pgtype.UUID      `json:"project_ids"`
+	Scopes      []string           `json:"scopes"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	UsedBy      pgtype.UUID        `json:"used_by"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UsedByName  pgtype.Text        `json:"used_by_name"`
+}
+
+func (q *Queries) ListAgentInvites(ctx context.Context, workspaceID pgtype.UUID) ([]ListAgentInvitesRow, error) {
+	rows, err := q.db.Query(ctx, listAgentInvites, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAgentInvitesRow{}
+	for rows.Next() {
+		var i ListAgentInvitesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.TokenHash,
+			&i.ProjectIds,
+			&i.Scopes,
+			&i.ExpiresAt,
+			&i.UsedBy,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UsedByName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAgentsForWorkspace = `-- name: ListAgentsForWorkspace :many
 select a.id, a.workspace_id, a.name, a.slug, a.description, a.avatar_key, a.created_by, a.created_at, a.updated_at, a.review_mode, cast((
     select max(t.last_used_at) from mcp_tokens t where t.agent_id = a.id
@@ -372,7 +496,7 @@ func (q *Queries) ListAgentsForWorkspace(ctx context.Context, workspaceID pgtype
 }
 
 const listGrantedProjects = `-- name: ListGrantedProjects :many
-select p.id, p.workspace_id, p.key, p.name, p.description, p.icon, p.color, p.created_by, p.created_at, p.updated_at from agent_project_permissions g
+select p.id, p.workspace_id, p.key, p.name, p.description, p.icon, p.color, p.created_by, p.created_at, p.updated_at, p.statuses, p.local_path, p.brief_policy from agent_project_permissions g
 join projects p on p.id = g.project_id
 where g.agent_id = $1 and 'project:read' = any(g.scopes)
 order by p.name
@@ -398,6 +522,9 @@ func (q *Queries) ListGrantedProjects(ctx context.Context, agentID pgtype.UUID) 
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Statuses,
+			&i.LocalPath,
+			&i.BriefPolicy,
 		); err != nil {
 			return nil, err
 		}
@@ -454,6 +581,30 @@ func (q *Queries) ListMcpTokens(ctx context.Context, agentID pgtype.UUID) ([]Lis
 	return items, nil
 }
 
+const listWorkspaceProjectIDs = `-- name: ListWorkspaceProjectIDs :many
+select id from projects where workspace_id = $1
+`
+
+func (q *Queries) ListWorkspaceProjectIDs(ctx context.Context, workspaceID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listWorkspaceProjectIDs, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const projectInAgentWorkspace = `-- name: ProjectInAgentWorkspace :one
 select exists (
     select 1 from projects p join agents a on a.workspace_id = p.workspace_id
@@ -472,6 +623,34 @@ func (q *Queries) ProjectInAgentWorkspace(ctx context.Context, arg ProjectInAgen
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const redeemAgentInvite = `-- name: RedeemAgentInvite :one
+update agent_invites set used_by = $1
+where id = $2 and used_by is null
+returning id, workspace_id, token_hash, project_ids, scopes, expires_at, used_by, created_by, created_at
+`
+
+type RedeemAgentInviteParams struct {
+	UsedBy pgtype.UUID `json:"used_by"`
+	ID     pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) RedeemAgentInvite(ctx context.Context, arg RedeemAgentInviteParams) (AgentInvite, error) {
+	row := q.db.QueryRow(ctx, redeemAgentInvite, arg.UsedBy, arg.ID)
+	var i AgentInvite
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.TokenHash,
+		&i.ProjectIds,
+		&i.Scopes,
+		&i.ExpiresAt,
+		&i.UsedBy,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const revokeAgentTokens = `-- name: RevokeAgentTokens :exec
