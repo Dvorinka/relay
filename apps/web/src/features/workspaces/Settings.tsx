@@ -16,6 +16,7 @@ import {
 import { api } from "../../lib/api";
 import { useSession } from "../../stores/session";
 import AgentsSection from "../agents/AgentsSection";
+import GitHubAppSection from "../github/GitHubAppSection";
 
 function errorMessage(err: unknown, fallback: string): string {
   return err instanceof ApiClientError
@@ -297,9 +298,14 @@ export default function Settings() {
 
       <Show when={current()}>
         {(ws) => (
-          <Section title="Agents">
-            <AgentsSection workspaceId={ws().id} canManage={canInvite()} />
-          </Section>
+          <>
+            <Section title="Agents">
+              <AgentsSection workspaceId={ws().id} canManage={canInvite()} />
+            </Section>
+            <Section title="GitHub">
+              <GitHubAppSection workspaceId={ws().id} canManage={canInvite()} />
+            </Section>
+          </>
         )}
       </Show>
     </div>

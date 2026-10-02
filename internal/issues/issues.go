@@ -132,7 +132,7 @@ func (s *Service) handleList(c *gin.Context) {
 	labelsByIssue := s.labelsFor(c, issueIDs(rows))
 	out := make([]gin.H, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, issueJSON(listRowToIssue(r), r.AssigneeName, r.AssigneeAvatar, labelsByIssue[r.ID.String()], p.Key))
+		out = append(out, issueJSON(listRowToIssue(r), r.AssigneeName, r.AssigneeAvatar, labelsByIssue[r.ID.String()], p.Key, r.GithubRepoOwner, r.GithubRepoName))
 	}
 	c.JSON(http.StatusOK, gin.H{"issues": out})
 }
@@ -214,7 +214,7 @@ func (s *Service) handleCreate(c *gin.Context) {
 	s.linkLabels(c, row.ID, labelIDs)
 	s.record(c, row.ID, user.ID, "created", gin.H{"status": req.Status})
 	s.log.Info("issue created", zap.String("issue", p.Key+"-"+strconv.Itoa(int(num))))
-	c.JSON(http.StatusCreated, issueJSON(row, pgtype.Text{}, pgtype.Text{}, s.issueLabels(c, row.ID), p.Key))
+	c.JSON(http.StatusCreated, issueJSON(row, pgtype.Text{}, pgtype.Text{}, s.issueLabels(c, row.ID), p.Key, pgtype.Text{}, pgtype.Text{}))
 }
 
 // --- issue-scoped handlers ---
@@ -224,7 +224,7 @@ func (s *Service) handleGet(c *gin.Context) {
 	pkey := s.projectKey(c, row.ProjectID)
 	activity := s.activityJSON(c, row.ID)
 	c.JSON(http.StatusOK, gin.H{
-		"issue":    issueJSON(forUserRowToIssue(row), row.AssigneeName, row.AssigneeAvatar, s.issueLabels(c, row.ID), pkey),
+		"issue":    issueJSON(forUserRowToIssue(row), row.AssigneeName, row.AssigneeAvatar, s.issueLabels(c, row.ID), pkey, row.GithubRepoOwner, row.GithubRepoName),
 		"activity": activity,
 	})
 }
@@ -345,7 +345,7 @@ func (s *Service) handleUpdate(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
-	c.JSON(http.StatusOK, issueJSON(byIDRowToIssue(fresh), fresh.AssigneeName, fresh.AssigneeAvatar, s.issueLabels(c, fresh.ID), s.projectKey(c, fresh.ProjectID)))
+	c.JSON(http.StatusOK, issueJSON(byIDRowToIssue(fresh), fresh.AssigneeName, fresh.AssigneeAvatar, s.issueLabels(c, fresh.ID), s.projectKey(c, fresh.ProjectID), fresh.GithubRepoOwner, fresh.GithubRepoName))
 }
 
 func (s *Service) handleConversation(c *gin.Context) {
@@ -433,7 +433,7 @@ func (s *Service) handleFromMessage(c *gin.Context) {
 			}
 		}
 	}
-	c.JSON(http.StatusCreated, issueJSON(row, pgtype.Text{}, pgtype.Text{}, nil, proj.Key))
+	c.JSON(http.StatusCreated, issueJSON(row, pgtype.Text{}, pgtype.Text{}, nil, proj.Key, pgtype.Text{}, pgtype.Text{}))
 }
 
 // --- labels ---
@@ -614,20 +614,35 @@ func authorJSON(kind string, id pgtype.UUID, name, avatar pgtype.Text) gin.H {
 
 // issueJSON renders an issue; assignee fields come from the optional users
 // join on the read queries.
-func issueJSON(i db.Issue, assigneeName, assigneeAvatar pgtype.Text, labels []gin.H, projectKey string) gin.H {
+func issueJSON(i db.Issue, assigneeName, assigneeAvatar pgtype.Text, labels []gin.H, projectKey string, ghOwner, ghRepo pgtype.Text) gin.H {
 	var assignee gin.H
 	if i.AssigneeID.Valid {
 		assignee = authorJSON("user", i.AssigneeID, assigneeName, assigneeAvatar)
 	}
-	return gin.H{
+	out := gin.H{
 		"id": i.ID.String(), "project_id": i.ProjectID.String(),
 		"number": i.Number, "key": projectKey + "-" + strconv.Itoa(int(i.Number)),
 		"title": i.Title, "description": i.Description,
 		"status": i.Status, "priority": i.Priority,
 		"assignee": assignee, "labels": labelsOrEmpty(labels),
+		"origin":     i.Origin,
 		"created_at": i.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
 		"updated_at": i.UpdatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
 	}
+	if i.GithubNumber.Valid && ghOwner.Valid && ghRepo.Valid {
+		full := ghOwner.String + "/" + ghRepo.String
+		state := "open"
+		if i.Status == "done" || i.Status == "cancelled" {
+			state = "closed"
+		}
+		out["github"] = gin.H{
+			"repo":   full,
+			"number": i.GithubNumber.Int32,
+			"state":  state,
+			"url":    "https://github.com/" + full + "/issues/" + strconv.Itoa(int(i.GithubNumber.Int32)),
+		}
+	}
+	return out
 }
 
 func labelsOrEmpty(l []gin.H) []gin.H {
@@ -643,6 +658,8 @@ func listRowToIssue(r db.ListIssuesForUserRow) db.Issue {
 		ID: r.ID, ProjectID: r.ProjectID, Number: r.Number, Title: r.Title,
 		Description: r.Description, Status: r.Status, Priority: r.Priority,
 		AssigneeID: r.AssigneeID, AgentID: r.AgentID, CreatedBy: r.CreatedBy,
+		GithubNodeID: r.GithubNodeID, GithubRepoID: r.GithubRepoID,
+		GithubNumber: r.GithubNumber, Origin: r.Origin,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
 }
@@ -652,6 +669,8 @@ func forUserRowToIssue(r db.GetIssueForUserRow) db.Issue {
 		ID: r.ID, ProjectID: r.ProjectID, Number: r.Number, Title: r.Title,
 		Description: r.Description, Status: r.Status, Priority: r.Priority,
 		AssigneeID: r.AssigneeID, AgentID: r.AgentID, CreatedBy: r.CreatedBy,
+		GithubNodeID: r.GithubNodeID, GithubRepoID: r.GithubRepoID,
+		GithubNumber: r.GithubNumber, Origin: r.Origin,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
 }
@@ -661,6 +680,8 @@ func byIDRowToIssue(r db.GetIssueByIDRow) db.Issue {
 		ID: r.ID, ProjectID: r.ProjectID, Number: r.Number, Title: r.Title,
 		Description: r.Description, Status: r.Status, Priority: r.Priority,
 		AssigneeID: r.AssigneeID, AgentID: r.AgentID, CreatedBy: r.CreatedBy,
+		GithubNodeID: r.GithubNodeID, GithubRepoID: r.GithubRepoID,
+		GithubNumber: r.GithubNumber, Origin: r.Origin,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
 }

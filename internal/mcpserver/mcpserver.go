@@ -21,6 +21,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Dvorinka/relay/internal/db"
+	"github.com/Dvorinka/relay/internal/github"
 	"github.com/Dvorinka/relay/internal/storage"
 )
 
@@ -42,6 +43,7 @@ type Agent struct {
 type Service struct {
 	q     *db.Queries
 	store *storage.Store
+	gh    *github.Service
 	log   *zap.Logger
 
 	mu      sync.Mutex
@@ -52,9 +54,9 @@ type Service struct {
 // New builds the gin handler for POST /mcp. It performs bearer auth,
 // rate limiting, and last_used_at bookkeeping, then hands the request
 // to the mcp-go streamable HTTP transport.
-func New(q *db.Queries, store *storage.Store, log *zap.Logger) gin.HandlerFunc {
+func New(q *db.Queries, store *storage.Store, log *zap.Logger, gh *github.Service) gin.HandlerFunc {
 	s := &Service{
-		q: q, store: store, log: log,
+		q: q, store: store, gh: gh, log: log,
 		windows: make(map[[16]byte]time.Time),
 		counts:  make(map[[16]byte]int),
 	}
@@ -253,6 +255,28 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithString("status", mcp.Description("backlog|todo|in_progress|review|done|cancelled")),
 		mcp.WithString("priority", mcp.Description("none|low|medium|high|urgent")),
 	), s.updateIssue)
+
+	srv.AddTool(mcp.NewTool("github_list_issues",
+		mcp.WithDescription("List open GitHub issues on the project's linked repository."),
+		mcp.WithString("project_id", mcp.Required()),
+	), s.ghListIssues)
+
+	srv.AddTool(mcp.NewTool("github_get_issue",
+		mcp.WithDescription("Get one GitHub issue (with body) from the project's linked repository."),
+		mcp.WithString("project_id", mcp.Required()),
+		mcp.WithNumber("number", mcp.Required()),
+	), s.ghGetIssue)
+
+	srv.AddTool(mcp.NewTool("github_list_prs",
+		mcp.WithDescription("List open pull requests on the project's linked repository."),
+		mcp.WithString("project_id", mcp.Required()),
+	), s.ghListPRs)
+
+	srv.AddTool(mcp.NewTool("github_get_pr",
+		mcp.WithDescription("Get one pull request from the project's linked repository."),
+		mcp.WithString("project_id", mcp.Required()),
+		mcp.WithNumber("number", mcp.Required()),
+	), s.ghGetPR)
 
 	srv.AddTool(mcp.NewTool("mark_message_read",
 		mcp.WithDescription("Mark a message as read by this agent."),
@@ -675,6 +699,129 @@ func (s *Service) recordActivity(ctx context.Context, issueID pgtype.UUID, kind 
 	}); err != nil {
 		s.log.Warn("record issue activity", zap.Error(err))
 	}
+}
+
+// ghRepo resolves the project's first linked repository under issue:read.
+func (s *Service) ghRepo(ctx context.Context, req mcp.CallToolRequest) (db.Repository, error) {
+	pid, err := uuidArg(req, "project_id")
+	if err != nil {
+		return db.Repository{}, err
+	}
+	if err := s.scope(ctx, pid, "issue:read"); err != nil {
+		return db.Repository{}, err
+	}
+	repos, err := s.q.ListProjectRepos(ctx, pid)
+	if err != nil || len(repos) == 0 {
+		return db.Repository{}, errors.New("no GitHub repository linked to this project")
+	}
+	return repos[0], nil
+}
+
+func (s *Service) ghClient(ctx context.Context) (*github.Client, error) {
+	if s.gh == nil {
+		return nil, errors.New("github integration unavailable")
+	}
+	return s.gh.Client(ctx)
+}
+
+func ghIssueJSON(i github.GHIssue, repo string) gin.H {
+	return gin.H{
+		"number": i.Number, "title": i.Title, "state": i.State,
+		"url": i.HTMLURL, "author": i.User.Login, "repo": repo,
+		"updated_at": i.UpdatedAt,
+	}
+}
+
+func (s *Service) ghListIssues(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	r, err := s.ghRepo(ctx, req)
+	if err != nil {
+		return errResult(err)
+	}
+	cli, err := s.ghClient(ctx)
+	if err != nil {
+		return errResult(err)
+	}
+	issues, err := cli.ListIssues(ctx, r.InstallationID, r.Owner, r.Name)
+	if err != nil {
+		return errResult(err)
+	}
+	full := r.Owner + "/" + r.Name
+	out := make([]gin.H, 0, len(issues))
+	for _, i := range issues {
+		out = append(out, ghIssueJSON(i, full))
+	}
+	return jsonResult(out)
+}
+
+func (s *Service) ghGetIssue(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	r, err := s.ghRepo(ctx, req)
+	if err != nil {
+		return errResult(err)
+	}
+	num := req.GetInt("number", 0)
+	if num < 1 {
+		return mcp.NewToolResultError("number required"), nil
+	}
+	cli, err := s.ghClient(ctx)
+	if err != nil {
+		return errResult(err)
+	}
+	i, err := cli.GetIssue(ctx, r.InstallationID, r.Owner, r.Name, num)
+	if err != nil {
+		return errResult(err)
+	}
+	out := ghIssueJSON(*i, r.Owner+"/"+r.Name)
+	out["body"] = i.Body
+	return jsonResult(out)
+}
+
+func ghPRJSON(p github.PR, repo string) gin.H {
+	return gin.H{
+		"number": p.Number, "title": p.Title, "state": p.State,
+		"draft": p.Draft, "url": p.HTMLURL, "author": p.User.Login,
+		"head": p.Head.Ref, "base": p.Base.Ref, "repo": repo,
+	}
+}
+
+func (s *Service) ghListPRs(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	r, err := s.ghRepo(ctx, req)
+	if err != nil {
+		return errResult(err)
+	}
+	cli, err := s.ghClient(ctx)
+	if err != nil {
+		return errResult(err)
+	}
+	prs, err := cli.ListPRs(ctx, r.InstallationID, r.Owner, r.Name)
+	if err != nil {
+		return errResult(err)
+	}
+	full := r.Owner + "/" + r.Name
+	out := make([]gin.H, 0, len(prs))
+	for _, p := range prs {
+		out = append(out, ghPRJSON(p, full))
+	}
+	return jsonResult(out)
+}
+
+func (s *Service) ghGetPR(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	r, err := s.ghRepo(ctx, req)
+	if err != nil {
+		return errResult(err)
+	}
+	num := req.GetInt("number", 0)
+	if num < 1 {
+		return mcp.NewToolResultError("number required"), nil
+	}
+	cli, err := s.ghClient(ctx)
+	if err != nil {
+		return errResult(err)
+	}
+	p, err := cli.GetPR(ctx, r.InstallationID, r.Owner, r.Name, num)
+	if err != nil {
+		return errResult(err)
+	}
+	return jsonResult(ghPRJSON(*p, r.Owner+"/"+r.Name))
 }
 
 func clampInt(v, lo, hi int) int {

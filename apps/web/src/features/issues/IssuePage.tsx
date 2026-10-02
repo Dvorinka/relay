@@ -11,7 +11,7 @@ import { Markdown } from "../../lib/markdown";
 import { timeAgo } from "../../lib/time";
 import { Conversation } from "../conversations/Conversation";
 import { AssigneeSelect, LabelsPicker, PrioritySelect, StatusSelect } from "./fields";
-import { LabelChip, statusLabel } from "./meta";
+import { GitHubBadge, LabelChip, statusLabel } from "./meta";
 
 function activityText(a: IssueActivity): string {
   const payload = a.payload ?? {};
@@ -204,6 +204,7 @@ export default function IssuePage() {
                 <span class="rounded border border-border px-1.5 py-0.5 font-mono text-[11px]">
                   {i.key}
                 </span>
+                <GitHubBadge issue={i} />
               </div>
               <div class="mt-2 max-w-3xl">
                 <EditableTitle

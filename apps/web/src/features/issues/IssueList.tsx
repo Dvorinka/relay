@@ -17,6 +17,7 @@ import { initials } from "../../lib/text";
 import { useSession } from "../../stores/session";
 import {
   isClosed,
+  GitHubBadge,
   LabelChip,
   PRIORITY_LABEL,
   PriorityGlyph,
@@ -46,15 +47,16 @@ function IssueRow(props: {
       <A
         href={`/app/p/${props.projectId}/i/${i().id}`}
         onMouseEnter={props.onHover}
-        class={`flex items-center gap-3 px-3 py-2 text-[13px] transition-colors ${
+        class={`flex items-center gap-2 px-3 py-2 text-[13px] transition-colors ${
           props.selected ? "bg-hover" : ""
         }`}
         data-selected={props.selected || undefined}
       >
-        <span class="w-14 shrink-0 font-mono text-[11px] text-muted">
+        <span class="w-12 shrink-0 font-mono text-[11px] text-muted">
           {i().key}
         </span>
-        <span class="min-w-0 flex-1 truncate">{i().title}</span>
+        <span class="min-w-0 flex-1 basis-32 truncate">{i().title}</span>
+        <GitHubBadge issue={i()} />
         <Show when={i().labels.length > 0}>
           <span class="hidden shrink-0 gap-1 md:flex">
             <For each={i().labels.slice(0, 3)}>
@@ -63,7 +65,7 @@ function IssueRow(props: {
           </span>
         </Show>
         <span
-          class="flex w-20 shrink-0 items-center gap-1.5 text-[11px] text-muted"
+          class="flex w-14 shrink-0 items-center gap-1.5 text-[11px] text-muted"
           title={`Priority: ${PRIORITY_LABEL[i().priority]}`}
         >
           <PriorityGlyph priority={i().priority} />
@@ -71,11 +73,11 @@ function IssueRow(props: {
             {PRIORITY_LABEL[i().priority]}
           </Show>
         </span>
-        <span class="flex w-24 shrink-0 items-center gap-1.5 text-[11px] text-muted">
+        <span class="flex w-20 shrink-0 items-center gap-1.5 text-[11px] text-muted">
           <StatusDot status={i().status} />
           <span class="truncate">{STATUS_LABEL[i().status]}</span>
         </span>
-        <span class="flex w-28 shrink-0 items-center gap-1.5 text-[12px] text-muted">
+        <span class="flex w-24 shrink-0 items-center gap-1.5 text-[12px] text-muted">
           <Show
             when={i().assignee}
             fallback={<span class="text-muted/60">Unassigned</span>}

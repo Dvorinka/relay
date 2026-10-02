@@ -12,14 +12,16 @@ import { messagePreview } from "../../lib/text";
 import { timeAgo } from "../../lib/time";
 import { useProjects } from "../../stores/projects";
 import { Conversation } from "../conversations/Conversation";
+import { DevelopmentPanel } from "../github/GitHub";
 import { IssueList } from "../issues/IssueList";
 
-type Tab = "overview" | "issues" | "conversation";
+type Tab = "overview" | "issues" | "conversation" | "development";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "issues", label: "Issues" },
   { id: "conversation", label: "Conversation" },
+  { id: "development", label: "Development" },
 ];
 
 function ProjectDot(props: { color?: string | null; class?: string }) {
@@ -175,6 +177,14 @@ export default function ProjectPage() {
       </Show>
       <Show when={tab() === "conversation"}>
         <Conversation projectId={params.projectId} />
+      </Show>
+      <Show when={tab() === "development" ? project() : undefined} keyed>
+        {(p) => (
+          <DevelopmentPanel
+            projectId={p.id}
+            workspaceId={p.workspace_id}
+          />
+        )}
       </Show>
     </div>
   );
