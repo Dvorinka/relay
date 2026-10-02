@@ -13,13 +13,15 @@ import { timeAgo } from "../../lib/time";
 import { useProjects } from "../../stores/projects";
 import { Conversation } from "../conversations/Conversation";
 import { DevelopmentPanel } from "../github/GitHub";
+import { Board } from "../issues/Board";
 import { IssueList } from "../issues/IssueList";
 
-type Tab = "overview" | "issues" | "conversation" | "development";
+type Tab = "overview" | "issues" | "board" | "conversation" | "development";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "issues", label: "Issues" },
+  { id: "board", label: "Board" },
   { id: "conversation", label: "Conversation" },
   { id: "development", label: "Development" },
 ];
@@ -174,6 +176,9 @@ export default function ProjectPage() {
       </Show>
       <Show when={tab() === "issues" ? project() : undefined} keyed>
         {(p) => <IssueList project={p} />}
+      </Show>
+      <Show when={tab() === "board" ? project() : undefined} keyed>
+        {(p) => <Board project={p} />}
       </Show>
       <Show when={tab() === "conversation"}>
         <Conversation projectId={params.projectId} />

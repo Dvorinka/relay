@@ -7,6 +7,7 @@ import Login from "./features/auth/Login";
 import Register from "./features/auth/Register";
 import ResetPassword from "./features/auth/ResetPassword";
 import Settings from "./features/workspaces/Settings";
+import IssueKeyRedirect from "./features/issues/IssueKeyRedirect";
 import IssuePage from "./features/issues/IssuePage";
 import ProjectPage from "./features/projects/ProjectPage";
 import "./index.css";
@@ -28,6 +29,7 @@ render(
           <Route path="/inbox" component={Inbox} />
           <Route path="/p/:projectId" component={ProjectPage} />
           <Route path="/p/:projectId/i/:issueId" component={IssuePage} />
+          <Route path="/p/:projectId/k/:key" component={IssueKeyRedirect} />
           <Route path="/settings" component={Settings} />
         </Route>
       </Router>

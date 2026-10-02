@@ -224,7 +224,11 @@ export default function IssuePage() {
                     <p class="text-[13px] text-muted/60">No description</p>
                   }
                 >
-                  <Markdown body={i.description} class="max-w-3xl" />
+                  <Markdown
+                    body={i.description}
+                    class="max-w-3xl"
+                    projectId={params.projectId}
+                  />
                 </Show>
 
                 <h2 class="mb-3 mt-8 text-[13px] font-semibold">Activity</h2>

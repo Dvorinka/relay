@@ -49,7 +49,15 @@ goose + sqlc wired, OpenAPI skeleton, health endpoint, brand kit, docs.
 - MCP server (streamable HTTP): full tool list from the spec
 - Project settings: agent access management
 
-## Phase 5.5 - Agent workflow ☐
+## Phase 5.5 - Agent workflow ☑
+
+Verified live: `relay-cli` (stdlib-only MCP client) lists projects, posts
+messages, manages issues/todos, and reads GitHub data with an `rly_` token.
+Agent todos persist per project with optional issue links, surface in the
+Board tab's work list (with agent attribution), and are enforceable by
+`issue:read`/`issue:write` MCP scopes. `owner/repo#123` and `MYB-42`
+references in messages and descriptions linkify; `KEY-42` resolves through
+`/app/p/:id/k/:key` to the issue page. Board tab offers drag-drop kanban.
 
 - `relay` CLI: single Go binary wrapping the MCP endpoint (`rly_` tokens)
 - Agent-managed project todos - the agent's persistent "what remains" list,

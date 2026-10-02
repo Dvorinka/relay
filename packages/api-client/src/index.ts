@@ -69,6 +69,16 @@ export interface DevRepoPanel {
   error?: string;
 }
 
+export interface Todo {
+  id: string;
+  content: string;
+  done: boolean;
+  agent?: { id: string; name: string };
+  issue?: { id: string; key: string };
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface DevelopmentPanel {
   repos: DevRepoPanel[];
   fetched_at: string;
@@ -353,6 +363,26 @@ export function createClient(baseUrl: string) {
       }),
     projectDevelopment: (projectId: string) =>
       request<DevelopmentPanel>(`/api/projects/${projectId}/development`),
+
+    // Todos
+    listTodos: (projectId: string) =>
+      request<{ todos: Todo[] }>(`/api/projects/${projectId}/todos`),
+    createTodo: (projectId: string, content: string, issueId?: string) =>
+      post<Todo>(`/api/projects/${projectId}/todos`, {
+        content,
+        ...(issueId ? { issue_id: issueId } : {}),
+      }),
+    updateTodo: (
+      todoId: string,
+      body: { content?: string; done?: boolean; issue_id?: string },
+    ) =>
+      patch<Todo>(`/api/todos/${todoId}`, body),
+    deleteTodo: (todoId: string) =>
+      request<void>(`/api/todos/${todoId}`, { method: "DELETE" }),
+    issueByKey: (projectId: string, key: string) =>
+      request<{ id: string; key: string }>(
+        `/api/projects/${projectId}/issues/key/${encodeURIComponent(key)}`,
+      ),
 
     // Attachments
     uploadAttachment: (projectId: string, file: File) => {
