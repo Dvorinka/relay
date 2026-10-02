@@ -26,11 +26,21 @@ device, enter your Relay server URL on the login screen
 ## Screens
 
 - **Login** — server URL + email/password (session cookie auth)
-- **Projects** — list with pull-to-refresh
-- **Conversation** — messages, agent badges, inline images, attachment
-  picker (`+`), 4s polling refresh
-- **Issues** — status chips; tap a status to advance the issue
+- **Projects** — list with pull-to-refresh, unread + pending-review badges,
+  header links to Inbox and Settings
+- **Inbox** — reviews awaiting your verdict (tap through to approve or
+  request changes) plus @mentions
+- **Conversation** — grouped timeline with avatars, day separators, reply
+  strips, reaction pills, `(edited)` markers, markdown (bold/italic/code/
+  fenced blocks), inline images, staged attachments (`+`), long-press
+  action sheet (reply / react / edit — edit locks once an agent has read
+  the message), 4s polling refresh
+- **Issues** — status-colored chips; tap a status to advance the issue
+- **Reviews** — pending-first review cards with approve / request-changes
+  (note required) verdicts
 - **Work list** — agent-managed todos for the project
+- **Settings** — appearance override (System / Light / Dark, persisted),
+  account, server URL, sign out
 
 ## Auth model
 

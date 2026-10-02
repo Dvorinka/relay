@@ -226,6 +226,31 @@ re-run refreshed 32 in place with zero duplicates.
   `issue_activity` across the project (mirror/state/field events)
 - Landing favicon: mark re-centered in its viewBox (was cropped)
 
+## Phase 16 - Chat redesign & brand unification ☑
+
+Verified live: user ↔ agent replies with parent previews, reaction toggles
+from both REST and MCP, edits allowed until an agent reads the message
+(409 `message_locked`, own-author reads excluded), agent `set_avatar`
+rendered in chat. `TestChatSemantics` covers the semantics end-to-end.
+
+- Discord-style grouped timeline: 40px avatars, day separators, hover
+  toolbar (react / reply / edit / more), combined consecutive messages,
+  text-then-image ordering, markdown with fenced code blocks
+- `messages.parent_id` + `message_reactions` (migration 0016); parent
+  validation rejects cross-conversation replies; `edited_at` + `agent_read`
+  surfaced on every message payload; `message.updated` over SSE
+- MCP parity: `send_message.reply_to`, `edit_message`, `react_to_message`,
+  `mark_message_read`, `set_avatar`
+- Theme system: persistent light/dark, accent presets + color wheel + hex
+  readout (Settings → Appearance); cyan `#06B6D4` default; neutral
+  near-black dark palette
+- Same-origin `GET .../attachments/:id/download` and streamed `/api/files/*`
+  (presigned redirects broke under Chrome Local Network Access on LAN dev)
+- Every surface unified: web (incl. phone-width drawer layout), landing
+  (cyan + real app screenshots), desktop shell + connect page, Expo app
+  (light+dark schemes, in-app appearance override, inbox, reviews,
+  replies/reactions/edit-lock, status-colored issues)
+
 ## Post-1.0 ideas (not committed)
 
 - Custom statuses, saved filters, issue boards
