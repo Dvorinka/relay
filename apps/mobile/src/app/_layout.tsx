@@ -18,6 +18,7 @@ function Shell() {
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="login" options={{ headerShown: false }} />
         <Stack.Screen name="projects" options={{ title: "Relay" }} />
+        <Stack.Screen name="inbox" options={{ title: "Inbox" }} />
         <Stack.Screen name="settings" options={{ title: "Settings" }} />
         <Stack.Screen name="p/[id]/index" options={{ title: "Conversation" }} />
         <Stack.Screen name="p/[id]/issues" options={{ title: "Issues" }} />

@@ -151,6 +151,15 @@ export const api = {
       response: response ?? "",
     }),
   workspaces: () => req<{ workspaces: Workspace[] }>("GET", "/api/workspaces"),
+  myReviews: () =>
+    req<{ reviews: MyReview[] }>("GET", "/api/me/reviews"),
+  unreadCounts: () =>
+    req<{ unread: Record<string, number>; reviews: Record<string, number> }>(
+      "GET",
+      "/api/me/unread",
+    ),
+  mentions: () =>
+    req<{ mentions: Mention[] }>("GET", "/api/me/mentions"),
   upload: async (
     projectId: string,
     file: { uri: string; name: string; type: string },
@@ -267,4 +276,21 @@ export interface Review {
 export interface Workspace {
   id: string;
   name: string;
+}
+export interface MyReview {
+  id: string;
+  project_id: string;
+  title: string;
+  agent: Person;
+  project_key: string;
+  project_name: string;
+  created_at: string;
+}
+export interface Mention {
+  id: string;
+  body: string;
+  created_at: string;
+  project_id: string;
+  is_read: boolean;
+  author: { name: string; avatar: string | null; kind: string };
 }
