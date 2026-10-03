@@ -5,3 +5,10 @@
 # 2026-10-02 (1.4.0 is latest). Revisit: 2026-12-01 or on first node-forge
 # release, whichever is earlier.
 CVE-2026-85393
+
+# braces@3.0.3 (CVE-2026-93687) — HIGH, DoS via stack overflow on deeply
+# nested glob patterns. Transitive of expo → @expo/metro-file-map →
+# micromatch (apps/mobile). Only bundler-facing; patterns are static app
+# config, not user input. No fixed release exists as of 2026-10-03
+# (3.0.3 is latest). Revisit: 2026-12-01 or on first braces release.
+CVE-2026-93687
