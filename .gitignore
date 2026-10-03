@@ -17,8 +17,9 @@ apps/*/dist/
 apps/*/.output/
 *.tsbuildinfo
 
-# Wails / mobile build output
-apps/desktop/build/
+# Wails / mobile build output — build/bin is generated; appicon.png and
+# build/windows/ (icon, manifest, info.json) are source assets and committed
+apps/desktop/build/bin/
 apps/desktop/frontend/
 # embedded SPA bundle — CI copies apps/web/dist here before wails build;
 # only the stub index.html is committed
@@ -38,7 +39,6 @@ apps/mobile/android/
 # local data
 /tmp/
 *.log
-apps/desktop/build/
 apps/desktop/desktop
 .vercel
 .env*

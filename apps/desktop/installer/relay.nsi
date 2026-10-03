@@ -16,6 +16,16 @@
 !ifndef OUTFILE
   !define OUTFILE "Relay-Setup-${VERSION}.exe"
 !endif
+!ifndef ICON
+  !define ICON "..\build\windows\icon.ico"
+!endif
+
+; Optional Authenticode signing of the generated uninstaller + installer.
+; Pass -DSIGNCMD="path\to\sign-windows.sh" (any in-place signer taking %1).
+!ifdef SIGNCMD
+  !finalize '${SIGNCMD} "%1"'
+  !uninstfinalize '${SIGNCMD} "%1"'
+!endif
 
 !define APP_NAME   "Relay"
 !define APP_EXE    "relay-desktop.exe"
@@ -27,6 +37,8 @@
 
 Name "${APP_NAME}"
 OutFile "${OUTFILE}"
+Icon "${ICON}"
+UninstallIcon "${ICON}"
 Unicode true
 RequestExecutionLevel user          ; per-user install — no UAC prompt
 InstallDir "$LOCALAPPDATA\Programs\Relay"
@@ -46,6 +58,8 @@ VIAddVersionKey "LegalCopyright"  "Apache-2.0"
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 
+!define MUI_ICON   "${ICON}"
+!define MUI_UNICON "${ICON}"
 !define MUI_FINISHPAGE_RUN "$INSTDIR\${APP_EXE}"
 !define MUI_FINISHPAGE_RUN_TEXT "Launch Relay"
 
