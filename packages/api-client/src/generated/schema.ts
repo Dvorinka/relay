@@ -607,7 +607,8 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        delete?: never;
+        /** Soft-delete a message - author only, locked once any agent has read it */
+        delete: operations["deleteMessage"];
         options?: never;
         head?: never;
         /** Edit a message's body - author only, locked once any agent has read it */
@@ -3262,6 +3263,37 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    deleteMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                messageId: components["parameters"]["MessageId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Message deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            /** @description An agent has read the message; deletion is locked */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     editMessage: {

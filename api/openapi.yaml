@@ -979,6 +979,20 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      operationId: deleteMessage
+      summary: Soft-delete a message - author only, locked once any agent has read it
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/MessageId" } ]
+      responses:
+        "204": { description: Message deleted }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: An agent has read the message; deletion is locked
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/messages/{messageId}/reactions:
     put:

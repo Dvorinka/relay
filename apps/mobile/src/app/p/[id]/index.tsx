@@ -298,6 +298,44 @@ export default function ConversationScreen() {
   const rows = useMemo(() => buildRows(messages).reverse(), [messages]);
   const canEdit = (m: Message) =>
     m.author.kind === "user" && m.author.id === meId && !m.agent_read;
+  const canDelete = canEdit; // same agent-read lock as edit
+
+  const removeMessage = (mid: string) =>
+    setMessages((ms) =>
+      ms
+        .filter((x) => x.id !== mid)
+        .map((x) =>
+          x.parent?.id === mid
+            ? { ...x, parent: { ...x.parent, deleted: true } }
+            : x,
+        ),
+    );
+
+  const confirmDelete = (msg: Message) => {
+    setSheetFor(null);
+    Alert.alert(
+      "Delete message?",
+      "This removes it for everyone. Replies keep a 'deleted' placeholder.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await api.deleteMessage(msg.id);
+              removeMessage(msg.id);
+            } catch (e) {
+              Alert.alert(
+                "Delete failed",
+                e instanceof Error ? e.message : "try again",
+              );
+            }
+          },
+        },
+      ],
+    );
+  };
 
   return (
     <KeyboardAvoidingView
@@ -526,12 +564,22 @@ export default function ConversationScreen() {
                 <Text style={s.sheetBtnText}>Edit</Text>
               </Pressable>
             )}
+            {sheetFor && canDelete(sheetFor) && (
+              <Pressable
+                style={s.sheetBtn}
+                onPress={() => confirmDelete(sheetFor)}
+              >
+                <Text style={[s.sheetBtnText, { color: "#EF4444" }]}>
+                  Delete
+                </Text>
+              </Pressable>
+            )}
             {sheetFor &&
               sheetFor.author.kind === "user" &&
               sheetFor.author.id === meId &&
               sheetFor.agent_read && (
                 <Text style={s.sheetHint}>
-                  Seen by an agent — editing locked
+                  Seen by an agent — editing and deletion locked
                 </Text>
               )}
           </View>

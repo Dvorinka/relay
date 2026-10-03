@@ -308,6 +308,8 @@ export function createClient(baseUrl: string, token?: string) {
       }),
     editMessage: (messageId: string, body: string) =>
       patch<Message>(`/api/messages/${messageId}`, { body }),
+    deleteMessage: (messageId: string) =>
+      request<void>(`/api/messages/${messageId}`, { method: "DELETE" }),
     toggleReaction: (messageId: string, emoji: string) =>
       put<{ reactions: Reaction[] }>(`/api/messages/${messageId}/reactions`, {
         emoji,

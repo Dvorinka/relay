@@ -24,6 +24,7 @@ import {
   PaperclipIcon,
   PencilIcon,
   ReplyIcon,
+  TrashIcon,
   XIcon,
 } from "../../components/icons";
 import {
@@ -296,6 +297,76 @@ function ConvertToIssueDialog(props: {
   );
 }
 
+function DeleteMessageDialog(props: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: () => Promise<void>;
+}) {
+  const [pending, setPending] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+
+  async function submit(e: SubmitEvent) {
+    e.preventDefault();
+    if (pending()) return;
+    setPending(true);
+    setError(null);
+    try {
+      await props.onConfirm();
+      props.onOpenChange(false);
+    } catch (err) {
+      setError(
+        err instanceof ApiClientError && err.status === 409
+          ? "An agent has read this message - it can no longer be deleted."
+          : err instanceof Error
+            ? err.message
+            : "Could not delete",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <Dialog.Root
+      open={props.open}
+      onOpenChange={(d) => props.onOpenChange(d.open)}
+    >
+      <Portal>
+        <Dialog.Backdrop class="fixed inset-0 z-40 bg-black/40" />
+        <Dialog.Positioner class="fixed inset-0 z-40 flex items-start justify-center p-4 pt-[15vh]">
+          <Dialog.Content class="w-full max-w-md rounded-xl border border-border bg-surface p-4 shadow-lg outline-none">
+            <Dialog.Title class="text-[14px] font-semibold">
+              Delete message
+            </Dialog.Title>
+            <Dialog.Description class="mt-1 text-[13px] text-muted">
+              This message will be permanently removed for everyone. Replies
+              to it keep a "deleted" placeholder.
+            </Dialog.Description>
+            <form onSubmit={submit} class="mt-3">
+              <FormError message={error()} />
+              <div class="mt-3 flex justify-end gap-2">
+                <Dialog.CloseTrigger
+                  type="button"
+                  class="inline-flex h-8 items-center justify-center rounded-md px-3 text-[13px] text-muted transition-colors hover:bg-hover hover:text-fg"
+                >
+                  Cancel
+                </Dialog.CloseTrigger>
+                <button
+                  type="submit"
+                  disabled={pending()}
+                  class="inline-flex h-8 items-center justify-center rounded-md bg-red-600 px-3 text-[13px] font-medium text-white transition-colors hover:bg-red-500 disabled:opacity-60"
+                >
+                  {pending() ? "Deleting..." : "Delete"}
+                </button>
+              </div>
+            </form>
+          </Dialog.Content>
+        </Dialog.Positioner>
+      </Portal>
+    </Dialog.Root>
+  );
+}
+
 function MessageRow(props: {
   projectId: string;
   message: Message;
@@ -303,9 +374,11 @@ function MessageRow(props: {
   meId: string | undefined;
   onReply: (m: Message) => void;
   onChanged: (m: Message) => void;
+  onDeleted: (id: string) => void;
 }) {
   const m = () => props.message;
   const [convertOpen, setConvertOpen] = createSignal(false);
+  const [deleteOpen, setDeleteOpen] = createSignal(false);
   const [editing, setEditing] = createSignal(false);
   const [editDraft, setEditDraft] = createSignal("");
   const [editError, setEditError] = createSignal<string | null>(null);
@@ -317,6 +390,12 @@ function MessageRow(props: {
     m().author.kind === "user" &&
     m().author.id === props.meId;
   const canEdit = () => mine() && !m().agent_read;
+  const canDelete = canEdit; // same lock: agent-read makes messages immutable
+
+  async function doDelete() {
+    await api.deleteMessage(m().id);
+    props.onDeleted(m().id);
+  }
 
   async function react(emoji: string) {
     try {
@@ -507,8 +586,8 @@ function MessageRow(props: {
             <Show when={mine()}>
               <span
                 class={`${toolBtn} cursor-not-allowed opacity-60`}
-                title="Seen by an agent - editing locked"
-                aria-label="Editing locked"
+                title="Seen by an agent - editing and deletion locked"
+                aria-label="Editing and deletion locked"
               >
                 <LockIcon class="h-4 w-4" />
               </span>
@@ -534,12 +613,28 @@ function MessageRow(props: {
         >
           <IssueIcon class="h-4 w-4" />
         </button>
+        <Show when={canDelete()}>
+          <button
+            type="button"
+            onClick={() => setDeleteOpen(true)}
+            title="Delete message"
+            aria-label="Delete message"
+            class={`${toolBtn} hover:!text-red-500`}
+          >
+            <TrashIcon class="h-4 w-4" />
+          </button>
+        </Show>
       </div>
       <ConvertToIssueDialog
         projectId={props.projectId}
         message={m()}
         open={convertOpen()}
         onOpenChange={setConvertOpen}
+      />
+      <DeleteMessageDialog
+        open={deleteOpen()}
+        onOpenChange={setDeleteOpen}
+        onConfirm={doDelete}
       />
     </div>
   );
@@ -673,6 +768,18 @@ function ConversationThread(props: {
     setMessages((cur) => cur.map((x) => (x.id === m.id ? { ...m } : x)));
   }
 
+  function removeMessage(id: string) {
+    setMessages((cur) =>
+      cur
+        .filter((x) => x.id !== id)
+        .map((x) =>
+          x.parent?.id === id
+            ? { ...x, parent: { ...x.parent, deleted: true } }
+            : x,
+        ),
+    );
+  }
+
   const unsub = subscribe((e) => {
     const data = e.data as Record<string, unknown> | undefined;
     if (!data || data.conversation_id !== props.conversationId) return;
@@ -684,6 +791,8 @@ function ConversationThread(props: {
       markLatestRead();
     } else if (e.type === "message.updated") {
       replaceMessage(data.message as Message);
+    } else if (e.type === "message.deleted") {
+      removeMessage(data.message_id as string);
     } else if (e.type === "reaction.updated") {
       const mid = data.message_id as string;
       const reactions = (data.reactions ?? []) as Reaction[];
@@ -1163,6 +1272,7 @@ function ConversationThread(props: {
                     meId={session.user()?.id}
                     onReply={startReply}
                     onChanged={replaceMessage}
+                    onDeleted={removeMessage}
                   />
                 </>
               );
