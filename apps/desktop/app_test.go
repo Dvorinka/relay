@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"testing/fstest"
+
 	"github.com/wailsapp/wails/v2/pkg/assetserver"
 	assetserveropts "github.com/wailsapp/wails/v2/pkg/options/assetserver"
 )
@@ -80,5 +82,82 @@ func TestSetupPageWhenUnconfigured(t *testing.T) {
 	app.ServeHTTP(rr, httptest.NewRequest("GET", "/", nil))
 	if !strings.Contains(rr.Body.String(), "server_url") {
 		t.Fatal("expected the connect form")
+	}
+}
+
+// Offline mode: embedded SPA serves files, unknown client-side routes fall
+// back to index.html, and /api/* never gets HTML.
+func TestOfflineSPARouting(t *testing.T) {
+	dist := fstest.MapFS{
+		"index.html":       {Data: []byte("<html>relay app</html>")},
+		"assets/app.js":    {Data: []byte("console.log(1)")},
+		"assets/style.css": {Data: []byte("body{}")},
+	}
+	h := spaHandler(dist)
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("GET", "/", nil))
+	if !strings.Contains(rr.Body.String(), "relay app") {
+		t.Fatal("index.html not served at /")
+	}
+
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("GET", "/assets/app.js", nil))
+	if rr.Body.String() != "console.log(1)" {
+		t.Fatal("static asset not served")
+	}
+
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("GET", "/projects/abc/chat", nil))
+	if !strings.Contains(rr.Body.String(), "relay app") {
+		t.Fatal("client route did not fall back to index.html")
+	}
+
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest("GET", "/api/health", nil))
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for /api/*, got %d", rr.Code)
+	}
+}
+
+// Stub builds (no real bundle embedded) must refuse offline mode rather
+// than dead-end the user on a broken page.
+func TestOfflineRejectedWhenBundleMissing(t *testing.T) {
+	app := &App{cfg: &Config{}}
+	app.handler.Store(app.buildHandler())
+	req := httptest.NewRequest("POST", "/", strings.NewReader("offline=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	app.ServeHTTP(rr, req)
+	if rr.Code == http.StatusOK && !offlineAvailable() {
+		t.Fatal("accepted offline mode without a bundled SPA")
+	}
+}
+
+// The connect form submits as a plain GET (WebKitGTK can drop POST bodies):
+// /?server_url=… persists the choice, swaps the handler, and redirects to /.
+func TestSetupPageGetChoice(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("upstream app"))
+	}))
+	defer upstream.Close()
+
+	app := &App{cfg: &Config{}}
+	app.handler.Store(app.buildHandler())
+
+	rr := httptest.NewRecorder()
+	app.ServeHTTP(rr, httptest.NewRequest("GET", "/?server_url="+upstream.URL, nil))
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after choice, got %d", rr.Code)
+	}
+	if app.cfg.ServerURL != upstream.URL || app.cfg.Offline {
+		t.Fatalf("choice not applied: %+v", app.cfg)
+	}
+
+	rr = httptest.NewRecorder()
+	app.ServeHTTP(rr, httptest.NewRequest("GET", "/", nil))
+	if rr.Body.String() != "upstream app" {
+		t.Fatalf("expected proxied app after connect, got %q", rr.Body.String())
 	}
 }

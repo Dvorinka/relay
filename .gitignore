@@ -20,6 +20,10 @@ apps/*/.output/
 # Wails / mobile build output
 apps/desktop/build/
 apps/desktop/frontend/
+# embedded SPA bundle — CI copies apps/web/dist here before wails build;
+# only the stub index.html is committed
+apps/desktop/web/dist/*
+!apps/desktop/web/dist/index.html
 apps/mobile/.expo/
 apps/mobile/android/
 

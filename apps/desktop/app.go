@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -19,6 +21,9 @@ const configName = "relay-desktop.json"
 
 type Config struct {
 	ServerURL string `json:"server_url"`
+	// Offline serves the embedded SPA ("This device" workspace) instead of
+	// proxying a server.
+	Offline bool `json:"offline"`
 }
 
 func configPath() (string, error) {
@@ -80,63 +85,152 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) buildHandler() http.Handler {
 	mux := http.NewServeMux()
-	if a.cfg.ServerURL == "" {
+	switch {
+	case a.cfg.Offline:
+		mux.Handle("/", spaHandler(webDist()))
+	case a.cfg.ServerURL == "":
 		mux.Handle("/", http.HandlerFunc(a.setupPage))
-		return mux
+	default:
+		target, _ := url.Parse(strings.TrimRight(a.cfg.ServerURL, "/"))
+		proxy := &httputil.ReverseProxy{
+			Rewrite: func(r *httputil.ProxyRequest) {
+				r.SetURL(target)
+				r.Out.Host = target.Host
+			},
+			// SSE (GET /api/events) needs immediate flushing.
+			FlushInterval: -1,
+		}
+		mux.Handle("/", proxy)
 	}
-	target, _ := url.Parse(strings.TrimRight(a.cfg.ServerURL, "/"))
-	proxy := &httputil.ReverseProxy{
-		Rewrite: func(r *httputil.ProxyRequest) {
-			r.SetURL(target)
-			r.Out.Host = target.Host
-		},
-		// SSE (GET /api/events) needs immediate flushing.
-		FlushInterval: -1,
-	}
-	mux.Handle("/", proxy)
 	return mux
 }
 
-// setupPage is the once-per-machine "which server?" screen.
-func (a *App) setupPage(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodPost {
-		raw := strings.TrimSpace(r.FormValue("server_url"))
+func webDist() fs.FS {
+	dist, err := fs.Sub(webFS, "web/dist")
+	if err != nil {
+		return nil
+	}
+	return dist
+}
+
+// spaHandler serves the embedded web bundle; unmatched paths fall back to
+// index.html for client-side routing. Local mode ("This device") is a
+// client-side adapter — it never calls the network, but 404 /api/* anyway
+// so a stray fetch can't eat an HTML page as JSON.
+func spaHandler(dist fs.FS) http.Handler {
+	if dist == nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "web bundle missing from this build", http.StatusInternalServerError)
+		})
+	}
+	files := http.FileServer(http.FS(dist))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			http.NotFound(w, r)
+			return
+		}
+		p := path.Clean(strings.TrimPrefix(r.URL.Path, "/"))
+		if p != "." {
+			if f, err := dist.Open(p); err == nil {
+				_ = f.Close()
+				files.ServeHTTP(w, r)
+				return
+			}
+		}
+		r2 := new(http.Request)
+		*r2 = *r
+		r2.URL = new(url.URL)
+		*r2.URL = *r.URL
+		r2.URL.Path = "/"
+		files.ServeHTTP(w, r2)
+	})
+}
+
+// offlineAvailable reports whether the binary carries the real SPA bundle
+// (release/CI builds) or just the committed dev stub.
+func offlineAvailable() bool {
+	st, err := fs.Stat(webFS, "web/dist/assets")
+	return err == nil && st.IsDir()
+}
+
+// applyChoice persists the connect-screen choice and hot-swaps the handler.
+func (a *App) applyChoice(serverURL string, offline bool) error {
+	if offline {
+		if !offlineAvailable() {
+			return fmt.Errorf("offline bundle not included in this build")
+		}
+		a.cfg.ServerURL = ""
+		a.cfg.Offline = true
+	} else {
+		raw := strings.TrimSpace(serverURL)
 		if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") {
 			raw = "https://" + raw
 		}
 		u, err := url.Parse(raw)
 		if err != nil || u.Host == "" {
-			http.Error(w, "invalid server URL", http.StatusBadRequest)
-			return
+			return fmt.Errorf("invalid server URL")
 		}
 		a.cfg.ServerURL = strings.TrimRight(u.String(), "/")
-		if err := a.cfg.save(); err != nil {
-			http.Error(w, "could not save config: "+err.Error(), http.StatusInternalServerError)
+		a.cfg.Offline = false
+	}
+	if err := a.cfg.save(); err != nil {
+		return fmt.Errorf("could not save config: %s", err)
+	}
+	a.handler.Store(a.buildHandler())
+	return nil
+}
+
+// setupPage is the once-per-machine "which server?" screen — or "work
+// offline", which serves the embedded SPA and its "This device" workspace.
+// Choices are accepted via POST and via GET query params: WebKitGTK's scheme
+// handler can drop POST bodies, so the page prefers plain navigation.
+func (a *App) setupPage(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		_ = r.ParseForm()
+		if err := a.applyChoice(r.PostForm.Get("server_url"), r.PostForm.Get("offline") == "1"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		a.handler.Store(a.buildHandler())
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = fmt.Fprintln(w, "ok")
 		return
 	}
+	if q := r.URL.Query(); q.Has("server_url") || q.Get("offline") == "1" {
+		if err := a.applyChoice(q.Get("server_url"), q.Get("offline") == "1"); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		// Reload via a clean URL so the choice is not replayed on refresh.
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	offline := ""
+	if offlineAvailable() {
+		offline = `<button type="button" onclick="location.search='?offline=1'">Work offline — this device only</button>`
+	}
 	w.Header().Set("Content-Type", "text/html")
-	_, _ = fmt.Fprint(w, `<!doctype html>
+	_, _ = fmt.Fprintf(w, `<!doctype html>
 <meta charset="utf-8">
 <title>Relay — connect</title>
 <style>
   body{background:#0a0a0b;color:#e9e9eb;font:14px/1.5 system-ui;display:flex;
        align-items:center;justify-content:center;min-height:100vh;margin:0}
-  form{display:flex;flex-direction:column;gap:10px;width:320px}
+  .wrap{display:flex;flex-direction:column;gap:10px;width:320px}
+  form{display:flex;flex-direction:column;gap:10px}
   h2{margin:0;font-size:18px}
   input,button{font:inherit;padding:10px 12px;border-radius:8px;border:1px solid #232427}
   input{background:#131416;color:#e9e9eb}
   button{background:#06b6d4;color:#062a30;font-weight:600;border:0;cursor:pointer}
+  .wrap>button{background:transparent;color:#9c9fa7;border-color:#232427}
   small{color:#9c9fa7}
 </style>
-<form method="post" onsubmit="event.preventDefault();fetch(location.pathname,{method:'post',headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({server_url:this.server_url.value})}).then(r=>r.ok?location.reload():r.text().then(alert))">
+<div class="wrap">
+<form method="get" action="/">
   <h2>Connect to a Relay server</h2>
   <input name="server_url" placeholder="https://relay.example.com" autofocus required>
   <button>Connect</button>
   <small>Self-hosted URL — or http://localhost:8080 while developing.</small>
-</form>`)
+</form>
+%s
+</div>`, offline)
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"embed"
 	"log"
 
 	"github.com/wailsapp/wails/v2"
@@ -8,6 +9,13 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
 )
+
+// web/dist holds the built SPA (copied from apps/web/dist in CI). Only a stub
+// index.html is committed so plain `go build` still compiles — release builds
+// ship the real bundle and enable "work offline" on the connect screen.
+//
+//go:embed web
+var webFS embed.FS
 
 func main() {
 	cfg, err := loadConfig()
