@@ -180,6 +180,25 @@ func (a *App) applyChoice(serverURL string, offline bool) error {
 	return nil
 }
 
+// serveChoiceBridge runs between applying a connect-screen choice and the
+// reload into the app. The SPA reads its mode from localStorage on this same
+// origin (net.ts: relay.local / relay.token / relay.serverUrl), so the bridge
+// aligns it: offline mirrors enterLocal(); connect mirrors a clean same-origin
+// session — no local flag, no stale token, no stale serverUrl — so the SPA
+// talks through the proxy instead of booting a leftover local workspace or
+// calling an old URL cross-origin.
+func serveChoiceBridge(w http.ResponseWriter, offline bool) {
+	script := `localStorage.removeItem('relay.local');localStorage.removeItem('relay.token');localStorage.setItem('relay.serverUrl','')`
+	if offline {
+		script = `localStorage.setItem('relay.local','1');localStorage.removeItem('relay.token')`
+	}
+	w.Header().Set("Content-Type", "text/html")
+	_, _ = fmt.Fprintf(w, `<!doctype html><meta charset="utf-8"><title>Relay</title>
+<script>try{%s}catch(e){}location.replace('/')</script>
+<noscript><meta http-equiv="refresh" content="0;url=/"></noscript>
+<p style="font:14px system-ui;color:#9c9fa7;padding:2rem">Continuing…</p>`, script)
+}
+
 // setupPage is the once-per-machine "which server?" screen — or "work
 // offline", which serves the embedded SPA and its "This device" workspace.
 // Choices are accepted via POST and via GET query params: WebKitGTK's scheme
@@ -187,21 +206,24 @@ func (a *App) applyChoice(serverURL string, offline bool) error {
 func (a *App) setupPage(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		_ = r.ParseForm()
-		if err := a.applyChoice(r.PostForm.Get("server_url"), r.PostForm.Get("offline") == "1"); err != nil {
+		offline := r.PostForm.Get("offline") == "1"
+		if err := a.applyChoice(r.PostForm.Get("server_url"), offline); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		w.Header().Set("Content-Type", "text/plain")
-		_, _ = fmt.Fprintln(w, "ok")
+		serveChoiceBridge(w, offline)
 		return
 	}
 	if q := r.URL.Query(); q.Has("server_url") || q.Get("offline") == "1" {
-		if err := a.applyChoice(q.Get("server_url"), q.Get("offline") == "1"); err != nil {
+		offline := q.Get("offline") == "1"
+		if err := a.applyChoice(q.Get("server_url"), offline); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		// Reload via a clean URL so the choice is not replayed on refresh.
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		// Bridge page, not a bare redirect: the SPA keys local/server mode on
+		// this origin's localStorage, so align it before reloading to a clean
+		// URL (also keeps the choice from replaying on refresh).
+		serveChoiceBridge(w, offline)
 		return
 	}
 	offline := ""

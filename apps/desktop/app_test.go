@@ -148,8 +148,11 @@ func TestSetupPageGetChoice(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	app.ServeHTTP(rr, httptest.NewRequest("GET", "/?server_url="+upstream.URL, nil))
-	if rr.Code != http.StatusSeeOther {
-		t.Fatalf("expected redirect after choice, got %d", rr.Code)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected bridge page after choice, got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "removeItem('relay.local')") {
+		t.Fatalf("bridge page must clear local-mode flag for server connect, got %q", rr.Body.String())
 	}
 	if app.cfg.ServerURL != upstream.URL || app.cfg.Offline {
 		t.Fatalf("choice not applied: %+v", app.cfg)
