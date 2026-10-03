@@ -116,11 +116,11 @@ func (a *App) setupPage(w http.ResponseWriter, r *http.Request) {
 		}
 		a.handler.Store(a.buildHandler())
 		w.Header().Set("Content-Type", "text/plain")
-		fmt.Fprintln(w, "ok")
+		_, _ = fmt.Fprintln(w, "ok")
 		return
 	}
 	w.Header().Set("Content-Type", "text/html")
-	fmt.Fprint(w, `<!doctype html>
+	_, _ = fmt.Fprint(w, `<!doctype html>
 <meta charset="utf-8">
 <title>Relay — connect</title>
 <style>
