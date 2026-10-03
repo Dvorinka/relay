@@ -13,3 +13,23 @@ export async function desktopOpen(url: string): Promise<boolean> {
     return false;
   }
 }
+
+// Persists a mode change into the desktop shell's relay-desktop.json and
+// hot-swaps its handler (embedded SPA ↔ server proxy). Called when the SPA
+// itself changes mode — sign-in from local mode, or "Work locally" while
+// connected — so the next launch boots the right bundle. In a normal
+// browser the request hits the server, which answers 200 HTML, not 204.
+export async function desktopApplyConfig(
+  serverUrl: string,
+  offline: boolean,
+): Promise<boolean> {
+  try {
+    const r = await fetch(
+      `/~desktop-config?server_url=${encodeURIComponent(serverUrl)}&offline=${offline ? "1" : "0"}`,
+      { cache: "no-store" },
+    );
+    return r.status === 204;
+  } catch {
+    return false;
+  }
+}
