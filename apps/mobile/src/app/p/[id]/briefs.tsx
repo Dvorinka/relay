@@ -14,6 +14,7 @@ import {
   View,
 } from "react-native";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api, type Brief, type Message } from "../../../lib/api";
 import { SceneSvg } from "../../../components/SceneSvg";
 import { useTheme, type Palette } from "../../../lib/theme";
@@ -160,6 +161,7 @@ function BriefDetail(props: {
   const [convId, setConvId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const insets = useSafeAreaInsets();
 
   const loadComments = useCallback(async () => {
     try {
@@ -208,7 +210,7 @@ function BriefDetail(props: {
       style={{ flex: 1, backgroundColor: C.bg }}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
-      <View style={s.detailHead}>
+      <View style={[s.detailHead, { paddingTop: 14 + insets.top }]}>
         <View style={{ flex: 1 }}>
           <Text style={s.detailTitle} numberOfLines={1}>
             {brief.title}

@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { View } from "react-native";
+import { Text, View } from "react-native";
 import Svg, {
   Defs,
   G,
@@ -10,6 +10,7 @@ import Svg, {
   Rect,
   Text as SvgText,
 } from "react-native-svg";
+import { useTheme } from "../lib/theme";
 
 // SceneSvg renders an Excalidraw-compatible scene ({elements: [...]}) with
 // react-native-svg — the mobile counterpart of the web's SceneView. Same
@@ -30,7 +31,18 @@ interface El {
 
 function elements(scene: Record<string, unknown> | undefined): El[] {
   const els = scene?.elements;
-  return Array.isArray(els) ? (els as El[]) : [];
+  if (!Array.isArray(els)) return [];
+  // Drop degenerate shapes (tap-artifacts): zero-area box/ellipse/diamond
+  // with no text renders nothing anyway.
+  return (els as El[]).filter(
+    (e) =>
+      e.type === "text" ||
+      e.type === "line" ||
+      e.type === "arrow" ||
+      (e.width ?? 0) >= 2 ||
+      (e.height ?? 0) >= 2 ||
+      (e.points?.length ?? 0) > 1,
+  );
 }
 
 function bounds(els: El[]) {
@@ -119,6 +131,7 @@ export function SceneSvg(props: {
   scene: Record<string, unknown> | undefined;
   width?: number;
 }) {
+  const C = useTheme();
   const els = useMemo(() => elements(props.scene), [props.scene]);
   const vb = useMemo(() => bounds(els), [els]);
   const scale = Math.max(vb.w / 800, 0.5);
@@ -126,7 +139,11 @@ export function SceneSvg(props: {
   const sw = (e: El) => (e.strokeWidth ?? 2) * scale;
 
   if (!els.length) {
-    return <View />;
+    return (
+      <View style={{ padding: 24, alignItems: "center" }}>
+        <Text style={{ color: C.muted, fontSize: 13 }}>Empty canvas</Text>
+      </View>
+    );
   }
 
   return (
