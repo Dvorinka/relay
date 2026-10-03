@@ -882,6 +882,9 @@ func TestThreads(t *testing.T) {
 		t.Fatalf("delete thread reply: %d %v", code, del)
 	}
 	code, plst = c.call("GET", "/api/conversations/"+convID+"/messages", "")
+	if code != 200 {
+		t.Fatalf("parent list after delete: %d", code)
+	}
 	for _, mm := range plst["messages"].([]any) {
 		m := mm.(map[string]any)
 		if m["id"] != parentID {

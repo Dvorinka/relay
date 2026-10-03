@@ -1130,7 +1130,6 @@ func (s *Service) createThread(ctx context.Context, req mcp.CallToolRequest) (*m
 		if err != nil {
 			if existing, e2 := s.q.GetThreadByParentMessage(ctx, mid); e2 == nil {
 				conv = existing
-				err = nil
 			} else {
 				return errResult(err)
 			}
