@@ -427,9 +427,11 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 	), s.getBrief)
 
 	srv.AddTool(mcp.NewTool("create_brief",
-		mcp.WithDescription("Create a visual brief explaining a change. 'scene' is Excalidraw-compatible JSON "+
-			"({elements: [{type: rectangle|ellipse|diamond|arrow|line|text, x, y, width, height, text?, "+
-			"strokeColor?, backgroundColor?}], appState?: {...}}). The brief gets its own conversation "+
+		mcp.WithDescription("Create a visual brief explaining a change. 'scene' is Excalidraw JSON "+
+			"({elements: [...], appState?: {...}, files?: {...}}). Full Excalidraw vocabulary is accepted "+
+			"and renders in the app's embedded editor; keep to rectangle|ellipse|diamond|arrow|line|text "+
+			"with x, y, width, height, text?/label via bound text, strokeColor?, backgroundColor? if you "+
+			"want the lightweight in-app SVG viewer to render it too. The brief gets its own conversation "+
 			"(returned as conversation_id) — post walkthrough notes there with send_message and iterate on "+
 			"comments. Fails if the project's brief policy is 'never'."),
 		mcp.WithString("project_id", mcp.Required()),
@@ -440,7 +442,9 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 	), s.createBrief)
 
 	srv.AddTool(mcp.NewTool("update_brief",
-		mcp.WithDescription("Update a brief's title, summary, status (open|resolved|archived), or scene after feedback."),
+		mcp.WithDescription("Update a brief's title, summary, status (open|resolved|archived), or replace its "+
+			"Excalidraw scene after feedback. Scenes edited by users in the app's embedded Excalidraw editor "+
+			"come back as full Excalidraw JSON — preserve elements/files fields when revising."),
 		mcp.WithString("brief_id", mcp.Required()),
 		mcp.WithString("title"),
 		mcp.WithString("summary"),
