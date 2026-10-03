@@ -51,3 +51,24 @@ function applyAccent() {
 apply(initial);
 applyAccent();
 localStorage.removeItem("relay.accent"); // dropped pref — brand is fixed
+
+// --- chat layout ---
+// "grouped" = left-aligned Discord-style rows (default). "bubbles" =
+// WhatsApp-style two-sided bubbles: own messages right, others left.
+
+export type ChatStyle = "grouped" | "bubbles";
+
+const [chatStyle, setChatStyleSignal] = createSignal<ChatStyle>(
+  localStorage.getItem("relay.chatStyle") === "bubbles"
+    ? "bubbles"
+    : "grouped",
+);
+
+export function useChatStyle() {
+  return { chatStyle };
+}
+
+export function setChatStyle(s: ChatStyle) {
+  setChatStyleSignal(s);
+  localStorage.setItem("relay.chatStyle", s);
+}

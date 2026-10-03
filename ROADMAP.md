@@ -236,8 +236,9 @@ from both REST and MCP, edits allowed until an agent reads the message
 rendered in chat. `TestChatSemantics` covers the semantics end-to-end.
 
 - Discord-style grouped timeline: 40px avatars, day separators, hover
-  toolbar (react / reply / edit / more), combined consecutive messages,
-  text-then-image ordering, markdown with fenced code blocks
+  toolbar (react / reply / edit / delete / more), combined consecutive
+  messages, text-then-image ordering, markdown with fenced code blocks;
+  optional two-sided bubble layout (Settings -> Appearance -> Chat layout)
 - `messages.parent_id` + `message_reactions` (migration 0016); parent
   validation rejects cross-conversation replies; `edited_at` + `agent_read`
   surfaced on every message payload; `message.updated` over SSE
