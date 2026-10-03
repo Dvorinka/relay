@@ -6,7 +6,18 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/wailsapp/wails/v2/pkg/assetserver"
+	assetserveropts "github.com/wailsapp/wails/v2/pkg/options/assetserver"
 )
+
+// stubRuntime satisfies assetserver.RuntimeAssets — the bridge JS is unused
+// in tests but the AssetServer requires the interface.
+type stubRuntime struct{}
+
+func (stubRuntime) DesktopIPC() []byte       { return nil }
+func (stubRuntime) WebsocketIPC() []byte     { return nil }
+func (stubRuntime) RuntimeDesktopJS() []byte { return nil }
 
 // The whole job of the shell is: webview hits app:// origin, API calls land
 // on the configured server with cookies and bodies intact.
@@ -36,6 +47,29 @@ func TestProxyForwardsAPI(t *testing.T) {
 	}
 	if !strings.Contains(rr.Header().Get("Set-Cookie"), "relay_session=abc") {
 		t.Fatal("upstream Set-Cookie not relayed to webview")
+	}
+}
+
+// Regression for the "Loading…" hang: embedded placeholder assets won the
+// AssetServer's file-first lookup and shadowed "/", so the proxy handler never
+// ran. Drive the real AssetServer to prove "/" reaches the app handler.
+func TestAssetServerRoutesToApp(t *testing.T) {
+	app := &App{cfg: &Config{}}
+	app.handler.Store(app.buildHandler())
+
+	srv, err := assetserver.NewAssetServer("", assetserveropts.Options{Handler: app}, false, nil, stubRuntime{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, httptest.NewRequest("GET", "/", nil))
+	body := rr.Body.String()
+	if strings.Contains(body, "Loading") {
+		t.Fatal("placeholder shadowed the handler — regression of the Loading… bug")
+	}
+	if !strings.Contains(body, "server_url") {
+		t.Fatal("expected the connect form via the app handler")
 	}
 }
 

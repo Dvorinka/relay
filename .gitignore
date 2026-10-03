@@ -19,6 +19,7 @@ apps/*/.output/
 
 # Wails / mobile build output
 apps/desktop/build/
+apps/desktop/frontend/
 apps/mobile/.expo/
 apps/mobile/android/
 

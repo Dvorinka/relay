@@ -14,6 +14,10 @@ Because the UI is proxied, the desktop client is never stale — it always
 serves whatever the server serves, session cookies stay same-origin, and
 no CORS configuration is needed.
 
+The app embeds no UI assets. `AssetServer.Handler` receives every request —
+deliberately: an embedded `index.html` would win the asset server's
+file-first lookup and shadow `/` forever.
+
 ## Build
 
 ```bash
@@ -24,7 +28,23 @@ wails build
 wails build -platform windows/amd64 -o relay-desktop.exe
 ```
 
-CI produces `relay-desktop.exe` as a workflow artifact on every run.
+## Windows installer
+
+`installer/relay.nsi` builds a per-user NSIS setup wizard — Start Menu and
+desktop shortcuts, Add/Remove Programs entry, uninstaller, and an evergreen
+WebView2 bootstrap when the runtime is absent. No admin rights required.
+
+```bash
+# needs nsis (apt install nsis); paths resolve relative to the .nsi file,
+# so pass absolute -DEXE/-DOUTFILE
+makensis -DVERSION=1.0.0 -DVI_VERSION=1.0.0.0 \
+  -DEXE=/abs/path/relay-desktop-windows-amd64.exe \
+  -DOUTFILE=/abs/path/Relay-Setup-1.0.0.exe \
+  installer/relay.nsi
+```
+
+The release workflow produces `Relay-Setup-<version>.exe` alongside the raw
+`relay-desktop-windows-amd64.exe` on every `v*` tag.
 
 ## Deferred
 

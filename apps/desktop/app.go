@@ -67,7 +67,6 @@ type App struct {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	a.handler.Store(a.buildHandler())
 	if a.cfg.ServerURL != "" {
 		wailsruntime.WindowSetTitle(ctx, "Relay")
 	}
