@@ -45,12 +45,16 @@ export function ExcalidrawEditor(props: {
     setErr("");
     try {
       const d: SceneDraft = canvas.scene();
+      // collaborators is a Map — JSON.stringify turns it into {} and the
+      // next restore crashes on forEach. Non-serializable runtime state,
+      // not scene data; drop it.
+      const { collaborators: _c, ...appState } = d.appState;
       const updated = await api.updateBrief(props.brief.id, {
         scene: {
           type: "excalidraw",
           version: 2,
           elements: d.elements,
-          appState: d.appState,
+          appState,
           files: d.files,
         },
       });

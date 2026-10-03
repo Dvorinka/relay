@@ -35,10 +35,14 @@ export function mountCanvas(
   },
 ): CanvasHandle {
   const raw = opts.scene ?? {};
+  // collaborators is a Map at runtime; once JSON-serialized it comes back
+  // as {} and crashes forEach. Drop it before restore.
+  const appStateIn = { ...(raw.appState as Record<string, unknown>) };
+  if (!(appStateIn.collaborators instanceof Map)) delete appStateIn.collaborators;
   const restored = restore(
     {
       elements: (Array.isArray(raw.elements) ? raw.elements : []) as never,
-      appState: { ...(raw.appState as object), theme: opts.theme } as never,
+      appState: { ...appStateIn, theme: opts.theme } as never,
       files: (raw.files ?? {}) as never,
     },
     null,
