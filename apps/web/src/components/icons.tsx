@@ -329,6 +329,23 @@ export function SmileIcon(props: IconProps): JSX.Element {
   );
 }
 
+export function TrashIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <path d="M2.5 4h11M6.5 2h3M5 4l.5 9.5h5L11 4M6.7 6.5v4M9.3 6.5v4" />
+    </svg>
+  );
+}
+
 export function LockIcon(props: IconProps): JSX.Element {
   return (
     <svg

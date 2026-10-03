@@ -98,6 +98,22 @@ where id = sqlc.arg(id)
   and deleted_at is null
 returning id;
 
+-- name: SoftDeleteMessage :one
+-- author-only soft delete; conversation id comes back for the SSE frame
+update messages set deleted_at = now()
+where id = sqlc.arg(id)
+  and author_user_id = sqlc.arg(author_user_id)
+  and deleted_at is null
+returning id, conversation_id;
+
+-- name: SoftDeleteMessageAgent :one
+-- agent-author counterpart; the MCP delete_message tool uses this
+update messages set deleted_at = now()
+where id = sqlc.arg(id)
+  and author_agent_id = sqlc.arg(author_agent_id)
+  and deleted_at is null
+returning id, conversation_id;
+
 -- name: MessageReadByAgent :one
 -- true once an agent other than the author has read the message; edits lock
 -- from that point (an agent's own read receipt must not lock its own message)

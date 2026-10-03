@@ -631,4 +631,71 @@ func TestChatSemantics(t *testing.T) {
 			t.Fatalf("agent reaction wrong: %v", r)
 		}
 	}
+
+	// delete before any agent read -> 204, gone from list, reply tombstones
+	code, m3 := c.call("POST", "/api/conversations/"+convID+"/messages",
+		`{"body":"delete me"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("post m3: %d %v", code, m3)
+	}
+	msg3 := m3["id"].(string)
+	code, m4 := c.call("POST", "/api/conversations/"+convID+"/messages",
+		fmt.Sprintf(`{"body":"reply to a doomed parent","parent_id":%q}`, msg3))
+	if code != 201 && code != 200 {
+		t.Fatalf("post m4: %d %v", code, m4)
+	}
+	msg4 := m4["id"].(string)
+
+	code, del := c.call("DELETE", "/api/messages/"+msg3, "")
+	if code != 204 {
+		t.Fatalf("delete: %d %v", code, del)
+	}
+	_, lst = c.call("GET", "/api/conversations/"+convID+"/messages", "")
+	var saw4 bool
+	for _, mm := range lst["messages"].([]any) {
+		m := mm.(map[string]any)
+		if m["id"] == msg3 {
+			t.Fatal("deleted message still listed")
+		}
+		if m["id"] == msg4 {
+			saw4 = true
+			p, _ := m["parent"].(map[string]any)
+			if p["deleted"] != true {
+				t.Fatalf("reply parent should tombstone, got %v", p)
+			}
+		}
+	}
+	if !saw4 {
+		t.Fatal("reply missing from list")
+	}
+
+	// second delete is a no-op 403 (author-scoped update finds no live row)
+	code, again := c.call("DELETE", "/api/messages/"+msg3, "")
+	if again["error"] == nil || code != 403 {
+		t.Fatalf("double delete: %d %v", code, again)
+	}
+
+	// agent-read messages cannot be deleted either (same lock as edit)
+	code, dlocked := c.call("DELETE", "/api/messages/"+msg1, "")
+	if code != 409 {
+		t.Fatalf("delete after agent read: %d %v", code, dlocked)
+	}
+
+	// agents can delete their own messages via MCP (own read receipt doesn't lock)
+	_, env = c.mcp(token, sid, "7", "tools/call",
+		fmt.Sprintf(`{"name":"send_message","arguments":{"conversation_id":%q,"body":"agent deletes this"}}`, convID))
+	amsg2 := mcpToolResult(t, env)
+	amsg2ID := amsg2["id"].(string)
+	_, env = c.mcp(token, sid, "8", "tools/call",
+		fmt.Sprintf(`{"name":"delete_message","arguments":{"message_id":%q}}`, amsg2ID))
+	if env["error"] != nil {
+		t.Fatalf("agent delete_message: %v", env["error"])
+	}
+	// and a user message is refused at the author check
+	_, env = c.mcp(token, sid, "9", "tools/call",
+		fmt.Sprintf(`{"name":"delete_message","arguments":{"message_id":%q}}`, msg4))
+	res, _ := env["result"].(map[string]any)
+	if res["isError"] != true {
+		t.Fatalf("agent deleted another author's message: %v", env)
+	}
 }

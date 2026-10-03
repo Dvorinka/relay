@@ -340,6 +340,18 @@ const impl = {
     save();
     return m;
   },
+  deleteMessage: async (messageId: string): Promise<void> => {
+    const idx = db.messages.findIndex((m) => m.id === messageId);
+    if (idx < 0) notFound();
+    db.messages.splice(idx, 1);
+    // replies keep a tombstone, mirroring the server's parent_deleted
+    for (const other of db.messages) {
+      if (other.parent?.id === messageId) {
+        other.parent.deleted = true;
+      }
+    }
+    save();
+  },
   toggleReaction: async (
     messageId: string,
     emoji: string,

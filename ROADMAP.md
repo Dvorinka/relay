@@ -241,8 +241,8 @@ rendered in chat. `TestChatSemantics` covers the semantics end-to-end.
 - `messages.parent_id` + `message_reactions` (migration 0016); parent
   validation rejects cross-conversation replies; `edited_at` + `agent_read`
   surfaced on every message payload; `message.updated` over SSE
-- MCP parity: `send_message.reply_to`, `edit_message`, `react_to_message`,
-  `mark_message_read`, `set_avatar`
+- MCP parity: `send_message.reply_to`, `edit_message`, `delete_message`,
+  `react_to_message`, `mark_message_read`, `set_avatar`
 - Theme system: persistent light/dark, accent presets + color wheel + hex
   readout (Settings → Appearance); cyan `#06B6D4` default; neutral
   near-black dark palette

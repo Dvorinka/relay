@@ -655,6 +655,58 @@ func (q *Queries) RemoveReactionUser(ctx context.Context, arg RemoveReactionUser
 	return result.RowsAffected(), nil
 }
 
+const softDeleteMessage = `-- name: SoftDeleteMessage :one
+update messages set deleted_at = now()
+where id = $1
+  and author_user_id = $2
+  and deleted_at is null
+returning id, conversation_id
+`
+
+type SoftDeleteMessageParams struct {
+	ID           pgtype.UUID `json:"id"`
+	AuthorUserID pgtype.UUID `json:"author_user_id"`
+}
+
+type SoftDeleteMessageRow struct {
+	ID             pgtype.UUID `json:"id"`
+	ConversationID pgtype.UUID `json:"conversation_id"`
+}
+
+// author-only soft delete; conversation id comes back for the SSE frame
+func (q *Queries) SoftDeleteMessage(ctx context.Context, arg SoftDeleteMessageParams) (SoftDeleteMessageRow, error) {
+	row := q.db.QueryRow(ctx, softDeleteMessage, arg.ID, arg.AuthorUserID)
+	var i SoftDeleteMessageRow
+	err := row.Scan(&i.ID, &i.ConversationID)
+	return i, err
+}
+
+const softDeleteMessageAgent = `-- name: SoftDeleteMessageAgent :one
+update messages set deleted_at = now()
+where id = $1
+  and author_agent_id = $2
+  and deleted_at is null
+returning id, conversation_id
+`
+
+type SoftDeleteMessageAgentParams struct {
+	ID            pgtype.UUID `json:"id"`
+	AuthorAgentID pgtype.UUID `json:"author_agent_id"`
+}
+
+type SoftDeleteMessageAgentRow struct {
+	ID             pgtype.UUID `json:"id"`
+	ConversationID pgtype.UUID `json:"conversation_id"`
+}
+
+// agent-author counterpart; the MCP delete_message tool uses this
+func (q *Queries) SoftDeleteMessageAgent(ctx context.Context, arg SoftDeleteMessageAgentParams) (SoftDeleteMessageAgentRow, error) {
+	row := q.db.QueryRow(ctx, softDeleteMessageAgent, arg.ID, arg.AuthorAgentID)
+	var i SoftDeleteMessageAgentRow
+	err := row.Scan(&i.ID, &i.ConversationID)
+	return i, err
+}
+
 const unreadCounts = `-- name: UnreadCounts :many
 select p.id as project_id, count(m.id)::int as unread
 from projects p

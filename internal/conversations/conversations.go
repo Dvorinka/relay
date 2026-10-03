@@ -45,6 +45,7 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
 	g.GET("/conversations/:id/messages", s.memberOnly, s.handleListMessages)
 	g.POST("/conversations/:id/messages", s.memberOnly, s.handlePostMessage)
 	g.PATCH("/messages/:id", s.handleEditMessage)
+	g.DELETE("/messages/:id", s.handleDeleteMessage)
 	g.PUT("/messages/:id/reactions", s.handleToggleReaction)
 	g.POST("/messages/:id/read", s.handleMarkRead)
 }
@@ -332,6 +333,50 @@ func (s *Service) handleEditMessage(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, out)
+}
+
+// handleDeleteMessage soft-deletes a message (deleted_at). Same rules as
+// edit: author only, and locked with 409 message_locked once an agent has
+// read it. Replies keep a tombstone via parent_deleted.
+func (s *Service) handleDeleteMessage(c *gin.Context) {
+	id, ok := httpx.PathUUID(c, "id")
+	if !ok {
+		return
+	}
+	user := auth.CurrentUser(c)
+	if _, err := s.q.GetMessageForUser(c.Request.Context(), db.GetMessageForUserParams{
+		ID: id, UserID: user.ID,
+	}); err != nil {
+		httpx.Error(c, http.StatusForbidden, "forbidden", "not a member of this workspace")
+		return
+	}
+	locked, err := s.q.MessageReadByAgent(c.Request.Context(), id)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	if locked {
+		httpx.Error(c, http.StatusConflict, "message_locked", "an agent has read this message; it can no longer be deleted")
+		return
+	}
+	row, err := s.q.SoftDeleteMessage(c.Request.Context(), db.SoftDeleteMessageParams{
+		ID: id, AuthorUserID: user.ID,
+	})
+	if err != nil {
+		httpx.Error(c, http.StatusForbidden, "forbidden", "only the author can delete a message")
+		return
+	}
+	if s.Bus != nil {
+		if pid, err := s.q.ResolveConversationProject(c.Request.Context(), row.ConversationID); err == nil {
+			p, _ := uuid.FromBytes(pid.Bytes[:])
+			s.Bus.Publish(events.Event{Type: "message.deleted", ProjectID: p,
+				Data: map[string]any{
+					"conversation_id": row.ConversationID.String(),
+					"message_id":      id.String(),
+				}})
+		}
+	}
+	c.Status(http.StatusNoContent)
 }
 
 // handleToggleReaction flips the caller's emoji on a message: absent ->

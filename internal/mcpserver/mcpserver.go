@@ -264,6 +264,11 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithString("body", mcp.Required(), mcp.Description("New markdown body")),
 	), s.editMessage)
 
+	srv.AddTool(mcp.NewTool("delete_message",
+		mcp.WithDescription("Delete one of this agent's own messages. Allowed only while no agent has read it."),
+		mcp.WithString("message_id", mcp.Required()),
+	), s.deleteMessage)
+
 	srv.AddTool(mcp.NewTool("react_to_message",
 		mcp.WithDescription("Toggle an emoji reaction on a message."),
 		mcp.WithString("message_id", mcp.Required()),
@@ -1035,6 +1040,38 @@ func (s *Service) editMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 	s.publish(ctx, m.ConversationID, "message.updated",
 		map[string]any{"conversation_id": m.ConversationID.String(), "message": messageJSON(m)})
 	return jsonResult(messageJSON(m))
+}
+
+// deleteMessage mirrors the REST rule: the author may delete only while no
+// agent has read the message. Replies keep a tombstone via parent_deleted.
+func (s *Service) deleteMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	mid, err := uuidArg(req, "message_id")
+	if err != nil {
+		return errResult(err)
+	}
+	pid, err := s.q.ResolveMessageProject(ctx, mid)
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "message:write"); err != nil {
+		return errResult(err)
+	}
+	locked, err := s.q.MessageReadByAgent(ctx, mid)
+	if err != nil {
+		return errResult(err)
+	}
+	if locked {
+		return mcp.NewToolResultError("message_locked: an agent has read this message"), nil
+	}
+	row, err := s.q.SoftDeleteMessageAgent(ctx, db.SoftDeleteMessageAgentParams{
+		ID: mid, AuthorAgentID: agent(ctx).ID,
+	})
+	if err != nil {
+		return errResult(errors.New("only the author can delete a message"))
+	}
+	s.publish(ctx, row.ConversationID, "message.deleted",
+		map[string]any{"conversation_id": row.ConversationID.String(), "message_id": mid.String()})
+	return jsonResult(map[string]any{"deleted": true, "message_id": mid.String()})
 }
 
 // reactToMessage toggles this agent's emoji on a message and publishes the

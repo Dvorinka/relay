@@ -134,6 +134,8 @@ export const api = {
     }),
   editMessage: (messageId: string, body: string) =>
     req<{ message: Message }>("PATCH", `/api/messages/${messageId}`, { body }),
+  deleteMessage: (messageId: string) =>
+    req<void>("DELETE", `/api/messages/${messageId}`),
   reactMessage: (messageId: string, emoji: string) =>
     req<{ reactions: Reaction[] }>(
       "PUT",
