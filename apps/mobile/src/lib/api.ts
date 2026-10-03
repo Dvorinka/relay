@@ -151,6 +151,27 @@ export const api = {
       response: response ?? "",
     }),
   workspaces: () => req<{ workspaces: Workspace[] }>("GET", "/api/workspaces"),
+  briefs: (projectId: string, issueId?: string) =>
+    req<{ briefs: Brief[]; policy: string }>(
+      "GET",
+      `/api/projects/${projectId}/briefs${issueId ? `?issue_id=${issueId}` : ""}`,
+    ),
+  getBrief: (briefId: string) => req<Brief>("GET", `/api/briefs/${briefId}`),
+  createBrief: (
+    projectId: string,
+    input: { title: string; summary?: string; issue_id?: string },
+  ) => req<Brief>("POST", `/api/projects/${projectId}/briefs`, input),
+  updateBrief: (
+    briefId: string,
+    input: {
+      title?: string;
+      summary?: string;
+      status?: string;
+      scene?: Record<string, unknown>;
+    },
+  ) => req<Brief>("PATCH", `/api/briefs/${briefId}`, input),
+  briefConversation: (briefId: string) =>
+    req<{ id: string }>("GET", `/api/briefs/${briefId}/conversation`),
   myReviews: () =>
     req<{ reviews: MyReview[] }>("GET", "/api/me/reviews"),
   unreadCounts: () =>
@@ -276,6 +297,18 @@ export interface Review {
 export interface Workspace {
   id: string;
   name: string;
+}
+export interface Brief {
+  id: string;
+  project_id: string;
+  issue_id?: string | null;
+  conversation_id?: string | null;
+  title: string;
+  summary: string;
+  scene: Record<string, unknown>;
+  status: string;
+  author_name?: string;
+  created_at?: string;
 }
 export interface MyReview {
   id: string;

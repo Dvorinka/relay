@@ -29,7 +29,6 @@ export function BriefsPanel(props: {
   const [briefs, { refetch }] = createResource(
     () => props.project.id,
     async (id) => {
-      if (net.isLocal()) return { briefs: [] as Brief[], policy: policy() };
       const r = await api.listBriefs(id, props.issueId);
       setPolicy(r.policy);
       return r;
@@ -59,7 +58,7 @@ export function BriefsPanel(props: {
             <button
               type="button"
               onClick={() => setCreating(true)}
-              disabled={net.isLocal() || policy() === "never"}
+              disabled={policy() === "never"}
               class="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[12px] text-muted transition-colors hover:bg-hover hover:text-fg disabled:opacity-40"
             >
               <PlusIcon class="h-3 w-3" /> New brief
@@ -78,8 +77,8 @@ export function BriefsPanel(props: {
         <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           <Show when={net.isLocal()}>
             <p class="mb-3 rounded-md border border-dashed border-border px-3 py-2 text-[12px] text-muted">
-              Briefs need a server connection — they exist so agents can post
-              diagrams back to you.
+              Local mode — canvases you draw stay on this device until you
+              sync to a server; agents only post briefs server-side.
             </p>
           </Show>
           <Show

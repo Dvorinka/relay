@@ -54,6 +54,7 @@ interface LocalDB {
   counters: Record<string, number>; // project_id -> next issue number
   savedFilters: Record<string, SavedFilter[]>; // project_id -> views
   boards: Record<string, Board[]>; // project_id -> named boards
+  briefs: Brief[]; // visual briefs incl. their scene JSON
   synced_at?: string;
 }
 
@@ -88,6 +89,7 @@ function emptyDB(): LocalDB {
     counters: {},
     savedFilters: {},
     boards: {},
+    briefs: [],
   };
 }
 
@@ -679,24 +681,86 @@ const impl = {
     return { deleted: true };
   },
 
-  // Briefs are agent-authored artifacts — no agents in local mode. The
-  // policy itself persists so a later sync keeps the setting.
-  listBriefs: async (projectId: string) => ({
-    briefs: [] as Brief[],
+  // Briefs work locally — the user can sketch canvases offline and sync
+  // them later. Agents still need a server (they're not local identities).
+  listBriefs: async (projectId: string, issueId?: string) => ({
+    briefs: db.briefs
+      .filter(
+        (b) =>
+          b.project_id === projectId &&
+          (!issueId || b.issue_id === issueId),
+      )
+      .sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? "")),
     policy: (db.projects.find((p) => p.id === projectId)?.brief_policy ??
       "on_request") as BriefPolicy,
   }),
-  createBrief: async () => {
-    throw new ApiClientError(0, "Briefs need a server connection");
+  createBrief: async (
+    projectId: string,
+    input: {
+      title: string;
+      summary?: string;
+      issue_id?: string;
+      scene?: Record<string, unknown>;
+    },
+  ): Promise<Brief> => {
+    const b: Brief = {
+      id: uuid(),
+      project_id: projectId,
+      issue_id: input.issue_id ?? null,
+      title: input.title,
+      summary: input.summary ?? "",
+      scene: input.scene ?? {},
+      status: "open",
+      author_name: db.user.name,
+      created_at: now(),
+    };
+    db.briefs.push(b);
+    save();
+    return b;
   },
-  getBrief: async () => {
-    throw new ApiClientError(404, "not found");
+  getBrief: async (briefId: string) => {
+    const b = db.briefs.find((x) => x.id === briefId);
+    if (!b) notFound();
+    return b;
   },
-  updateBrief: async () => {
-    throw new ApiClientError(0, "Briefs need a server connection");
+  updateBrief: async (
+    briefId: string,
+    input: {
+      title?: string;
+      summary?: string;
+      status?: "open" | "resolved" | "archived";
+      scene?: Record<string, unknown>;
+    },
+  ) => {
+    const b = db.briefs.find((x) => x.id === briefId);
+    if (!b) notFound();
+    if (input.title != null) b.title = input.title;
+    if (input.summary != null) b.summary = input.summary;
+    if (input.status != null) b.status = input.status;
+    if (input.scene != null) b.scene = input.scene;
+    b.updated_at = now();
+    save();
+    return b;
   },
-  briefConversation: async () => {
-    throw new ApiClientError(0, "Briefs need a server connection");
+  briefConversation: async (briefId: string) => {
+    const b = db.briefs.find((x) => x.id === briefId);
+    if (!b) notFound();
+    const existing = b.conversation_id
+      ? db.conversations.find((c) => c.id === b.conversation_id)
+      : undefined;
+    if (existing) return existing;
+    const conv: Conversation = {
+      id: uuid(),
+      project_id: b.project_id,
+      kind: "brief",
+      issue_id: b.issue_id ?? null,
+      brief_id: b.id,
+      created_at: now(),
+    };
+    db.conversations.push(conv);
+    b.conversation_id = conv.id;
+    save();
+    return conv;
   },
   setBriefPolicy: async (projectId: string, policy: BriefPolicy) => {
     const p = db.projects.find((x) => x.id === projectId);
