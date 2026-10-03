@@ -11,6 +11,7 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "dev.tdvorak.relay",
       "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "backgroundColor": "#0a0a0b",

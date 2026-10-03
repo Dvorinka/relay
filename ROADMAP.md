@@ -338,3 +338,19 @@ repos' open PRs; rail search filters this project inline.
 - **Brand lock**: `#06b6d4` is the only accent; the Settings accent picker
   is gone (`relay.accent` pref purged); favicon is the white mark on brand
   black with a cyan dot, shared by web and landing.
+## Phase 20 — release artifacts & landing refresh
+
+- **Release builds**: `v*` tags produce the full artifact set —
+  server + CLI binaries (linux/windows/darwin), Wails desktop for
+  linux + windows, `relay-android.apk` (expo prebuild + Gradle,
+  debug-signed; EAS remains the path for store signatures), and
+  `ghcr.io/dvorinka/relay:<tag>` + `:latest`.
+- **CI hardening**: the docker job now builds via buildx with GHA cache
+  and publishes `ghcr.io/dvorinka/relay:latest` + `sha-<short>` on every
+  main push; the desktop job builds the Linux binary alongside the
+  Windows cross-build so both smoke on every PR.
+- **Landing**: screenshots retaken against the redesigned app (chat hero,
+  board, review card, brief viewer); new "Briefs" section; og:image on
+  the chat shot.
+- **Scene labels**: `SceneView` renders `text` on shapes (agent-authored
+  labels), centered with line splits and a luminance-aware fill.

@@ -42,31 +42,6 @@ function NavItem(props: ParentProps<{ href: string }>) {
   );
 }
 
-function HealthStatus() {
-  const [health] = createResource(() => api.health());
-  return (
-    <div
-      class="flex items-center gap-2 px-2 py-1.5 text-[13px] text-muted"
-      title="API status"
-    >
-      <span
-        class="h-1.5 w-1.5 rounded-full bg-muted"
-        classList={{
-          "!bg-emerald-500": health.state === "ready",
-          "!bg-red-500": health.state === "errored",
-        }}
-      />
-      <span>
-        {health.state === "ready"
-          ? "api ok"
-          : health.state === "errored"
-            ? "api offline"
-            : "api"}
-      </span>
-    </div>
-  );
-}
-
 function ProjectRow(props: { project: Project }) {
   const { unread } = useUnread();
   const { pendingReviews } = usePendingReviews();
@@ -354,7 +329,6 @@ export function Rail() {
       </div>
 
       <div class="mt-auto flex flex-col gap-0.5 border-t border-border p-2">
-        <HealthStatus />
         <NavItem href="/app/settings">
           <SettingsIcon class="h-3.5 w-3.5" />
           Settings

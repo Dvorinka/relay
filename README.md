@@ -95,6 +95,11 @@ docker compose up -d        # relay + postgres + storage (RustFS)
 Then open `http://localhost:8080` - the first registered account becomes
 the workspace owner.
 
+Prebuilt artifacts: `ghcr.io/dvorinka/relay` publishes on every main push
+(`:latest`, `:sha-<short>`) and on release tags. `v*` tags cut a GitHub
+release with the server + CLI binaries (linux/windows/darwin), the Wails
+desktop app (linux + windows), and a debug-signed `relay-android.apk`.
+
 For local development (Go 1.24+, Node 20+, `just`):
 
 ```bash

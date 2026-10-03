@@ -8,7 +8,7 @@
   <meta property="og:title" content="Relay">
   <meta property="og:description" content="Self-hosted hub for agent-driven work. Agents do not live in Relay; they work through it.">
   <meta property="og:type" content="website">
-  <meta property="og:image" content="shots/reviews.png">
+  <meta property="og:image" content="shots/chat.png">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="theme-color" content="#0a0a0b">
   <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20viewBox%3D%270%200%20256%20256%27%3E%3Crect%20width%3D%27256%27%20height%3D%27256%27%20rx%3D%2756%27%20fill%3D%27%230a0a0b%27/%3E%3Cg%20transform%3D%27translate%2837.6%2038.7%29%20scale%280.72%29%27%20fill%3D%27none%27%20stroke%3D%27%23ffffff%27%20stroke-width%3D%2730%27%20stroke-linecap%3D%27round%27%3E%3Cpath%20d%3D%27M196%2096%20V82%20A30%2030%200%200%200%20166%2052%20H82%20A30%2030%200%200%200%2052%2082%20V166%20A30%2030%200%200%200%2082%20196%20H166%20A30%2030%200%200%200%20196%20166%20V160%27/%3E%3C/g%3E%3Ccircle%20cx%3D%27178.7%27%20cy%3D%27130.9%27%20r%3D%2717.5%27%20fill%3D%27%2306b6d4%27/%3E%3C/svg%3E">
@@ -26,6 +26,7 @@
       </a>
       <nav aria-label="Primary">
         <a href="#reviews">Reviews</a>
+        <a href="#briefs">Briefs</a>
         <a href="#wire">Wire</a>
         <a href="#selfhost">Self-host</a>
       </nav>
@@ -50,7 +51,7 @@
           </div>
         </div>
         <figure class="hero-shot" aria-label="Relay project page screenshot">
-          <img src="shots/reviews.png" alt="Relay project page: grouped chat timeline with agent replies, and a context rail of open issues and pending reviews" width="1600" height="1000">
+          <img src="shots/chat.png" alt="Relay project page: grouped chat timeline with agent replies, and a context rail of open issues and pending reviews" width="1600" height="1000">
         </figure>
       </div>
     </section>
@@ -93,6 +94,24 @@
         </div>
         <figure class="split-shot">
           <img src="shots/review-card.png" alt="A Relay review card: required actions, changed files with stats, agent decisions, verdict buttons" width="760" height="900" loading="lazy">
+        </figure>
+      </div>
+    </section>
+
+    <!-- BRIEFS -->
+    <section class="section" id="briefs">
+      <div class="wrap split">
+        <div class="split-copy">
+          <h2>Briefs that show, not tell.</h2>
+          <p>Before a merge — or whenever you ask — the agent draws what it changed. Excalidraw-compatible scenes render right in the app: shapes, arrows, labels, and a comment thread the agent reads and revises from.</p>
+          <ul class="mono-list">
+            <li><b>per project policy</b><span>always, on request, or never — you set the gate</span></li>
+            <li><b>iterate in place</b><span>comment on the diagram; the agent rewrites the scene</span></li>
+            <li><b>MCP native</b><span>agents read policy, draft scenes, and resolve threads</span></li>
+          </ul>
+        </div>
+        <figure class="split-shot">
+          <img src="shots/brief.png" alt="A Relay visual brief: a diagram of a release pipeline with a summary and an agent-readable comment thread" width="1600" height="1000" loading="lazy">
         </figure>
       </div>
     </section>

@@ -67,10 +67,30 @@ jobs:
 
   docker:
     runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
     steps:
       - uses: actions/checkout@v7
       - run: cp .env.example .env && docker compose config --quiet
-      - run: docker build -f deploy/Dockerfile -t relay:ci .
+      - uses: docker/setup-buildx-action@v4
+      - name: Build image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/Dockerfile
+          load: true
+          tags: relay:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Publish to GHCR
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          docker tag relay:ci ghcr.io/dvorinka/relay:latest
+          docker tag relay:ci ghcr.io/dvorinka/relay:sha-${GITHUB_SHA:0:7}
+          docker push ghcr.io/dvorinka/relay:latest
+          docker push ghcr.io/dvorinka/relay:sha-${GITHUB_SHA:0:7}
 
   desktop:
     runs-on: ubuntu-latest
@@ -80,7 +100,7 @@ jobs:
         with:
           go-version: "1.27"
           cache: true
-      - run: sudo apt-get update && sudo apt-get install -y mingw-w64
+      - run: sudo apt-get update && sudo apt-get install -y mingw-w64 libgtk-3-dev libwebkit2gtk-4.1-dev
       - run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
       - run: cd apps/desktop && go mod download && go test ./...
       - name: Cross-build Windows binary
@@ -88,10 +108,19 @@ jobs:
           cd apps/desktop
           ~/go/bin/wails build -platform windows/amd64 -o relay-desktop.exe
           test -f build/bin/relay-desktop.exe
+      - name: Build Linux binary
+        run: |
+          cd apps/desktop
+          ~/go/bin/wails build -platform linux/amd64 -tags webkit2_41 -o relay-desktop
+          test -f build/bin/relay-desktop
       - uses: actions/upload-artifact@v4
         with:
           name: relay-desktop-windows
           path: apps/desktop/build/bin/relay-desktop.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: relay-desktop-linux
+          path: apps/desktop/build/bin/relay-desktop
 
   security:
     runs-on: ubuntu-latest

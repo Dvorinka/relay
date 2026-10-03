@@ -56,6 +56,50 @@ function fill(e: El) {
     : "none";
 }
 
+// ShapeLabel draws e.text centered inside a shape. Agents author labels
+// directly on the element (rect/diamond/ellipse) rather than as separate
+// text elements; \n splits lines.
+function ShapeLabel(props: {
+  e: El;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  size: number;
+}) {
+  const lines = () => (props.e.text ?? "").split("\n").filter(Boolean);
+  // White text on dark fills, slate otherwise.
+  const color = () => {
+    const bg = props.e.backgroundColor;
+    const m = /^#([0-9a-f]{6})$/i.exec(bg ?? "");
+    if (!m) return "#1e293b";
+    const n = parseInt(m[1]!, 16);
+    const lum = (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
+    return lum < 0.45 ? "#f8fafc" : "#1e293b";
+  };
+  return (
+    <Show when={lines().length > 0}>
+      <text
+        x={props.x + props.w / 2}
+        y={props.y + props.h / 2 - ((lines().length - 1) * props.size * 1.2) / 2}
+        text-anchor="middle"
+        dominant-baseline="central"
+        font-size={`${props.size}px`}
+        fill={color()}
+        style={{ "font-family": "ui-sans-serif, system-ui, sans-serif" }}
+      >
+        <For each={lines()}>
+          {(line, i) => (
+            <tspan x={props.x + props.w / 2} dy={i() === 0 ? 0 : props.size * 1.2}>
+              {line}
+            </tspan>
+          )}
+        </For>
+      </text>
+    </Show>
+  );
+}
+
 export function SceneView(props: { scene: Record<string, unknown> }) {
   const els = createMemo(() => elements(props.scene));
   const vb = createMemo(() => bounds(els()));
@@ -111,26 +155,32 @@ export function SceneView(props: { scene: Record<string, unknown> }) {
               }
               if (e.type === "diamond") {
                 return (
-                  <polygon
-                    points={`${x + w / 2},${y} ${x + w},${y + h / 2} ${x + w / 2},${y + h} ${x},${y + h / 2}`}
-                    fill={fill(e)}
-                    stroke={stroke(e)}
-                    stroke-width={sw(e)}
-                    stroke-linejoin="round"
-                  />
+                  <>
+                    <polygon
+                      points={`${x + w / 2},${y} ${x + w},${y + h / 2} ${x + w / 2},${y + h} ${x},${y + h / 2}`}
+                      fill={fill(e)}
+                      stroke={stroke(e)}
+                      stroke-width={sw(e)}
+                      stroke-linejoin="round"
+                    />
+                    <ShapeLabel e={e} x={x} y={y} w={w} h={h} size={fontSize()} />
+                  </>
                 );
               }
               if (e.type === "ellipse") {
                 return (
-                  <ellipse
-                    cx={x + w / 2}
-                    cy={y + h / 2}
-                    rx={Math.abs(w / 2)}
-                    ry={Math.abs(h / 2)}
-                    fill={fill(e)}
-                    stroke={stroke(e)}
-                    stroke-width={sw(e)}
-                  />
+                  <>
+                    <ellipse
+                      cx={x + w / 2}
+                      cy={y + h / 2}
+                      rx={Math.abs(w / 2)}
+                      ry={Math.abs(h / 2)}
+                      fill={fill(e)}
+                      stroke={stroke(e)}
+                      stroke-width={sw(e)}
+                    />
+                    <ShapeLabel e={e} x={x} y={y} w={w} h={h} size={fontSize()} />
+                  </>
                 );
               }
               if (e.type === "line" || e.type === "arrow") {
@@ -151,16 +201,19 @@ export function SceneView(props: { scene: Record<string, unknown> }) {
               }
               // rectangle (default)
               return (
-                <rect
-                  x={x}
-                  y={y}
-                  width={w}
-                  height={h}
-                  rx={6 * scale()}
-                  fill={fill(e)}
-                  stroke={stroke(e)}
-                  stroke-width={sw(e)}
-                />
+                <>
+                  <rect
+                    x={x}
+                    y={y}
+                    width={w}
+                    height={h}
+                    rx={6 * scale()}
+                    fill={fill(e)}
+                    stroke={stroke(e)}
+                    stroke-width={sw(e)}
+                  />
+                  <ShapeLabel e={e} x={x} y={y} w={w} h={h} size={fontSize()} />
+                </>
               );
             }}
           </For>

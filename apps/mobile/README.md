@@ -64,8 +64,22 @@ Phase 10 notes.
 
 ## Production build
 
+Every `v*` tag builds `relay-android.apk` in CI (`release.yml` → `apk`
+job): `expo prebuild` generates `android/`, then Gradle assembles a
+debug-signed APK attached to the release. Debug-signed APKs install on
+any device but can't be updated over an existing install with a
+different signature — for store distribution use EAS:
+
 ```bash
 npx eas-cli build --platform android --profile production
 ```
 
 requires an Expo account (`EXPO_TOKEN` or `eas login`).
+
+Local build:
+
+```bash
+npx expo prebuild --platform android --no-install
+cd android && ./gradlew assembleDebug
+# → android/app/build/outputs/apk/debug/app-debug.apk
+```
