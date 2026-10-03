@@ -2,10 +2,6 @@
   "$schema": "https://wails.io/schemas/config.v2.json",
   "name": "Relay",
   "outputfilename": "relay-desktop",
-  "frontend:dir": "frontend/dist",
-  "frontend:install": "",
-  "frontend:build": "",
-  "frontend:dev": "",
   "app": {
     "withGlobalFileExplorer": true
   },

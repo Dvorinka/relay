@@ -12,8 +12,12 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"strings"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 func sig(secret, body []byte) string {
@@ -103,4 +107,47 @@ func TestSealOpenRoundTrip(t *testing.T) {
 	if _, err := open(enc, strings.Repeat("x", 32)); err == nil {
 		t.Fatal("wrong key must fail")
 	}
+}
+
+func TestManifestPage(t *testing.T) {
+	s := &Service{}
+	render := func(t *testing.T, query string) (int, string, string) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet, "/api/github/manifest-page?"+query, nil)
+		s.handleManifestPage(c)
+		return w.Code, w.Body.String(), w.Header().Get("Content-Security-Policy")
+	}
+
+	manifest := `{"name":"Relay","url":"https://x/cb","hook_attributes":{"url":"https://x/h"},"redirect_url":"https://x/d","public":false,"default_events":["issues"],"default_permissions":{"issues":"write"}}`
+	enc := base64.RawURLEncoding.EncodeToString([]byte(manifest))
+
+	t.Run("valid payload renders auto-submit form", func(t *testing.T) {
+		code, body, csp := render(t, "m="+enc)
+		if code != http.StatusOK {
+			t.Fatalf("got %d", code)
+		}
+		for _, want := range []string{
+			`method="post" action="https://github.com/settings/apps/new"`,
+			`name="manifest"`,
+			`&#34;default_permissions&#34;`, // JSON stays html-escaped in the hidden field
+			`document.getElementById('f').submit()`,
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("missing %q", want)
+			}
+		}
+		if !strings.Contains(csp, "script-src 'unsafe-inline'") {
+			t.Errorf("CSP must allow the inline auto-submit: %q", csp)
+		}
+	})
+
+	t.Run("rejects malformed payloads", func(t *testing.T) {
+		for _, q := range []string{"", "m=", "m=!!!", "m=" + base64.RawURLEncoding.EncodeToString([]byte("not json")), "m=" + base64.RawURLEncoding.EncodeToString(make([]byte, 65<<10))} {
+			if code, _, _ := render(t, q); code != http.StatusBadRequest {
+				t.Errorf("query %q…: got %d, want 400", q[:24], code)
+			}
+		}
+	})
 }

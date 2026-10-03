@@ -102,7 +102,9 @@ jobs:
           cache: true
       - run: sudo apt-get update && sudo apt-get install -y mingw-w64 libgtk-3-dev libwebkit2gtk-4.1-dev
       - run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
-      - run: cd apps/desktop && go mod download && go test ./...
+      # webkit2_41 tag matches the installed libwebkit2gtk-4.1-dev; without it
+      # wails' webview cgo looks for webkit2gtk-4.0.
+      - run: cd apps/desktop && go mod download && go test -tags webkit2_41 ./...
       - name: Cross-build Windows binary
         run: |
           cd apps/desktop
@@ -113,10 +115,22 @@ jobs:
           cd apps/desktop
           ~/go/bin/wails build -platform linux/amd64 -tags webkit2_41 -o relay-desktop
           test -f build/bin/relay-desktop
+      - name: Verify Windows installer builds
+        run: |
+          sudo apt-get install -y nsis
+          makensis -DVERSION=0.0.0-ci -DVI_VERSION=0.0.0.0 \
+            -DEXE="$GITHUB_WORKSPACE/apps/desktop/build/bin/relay-desktop.exe" \
+            -DOUTFILE="$GITHUB_WORKSPACE/apps/desktop/build/bin/Relay-Setup-ci.exe" \
+            apps/desktop/installer/relay.nsi
+          test -f apps/desktop/build/bin/Relay-Setup-ci.exe
       - uses: actions/upload-artifact@v4
         with:
           name: relay-desktop-windows
           path: apps/desktop/build/bin/relay-desktop.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: relay-installer-windows
+          path: apps/desktop/build/bin/Relay-Setup-ci.exe
       - uses: actions/upload-artifact@v4
         with:
           name: relay-desktop-linux

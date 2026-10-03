@@ -1,0 +1,35 @@
+name: tag-release
+
+# Every push to main bumps the patch version and pushes a v* tag, which in
+# turn triggers the release workflow (binaries, installer, APK, GHCR image).
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tag-release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Bump patch version and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          latest=$(git tag -l 'v*' --sort=-v:refname | head -1)
+          latest=${latest:-v0.0.0}
+          ver=${latest#v}
+          IFS=. read -r major minor patch <<< "$ver"
+          next="v${major}.${minor}.$((patch + 1))"
+          echo "tagging ${latest} -> ${next}"
+          git tag "$next"
+          git push origin "$next"

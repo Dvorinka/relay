@@ -430,7 +430,11 @@ export function createClient(baseUrl: string, token?: string) {
         install_url?: string;
       }>("/api/github/app"),
     githubManifest: (workspaceId: string) =>
-      post<{ manifest: Record<string, unknown>; post_url: string }>(
+      post<{
+        manifest: Record<string, unknown>;
+        post_url: string;
+        page_url?: string;
+      }>(
         `/api/github/app/manifest?workspace=${encodeURIComponent(workspaceId)}`,
       ),
     deleteGitHubApp: () =>

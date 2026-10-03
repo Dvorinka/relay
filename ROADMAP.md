@@ -114,7 +114,9 @@ configured Relay server (no stale bundles, no CORS, same-origin cookies).
 First launch shows a "connect to server" screen persisted to the user
 config dir. Windows binary cross-builds via mingw-w64 and is produced by
 CI as an artifact; Linux binary verified to launch a real window against
-the local stack.
+the local stack. Releases ship a per-user NSIS installer
+(`Relay-Setup-<ver>.exe` — shortcuts, uninstaller, WebView2 bootstrap,
+no admin).
 
 - Wails v2 shell proxying to the configured server — Linux/Windows
   (macOS supported by the same code path via `wails build -platform darwin`)

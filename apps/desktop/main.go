@@ -10,11 +10,12 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
 )
 
-// Wails needs a frontend asset tree even though the real UI streams through
-// the proxy — this ships a placeholder index.html only.
+// web/dist holds the built SPA (copied from apps/web/dist in CI). Only a stub
+// index.html is committed so plain `go build` still compiles — release builds
+// ship the real bundle and enable "work offline" on the connect screen.
 //
-//go:embed frontend/dist
-var assets embed.FS
+//go:embed web
+var webFS embed.FS
 
 func main() {
 	cfg, err := loadConfig()
@@ -22,16 +23,17 @@ func main() {
 		log.Fatal(err)
 	}
 	app := &App{cfg: cfg}
+	app.handler.Store(app.buildHandler())
 
 	err = wails.Run(&options.App{
 		Title:  "Relay",
 		Width:  1280,
 		Height: 800,
 		AssetServer: &assetserver.Options{
-			Assets: assets,
-			// Everything the webview requests flows through the app: API
-			// calls are proxied to the configured server, all else gets the
-			// setup page until a server exists.
+			// No embedded assets: an embedded index.html wins the AssetServer's
+			// file-first lookup and shadows "/" (the "Loading…" placeholder bug).
+			// With Assets unset every webview request reaches the app — API calls
+			// proxy to the configured server, everything else gets the setup page.
 			Handler: app,
 		},
 		Bind:             []any{app},

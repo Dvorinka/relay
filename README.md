@@ -98,7 +98,9 @@ the workspace owner.
 Prebuilt artifacts: `ghcr.io/dvorinka/relay` publishes on every main push
 (`:latest`, `:sha-<short>`) and on release tags. `v*` tags cut a GitHub
 release with the server + CLI binaries (linux/windows/darwin), the Wails
-desktop app (linux + windows), and a debug-signed `relay-android.apk`.
+desktop app (`relay-desktop-*`, plus a per-user `Relay-Setup-<ver>.exe`
+Windows installer — Start Menu/Desktop shortcuts, WebView2 bootstrap, no
+admin needed), and a debug-signed `relay-android.apk`.
 
 For local development (Go 1.24+, Node 20+, `just`):
 
