@@ -39,6 +39,7 @@ import { subscribe } from "../../lib/events";
 import { Markdown, renderMarkdown } from "../../lib/markdown";
 import { formatBytes, initials, messagePreview } from "../../lib/text";
 import { useSession } from "../../stores/session";
+import { useChatStyle } from "../../stores/theme";
 
 const PAGE_SIZE = 50;
 const MAX_FILE_MIB = 25;
@@ -96,12 +97,16 @@ function stamp(iso: string): string {
   return `${dayLabel(iso)} at ${shortTime(iso)}`;
 }
 
-function MessageAvatar(props: { message: Message }) {
+function MessageAvatar(props: { message: Message; small?: boolean }) {
   const m = () => props.message;
   return (
-    <Avatar.Root class="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border">
+    <Avatar.Root
+      class={`mt-0.5 flex shrink-0 items-center justify-center rounded-full border border-border ${
+        props.small ? "h-7 w-7" : "h-10 w-10"
+      }`}
+    >
       <Avatar.Fallback
-        class="text-[13px] font-semibold"
+        class={props.small ? "text-[10px] font-semibold" : "text-[13px] font-semibold"}
         style={{
           color: authorColor(m().author.name),
           "background-color": `color-mix(in srgb, ${authorColor(m().author.name)} 14%, transparent)`,
@@ -377,6 +382,8 @@ function MessageRow(props: {
   onDeleted: (id: string) => void;
 }) {
   const m = () => props.message;
+  const { chatStyle } = useChatStyle();
+  const bubbles = () => chatStyle() === "bubbles";
   const [convertOpen, setConvertOpen] = createSignal(false);
   const [deleteOpen, setDeleteOpen] = createSignal(false);
   const [editing, setEditing] = createSignal(false);
@@ -447,9 +454,15 @@ function MessageRow(props: {
 
   return (
     <div
-      class={`group relative flex gap-3 px-4 hover:bg-hover/60 ${
-        props.grouped ? "py-[3px]" : "mt-4 py-1.5"
-      }`}
+      class={
+        bubbles()
+          ? `group relative flex px-4 ${
+              mine() ? "justify-end" : "justify-start"
+            } ${props.grouped ? "py-[1px]" : "mt-2.5 py-[1px]"}`
+          : `group relative flex gap-3 px-4 hover:bg-hover/60 ${
+              props.grouped ? "py-[3px]" : "mt-4 py-1.5"
+            }`
+      }
       onClick={(e) => {
         if (window.matchMedia("(hover: none)").matches &&
             !(e.target as HTMLElement).closest("a,button,textarea,input,pre")) {
@@ -457,23 +470,43 @@ function MessageRow(props: {
         }
       }}
     >
-      <Show
-        when={!props.grouped}
-        fallback={
-          <div class="w-10 shrink-0 text-right">
-            <span
-              class="text-[10px] leading-[22px] text-faint opacity-0 transition-opacity group-hover:opacity-100"
-              title={new Date(m().created_at).toLocaleString()}
-            >
-              {shortTime(m().created_at)}
-            </span>
-          </div>
+      <Show when={!bubbles()}>
+        <Show
+          when={!props.grouped}
+          fallback={
+            <div class="w-10 shrink-0 text-right">
+              <span
+                class="text-[10px] leading-[22px] text-faint opacity-0 transition-opacity group-hover:opacity-100"
+                title={new Date(m().created_at).toLocaleString()}
+              >
+                {shortTime(m().created_at)}
+              </span>
+            </div>
+          }
+        >
+          <MessageAvatar message={m()} />
+        </Show>
+      </Show>
+      <Show when={bubbles() && !mine()}>
+        {/* fixed slot keeps the left bubble edge aligned across a group */}
+        <div class="mr-1.5 flex w-7 shrink-0 items-end">
+          <Show when={!props.grouped}>
+            <MessageAvatar message={m()} small />
+          </Show>
+        </div>
+      </Show>
+      <div
+        class={
+          bubbles()
+            ? `min-w-0 max-w-[78%] rounded-2xl px-3 py-1.5 ${
+                mine()
+                  ? "rounded-br-md bg-accent-soft"
+                  : "rounded-bl-md border border-border bg-surface"
+              }`
+            : "min-w-0 flex-1"
         }
       >
-        <MessageAvatar message={m()} />
-      </Show>
-      <div class="min-w-0 flex-1">
-        <Show when={!props.grouped}>
+        <Show when={!props.grouped && (!bubbles() || !mine())}>
           <div class="flex items-baseline gap-2">
             <span
               class="text-[14.5px] font-semibold"
@@ -486,12 +519,14 @@ function MessageRow(props: {
                 agent
               </span>
             </Show>
-            <span
-              class="text-[11.5px] text-faint"
-              title={new Date(m().created_at).toLocaleString()}
-            >
-              {stamp(m().created_at)}
-            </span>
+            <Show when={!bubbles()}>
+              <span
+                class="text-[11.5px] text-faint"
+                title={new Date(m().created_at).toLocaleString()}
+              >
+                {stamp(m().created_at)}
+              </span>
+            </Show>
           </div>
         </Show>
         <Show when={m().parent}>{(p) => <ReplyStrip parent={p()} />}</Show>
@@ -502,7 +537,7 @@ function MessageRow(props: {
               <Show when={m().body.trim().length > 0}>
                 <Markdown body={m().body} projectId={props.projectId} />
               </Show>
-              <Show when={m().edited_at}>
+              <Show when={m().edited_at && !bubbles()}>
                 <span class="ml-0 align-middle text-[10.5px] text-faint">
                   (edited)
                 </span>
@@ -553,9 +588,21 @@ function MessageRow(props: {
           reactions={m().reactions}
           onChange={(reactions) => props.onChanged({ ...m(), reactions })}
         />
+        <Show when={bubbles()}>
+          <div class="mt-0.5 flex items-center justify-end gap-1.5 text-[10px] leading-3 text-faint">
+            <Show when={m().edited_at}>
+              <span>(edited)</span>
+            </Show>
+            <span title={new Date(m().created_at).toLocaleString()}>
+              {shortTime(m().created_at)}
+            </span>
+          </div>
+        </Show>
       </div>
       <div
-        class="msg-actions absolute -top-3 right-3 hidden items-center gap-0.5 rounded-lg border border-border bg-surface px-1 py-0.5 shadow-sm group-hover:flex"
+        class={`msg-actions absolute -top-3 hidden items-center gap-0.5 rounded-lg border border-border bg-surface px-1 py-0.5 shadow-sm group-hover:flex ${
+          bubbles() && !mine() ? "left-[46px]" : "right-3"
+        }`}
         style={{ display: tapped() ? "flex" : undefined }}
       >
         <For each={QUICK_REACTIONS}>

@@ -18,7 +18,12 @@ import { api } from "../../lib/api";
 import { net } from "../../lib/net";
 import { syncToServer } from "../../lib/sync";
 import { useSession } from "../../stores/session";
-import { toggleTheme, useTheme } from "../../stores/theme";
+import {
+  setChatStyle,
+  toggleTheme,
+  useChatStyle,
+  useTheme,
+} from "../../stores/theme";
 import AgentsSection from "../agents/AgentsSection";
 import GitHubAppSection from "../github/GitHubAppSection";
 
@@ -235,9 +240,16 @@ function NewWorkspaceForm(props: { onCreated: () => void }) {
   );
 }
 
-// Theme toggle only — the accent is the fixed brand cyan.
+// Theme toggle + chat layout — the accent is the fixed brand cyan.
 function AppearanceSection() {
   const { theme } = useTheme();
+  const { chatStyle } = useChatStyle();
+  const seg = (active: boolean) =>
+    `rounded-md px-2.5 py-1 text-[12.5px] transition-colors ${
+      active
+        ? "bg-accent-soft font-medium text-accent-ink"
+        : "text-muted hover:text-fg"
+    }`;
   return (
     <div class="flex flex-col gap-4">
       <div class="flex items-center gap-2">
@@ -255,6 +267,31 @@ function AppearanceSection() {
           </Show>
           {theme() === "dark" ? "Dark" : "Light"}
         </button>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="w-20 text-[12px] text-muted">Chat layout</span>
+        <div
+          class="flex gap-0.5 rounded-lg border border-border bg-surface p-0.5"
+          role="group"
+          aria-label="Chat layout"
+        >
+          <button
+            type="button"
+            onClick={() => setChatStyle("grouped")}
+            class={seg(chatStyle() === "grouped")}
+            aria-pressed={chatStyle() === "grouped"}
+          >
+            Left aligned
+          </button>
+          <button
+            type="button"
+            onClick={() => setChatStyle("bubbles")}
+            class={seg(chatStyle() === "bubbles")}
+            aria-pressed={chatStyle() === "bubbles"}
+          >
+            Two-sided
+          </button>
+        </div>
       </div>
       <div class="flex items-center gap-2">
         <span class="w-20 text-[12px] text-muted">Accent</span>
