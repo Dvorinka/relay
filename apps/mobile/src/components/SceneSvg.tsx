@@ -1,10 +1,8 @@
 import { useMemo } from "react";
 import { Text, View } from "react-native";
 import Svg, {
-  Defs,
   G,
   Ellipse,
-  Marker,
   Path,
   Polygon,
   Rect,
@@ -177,19 +175,6 @@ export function SceneSvg(props: {
       width={props.width ?? "100%"}
       height={((props.width ?? 340) / vb.w) * vb.h}
     >
-      <Defs>
-        <Marker
-          id="arr"
-          viewBox="0 0 10 10"
-          refX={9}
-          refY={5}
-          markerWidth={7}
-          markerHeight={7}
-          orient="auto-start-reverse"
-        >
-          <Path d="M 0 1 L 9 5 L 0 9" strokeWidth={1.5} fill="none" />
-        </Marker>
-      </Defs>
       {els.map((e, i) => {
         const x = e.x ?? 0,
           y = e.y ?? 0;
@@ -246,16 +231,44 @@ export function SceneSvg(props: {
           const d = pts
             .map(([px, py], j) => `${j === 0 ? "M" : "L"} ${x + px} ${y + py}`)
             .join(" ");
+          // react-native-svg has no <Marker> — draw the arrowhead manually
+          // from the last segment direction.
+          let head: string | null = null;
+          if (e.type === "arrow" && pts.length > 1) {
+            const [ax, ay] = pts[pts.length - 2];
+            const [bx, by] = pts[pts.length - 1];
+            const dx = bx - ax,
+              dy = by - ay;
+            const len = Math.hypot(dx, dy) || 1;
+            const ux = dx / len,
+              uy = dy / len;
+            const size = 10 * scale;
+            const h1x = bx - ux * size - uy * size * 0.5;
+            const h1y = by - uy * size + ux * size * 0.5;
+            const h2x = bx - ux * size + uy * size * 0.5;
+            const h2y = by - uy * size - ux * size * 0.5;
+            head = `M ${x + h1x} ${y + h1y} L ${x + bx} ${y + by} L ${x + h2x} ${y + h2y}`;
+          }
           return (
-            <Path
-              key={i}
-              d={d}
-              fill="none"
-              stroke={stroke(e)}
-              strokeWidth={sw(e)}
-              strokeLinecap="round"
-              markerEnd={e.type === "arrow" ? "url(#arr)" : undefined}
-            />
+            <G key={i}>
+              <Path
+                d={d}
+                fill="none"
+                stroke={stroke(e)}
+                strokeWidth={sw(e)}
+                strokeLinecap="round"
+              />
+              {head && (
+                <Path
+                  d={head}
+                  fill="none"
+                  stroke={stroke(e)}
+                  strokeWidth={sw(e)}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              )}
+            </G>
           );
         }
         // rectangle (default)

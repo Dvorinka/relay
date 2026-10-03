@@ -81,6 +81,15 @@ export default function BriefsScreen() {
               <Pressable style={s.newBtn} onPress={create}>
                 <Text style={s.newBtnText}>Add</Text>
               </Pressable>
+              <Pressable
+                style={s.cancelBtn}
+                onPress={() => {
+                  setCreating(false);
+                  setNewTitle("");
+                }}
+              >
+                <Text style={s.cancelText}>✕</Text>
+              </Pressable>
             </>
           ) : (
             <Pressable style={s.newToggle} onPress={() => setCreating(true)}>
@@ -281,7 +290,7 @@ function BriefDetail(props: {
 const themedStyles = (C: Palette) =>
   StyleSheet.create({
     empty: { color: C.muted, textAlign: "center", marginTop: 60, marginHorizontal: 24 },
-    newRow: { padding: 12, paddingBottom: 0 },
+    newRow: { padding: 12, paddingBottom: 0, flexDirection: "row" },
     newToggle: {
       borderColor: C.border,
       borderWidth: 1,
@@ -308,6 +317,8 @@ const themedStyles = (C: Palette) =>
       paddingVertical: 10,
     },
     newBtnText: { color: C.onAccent, fontWeight: "600" },
+    cancelBtn: { justifyContent: "center", paddingHorizontal: 10 },
+    cancelText: { color: C.muted, fontSize: 16 },
     card: {
       backgroundColor: C.surface,
       borderColor: C.border,
