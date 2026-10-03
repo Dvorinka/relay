@@ -7,10 +7,12 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
@@ -72,6 +74,7 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup, pub *gin.RouterGroup) {
 	g.POST("/projects/:id/github/import", s.projectAdminOnly, s.handleImport)
 	// browser redirect targets / webhook entry
 	pub.GET("/github/callback", s.handleCallback)
+	pub.GET("/github/manifest-page", s.handleManifestPage)
 	pub.POST("/github/webhook", s.handleWebhook)
 }
 
@@ -123,10 +126,44 @@ func (s *Service) handleManifest(c *gin.Context) {
 		// it to the app webhook automatically.
 		"default_events": []string{"issues", "pull_request", "push"},
 	}
+	// page_url is a public auto-submitting page that POSTs the manifest to
+	// github.com — desktop shells open it in the system browser, where the
+	// user's GitHub session actually lives. The manifest contains no
+	// secrets (those arrive later via the conversion), so embedding it in a
+	// URL is safe.
+	raw, _ := json.Marshal(manifest)
 	c.JSON(http.StatusOK, gin.H{
 		"manifest": manifest,
 		"post_url": "https://github.com/settings/apps/new",
+		"page_url": s.cfg.PublicURL + "/api/github/manifest-page?m=" +
+			base64.RawURLEncoding.EncodeToString(raw),
 	})
+}
+
+// handleManifestPage serves the auto-submitting manifest POST as a public
+// page. The desktop app hands this URL to the OS browser; the SPA could also
+// use it, but it submits the form itself since it already runs in a browser.
+func (s *Service) handleManifestPage(c *gin.Context) {
+	raw, err := base64.RawURLEncoding.DecodeString(c.Query("m"))
+	if err != nil || len(raw) == 0 || len(raw) > 64<<10 {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "bad manifest payload")
+		return
+	}
+	var probe map[string]any
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "bad manifest payload")
+		return
+	}
+	// The global CSP forbids inline scripts; this page's only job is its
+	// auto-submit. Everything else stays locked down.
+	c.Header("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'")
+	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(`<!doctype html><meta charset="utf-8">
+<title>Relay — register GitHub App</title>
+<body style="font:14px system-ui;color:#9c9fa7;background:#0a0a0b;display:grid;place-items:center;min-height:100vh;margin:0">
+<p>Opening GitHub…</p>
+<form id="f" method="post" action="https://github.com/settings/apps/new">
+<input type="hidden" name="manifest" value="`+html.EscapeString(string(raw))+`">
+</form><script>document.getElementById('f').submit()</script>`))
 }
 
 type manifestConversion struct {

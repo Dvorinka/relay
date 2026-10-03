@@ -1,6 +1,7 @@
 import { createResource, createSignal, For, Show } from "solid-js";
 import { FormError, SubmitButton } from "../../components/ui";
 import { api } from "../../lib/api";
+import { desktopOpen } from "../../lib/desktop";
 import { markGitHub } from "./GitHub";
 
 function errorMessage(err: unknown, fallback: string): string {
@@ -23,15 +24,21 @@ export default function GitHubAppSection(props: {
   const [confirmDelete, setConfirmDelete] = createSignal(false);
 
   // GitHub's app-manifest flow: POST the manifest JSON to
-  // github.com/settings/apps/new in a new navigation. We build a real
-  // form and submit it — fetch can't cross-post a form.
+  // github.com/settings/apps/new in a new navigation. In the desktop app we
+  // hand the server's hosted bridge page to the OS browser — the GitHub
+  // login session lives there, not in the webview. In a normal browser we
+  // build a real form and submit it — fetch can't cross-post a form.
   async function register() {
     setError(null);
     setPending(true);
     try {
-      const { manifest, post_url } = await api.githubManifest(
+      const { manifest, post_url, page_url } = await api.githubManifest(
         props.workspaceId,
       );
+      if (page_url && (await desktopOpen(page_url))) {
+        setPending(false);
+        return;
+      }
       const form = document.createElement("form");
       form.method = "POST";
       form.action = post_url;
@@ -115,6 +122,13 @@ export default function GitHubAppSection(props: {
                   <a
                     href={a().install_url}
                     class="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-white"
+                    onClick={async (e) => {
+                      e.preventDefault();
+                      const url = a().install_url!;
+                      if (!(await desktopOpen(url))) {
+                        window.location.href = url;
+                      }
+                    }}
                   >
                     Install on GitHub
                   </a>

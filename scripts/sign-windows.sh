@@ -24,11 +24,11 @@ if [[ ! -f $FILE ]]; then
 fi
 
 args=(sign -n "Relay" -t "http://timestamp.digicert.com")
-if [[ -n $PFX ]]; then
+if [[ -n ${2:-} && -n $KEY ]]; then
+	args+=(-certs "$2" -key "$KEY")
+elif [[ -n $PFX ]]; then
 	args+=(-pkcs12 "$PFX")
 	[[ -n $PASS ]] && args+=(-pass "$PASS")
-elif [[ -n ${2:-} && -n $KEY ]]; then
-	args+=(-certs "$2" -key "$KEY")
 else
 	echo "sign-windows: set SIGNING_CERT_PFX or pass cert.pem key.pem" >&2
 	exit 1

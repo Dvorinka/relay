@@ -164,3 +164,36 @@ func TestSetupPageGetChoice(t *testing.T) {
 		t.Fatalf("expected proxied app after connect, got %q", rr.Body.String())
 	}
 }
+
+func TestDesktopOpen(t *testing.T) {
+	app := &App{cfg: &Config{ServerURL: "http://relay.test"}}
+	app.handler.Store(app.buildHandler())
+
+	cases := []struct {
+		query string
+		want  int
+	}{
+		{"u=https%3A%2F%2Fgithub.com%2Fapps%2Fx", http.StatusNoContent},
+		{"u=/api/github/manifest-page%3Fm%3Dabc", http.StatusNoContent}, // resolves against server
+		{"u=javascript%3Aalert(1)", http.StatusBadRequest},
+		{"u=ftp%3A%2F%2Fx.test", http.StatusBadRequest},
+		{"u=%2F%2Fevil.test", http.StatusBadRequest}, // scheme-relative must not become https
+		{"", http.StatusBadRequest},
+	}
+	for _, tc := range cases {
+		rr := httptest.NewRecorder()
+		app.ServeHTTP(rr, httptest.NewRequest("GET", "/~desktop-open?"+tc.query, nil))
+		if rr.Code != tc.want {
+			t.Errorf("?%s: got %d, want %d", tc.query, rr.Code, tc.want)
+		}
+	}
+
+	// Root-relative URL with no configured server must not resolve.
+	app2 := &App{cfg: &Config{}}
+	app2.handler.Store(app2.buildHandler())
+	rr := httptest.NewRecorder()
+	app2.ServeHTTP(rr, httptest.NewRequest("GET", "/~desktop-open?u=/api/x", nil))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("relative URL without server: got %d", rr.Code)
+	}
+}

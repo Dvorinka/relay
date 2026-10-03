@@ -85,6 +85,7 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) buildHandler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/~desktop-open", a.openExternal)
 	switch {
 	case a.cfg.Offline:
 		mux.Handle("/", spaHandler(webDist()))
@@ -103,6 +104,31 @@ func (a *App) buildHandler() http.Handler {
 		mux.Handle("/", proxy)
 	}
 	return mux
+}
+
+// openExternal hands a URL to the OS browser. The SPA calls this for flows
+// that need the user's real browser session (GitHub App registration needs a
+// GitHub login the webview doesn't have). Absolute http(s) URLs open as-is;
+// a root-relative path resolves against the configured server. Registered on
+// every handler mode so the call works pre-connect and in offline mode too.
+func (a *App) openExternal(w http.ResponseWriter, r *http.Request) {
+	u := r.URL.Query().Get("u")
+	if strings.HasPrefix(u, "/") && !strings.HasPrefix(u, "//") {
+		if a.cfg.ServerURL == "" {
+			http.Error(w, "no server configured", http.StatusBadRequest)
+			return
+		}
+		u = strings.TrimRight(a.cfg.ServerURL, "/") + u
+	}
+	parsed, err := url.Parse(u)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		http.Error(w, "bad url", http.StatusBadRequest)
+		return
+	}
+	if a.ctx != nil {
+		go wailsruntime.BrowserOpenURL(a.ctx, u)
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func webDist() fs.FS {
