@@ -416,7 +416,7 @@ function ConnectionSection() {
         setStep,
       );
       setResult(
-        `Synced ${r.projects} project(s), ${r.messages} message(s), ${r.issues} issue(s), ${r.todos} todo(s). Local data is unchanged.`,
+        `Synced ${r.projects} project(s), ${r.messages} message(s), ${r.issues} issue(s), ${r.todos} todo(s), ${r.briefs} brief(s). Local data is unchanged.`,
       );
     } catch (err) {
       setError(errorMessage(err, "Sync failed"));
