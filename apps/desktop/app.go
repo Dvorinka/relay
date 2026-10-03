@@ -86,6 +86,7 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (a *App) buildHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/~desktop-open", a.openExternal)
+	mux.HandleFunc("/~desktop-config", a.configFromSPA)
 	switch {
 	case a.cfg.Offline:
 		mux.Handle("/", spaHandler(webDist()))
@@ -177,6 +178,22 @@ func spaHandler(dist fs.FS) http.Handler {
 func offlineAvailable() bool {
 	st, err := fs.Stat(webFS, "web/dist/assets")
 	return err == nil && st.IsDir()
+}
+
+// configFromSPA lets the running SPA sync the shell config when it changes
+// mode itself — "Connect & sign in" from local mode (server_url=…) and
+// "Work locally" from a connected session (offline=1). Without it
+// relay-desktop.json still says the old mode on next launch, and
+// /~desktop-open can't resolve root-relative URLs. 204 on success so the
+// SPA can tell it apart from a real server's SPA fallback (200 HTML). GET
+// only: WebKitGTK can drop POST bodies.
+func (a *App) configFromSPA(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	if err := a.applyChoice(q.Get("server_url"), q.Get("offline") == "1"); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // applyChoice persists the connect-screen choice and hot-swaps the handler.

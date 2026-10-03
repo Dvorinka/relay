@@ -165,6 +165,42 @@ func TestSetupPageGetChoice(t *testing.T) {
 	}
 }
 
+// The SPA syncs the shell config when it changes mode itself (connect from
+// local mode, or "Work locally" while connected): 204 on apply, 400 on bad
+// input, and the handler hot-swaps to match.
+func TestDesktopConfigFromSPA(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("upstream app"))
+	}))
+	defer upstream.Close()
+
+	app := &App{cfg: &Config{Offline: true}}
+	app.handler.Store(app.buildHandler())
+
+	rr := httptest.NewRecorder()
+	app.ServeHTTP(rr, httptest.NewRequest("GET",
+		"/~desktop-config?server_url="+upstream.URL+"&offline=0", nil))
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", rr.Code)
+	}
+	if app.cfg.ServerURL != upstream.URL || app.cfg.Offline {
+		t.Fatalf("config not applied: %+v", app.cfg)
+	}
+
+	rr = httptest.NewRecorder()
+	app.ServeHTTP(rr, httptest.NewRequest("GET", "/", nil))
+	if rr.Body.String() != "upstream app" {
+		t.Fatalf("expected proxy after config sync, got %q", rr.Body.String())
+	}
+
+	rr = httptest.NewRecorder()
+	app.ServeHTTP(rr, httptest.NewRequest("GET", "/~desktop-config?server_url=&offline=0", nil))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("empty server_url: got %d", rr.Code)
+	}
+}
+
 func TestDesktopOpen(t *testing.T) {
 	app := &App{cfg: &Config{ServerURL: "http://relay.test"}}
 	app.handler.Store(app.buildHandler())
