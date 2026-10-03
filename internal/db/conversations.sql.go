@@ -89,7 +89,7 @@ const createProjectConversation = `-- name: CreateProjectConversation :one
 insert into conversations (project_id, kind)
 values ($1, 'project')
 on conflict do nothing
-returning id, project_id, kind, issue_id, created_at, brief_id
+returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent
 `
 
 func (q *Queries) CreateProjectConversation(ctx context.Context, projectID pgtype.UUID) (Conversation, error) {
@@ -102,12 +102,93 @@ func (q *Queries) CreateProjectConversation(ctx context.Context, projectID pgtyp
 		&i.IssueID,
 		&i.CreatedAt,
 		&i.BriefID,
+		&i.ParentMessageID,
+		&i.Title,
+		&i.CreatedByUser,
+		&i.CreatedByAgent,
+	)
+	return i, err
+}
+
+const createThread = `-- name: CreateThread :one
+insert into conversations (project_id, kind, parent_message_id, title, created_by_user)
+values ($1, 'thread', $2,
+        $3, $4)
+on conflict (parent_message_id) where kind = 'thread' do nothing
+returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent
+`
+
+type CreateThreadParams struct {
+	ProjectID       pgtype.UUID `json:"project_id"`
+	ParentMessageID pgtype.UUID `json:"parent_message_id"`
+	Title           pgtype.Text `json:"title"`
+	CreatedByUser   pgtype.UUID `json:"created_by_user"`
+}
+
+// one thread per message; the unique index makes this race-safe
+func (q *Queries) CreateThread(ctx context.Context, arg CreateThreadParams) (Conversation, error) {
+	row := q.db.QueryRow(ctx, createThread,
+		arg.ProjectID,
+		arg.ParentMessageID,
+		arg.Title,
+		arg.CreatedByUser,
+	)
+	var i Conversation
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Kind,
+		&i.IssueID,
+		&i.CreatedAt,
+		&i.BriefID,
+		&i.ParentMessageID,
+		&i.Title,
+		&i.CreatedByUser,
+		&i.CreatedByAgent,
+	)
+	return i, err
+}
+
+const createThreadAgent = `-- name: CreateThreadAgent :one
+insert into conversations (project_id, kind, parent_message_id, title, created_by_agent)
+values ($1, 'thread', $2,
+        $3, $4)
+on conflict (parent_message_id) where kind = 'thread' do nothing
+returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent
+`
+
+type CreateThreadAgentParams struct {
+	ProjectID       pgtype.UUID `json:"project_id"`
+	ParentMessageID pgtype.UUID `json:"parent_message_id"`
+	Title           pgtype.Text `json:"title"`
+	CreatedByAgent  pgtype.UUID `json:"created_by_agent"`
+}
+
+func (q *Queries) CreateThreadAgent(ctx context.Context, arg CreateThreadAgentParams) (Conversation, error) {
+	row := q.db.QueryRow(ctx, createThreadAgent,
+		arg.ProjectID,
+		arg.ParentMessageID,
+		arg.Title,
+		arg.CreatedByAgent,
+	)
+	var i Conversation
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Kind,
+		&i.IssueID,
+		&i.CreatedAt,
+		&i.BriefID,
+		&i.ParentMessageID,
+		&i.Title,
+		&i.CreatedByUser,
+		&i.CreatedByAgent,
 	)
 	return i, err
 }
 
 const getConversationByID = `-- name: GetConversationByID :one
-select id, project_id, kind, issue_id, created_at, brief_id
+select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent
 from conversations
 where id = $1
 `
@@ -122,12 +203,16 @@ func (q *Queries) GetConversationByID(ctx context.Context, id pgtype.UUID) (Conv
 		&i.IssueID,
 		&i.CreatedAt,
 		&i.BriefID,
+		&i.ParentMessageID,
+		&i.Title,
+		&i.CreatedByUser,
+		&i.CreatedByAgent,
 	)
 	return i, err
 }
 
 const getConversationForUser = `-- name: GetConversationForUser :one
-select c.id, c.project_id, c.kind, c.issue_id, c.created_at, c.brief_id
+select c.id, c.project_id, c.kind, c.issue_id, c.created_at, c.brief_id, c.parent_message_id, c.title, c.created_by_user, c.created_by_agent
 from conversations c
 join projects p on p.id = c.project_id
 join workspace_members wm on wm.workspace_id = p.workspace_id
@@ -150,6 +235,10 @@ func (q *Queries) GetConversationForUser(ctx context.Context, arg GetConversatio
 		&i.IssueID,
 		&i.CreatedAt,
 		&i.BriefID,
+		&i.ParentMessageID,
+		&i.Title,
+		&i.CreatedByUser,
+		&i.CreatedByAgent,
 	)
 	return i, err
 }
@@ -161,13 +250,17 @@ select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
        coalesce(pu.name, pa.name, '') as parent_author_name,
        pm.body as parent_body,
-       (pm.id is not null and pm.deleted_at is not null) as parent_deleted
+       (pm.id is not null and pm.deleted_at is not null) as parent_deleted,
+       t.id as thread_id, t.title as thread_title,
+       (select count(*)::int from messages tm
+         where tm.conversation_id = t.id and tm.deleted_at is null) as thread_reply_count
 from messages m
 left join users u on u.id = m.author_user_id
 left join agents a on a.id = m.author_agent_id
 left join messages pm on pm.id = m.parent_id
 left join users pu on pu.id = pm.author_user_id
 left join agents pa on pa.id = pm.author_agent_id
+left join conversations t on t.parent_message_id = m.id and t.kind = 'thread'
 where m.id = $1
 `
 
@@ -186,6 +279,9 @@ type GetMessageByIDRow struct {
 	ParentAuthorName string             `json:"parent_author_name"`
 	ParentBody       pgtype.Text        `json:"parent_body"`
 	ParentDeleted    pgtype.Bool        `json:"parent_deleted"`
+	ThreadID         pgtype.UUID        `json:"thread_id"`
+	ThreadTitle      pgtype.Text        `json:"thread_title"`
+	ThreadReplyCount int32              `json:"thread_reply_count"`
 }
 
 func (q *Queries) GetMessageByID(ctx context.Context, id pgtype.UUID) (GetMessageByIDRow, error) {
@@ -206,8 +302,25 @@ func (q *Queries) GetMessageByID(ctx context.Context, id pgtype.UUID) (GetMessag
 		&i.ParentAuthorName,
 		&i.ParentBody,
 		&i.ParentDeleted,
+		&i.ThreadID,
+		&i.ThreadTitle,
+		&i.ThreadReplyCount,
 	)
 	return i, err
+}
+
+const getMessageConversation = `-- name: GetMessageConversation :one
+select conversation_id
+from messages
+where id = $1
+`
+
+// conversation a message lives in - used to forbid nested threads
+func (q *Queries) GetMessageConversation(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, getMessageConversation, id)
+	var conversation_id pgtype.UUID
+	err := row.Scan(&conversation_id)
+	return conversation_id, err
 }
 
 const getMessageForUser = `-- name: GetMessageForUser :one
@@ -233,7 +346,7 @@ func (q *Queries) GetMessageForUser(ctx context.Context, arg GetMessageForUserPa
 }
 
 const getProjectConversation = `-- name: GetProjectConversation :one
-select id, project_id, kind, issue_id, created_at, brief_id
+select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent
 from conversations
 where project_id = $1 and kind = 'project'
 `
@@ -248,6 +361,10 @@ func (q *Queries) GetProjectConversation(ctx context.Context, projectID pgtype.U
 		&i.IssueID,
 		&i.CreatedAt,
 		&i.BriefID,
+		&i.ParentMessageID,
+		&i.Title,
+		&i.CreatedByUser,
+		&i.CreatedByAgent,
 	)
 	return i, err
 }
@@ -299,6 +416,80 @@ func (q *Queries) GetProjectForUser(ctx context.Context, arg GetProjectForUserPa
 	return i, err
 }
 
+const getThread = `-- name: GetThread :one
+select c.id, c.project_id, c.parent_message_id, c.title, c.created_at,
+       pm.conversation_id as parent_conversation_id,
+       coalesce(u.name, a.name, '') as creator_name,
+       case when pm.deleted_at is null then coalesce(pu.name, pa.name, '')
+            else 'Deleted' end as parent_author_name,
+       case when pm.deleted_at is null then left(pm.body, 160)
+            else 'Original message was deleted' end as parent_preview,
+       (select count(*)::int from messages tm
+         where tm.conversation_id = c.id and tm.deleted_at is null) as reply_count
+from conversations c
+join messages pm on pm.id = c.parent_message_id
+left join users u on u.id = c.created_by_user
+left join agents a on a.id = c.created_by_agent
+left join users pu on pu.id = pm.author_user_id
+left join agents pa on pa.id = pm.author_agent_id
+where c.id = $1
+`
+
+type GetThreadRow struct {
+	ID                   pgtype.UUID        `json:"id"`
+	ProjectID            pgtype.UUID        `json:"project_id"`
+	ParentMessageID      pgtype.UUID        `json:"parent_message_id"`
+	Title                pgtype.Text        `json:"title"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	ParentConversationID pgtype.UUID        `json:"parent_conversation_id"`
+	CreatorName          string             `json:"creator_name"`
+	ParentAuthorName     string             `json:"parent_author_name"`
+	ParentPreview        string             `json:"parent_preview"`
+	ReplyCount           int32              `json:"reply_count"`
+}
+
+func (q *Queries) GetThread(ctx context.Context, id pgtype.UUID) (GetThreadRow, error) {
+	row := q.db.QueryRow(ctx, getThread, id)
+	var i GetThreadRow
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ParentMessageID,
+		&i.Title,
+		&i.CreatedAt,
+		&i.ParentConversationID,
+		&i.CreatorName,
+		&i.ParentAuthorName,
+		&i.ParentPreview,
+		&i.ReplyCount,
+	)
+	return i, err
+}
+
+const getThreadByParentMessage = `-- name: GetThreadByParentMessage :one
+select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent
+from conversations
+where parent_message_id = $1 and kind = 'thread'
+`
+
+func (q *Queries) GetThreadByParentMessage(ctx context.Context, parentMessageID pgtype.UUID) (Conversation, error) {
+	row := q.db.QueryRow(ctx, getThreadByParentMessage, parentMessageID)
+	var i Conversation
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Kind,
+		&i.IssueID,
+		&i.CreatedAt,
+		&i.BriefID,
+		&i.ParentMessageID,
+		&i.Title,
+		&i.CreatedByUser,
+		&i.CreatedByAgent,
+	)
+	return i, err
+}
+
 const listMessages = `-- name: ListMessages :many
 select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m.parent_id,
        m.author_user_id, m.author_agent_id,
@@ -306,13 +497,17 @@ select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
        coalesce(pu.name, pa.name, '') as parent_author_name,
        pm.body as parent_body,
-       (pm.id is not null and pm.deleted_at is not null) as parent_deleted
+       (pm.id is not null and pm.deleted_at is not null) as parent_deleted,
+       t.id as thread_id, t.title as thread_title,
+       (select count(*)::int from messages tm
+         where tm.conversation_id = t.id and tm.deleted_at is null) as thread_reply_count
 from messages m
 left join users u on u.id = m.author_user_id
 left join agents a on a.id = m.author_agent_id
 left join messages pm on pm.id = m.parent_id
 left join users pu on pu.id = pm.author_user_id
 left join agents pa on pa.id = pm.author_agent_id
+left join conversations t on t.parent_message_id = m.id and t.kind = 'thread'
 where m.conversation_id = $1
   and m.deleted_at is null
   and ($2::uuid is null or
@@ -342,6 +537,9 @@ type ListMessagesRow struct {
 	ParentAuthorName string             `json:"parent_author_name"`
 	ParentBody       pgtype.Text        `json:"parent_body"`
 	ParentDeleted    pgtype.Bool        `json:"parent_deleted"`
+	ThreadID         pgtype.UUID        `json:"thread_id"`
+	ThreadTitle      pgtype.Text        `json:"thread_title"`
+	ThreadReplyCount int32              `json:"thread_reply_count"`
 }
 
 // newest-first page; $2 is an optional "older than message id" cursor
@@ -369,6 +567,77 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]L
 			&i.ParentAuthorName,
 			&i.ParentBody,
 			&i.ParentDeleted,
+			&i.ThreadID,
+			&i.ThreadTitle,
+			&i.ThreadReplyCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProjectThreads = `-- name: ListProjectThreads :many
+select c.id, c.parent_message_id, c.title, c.created_at,
+       pm.conversation_id as parent_conversation_id,
+       coalesce(u.name, a.name, '') as creator_name,
+       case when pm.deleted_at is null then coalesce(pu.name, pa.name, '')
+            else 'Deleted' end as parent_author_name,
+       case when pm.deleted_at is null then left(pm.body, 160)
+            else 'Original message was deleted' end as parent_preview,
+       (select count(*)::int from messages tm
+         where tm.conversation_id = c.id and tm.deleted_at is null) as reply_count,
+       (select max(tm.created_at)::timestamptz from messages tm
+         where tm.conversation_id = c.id and tm.deleted_at is null) as last_reply_at
+from conversations c
+join messages pm on pm.id = c.parent_message_id
+left join users u on u.id = c.created_by_user
+left join agents a on a.id = c.created_by_agent
+left join users pu on pu.id = pm.author_user_id
+left join agents pa on pa.id = pm.author_agent_id
+where c.project_id = $1 and c.kind = 'thread'
+order by last_reply_at desc nulls last, c.created_at desc
+limit 100
+`
+
+type ListProjectThreadsRow struct {
+	ID                   pgtype.UUID        `json:"id"`
+	ParentMessageID      pgtype.UUID        `json:"parent_message_id"`
+	Title                pgtype.Text        `json:"title"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	ParentConversationID pgtype.UUID        `json:"parent_conversation_id"`
+	CreatorName          string             `json:"creator_name"`
+	ParentAuthorName     string             `json:"parent_author_name"`
+	ParentPreview        string             `json:"parent_preview"`
+	ReplyCount           int32              `json:"reply_count"`
+	LastReplyAt          pgtype.Timestamptz `json:"last_reply_at"`
+}
+
+// thread index for a project, most recently active first
+func (q *Queries) ListProjectThreads(ctx context.Context, projectID pgtype.UUID) ([]ListProjectThreadsRow, error) {
+	rows, err := q.db.Query(ctx, listProjectThreads, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListProjectThreadsRow{}
+	for rows.Next() {
+		var i ListProjectThreadsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ParentMessageID,
+			&i.Title,
+			&i.CreatedAt,
+			&i.ParentConversationID,
+			&i.CreatorName,
+			&i.ParentAuthorName,
+			&i.ParentPreview,
+			&i.ReplyCount,
+			&i.LastReplyAt,
 		); err != nil {
 			return nil, err
 		}

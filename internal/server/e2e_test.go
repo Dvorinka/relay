@@ -699,3 +699,220 @@ func TestChatSemantics(t *testing.T) {
 		t.Fatalf("agent deleted another author's message: %v", env)
 	}
 }
+
+// Threads: a message-rooted side conversation. Create is idempotent, titles
+// default to the parent excerpt, nesting is refused, reply counts ride the
+// parent message's thread chip, and thread messages use the normal
+// conversation endpoints.
+func TestThreads(t *testing.T) {
+	dsn := os.Getenv("RELAY_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("RELAY_TEST_DATABASE_URL unset")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	goose.SetBaseFS(relaydb.MigrationsFS)
+	if err := goose.SetDialect("postgres"); err != nil {
+		t.Fatal(err)
+	}
+	if err := goose.UpContext(ctx, stdlib.OpenDBFromPool(pool), "migrations"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "delete from rate_limits"); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Config{
+		DatabaseURL:     dsn,
+		AuthSecret:      "test-secret-test-secret-test-secret",
+		InsecureDev:     true,
+		SessionTTLHours: 1,
+	}
+	srv := httptest.NewServer(New(cfg, zap.NewNop(), pool, "test"))
+	defer srv.Close()
+	c := &e2eClient{t: t, base: srv.URL}
+
+	code, reg := c.call("POST", "/api/auth/register",
+		fmt.Sprintf(`{"email":"thr-%d@relay.dev","password":"thrpass12345","name":"Threader"}`,
+			time.Now().UnixNano()))
+	if code != 201 && code != 200 {
+		t.Fatalf("register: %d %v", code, reg)
+	}
+	code, ws := c.call("POST", "/api/workspaces", `{"name":"Thread WS"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("workspace: %d %v", code, ws)
+	}
+	wsID := ws["id"].(string)
+	code, proj := c.call("POST", "/api/projects",
+		fmt.Sprintf(`{"workspace_id":%q,"key":"THR","name":"Thread Lab"}`, wsID))
+	if code != 201 && code != 200 {
+		t.Fatalf("project: %d %v", code, proj)
+	}
+	projID := proj["id"].(string)
+
+	code, conv := c.call("GET", "/api/projects/"+projID+"/conversation", "")
+	if code != 200 {
+		t.Fatalf("conversation: %d %v", code, conv)
+	}
+	convID := conv["id"].(string)
+
+	code, m1 := c.call("POST", "/api/conversations/"+convID+"/messages",
+		`{"body":"parent message for the thread"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("post: %d %v", code, m1)
+	}
+	parentID := m1["id"].(string)
+
+	// create with an explicit title
+	code, tr := c.call("POST", "/api/messages/"+parentID+"/thread",
+		`{"title":"Side discussion"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("create thread: %d %v", code, tr)
+	}
+	thread := tr["thread"].(map[string]any)
+	threadID := thread["id"].(string)
+	if thread["title"] != "Side discussion" {
+		t.Fatalf("title: %v", thread["title"])
+	}
+	if thread["parent_message_id"] != parentID {
+		t.Fatalf("parent_message_id: %v", thread["parent_message_id"])
+	}
+	if thread["parent_conversation"] != convID {
+		t.Fatalf("parent_conversation: %v", thread["parent_conversation"])
+	}
+	if thread["reply_count"].(float64) != 0 {
+		t.Fatalf("fresh thread should have 0 replies: %v", thread)
+	}
+	pv, _ := thread["parent"].(map[string]any)
+	if pv["author"] != "Threader" || pv["preview"] != "parent message for the thread" {
+		t.Fatalf("parent preview: %v", pv)
+	}
+
+	// same message again returns the existing thread, not a new one
+	code, tr2 := c.call("POST", "/api/messages/"+parentID+"/thread",
+		`{"title":"Ignored"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("re-create: %d %v", code, tr2)
+	}
+	if tr2["thread"].(map[string]any)["id"] != threadID {
+		t.Fatal("duplicate create returned a different thread")
+	}
+
+	// omitted title falls back to the parent excerpt
+	code, m2 := c.call("POST", "/api/conversations/"+convID+"/messages",
+		`{"body":"untitled thread parent here"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("post m2: %d %v", code, m2)
+	}
+	m2ID := m2["id"].(string)
+	code, tr3 := c.call("POST", "/api/messages/"+m2ID+"/thread", "")
+	if code != 201 && code != 200 {
+		t.Fatalf("create untitled thread: %d %v", code, tr3)
+	}
+	if tr3["thread"].(map[string]any)["title"] != "untitled thread parent here" {
+		t.Fatalf("default title: %v", tr3["thread"])
+	}
+
+	// a reply inside the thread bumps the count and uses the normal endpoints
+	code, tm := c.call("POST", "/api/conversations/"+threadID+"/messages",
+		`{"body":"first thread reply"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("thread reply: %d %v", code, tm)
+	}
+	threadReplyID := tm["id"].(string)
+
+	code, lst := c.call("GET", "/api/conversations/"+threadID+"/messages", "")
+	if code != 200 {
+		t.Fatalf("thread list: %d", code)
+	}
+	if len(lst["messages"].([]any)) != 1 {
+		t.Fatalf("thread should have exactly 1 message: %v", lst["messages"])
+	}
+
+	// the parent's chip reports the live reply count
+	code, plst := c.call("GET", "/api/conversations/"+convID+"/messages", "")
+	if code != 200 {
+		t.Fatalf("parent list: %d", code)
+	}
+	var chip map[string]any
+	for _, mm := range plst["messages"].([]any) {
+		m := mm.(map[string]any)
+		if m["id"] == parentID {
+			chip, _ = m["thread"].(map[string]any)
+		}
+	}
+	if chip == nil {
+		t.Fatal("parent message has no thread chip")
+	}
+	if chip["id"] != threadID || chip["reply_count"].(float64) != 1 {
+		t.Fatalf("thread chip: %v", chip)
+	}
+
+	// project thread index lists it most-recent-activity first
+	code, idx := c.call("GET", "/api/projects/"+projID+"/threads", "")
+	if code != 200 {
+		t.Fatalf("threads index: %d", code)
+	}
+	threads := idx["threads"].([]any)
+	if len(threads) < 2 {
+		t.Fatalf("expected both threads listed: %v", threads)
+	}
+	first := threads[0].(map[string]any)
+	if first["id"] != threadID {
+		t.Fatalf("most recently active thread should sort first: %v", threads)
+	}
+	if first["last_reply_at"] == nil {
+		t.Fatal("last_reply_at missing on active thread")
+	}
+
+	// threads cannot nest
+	code, nested := c.call("POST", "/api/messages/"+threadReplyID+"/thread", "")
+	if code != 400 {
+		t.Fatalf("nested thread: %d %v", code, nested)
+	}
+
+	// deleting a thread reply drops the chip count back to zero
+	code, del := c.call("DELETE", "/api/messages/"+threadReplyID, "")
+	if code != 204 {
+		t.Fatalf("delete thread reply: %d %v", code, del)
+	}
+	code, plst = c.call("GET", "/api/conversations/"+convID+"/messages", "")
+	if code != 200 {
+		t.Fatalf("parent list after delete: %d", code)
+	}
+	for _, mm := range plst["messages"].([]any) {
+		m := mm.(map[string]any)
+		if m["id"] != parentID {
+			continue
+		}
+		chip, _ = m["thread"].(map[string]any)
+		if chip["reply_count"].(float64) != 0 {
+			t.Fatalf("reply count after delete: %v", chip)
+		}
+	}
+
+	// deleting the parent message turns the thread card's parent into a tombstone
+	code, delP := c.call("DELETE", "/api/messages/"+parentID, "")
+	if code != 204 {
+		t.Fatalf("delete parent: %d %v", code, delP)
+	}
+	code, tl := c.call("GET", "/api/projects/"+projID+"/threads", "")
+	if code != 200 {
+		t.Fatalf("threads index: %d", code)
+	}
+	for _, tt := range tl["threads"].([]any) {
+		thr := tt.(map[string]any)
+		if thr["id"] != threadID {
+			continue
+		}
+		pv, _ = thr["parent"].(map[string]any)
+		if pv["author"] != "Deleted" || pv["preview"] != "Original message was deleted" {
+			t.Fatalf("deleted parent should tombstone: %v", pv)
+		}
+	}
+}

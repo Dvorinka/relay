@@ -5,6 +5,8 @@ import {
   type Conversation as ApiConversation,
   type Message,
   type Reaction,
+  type Thread,
+  type ThreadSummary,
 } from "@relay/api-client";
 import { useNavigate } from "@solidjs/router";
 import {
@@ -24,6 +26,7 @@ import {
   PaperclipIcon,
   PencilIcon,
   ReplyIcon,
+  ThreadIcon,
   TrashIcon,
   XIcon,
 } from "../../components/icons";
@@ -372,6 +375,89 @@ function DeleteMessageDialog(props: {
   );
 }
 
+function CreateThreadDialog(props: {
+  message: Message;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onCreated: (t: Thread) => void;
+}) {
+  const [title, setTitle] = createSignal("");
+  const [pending, setPending] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+
+  createEffect(() => {
+    if (props.open) {
+      setTitle("");
+      setError(null);
+    }
+  });
+
+  async function submit(e: SubmitEvent) {
+    e.preventDefault();
+    if (pending()) return;
+    setPending(true);
+    setError(null);
+    try {
+      const { thread } = await api.createThread(
+        props.message.id,
+        title().trim() || undefined,
+      );
+      props.onOpenChange(false);
+      props.onCreated(thread);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create thread");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <Dialog.Root
+      open={props.open}
+      onOpenChange={(d) => props.onOpenChange(d.open)}
+    >
+      <Portal>
+        <Dialog.Backdrop class="fixed inset-0 z-40 bg-black/40" />
+        <Dialog.Positioner class="fixed inset-0 z-40 flex items-start justify-center p-4 pt-[15vh]">
+          <Dialog.Content class="w-full max-w-md rounded-xl border border-border bg-surface p-4 shadow-lg outline-none">
+            <Dialog.Title class="text-[14px] font-semibold">
+              Create thread
+            </Dialog.Title>
+            <Dialog.Description class="mt-1 text-[13px] text-muted">
+              A dedicated conversation under this message, so side topics don't
+              drown the channel.
+            </Dialog.Description>
+            <form onSubmit={submit} class="mt-3 flex flex-col gap-3">
+              <input
+                ref={(el) => requestAnimationFrame(() => el.focus())}
+                type="text"
+                value={title()}
+                onInput={(e) => setTitle(e.currentTarget.value)}
+                placeholder="Thread title (optional)"
+                aria-label="Thread title"
+                maxlength={120}
+                class={inputClass}
+              />
+              <FormError message={error()} />
+              <div class="flex justify-end gap-2">
+                <Dialog.CloseTrigger
+                  type="button"
+                  class="inline-flex h-8 items-center justify-center rounded-md px-3 text-[13px] text-muted transition-colors hover:bg-hover hover:text-fg"
+                >
+                  Cancel
+                </Dialog.CloseTrigger>
+                <SubmitButton pending={pending()}>
+                  {pending() ? "Creating..." : "Create thread"}
+                </SubmitButton>
+              </div>
+            </form>
+          </Dialog.Content>
+        </Dialog.Positioner>
+      </Portal>
+    </Dialog.Root>
+  );
+}
+
 function MessageRow(props: {
   projectId: string;
   message: Message;
@@ -380,12 +466,14 @@ function MessageRow(props: {
   onReply: (m: Message) => void;
   onChanged: (m: Message) => void;
   onDeleted: (id: string) => void;
+  onOpenThread?: (t: ThreadSummary) => void;
 }) {
   const m = () => props.message;
   const { chatStyle } = useChatStyle();
   const bubbles = () => chatStyle() === "bubbles";
   const [convertOpen, setConvertOpen] = createSignal(false);
   const [deleteOpen, setDeleteOpen] = createSignal(false);
+  const [threadOpen, setThreadOpen] = createSignal(false);
   const [editing, setEditing] = createSignal(false);
   const [editDraft, setEditDraft] = createSignal("");
   const [editError, setEditError] = createSignal<string | null>(null);
@@ -588,6 +676,23 @@ function MessageRow(props: {
           reactions={m().reactions}
           onChange={(reactions) => props.onChanged({ ...m(), reactions })}
         />
+        <Show when={m().thread} keyed>
+          {(t) => (
+            <button
+              type="button"
+              onClick={() => props.onOpenThread?.(t)}
+              class="mt-1 flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[12px] font-medium text-accent-ink transition-colors hover:bg-hover"
+            >
+              <ThreadIcon class="h-3.5 w-3.5" />
+              <span class="truncate">
+                {t.title || "Thread"}
+              </span>
+              <span class="text-faint">
+                · {t.reply_count} {t.reply_count === 1 ? "reply" : "replies"}
+              </span>
+            </button>
+          )}
+        </Show>
         <Show when={bubbles()}>
           <div class="mt-0.5 flex items-center justify-end gap-1.5 text-[10px] leading-3 text-faint">
             <Show when={m().edited_at}>
@@ -627,6 +732,17 @@ function MessageRow(props: {
         >
           <ReplyIcon class="h-4 w-4" />
         </button>
+        <Show when={props.onOpenThread && !m().thread}>
+          <button
+            type="button"
+            title="Create thread"
+            aria-label="Create thread"
+            onClick={() => setThreadOpen(true)}
+            class={toolBtn}
+          >
+            <ThreadIcon class="h-4 w-4" />
+          </button>
+        </Show>
         <Show
           when={canEdit()}
           fallback={
@@ -682,6 +798,12 @@ function MessageRow(props: {
         open={deleteOpen()}
         onOpenChange={setDeleteOpen}
         onConfirm={doDelete}
+      />
+      <CreateThreadDialog
+        message={m()}
+        open={threadOpen()}
+        onOpenChange={setThreadOpen}
+        onCreated={(t) => props.onOpenThread?.(t)}
       />
     </div>
   );
@@ -754,6 +876,7 @@ function PendingChip(props: {
 function ConversationThread(props: {
   conversationId: string;
   projectId: string;
+  onOpenThread?: (t: ThreadSummary) => void;
 }) {
   const session = useSession();
   const [messages, setMessages] = createSignal<Message[]>([]);
@@ -846,6 +969,21 @@ function ConversationThread(props: {
       setMessages((cur) =>
         cur.map((x) => (x.id === mid ? { ...x, reactions } : x)),
       );
+    } else if (e.type === "thread.created" || e.type === "thread.updated") {
+      // Events are keyed to the parent conversation — patch the chip on the
+      // parent message live (create shows it, replies bump the count).
+      const mid = data.parent_message_id as string;
+      const t = data.thread as Thread | undefined;
+      if (t) {
+        const chip: ThreadSummary = {
+          id: t.id,
+          title: t.title,
+          reply_count: t.reply_count,
+        };
+        setMessages((cur) =>
+          cur.map((x) => (x.id === mid ? { ...x, thread: chip } : x)),
+        );
+      }
     }
   });
   onCleanup(unsub);
@@ -1320,6 +1458,7 @@ function ConversationThread(props: {
                     onReply={startReply}
                     onChanged={replaceMessage}
                     onDeleted={removeMessage}
+                    onOpenThread={props.onOpenThread}
                   />
                 </>
               );
@@ -1628,10 +1767,48 @@ function FilePreview(props: {
   );
 }
 
+// ThreadPanel: a message-rooted conversation in a side rail. On small
+// screens it becomes a full overlay; the rail appears beside the chat on sm+.
+function ThreadPanel(props: {
+  projectId: string;
+  thread: ThreadSummary;
+  onClose: () => void;
+}) {
+  return (
+    <div class="fixed inset-0 z-40 flex flex-col bg-surface sm:static sm:z-auto sm:w-80 sm:shrink-0 sm:border-l sm:border-border lg:w-96">
+      <div class="flex items-center gap-2 border-b border-border px-3 py-2.5">
+        <ThreadIcon class="h-4 w-4 shrink-0 text-faint" />
+        <div class="min-w-0 flex-1">
+          <p class="truncate text-[13px] font-semibold">
+            {props.thread.title || "Thread"}
+          </p>
+          <p class="text-[10.5px] text-faint">
+            {props.thread.reply_count}{" "}
+            {props.thread.reply_count === 1 ? "reply" : "replies"}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={props.onClose}
+          aria-label="Close thread"
+          class="rounded p-1 text-muted transition-colors hover:bg-hover hover:text-fg"
+        >
+          <XIcon class="h-4 w-4" />
+        </button>
+      </div>
+      <ConversationThread
+        conversationId={props.thread.id}
+        projectId={props.projectId}
+      />
+    </div>
+  );
+}
+
 /**
  * Message list + composer for a conversation. Pass `conversation` when the
  * caller already resolved it (e.g. an issue thread); otherwise the project's
- * own conversation is fetched for `projectId`.
+ * own conversation is fetched for `projectId`. Messages can spawn threads,
+ * which open in a side panel.
  */
 export function Conversation(props: {
   projectId: string;
@@ -1643,6 +1820,9 @@ export function Conversation(props: {
       props.conversation
         ? Promise.resolve(props.conversation)
         : api.projectConversation(props.projectId),
+  );
+  const [activeThread, setActiveThread] = createSignal<ThreadSummary | null>(
+    null,
   );
   return (
     <Show
@@ -1657,10 +1837,22 @@ export function Conversation(props: {
       }
     >
       {(c) => (
-        <ConversationThread
-          conversationId={c.id}
-          projectId={props.projectId}
-        />
+        <div class="flex min-h-0 flex-1">
+          <ConversationThread
+            conversationId={c.id}
+            projectId={props.projectId}
+            onOpenThread={setActiveThread}
+          />
+          <Show when={activeThread()} keyed>
+            {(t) => (
+              <ThreadPanel
+                projectId={props.projectId}
+                thread={t}
+                onClose={() => setActiveThread(null)}
+              />
+            )}
+          </Show>
+        </div>
       )}
     </Show>
   );

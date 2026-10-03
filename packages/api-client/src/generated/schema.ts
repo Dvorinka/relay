@@ -615,6 +615,43 @@ export interface paths {
         patch: operations["editMessage"];
         trace?: never;
     };
+    "/api/messages/{messageId}/thread": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create (or fetch) the thread rooted at this message
+         * @description One thread per message. Title optional - defaults to an excerpt of the parent body. Threads cannot nest; calls on a message inside a thread return 400.
+         */
+        post: operations["createThread"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/threads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List a project's threads, most recently active first */
+        get: operations["listThreads"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/messages/{messageId}/reactions": {
         parameters: {
             query?: never;
@@ -1649,7 +1686,7 @@ export interface components {
             /** Format: uuid */
             project_id: string;
             /** @enum {string} */
-            kind: "project" | "issue" | "brief";
+            kind: "project" | "issue" | "brief" | "thread";
             /** Format: uuid */
             issue_id?: string | null;
             /** Format: uuid */
@@ -1712,6 +1749,40 @@ export interface components {
             edited_at?: string | null;
             /** @description True once at least one agent has read the message; edits are then rejected with 409 */
             agent_read: boolean;
+            /** @description Thread rooted at this message, when one exists */
+            thread?: components["schemas"]["ThreadSummary"] | null;
+        };
+        /** @description Thread pointer embedded on a message */
+        ThreadSummary: {
+            /**
+             * Format: uuid
+             * @description the thread's conversation id
+             */
+            id: string;
+            title: string | null;
+            reply_count: number;
+        };
+        Thread: {
+            /**
+             * Format: uuid
+             * @description the thread's conversation id
+             */
+            id: string;
+            /** Format: uuid */
+            parent_message_id: string;
+            /** Format: uuid */
+            parent_conversation: string;
+            title: string | null;
+            reply_count: number;
+            created_by?: string;
+            parent?: {
+                author?: string;
+                preview?: string;
+            };
+            /** Format: date-time */
+            last_reply_at?: string | null;
+            /** Format: date-time */
+            created_at: string;
         };
         MentionRef: {
             /**
@@ -3333,6 +3404,75 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+        };
+    };
+    createThread: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                messageId: components["parameters"]["MessageId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    title?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Thread already existed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        thread: components["schemas"]["Thread"];
+                    };
+                };
+            };
+            /** @description Thread created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        thread: components["schemas"]["Thread"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listThreads: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Thread index */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        threads: components["schemas"]["Thread"][];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
         };
     };
     toggleReaction: {

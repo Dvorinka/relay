@@ -22,6 +22,73 @@ select *
 from conversations
 where id = $1;
 
+-- name: GetMessageConversation :one
+-- conversation a message lives in - used to forbid nested threads
+select conversation_id
+from messages
+where id = $1;
+
+-- name: CreateThread :one
+-- one thread per message; the unique index makes this race-safe
+insert into conversations (project_id, kind, parent_message_id, title, created_by_user)
+values (sqlc.arg(project_id), 'thread', sqlc.arg(parent_message_id),
+        sqlc.narg(title), sqlc.arg(created_by_user))
+on conflict (parent_message_id) where kind = 'thread' do nothing
+returning *;
+
+-- name: CreateThreadAgent :one
+insert into conversations (project_id, kind, parent_message_id, title, created_by_agent)
+values (sqlc.arg(project_id), 'thread', sqlc.arg(parent_message_id),
+        sqlc.narg(title), sqlc.arg(created_by_agent))
+on conflict (parent_message_id) where kind = 'thread' do nothing
+returning *;
+
+-- name: GetThreadByParentMessage :one
+select *
+from conversations
+where parent_message_id = $1 and kind = 'thread';
+
+-- name: GetThread :one
+select c.id, c.project_id, c.parent_message_id, c.title, c.created_at,
+       pm.conversation_id as parent_conversation_id,
+       coalesce(u.name, a.name, '') as creator_name,
+       case when pm.deleted_at is null then coalesce(pu.name, pa.name, '')
+            else 'Deleted' end as parent_author_name,
+       case when pm.deleted_at is null then left(pm.body, 160)
+            else 'Original message was deleted' end as parent_preview,
+       (select count(*)::int from messages tm
+         where tm.conversation_id = c.id and tm.deleted_at is null) as reply_count
+from conversations c
+join messages pm on pm.id = c.parent_message_id
+left join users u on u.id = c.created_by_user
+left join agents a on a.id = c.created_by_agent
+left join users pu on pu.id = pm.author_user_id
+left join agents pa on pa.id = pm.author_agent_id
+where c.id = $1;
+
+-- name: ListProjectThreads :many
+-- thread index for a project, most recently active first
+select c.id, c.parent_message_id, c.title, c.created_at,
+       pm.conversation_id as parent_conversation_id,
+       coalesce(u.name, a.name, '') as creator_name,
+       case when pm.deleted_at is null then coalesce(pu.name, pa.name, '')
+            else 'Deleted' end as parent_author_name,
+       case when pm.deleted_at is null then left(pm.body, 160)
+            else 'Original message was deleted' end as parent_preview,
+       (select count(*)::int from messages tm
+         where tm.conversation_id = c.id and tm.deleted_at is null) as reply_count,
+       (select max(tm.created_at)::timestamptz from messages tm
+         where tm.conversation_id = c.id and tm.deleted_at is null) as last_reply_at
+from conversations c
+join messages pm on pm.id = c.parent_message_id
+left join users u on u.id = c.created_by_user
+left join agents a on a.id = c.created_by_agent
+left join users pu on pu.id = pm.author_user_id
+left join agents pa on pa.id = pm.author_agent_id
+where c.project_id = $1 and c.kind = 'thread'
+order by last_reply_at desc nulls last, c.created_at desc
+limit 100;
+
 -- name: GetProjectForUser :one
 -- project row only when the caller is a member of its workspace
 select p.id, p.workspace_id, p.key, p.name, p.description, p.icon, p.color,
@@ -38,13 +105,17 @@ select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
        coalesce(pu.name, pa.name, '') as parent_author_name,
        pm.body as parent_body,
-       (pm.id is not null and pm.deleted_at is not null) as parent_deleted
+       (pm.id is not null and pm.deleted_at is not null) as parent_deleted,
+       t.id as thread_id, t.title as thread_title,
+       (select count(*)::int from messages tm
+         where tm.conversation_id = t.id and tm.deleted_at is null) as thread_reply_count
 from messages m
 left join users u on u.id = m.author_user_id
 left join agents a on a.id = m.author_agent_id
 left join messages pm on pm.id = m.parent_id
 left join users pu on pu.id = pm.author_user_id
 left join agents pa on pa.id = pm.author_agent_id
+left join conversations t on t.parent_message_id = m.id and t.kind = 'thread'
 where m.conversation_id = $1
   and m.deleted_at is null
   and (sqlc.narg(before)::uuid is null or
@@ -72,13 +143,17 @@ select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
        coalesce(pu.name, pa.name, '') as parent_author_name,
        pm.body as parent_body,
-       (pm.id is not null and pm.deleted_at is not null) as parent_deleted
+       (pm.id is not null and pm.deleted_at is not null) as parent_deleted,
+       t.id as thread_id, t.title as thread_title,
+       (select count(*)::int from messages tm
+         where tm.conversation_id = t.id and tm.deleted_at is null) as thread_reply_count
 from messages m
 left join users u on u.id = m.author_user_id
 left join agents a on a.id = m.author_agent_id
 left join messages pm on pm.id = m.parent_id
 left join users pu on pu.id = pm.author_user_id
 left join agents pa on pa.id = pm.author_agent_id
+left join conversations t on t.parent_message_id = m.id and t.kind = 'thread'
 where m.id = $1;
 
 -- name: GetMessageForUser :one

@@ -35,6 +35,8 @@ export interface Mentionables {
   repos: string[];
 }
 export type Reaction = components["schemas"]["Reaction"];
+export type Thread = components["schemas"]["Thread"];
+export type ThreadSummary = components["schemas"]["ThreadSummary"];
 export type Attachment = components["schemas"]["Attachment"];
 export type Issue = components["schemas"]["Issue"];
 export type IssueStatus = components["schemas"]["IssueStatus"];
@@ -316,6 +318,12 @@ export function createClient(baseUrl: string, token?: string) {
       }),
     markMessageRead: (messageId: string) =>
       post<void>(`/api/messages/${messageId}/read`),
+    createThread: (messageId: string, title?: string) =>
+      post<{ thread: Thread }>(`/api/messages/${messageId}/thread`, {
+        ...(title ? { title } : {}),
+      }),
+    listThreads: (projectId: string) =>
+      request<{ threads: Thread[] }>(`/api/projects/${projectId}/threads`),
 
     // Issues
     listIssues: (projectId: string, filters?: IssueFilters) => {

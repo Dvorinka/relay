@@ -994,6 +994,64 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /api/messages/{messageId}/thread:
+    post:
+      operationId: createThread
+      summary: Create (or fetch) the thread rooted at this message
+      description: "One thread per message. Title optional - defaults to an excerpt of the parent body. Threads cannot nest; calls on a message inside a thread return 400."
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/MessageId" } ]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string, maxLength: 120 }
+      responses:
+        "200":
+          description: Thread already existed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [thread]
+                properties:
+                  thread: { $ref: "#/components/schemas/Thread" }
+        "201":
+          description: Thread created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [thread]
+                properties:
+                  thread: { $ref: "#/components/schemas/Thread" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/projects/{projectId}/threads:
+    get:
+      operationId: listThreads
+      summary: List a project's threads, most recently active first
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      responses:
+        "200":
+          description: Thread index
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [threads]
+                properties:
+                  threads:
+                    type: array
+                    items: { $ref: "#/components/schemas/Thread" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /api/messages/{messageId}/reactions:
     put:
       operationId: toggleReaction
@@ -2477,7 +2535,7 @@ components:
       properties:
         id: { type: string, format: uuid }
         project_id: { type: string, format: uuid }
-        kind: { type: string, enum: [project, issue, brief] }
+        kind: { type: string, enum: [project, issue, brief, thread] }
         issue_id: { type: ["string", "null"], format: uuid }
         brief_id: { type: ["string", "null"], format: uuid }
         created_at: { type: string, format: date-time }
@@ -2550,6 +2608,38 @@ components:
         agent_read:
           type: boolean
           description: "True once at least one agent has read the message; edits are then rejected with 409"
+        thread:
+          anyOf:
+            - $ref: "#/components/schemas/ThreadSummary"
+            - type: "null"
+          description: "Thread rooted at this message, when one exists"
+
+    ThreadSummary:
+      type: object
+      required: [id, title, reply_count]
+      description: "Thread pointer embedded on a message"
+      properties:
+        id: { type: string, format: uuid, description: "the thread's conversation id" }
+        title: { type: ["string", "null"], maxLength: 120 }
+        reply_count: { type: integer }
+
+    Thread:
+      type: object
+      required: [id, parent_message_id, parent_conversation, title, reply_count, created_at]
+      properties:
+        id: { type: string, format: uuid, description: "the thread's conversation id" }
+        parent_message_id: { type: string, format: uuid }
+        parent_conversation: { type: string, format: uuid }
+        title: { type: ["string", "null"], maxLength: 120 }
+        reply_count: { type: integer }
+        created_by: { type: string }
+        parent:
+          type: object
+          properties:
+            author: { type: string }
+            preview: { type: string }
+        last_reply_at: { type: ["string", "null"], format: date-time }
+        created_at: { type: string, format: date-time }
 
     MentionRef:
       type: object

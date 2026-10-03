@@ -60,13 +60,17 @@ select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
        coalesce(pu.name, pa.name, '') as parent_author_name,
        pm.body as parent_body,
-       (pm.id is not null and pm.deleted_at is not null) as parent_deleted
+       (pm.id is not null and pm.deleted_at is not null) as parent_deleted,
+       t.id as thread_id, t.title as thread_title,
+       (select count(*)::int from messages tm
+         where tm.conversation_id = t.id and tm.deleted_at is null) as thread_reply_count
 from messages m
 left join users u on u.id = m.author_user_id
 left join agents a on a.id = m.author_agent_id
 left join messages pm on pm.id = m.parent_id
 left join users pu on pu.id = pm.author_user_id
 left join agents pa on pa.id = pm.author_agent_id
+left join conversations t on t.parent_message_id = m.id and t.kind = 'thread'
 where m.id = sqlc.arg(id);
 
 -- name: AddReactionAgent :exec

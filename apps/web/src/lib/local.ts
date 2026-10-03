@@ -6,6 +6,7 @@
 // in `blobs` keyed by attachment id — hundreds of MB of quota instead of
 // localStorage's ~5MB. A pre-IDB `relay.localdb.v1` document (data-URL
 // attachments included) is imported once and removed.
+import { emitLocal } from "./events";
 import {
   dataUrlToBlob,
   localStore,
@@ -28,6 +29,7 @@ import {
   type Project,
   type Reaction,
   type SearchResults,
+  type Thread,
   type Todo,
   type User,
   type WorkspaceMember,
@@ -40,11 +42,20 @@ interface LocalAttachment extends Attachment {
   url: string;
 }
 
+interface LocalThread {
+  id: string; // == conversation id
+  parent_message_id: string;
+  parent_conversation: string;
+  title: string | null;
+  created_at: string;
+}
+
 interface LocalDB {
   user: User;
   workspace: WorkspaceWithRole;
   projects: Project[];
-  conversations: Conversation[]; // project + issue conversations
+  conversations: Conversation[]; // project + issue + thread conversations
+  threads: LocalThread[]; // thread metadata keyed to conversations
   messages: Message[]; // all conversations, one list
   issues: Issue[];
   todos: Todo[];
@@ -80,6 +91,7 @@ function emptyDB(): LocalDB {
     },
     projects: [],
     conversations: [],
+    threads: [],
     messages: [],
     issues: [],
     todos: [],
@@ -191,7 +203,10 @@ const findMessage = (id: string) => db.messages.find((m) => m.id === id);
 const findIssue = (id: string) => db.issues.find((i) => i.id === id);
 const convOf = (projectId: string, issueId?: string) =>
   db.conversations.find(
-    (c) => c.project_id === projectId && (c.issue_id ?? null) === (issueId ?? null),
+    (c) =>
+      c.kind !== "thread" &&
+      c.project_id === projectId &&
+      (c.issue_id ?? null) === (issueId ?? null),
   );
 
 function projectConv(projectId: string, issueId?: string): Conversation {
@@ -223,6 +238,55 @@ function parentPreview(parentId?: string): Message["parent"] {
 
 function notFound(): never {
   throw new ApiClientError(404, "not found");
+}
+
+const threadOf = (messageId: string) =>
+  db.threads.find((t) => t.parent_message_id === messageId) ?? null;
+
+// Ping open views when a thread conversation gains/loses a reply so the
+// parent message's chip count stays live.
+function notifyThread(conversationId: string) {
+  const t = db.threads.find((x) => x.id === conversationId);
+  if (!t) return;
+  emitLocal({
+    type: "thread.updated",
+    project_id:
+      db.conversations.find((c) => c.id === t.parent_conversation)
+        ?.project_id ?? "",
+    data: {
+      conversation_id: t.parent_conversation,
+      parent_message_id: t.parent_message_id,
+      thread: threadOut(t),
+    },
+  });
+}
+
+const withReplyCount = (t: LocalThread | null): Message["thread"] =>
+  t
+    ? {
+        id: t.id,
+        title: t.title,
+        reply_count: db.messages.filter((m) => m.conversation_id === t.id)
+          .length,
+      }
+    : null;
+
+function threadOut(t: LocalThread): Thread {
+  const parent = findMessage(t.parent_message_id);
+  const replies = db.messages.filter((m) => m.conversation_id === t.id);
+  return {
+    id: t.id,
+    parent_message_id: t.parent_message_id,
+    parent_conversation: t.parent_conversation,
+    title: t.title,
+    reply_count: replies.length,
+    created_by: db.user.name,
+    parent: parent
+      ? { author: parent.author.name, preview: parent.body.slice(0, 160) }
+      : { author: "Deleted", preview: "Original message was deleted" },
+    last_reply_at: replies.at(-1)?.created_at ?? null,
+    created_at: t.created_at,
+  };
 }
 
 // --- the adapter surface (subset of the server client) ---
@@ -285,6 +349,61 @@ const impl = {
   },
   projectConversation: async (projectId: string) => projectConv(projectId),
 
+  createThread: async (messageId: string, title?: string) => {
+    const m = findMessage(messageId);
+    if (!m) notFound();
+    const parentConv = db.conversations.find(
+      (c) => c.id === m.conversation_id,
+    );
+    if (!parentConv) notFound();
+    if (parentConv.kind === "thread")
+      throw new ApiClientError(400, "threads cannot be nested");
+    let t = threadOf(messageId);
+    if (!t) {
+      t = {
+        id: uuid(),
+        parent_message_id: messageId,
+        parent_conversation: m.conversation_id,
+        title: title?.trim() || m.body.slice(0, 80).trim() || null,
+        created_at: now(),
+      };
+      db.threads.push(t);
+      db.conversations.push({
+        id: t.id,
+        project_id: parentConv.project_id,
+        kind: "thread",
+        issue_id: null,
+        created_at: t.created_at,
+      } as Conversation);
+      save();
+      emitLocal({
+        type: "thread.created",
+        project_id: parentConv.project_id,
+        data: {
+          conversation_id: m.conversation_id,
+          parent_message_id: messageId,
+          thread: threadOut(t),
+        },
+      });
+    }
+    return { thread: threadOut(t) };
+  },
+  listThreads: async (projectId: string) => ({
+    threads: db.threads
+      .filter(
+        (t) =>
+          db.conversations.find((c) => c.id === t.parent_conversation)
+            ?.project_id === projectId,
+      )
+      .sort(
+        (a, b) =>
+          (threadOut(b).last_reply_at ?? b.created_at).localeCompare(
+            threadOut(a).last_reply_at ?? a.created_at,
+          ),
+      )
+      .map(threadOut),
+  }),
+
   listMessages: async (
     conversationId: string,
     opts?: { limit?: number; before?: string },
@@ -299,7 +418,12 @@ const impl = {
     }
     const limit = opts?.limit ?? 50;
     const start = Math.max(0, end - limit);
-    return { messages: all.slice(start, end), has_more: start > 0 };
+    return {
+      messages: all
+        .slice(start, end)
+        .map((m) => ({ ...m, thread: withReplyCount(threadOf(m.id)) })),
+      has_more: start > 0,
+    };
   },
   postMessage: async (
     conversationId: string,
@@ -324,6 +448,7 @@ const impl = {
     };
     db.messages.push(m);
     save();
+    notifyThread(conversationId);
     return m;
   },
   editMessage: async (messageId: string, body: string): Promise<Message> => {
@@ -343,6 +468,7 @@ const impl = {
   deleteMessage: async (messageId: string): Promise<void> => {
     const idx = db.messages.findIndex((m) => m.id === messageId);
     if (idx < 0) notFound();
+    const convId = db.messages[idx]!.conversation_id;
     db.messages.splice(idx, 1);
     // replies keep a tombstone, mirroring the server's parent_deleted
     for (const other of db.messages) {
@@ -351,6 +477,7 @@ const impl = {
       }
     }
     save();
+    notifyThread(convId);
   },
   toggleReaction: async (
     messageId: string,
