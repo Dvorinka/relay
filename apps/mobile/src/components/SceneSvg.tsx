@@ -29,20 +29,45 @@ interface El {
   points?: [number, number][];
 }
 
+const num = (v: unknown): number | undefined => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+};
+
 function elements(scene: Record<string, unknown> | undefined): El[] {
   const els = scene?.elements;
   if (!Array.isArray(els)) return [];
-  // Drop degenerate shapes (tap-artifacts): zero-area box/ellipse/diamond
-  // with no text renders nothing anyway.
-  return (els as El[]).filter(
-    (e) =>
-      e.type === "text" ||
-      e.type === "line" ||
-      e.type === "arrow" ||
-      (e.width ?? 0) >= 2 ||
-      (e.height ?? 0) >= 2 ||
-      (e.points?.length ?? 0) > 1,
-  );
+  return (els as Record<string, unknown>[]).flatMap((raw) => {
+    const e: El = {
+      type: typeof raw.type === "string" ? raw.type : "rectangle",
+      x: num(raw.x) ?? 0,
+      y: num(raw.y) ?? 0,
+      width: num(raw.width) ?? 0,
+      height: num(raw.height) ?? 0,
+      text: typeof raw.text === "string" ? raw.text : undefined,
+      strokeColor: typeof raw.strokeColor === "string" ? raw.strokeColor : undefined,
+      backgroundColor:
+        typeof raw.backgroundColor === "string" ? raw.backgroundColor : undefined,
+      strokeWidth: num(raw.strokeWidth),
+      points: Array.isArray(raw.points)
+        ? raw.points.flatMap((p): [number, number][] => {
+            const px = Array.isArray(p) ? num(p[0]) : num((p as { x?: number })?.x);
+            const py = Array.isArray(p) ? num(p[1]) : num((p as { y?: number })?.y);
+            return px !== undefined && py !== undefined ? [[px, py]] : [];
+          })
+        : undefined,
+    };
+    // Drop degenerate shapes (tap-artifacts): zero-area box/ellipse/diamond
+    // with no text renders nothing anyway.
+    const degenerate =
+      e.type !== "text" &&
+      e.type !== "line" &&
+      e.type !== "arrow" &&
+      (e.width ?? 0) < 2 &&
+      (e.height ?? 0) < 2 &&
+      (e.points?.length ?? 0) < 2;
+    return degenerate ? [] : [e];
+  });
 }
 
 function bounds(els: El[]) {
