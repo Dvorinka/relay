@@ -1648,9 +1648,11 @@ export interface components {
             /** Format: uuid */
             project_id: string;
             /** @enum {string} */
-            kind: "project" | "issue";
+            kind: "project" | "issue" | "brief";
             /** Format: uuid */
             issue_id?: string | null;
+            /** Format: uuid */
+            brief_id?: string | null;
             /** Format: date-time */
             created_at: string;
         };

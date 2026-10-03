@@ -10,6 +10,7 @@ export interface SyncResult {
   messages: number;
   issues: number;
   todos: number;
+  briefs: number;
 }
 
 // att.url is a live object URL for the IDB blob — fetch resolves it.
@@ -39,7 +40,13 @@ export async function syncToServer(
   const ws = session.workspaces[0];
   if (!ws) throw new Error("account has no workspace");
 
-  const result: SyncResult = { projects: 0, messages: 0, issues: 0, todos: 0 };
+  const result: SyncResult = {
+    projects: 0,
+    messages: 0,
+    issues: 0,
+    todos: 0,
+    briefs: 0,
+  };
 
   for (const p of db.projects) {
     onStep?.(`Project ${p.name}`);
@@ -103,6 +110,7 @@ export async function syncToServer(
       result.messages++;
     }
 
+    const issueIdMap = new Map<string, string>();
     for (const i of db.issues.filter((x) => x.project_id === p.id)) {
       onStep?.(`Issue ${i.key}`);
       const ni = await remote.createIssue(created.id, {
@@ -110,6 +118,7 @@ export async function syncToServer(
         description: i.description,
         priority: i.priority,
       });
+      issueIdMap.set(i.id, ni.id);
       if (i.status !== "todo") {
         await remote.updateIssue(ni.id, { status: i.status });
       }
@@ -128,6 +137,40 @@ export async function syncToServer(
         if (match) await remote.updateTodo(match.id, { done: true });
       }
       result.todos++;
+    }
+
+    // Briefs carry their own comment conversations — replay both.
+    for (const b of db.briefs.filter((x) => x.project_id === p.id)) {
+      onStep?.(`Brief ${b.title}`);
+      const nb = await remote.createBrief(created.id, {
+        title: b.title,
+        summary: b.summary,
+        scene: b.scene,
+        ...(b.issue_id && issueIdMap.has(b.issue_id)
+          ? { issue_id: issueIdMap.get(b.issue_id)! }
+          : {}),
+      });
+      result.briefs++;
+      if (b.status !== "open") {
+        await remote.updateBrief(nb.id, { status: b.status });
+      }
+      const localConvId = b.conversation_id;
+      if (!localConvId) continue;
+      const remoteConv = await remote.briefConversation(nb.id);
+      const bMsgs = db.messages
+        .filter((m) => m.conversation_id === localConvId)
+        .sort((a, c) => a.created_at.localeCompare(c.created_at));
+      const bMsgIdMap = new Map<string, string>();
+      for (const m of bMsgs) {
+        const posted = await remote.postMessage(
+          remoteConv.id,
+          m.body,
+          undefined,
+          m.parent ? bMsgIdMap.get(m.parent.id) : undefined,
+        );
+        bMsgIdMap.set(m.id, posted.id);
+        result.messages++;
+      }
     }
   }
 

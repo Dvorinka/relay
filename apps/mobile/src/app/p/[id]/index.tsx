@@ -311,6 +311,9 @@ export default function ConversationScreen() {
         <Pressable onPress={() => router.push(`/p/${id}/reviews`)}>
           <Text style={s.tab}>Reviews</Text>
         </Pressable>
+        <Pressable onPress={() => router.push(`/p/${id}/briefs`)}>
+          <Text style={s.tab}>Briefs</Text>
+        </Pressable>
         <Pressable onPress={() => router.push(`/p/${id}/todos`)}>
           <Text style={s.tab}>Work list</Text>
         </Pressable>

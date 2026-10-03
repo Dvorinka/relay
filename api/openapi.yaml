@@ -2463,8 +2463,9 @@ components:
       properties:
         id: { type: string, format: uuid }
         project_id: { type: string, format: uuid }
-        kind: { type: string, enum: [project, issue] }
+        kind: { type: string, enum: [project, issue, brief] }
         issue_id: { type: ["string", "null"], format: uuid }
+        brief_id: { type: ["string", "null"], format: uuid }
         created_at: { type: string, format: date-time }
 
     MessageAuthor:

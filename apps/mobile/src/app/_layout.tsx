@@ -24,6 +24,7 @@ function Shell() {
         <Stack.Screen name="p/[id]/issues" options={{ title: "Issues" }} />
         <Stack.Screen name="p/[id]/todos" options={{ title: "Work list" }} />
         <Stack.Screen name="p/[id]/reviews" options={{ title: "Reviews" }} />
+        <Stack.Screen name="p/[id]/briefs" options={{ title: "Briefs" }} />
       </Stack>
     </>
   );
