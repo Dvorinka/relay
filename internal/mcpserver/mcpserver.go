@@ -269,6 +269,12 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithString("message_id", mcp.Required()),
 	), s.deleteMessage)
 
+	srv.AddTool(mcp.NewTool("create_thread",
+		mcp.WithDescription("Open (or get) the thread rooted at a message: a side conversation so off-topic discussion leaves the channel readable. One thread per message; threads cannot nest."),
+		mcp.WithString("message_id", mcp.Required()),
+		mcp.WithString("title", mcp.Description("Optional thread title; defaults to the parent excerpt")),
+	), s.createThread)
+
 	srv.AddTool(mcp.NewTool("react_to_message",
 		mcp.WithDescription("Toggle an emoji reaction on a message."),
 		mcp.WithString("message_id", mcp.Required()),
@@ -1072,6 +1078,87 @@ func (s *Service) deleteMessage(ctx context.Context, req mcp.CallToolRequest) (*
 	s.publish(ctx, row.ConversationID, "message.deleted",
 		map[string]any{"conversation_id": row.ConversationID.String(), "message_id": mid.String()})
 	return jsonResult(map[string]any{"deleted": true, "message_id": mid.String()})
+}
+
+// createThread mirrors POST /messages/:id/thread: idempotent per parent
+// message, titles fall back to the excerpt, nesting is refused.
+func (s *Service) createThread(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	mid, err := uuidArg(req, "message_id")
+	if err != nil {
+		return errResult(err)
+	}
+	pid, err := s.q.ResolveMessageProject(ctx, mid)
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "message:write"); err != nil {
+		return errResult(err)
+	}
+	parentConvID, err := s.q.GetMessageConversation(ctx, mid)
+	if err != nil {
+		return errResult(err)
+	}
+	parentConv, err := s.q.GetConversationByID(ctx, parentConvID)
+	if err != nil {
+		return errResult(err)
+	}
+	if parentConv.Kind == "thread" {
+		return mcp.NewToolResultError("threads cannot be nested"), nil
+	}
+	title, _ := req.GetArguments()["title"].(string)
+	title = strings.TrimSpace(title)
+	if len([]rune(title)) > 120 {
+		return mcp.NewToolResultError("title too long (max 120)"), nil
+	}
+	if title == "" {
+		if m, err := s.q.GetMessageFull(ctx, mid); err == nil {
+			title = strings.TrimSpace(m.Body)
+			if len([]rune(title)) > 80 {
+				title = string([]rune(title)[:80]) + "…"
+			}
+		}
+	}
+	conv, err := s.q.GetThreadByParentMessage(ctx, mid)
+	created := false
+	if err != nil {
+		conv, err = s.q.CreateThreadAgent(ctx, db.CreateThreadAgentParams{
+			ProjectID:       pid,
+			ParentMessageID: mid,
+			Title:           pgtype.Text{String: title, Valid: title != ""},
+			CreatedByAgent:  agent(ctx).ID,
+		})
+		if err != nil {
+			if existing, e2 := s.q.GetThreadByParentMessage(ctx, mid); e2 == nil {
+				conv = existing
+				err = nil
+			} else {
+				return errResult(err)
+			}
+		} else {
+			created = true
+		}
+	}
+	tr, err := s.q.GetThread(ctx, conv.ID)
+	if err != nil {
+		return errResult(err)
+	}
+	out := map[string]any{
+		"id":                  tr.ID.String(),
+		"parent_message_id":   tr.ParentMessageID.String(),
+		"parent_conversation": tr.ParentConversationID.String(),
+		"title":               tr.Title.String,
+		"reply_count":         tr.ReplyCount,
+		"created_by":          tr.CreatorName,
+		"created_at":          tr.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
+	}
+	if created {
+		s.publish(ctx, tr.ParentConversationID, "thread.created", map[string]any{
+			"conversation_id":   tr.ParentConversationID.String(),
+			"parent_message_id": tr.ParentMessageID.String(),
+			"thread":            out,
+		})
+	}
+	return jsonResult(gin.H{"thread": out})
 }
 
 // reactToMessage toggles this agent's emoji on a message and publishes the

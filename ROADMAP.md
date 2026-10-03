@@ -373,3 +373,25 @@ repos' open PRs; rail search filters this project inline.
   JSON via `get_brief`/`update_brief` — user-drawn and agent-drawn canvases
   are interchangeable; the lightweight `SceneView` still renders the core
   subset for quick viewing.
+
+## Phase 22 — message deletion, chat styles, threads
+
+- **Message deletion**: `DELETE /api/messages/:id` soft-deletes (`deleted_at`),
+  author-only, same agent-read lock as edit; `message.deleted` over SSE drops
+  it live everywhere; replies keep tombstones. Parity across web (hover
+  toolbar + confirm), mobile (long-press sheet), local mode, and MCP
+  (`delete_message`).
+- **Chat layout preference**: per-user `relay.chatStyle` — default grouped
+  left-aligned timeline or WhatsApp-style two-sided bubbles (own messages
+  right, tinted; Settings → Appearance). Shared `MessageRow` renders both.
+- **Message threads**: `conversations.kind='thread'` rooted at a
+  `parent_message_id` (migration 0020). `POST /api/messages/:id/thread` is
+  idempotent (one thread per message, race-safe via partial unique index),
+  titles optional with parent-excerpt default, nesting refused at schema
+  and API. Parent messages carry a `thread` chip ({id,title,reply_count})
+  patched live by `thread.created`/`thread.updated` SSE frames keyed to the
+  parent conversation; replies post through the normal messages API and
+  membership gates are unchanged. Web opens threads in a side panel reusing
+  `ConversationThread`; local-mode adapter mirrors the surface; MCP gets
+  `create_thread`. `GET /api/projects/:id/threads` indexes a project's
+  threads most-recent-first.

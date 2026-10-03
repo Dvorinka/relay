@@ -193,13 +193,17 @@ select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
        coalesce(pu.name, pa.name, '') as parent_author_name,
        pm.body as parent_body,
-       (pm.id is not null and pm.deleted_at is not null) as parent_deleted
+       (pm.id is not null and pm.deleted_at is not null) as parent_deleted,
+       t.id as thread_id, t.title as thread_title,
+       (select count(*)::int from messages tm
+         where tm.conversation_id = t.id and tm.deleted_at is null) as thread_reply_count
 from messages m
 left join users u on u.id = m.author_user_id
 left join agents a on a.id = m.author_agent_id
 left join messages pm on pm.id = m.parent_id
 left join users pu on pu.id = pm.author_user_id
 left join agents pa on pa.id = pm.author_agent_id
+left join conversations t on t.parent_message_id = m.id and t.kind = 'thread'
 where m.id = $1
 `
 
@@ -218,6 +222,9 @@ type GetMessageFullRow struct {
 	ParentAuthorName string             `json:"parent_author_name"`
 	ParentBody       pgtype.Text        `json:"parent_body"`
 	ParentDeleted    pgtype.Bool        `json:"parent_deleted"`
+	ThreadID         pgtype.UUID        `json:"thread_id"`
+	ThreadTitle      pgtype.Text        `json:"thread_title"`
+	ThreadReplyCount int32              `json:"thread_reply_count"`
 }
 
 func (q *Queries) GetMessageFull(ctx context.Context, id pgtype.UUID) (GetMessageFullRow, error) {
@@ -238,12 +245,15 @@ func (q *Queries) GetMessageFull(ctx context.Context, id pgtype.UUID) (GetMessag
 		&i.ParentAuthorName,
 		&i.ParentBody,
 		&i.ParentDeleted,
+		&i.ThreadID,
+		&i.ThreadTitle,
+		&i.ThreadReplyCount,
 	)
 	return i, err
 }
 
 const listProjectConversations = `-- name: ListProjectConversations :many
-select id, project_id, kind, issue_id, created_at, brief_id from conversations where project_id = $1
+select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent from conversations where project_id = $1
 order by created_at
 `
 
@@ -263,6 +273,10 @@ func (q *Queries) ListProjectConversations(ctx context.Context, projectID pgtype
 			&i.IssueID,
 			&i.CreatedAt,
 			&i.BriefID,
+			&i.ParentMessageID,
+			&i.Title,
+			&i.CreatedByUser,
+			&i.CreatedByAgent,
 		); err != nil {
 			return nil, err
 		}

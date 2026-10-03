@@ -346,6 +346,24 @@ export function TrashIcon(props: IconProps): JSX.Element {
   );
 }
 
+export function ThreadIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <path d="M2.5 4.5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v4.5a2 2 0 0 1-2 2H7L4.5 13v-2A2 2 0 0 1 2.5 9Z" />
+      <path d="M5.5 6h5M5.5 8.5h3" />
+    </svg>
+  );
+}
+
 export function LockIcon(props: IconProps): JSX.Element {
   return (
     <svg

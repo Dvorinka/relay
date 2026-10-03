@@ -6,6 +6,7 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"time"
 
@@ -174,6 +175,11 @@ func mountStatic(r *gin.Engine, dir string) {
 	r.Static("/assets", filepath.Join(dir, "assets"))
 	r.StaticFile("/favicon.svg", filepath.Join(dir, "favicon.svg"))
 	r.NoRoute(func(c *gin.Context) {
+		name := path.Clean("/" + c.Request.URL.Path)
+		if info, err := os.Stat(filepath.Join(dir, name)); err == nil && info.Mode().IsRegular() {
+			c.File(filepath.Join(dir, name))
+			return
+		}
 		c.File(index)
 	})
 }

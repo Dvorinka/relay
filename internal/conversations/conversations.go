@@ -46,6 +46,8 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
 	g.POST("/conversations/:id/messages", s.memberOnly, s.handlePostMessage)
 	g.PATCH("/messages/:id", s.handleEditMessage)
 	g.DELETE("/messages/:id", s.handleDeleteMessage)
+	g.POST("/messages/:id/thread", s.handleCreateThread)
+	g.GET("/projects/:id/threads", s.projectMemberOnly, s.handleListThreads)
 	g.PUT("/messages/:id/reactions", s.handleToggleReaction)
 	g.POST("/messages/:id/read", s.handleMarkRead)
 }
@@ -164,9 +166,11 @@ func (s *Service) handleListMessages(c *gin.Context) {
 			AuthorName: m.AuthorName, AuthorAvatar: m.AuthorAvatar,
 			ParentAuthorName: m.ParentAuthorName, ParentBody: m.ParentBody,
 			ParentDeleted: m.ParentDeleted,
-			Attachments:   atts[m.ID.String()],
-			Reactions:     rxns[m.ID.String()],
-			AgentRead:     read[m.ID.String()],
+			ThreadID:      m.ThreadID, ThreadTitle: m.ThreadTitle,
+			ThreadReplyCount: m.ThreadReplyCount,
+			Attachments:      atts[m.ID.String()],
+			Reactions:        rxns[m.ID.String()],
+			AgentRead:        read[m.ID.String()],
 		}))
 	}
 	c.JSON(http.StatusOK, gin.H{"messages": msgs, "has_more": hasMore})
@@ -248,12 +252,18 @@ func (s *Service) handlePostMessage(c *gin.Context) {
 		AuthorName: m.AuthorName, AuthorAvatar: m.AuthorAvatar,
 		ParentAuthorName: m.ParentAuthorName, ParentBody: m.ParentBody,
 		ParentDeleted: m.ParentDeleted,
-		Attachments:   atts[m.ID.String()],
+		ThreadID:      m.ThreadID, ThreadTitle: m.ThreadTitle,
+		ThreadReplyCount: m.ThreadReplyCount,
+		Attachments:      atts[m.ID.String()],
 	})
 	if s.Bus != nil {
 		pid, _ := uuid.FromBytes(conv.ProjectID.Bytes[:])
 		s.Bus.Publish(events.Event{Type: "message.created", ProjectID: pid,
 			Data: map[string]any{"conversation_id": m.ConversationID.String(), "message": out}})
+	}
+	if conv.Kind == "thread" {
+		// reply count on the parent message's chip moves live
+		s.publishThreadEvent(c, conv.ID, "thread.updated")
 	}
 	if s.Push != nil {
 		s.Push.NotifyMessage(conv.ProjectID, user.ID, req.Body, m.ID,
@@ -322,8 +332,10 @@ func (s *Service) handleEditMessage(c *gin.Context) {
 		AuthorName: m.AuthorName, AuthorAvatar: m.AuthorAvatar,
 		ParentAuthorName: m.ParentAuthorName, ParentBody: m.ParentBody,
 		ParentDeleted: m.ParentDeleted,
-		Attachments:   s.attachmentsFor(c, []pgtype.UUID{m.ID})[m.ID.String()],
-		Reactions:     s.reactionsFor(c, []pgtype.UUID{m.ID})[m.ID.String()],
+		ThreadID:      m.ThreadID, ThreadTitle: m.ThreadTitle,
+		ThreadReplyCount: m.ThreadReplyCount,
+		Attachments:      s.attachmentsFor(c, []pgtype.UUID{m.ID})[m.ID.String()],
+		Reactions:        s.reactionsFor(c, []pgtype.UUID{m.ID})[m.ID.String()],
 	})
 	if s.Bus != nil {
 		if pid, err := s.q.ResolveConversationProject(c.Request.Context(), m.ConversationID); err == nil {
@@ -375,8 +387,173 @@ func (s *Service) handleDeleteMessage(c *gin.Context) {
 					"message_id":      id.String(),
 				}})
 		}
+		// a reply removed inside a thread drops the parent's reply count
+		if conv, err := s.q.GetConversationByID(c.Request.Context(), row.ConversationID); err == nil && conv.Kind == "thread" {
+			s.publishThreadEvent(c, conv.ID, "thread.updated")
+		}
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// handleCreateThread opens (or returns) the thread rooted at a message.
+// One thread per message; nesting is rejected - a thread's own messages
+// cannot seed further threads. Title defaults to the parent's excerpt.
+func (s *Service) handleCreateThread(c *gin.Context) {
+	id, ok := httpx.PathUUID(c, "id")
+	if !ok {
+		return
+	}
+	user := auth.CurrentUser(c)
+	var req struct {
+		Title string `json:"title"`
+	}
+	if c.Request.Body != nil && c.Request.ContentLength > 0 {
+		if !httpx.BindJSON(c, &req) {
+			return
+		}
+	}
+	title := strings.TrimSpace(req.Title)
+	if len([]rune(title)) > 120 {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "title must be <= 120 characters")
+		return
+	}
+	if _, err := s.q.GetMessageForUser(c.Request.Context(), db.GetMessageForUserParams{
+		ID: id, UserID: user.ID,
+	}); err != nil {
+		httpx.Error(c, http.StatusForbidden, "forbidden", "not a member of this workspace")
+		return
+	}
+	convID, err := s.q.GetMessageConversation(c.Request.Context(), id)
+	if err != nil {
+		httpx.Error(c, http.StatusNotFound, "not_found", "message not found")
+		return
+	}
+	parentConv, err := s.q.GetConversationByID(c.Request.Context(), convID)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	if parentConv.Kind == "thread" {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "threads cannot be nested")
+		return
+	}
+	if title == "" {
+		m, err := s.q.GetMessageByID(c.Request.Context(), id)
+		if err == nil {
+			title = strings.TrimSpace(m.Body)
+			if len([]rune(title)) > 80 {
+				title = string([]rune(title)[:80]) + "…"
+			}
+		}
+	}
+	if existing, err := s.q.GetThreadByParentMessage(c.Request.Context(), id); err == nil {
+		tr, err := s.q.GetThread(c.Request.Context(), existing.ID)
+		if err != nil {
+			httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"thread": threadJSON(tr)})
+		return
+	}
+	conv, err := s.q.CreateThread(c.Request.Context(), db.CreateThreadParams{
+		ProjectID:       parentConv.ProjectID,
+		ParentMessageID: id,
+		Title:           pgtype.Text{String: title, Valid: title != ""},
+		CreatedByUser:   user.ID,
+	})
+	if err != nil {
+		// lost the create race - the other writer's row is the answer
+		existing, e2 := s.q.GetThreadByParentMessage(c.Request.Context(), id)
+		if e2 != nil {
+			httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
+		conv = existing
+	} else if s.Bus != nil {
+		s.publishThreadEvent(c, conv.ID, "thread.created")
+	}
+	tr, err := s.q.GetThread(c.Request.Context(), conv.ID)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"thread": threadJSON(tr)})
+}
+
+// handleListThreads returns a project's thread index for the Threads view.
+func (s *Service) handleListThreads(c *gin.Context) {
+	p := c.MustGet(ctxProjectRow).(db.GetProjectForUserRow)
+	rows, err := s.q.ListProjectThreads(c.Request.Context(), p.ID)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	out := make([]gin.H, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, gin.H{
+			"id":                  r.ID.String(),
+			"parent_message_id":   r.ParentMessageID.String(),
+			"parent_conversation": r.ParentConversationID.String(),
+			"title":               nullText(r.Title),
+			"created_by":          r.CreatorName,
+			"parent": gin.H{
+				"author":  r.ParentAuthorName,
+				"preview": r.ParentPreview,
+			},
+			"reply_count":   r.ReplyCount,
+			"last_reply_at": nullTime(r.LastReplyAt),
+			"created_at":    r.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"threads": out})
+}
+
+// publishThreadEvent emits a thread.* frame keyed to the parent channel so
+// open clients can bump the parent message's thread chip live.
+func (s *Service) publishThreadEvent(c *gin.Context, threadID pgtype.UUID, typ string) {
+	tr, err := s.q.GetThread(c.Request.Context(), threadID)
+	if err != nil || s.Bus == nil {
+		return
+	}
+	pid, _ := uuid.FromBytes(tr.ProjectID.Bytes[:])
+	s.Bus.Publish(events.Event{Type: typ, ProjectID: pid,
+		Data: map[string]any{
+			"conversation_id":   tr.ParentConversationID.String(),
+			"parent_message_id": tr.ParentMessageID.String(),
+			"thread":            threadJSON(tr),
+		}})
+}
+
+// threadJSON renders the thread summary embedded in message payloads and
+// thread.* events: id, title, and a live reply count.
+func threadJSON(tr db.GetThreadRow) gin.H {
+	return gin.H{
+		"id": tr.ID.String(), "title": nullText(tr.Title),
+		"parent_message_id":   tr.ParentMessageID.String(),
+		"parent_conversation": tr.ParentConversationID.String(),
+		"reply_count":         tr.ReplyCount,
+		"parent": gin.H{
+			"author":  tr.ParentAuthorName,
+			"preview": tr.ParentPreview,
+		},
+		"created_by": tr.CreatorName,
+		"created_at": tr.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
+	}
+}
+
+func nullText(t pgtype.Text) *string {
+	if !t.Valid {
+		return nil
+	}
+	return &t.String
+}
+
+func nullTime(t pgtype.Timestamptz) *string {
+	if !t.Valid {
+		return nil
+	}
+	s := t.Time.Format("2006-01-02T15:04:05Z07:00")
+	return &s
 }
 
 // handleToggleReaction flips the caller's emoji on a message: absent ->
@@ -600,6 +777,9 @@ type MessageView struct {
 	ParentAuthorName             string
 	ParentBody                   pgtype.Text
 	ParentDeleted                pgtype.Bool
+	ThreadID                     pgtype.UUID
+	ThreadTitle                  pgtype.Text
+	ThreadReplyCount             int32
 	Attachments                  []gin.H
 	Reactions                    []gin.H
 	AgentRead                    bool
@@ -649,6 +829,14 @@ func MessageJSON(v MessageView) gin.H {
 	if mrefs == nil {
 		mrefs = []any{}
 	}
+	var thread *gin.H
+	if v.ThreadID.Valid {
+		thread = &gin.H{
+			"id":          v.ThreadID.String(),
+			"title":       nullText(v.ThreadTitle),
+			"reply_count": v.ThreadReplyCount,
+		}
+	}
 	return gin.H{
 		"id": v.ID.String(), "conversation_id": v.ConversationID.String(),
 		"author": gin.H{
@@ -658,6 +846,7 @@ func MessageJSON(v MessageView) gin.H {
 		"body":        v.Body,
 		"mentions":    mrefs,
 		"parent":      parent,
+		"thread":      thread,
 		"attachments": nonEmpty(v.Attachments),
 		"reactions":   nonEmpty(v.Reactions),
 		"created_at":  v.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),

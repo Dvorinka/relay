@@ -136,6 +136,10 @@ export const api = {
     req<{ message: Message }>("PATCH", `/api/messages/${messageId}`, { body }),
   deleteMessage: (messageId: string) =>
     req<void>("DELETE", `/api/messages/${messageId}`),
+  createThread: (messageId: string, title?: string) =>
+    req<{ thread: Thread }>("POST", `/api/messages/${messageId}/thread`, {
+      ...(title ? { title } : {}),
+    }),
   reactMessage: (messageId: string, emoji: string) =>
     req<{ reactions: Reaction[] }>(
       "PUT",
@@ -263,6 +267,17 @@ export interface MessageParent {
   preview: string;
   deleted: boolean;
 }
+export interface ThreadChip {
+  id: string;
+  title: string | null;
+  reply_count: number;
+}
+export interface Thread extends ThreadChip {
+  parent_message_id: string;
+  parent_conversation: string;
+  created_by?: string;
+  created_at?: string;
+}
 export interface Message {
   id: string;
   body: string;
@@ -271,6 +286,7 @@ export interface Message {
   agent_read: boolean;
   author: { id: string; name: string; kind: string; avatar_url: string | null };
   parent: MessageParent | null;
+  thread?: ThreadChip | null;
   attachments?: Attachment[];
   reactions?: Reaction[];
 }

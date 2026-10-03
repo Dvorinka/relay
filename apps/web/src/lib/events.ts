@@ -44,6 +44,13 @@ function connect() {
   };
 }
 
+// emitLocal feeds a synthetic event to subscribers. Local mode has no SSE;
+// the adapter uses this for updates a live view needs (e.g. a thread's
+// reply count on the parent message).
+export function emitLocal(e: RelayEvent) {
+  for (const h of handlers) h(e);
+}
+
 export function subscribe(h: Handler): () => void {
   handlers.add(h);
   if (!source) connect();

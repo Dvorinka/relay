@@ -109,12 +109,16 @@ type Brief struct {
 }
 
 type Conversation struct {
-	ID        pgtype.UUID        `json:"id"`
-	ProjectID pgtype.UUID        `json:"project_id"`
-	Kind      string             `json:"kind"`
-	IssueID   pgtype.UUID        `json:"issue_id"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	BriefID   pgtype.UUID        `json:"brief_id"`
+	ID              pgtype.UUID        `json:"id"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	Kind            string             `json:"kind"`
+	IssueID         pgtype.UUID        `json:"issue_id"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	BriefID         pgtype.UUID        `json:"brief_id"`
+	ParentMessageID pgtype.UUID        `json:"parent_message_id"`
+	Title           pgtype.Text        `json:"title"`
+	CreatedByUser   pgtype.UUID        `json:"created_by_user"`
+	CreatedByAgent  pgtype.UUID        `json:"created_by_agent"`
 }
 
 type GithubApp struct {
