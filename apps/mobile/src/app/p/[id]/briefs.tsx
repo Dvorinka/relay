@@ -36,8 +36,8 @@ export default function BriefsScreen() {
       const r = await api.briefs(id);
       setItems(r.briefs);
       setPolicy(r.policy);
-    } catch {
-      // transient
+    } catch (e) {
+      console.warn("briefs load failed", e);
     } finally {
       setRefreshing(false);
     }
@@ -178,8 +178,8 @@ function BriefDetail(props: {
       setConvId(conv.id);
       const r = await api.messages(conv.id);
       setComments(r.messages.slice().reverse());
-    } catch {
-      // transient
+    } catch (e) {
+      console.warn("brief comments load failed", e);
     }
   }, [brief.id]);
 
