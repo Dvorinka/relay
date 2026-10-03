@@ -6,8 +6,12 @@ on:
   push:
     branches: [main]
 
+# actions:write is required for `gh workflow run` — pushes made with
+# GITHUB_TOKEN do not trigger tag-based workflows, so the release is
+# dispatched explicitly below.
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: tag-release
@@ -21,7 +25,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Bump patch version and push tag
+      - name: Bump patch version, push tag, trigger release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -33,3 +39,4 @@ jobs:
           echo "tagging ${latest} -> ${next}"
           git tag "$next"
           git push origin "$next"
+          gh workflow run release.yml --ref "$next"
