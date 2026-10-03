@@ -3,8 +3,9 @@ import type { Brief, BriefPolicy, Message, Project } from "@relay/api-client";
 import { api } from "../../lib/api";
 import { net } from "../../lib/net";
 import { SceneView } from "./SceneView";
+import { ExcalidrawEditor } from "./ExcalidrawEditor";
 import { Markdown } from "../../lib/markdown";
-import { XIcon, PlusIcon, CheckIcon } from "../../components/icons";
+import { XIcon, PlusIcon, CheckIcon, PencilIcon } from "../../components/icons";
 import { inputClass, primaryButtonClass } from "../../components/ui";
 
 const POLICY_LABEL: Record<BriefPolicy, string> = {
@@ -152,8 +153,9 @@ export function BriefsPanel(props: {
   );
 }
 
-// Minimal composer for human-authored briefs — scene stays empty; comments
-// do the iterating. Agents produce real scenes via MCP.
+// Minimal composer for human-authored briefs — creates an empty canvas, then
+// "Edit canvas" opens the embedded Excalidraw editor. Agents produce scenes
+// via MCP on the same JSON shape.
 function NewBrief(props: {
   projectId: string;
   issueId?: string;
@@ -225,6 +227,7 @@ function BriefView(props: {
   const [draft, setDraft] = createSignal("");
   const [sending, setSending] = createSignal(false);
   const [brief, setBrief] = createSignal(props.brief);
+  const [editing, setEditing] = createSignal(false);
 
   const [comments, { refetch: refetchComments }] = createResource(
     () => brief().id,
@@ -273,6 +276,14 @@ function BriefView(props: {
             </p>
           </div>
           <div class="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setEditing(true)}
+              title="Open in the Excalidraw editor"
+              class="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[12px] text-muted hover:bg-hover hover:text-fg"
+            >
+              <PencilIcon class="h-3 w-3" /> Edit canvas
+            </button>
             <Show when={brief().status !== "resolved"}>
               <button
                 type="button"
@@ -358,6 +369,18 @@ function BriefView(props: {
           </button>
         </form>
       </div>
+
+      <Show when={editing()}>
+        <ExcalidrawEditor
+          brief={brief()}
+          onSaved={(b) => {
+            setBrief(b);
+            setEditing(false);
+            props.onChanged();
+          }}
+          onClose={() => setEditing(false)}
+        />
+      </Show>
     </div>
   );
 }

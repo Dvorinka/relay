@@ -354,3 +354,19 @@ repos' open PRs; rail search filters this project inline.
   the chat shot.
 - **Scene labels**: `SceneView` renders `text` on shapes (agent-authored
   labels), centered with line splits and a luminance-aware fill.
+
+## Phase 21 — embedded Excalidraw editor
+
+- **Real Excalidraw in briefs**: every brief gains an "Edit canvas" path that
+  mounts the actual `@excalidraw/excalidraw` component as a React island
+  inside the Solid app — full tool palette (shapes, arrows, freedraw, text,
+  images, bindings), so users draw proper architecture diagrams instead of
+  only commenting on agent output. Lazy-loaded; the ~1.4MB chunk only ships
+  when the editor opens. `resolve.dedupe` + `optimizeDeps.include` keep one
+  React copy (otherwise hooks explode).
+- **Shared scene format**: saved scenes persist full Excalidraw JSON
+  (elements/appState/files). `restore()` normalizes minimal agent-authored
+  scenes before the editor sees them. Agents read and revise the identical
+  JSON via `get_brief`/`update_brief` — user-drawn and agent-drawn canvases
+  are interchangeable; the lightweight `SceneView` still renders the core
+  subset for quick viewing.
