@@ -1,5 +1,6 @@
 import type { ParentProps } from "solid-js";
 import { CommandPalette } from "./components/CommandPalette";
+import { ConfirmHost } from "./components/Confirm";
 import { ProfileModalHost } from "./components/ProfileModal";
 import { Rail } from "./components/Rail";
 import { TopBar } from "./components/TopBar";
@@ -20,6 +21,7 @@ export default function App(props: ParentProps) {
           </div>
           <CommandPalette />
           <ProfileModalHost />
+          <ConfirmHost />
         </div>
       </ProjectsProvider>
     </RequireAuth>

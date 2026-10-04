@@ -17,6 +17,7 @@ import {
   Tip,
 } from "../../components/ui";
 import { api } from "../../lib/api";
+import { confirmDestructive } from "../../components/Confirm";
 import { mediaURL, net } from "../../lib/net";
 import { timeAgo, timeUntil } from "../../lib/time";
 
@@ -313,14 +314,22 @@ function AgentRow(props: {
                             <button
                               type="button"
                               class="text-[11px] text-muted hover:text-red-600 dark:hover:text-red-400"
-                              onClick={() =>
+                              onClick={async () => {
+                                if (
+                                  !(await confirmDestructive({
+                                    title: "Revoke project access",
+                                    body: `Revoke ${props.agent.name}'s access to ${g.project_name}? Its tokens keep working on other granted projects.`,
+                                    confirmLabel: "Revoke",
+                                  }))
+                                )
+                                  return;
                                 run(() =>
                                   api.revokeAgentProject(
                                     props.agent.id,
                                     g.project_id,
                                   ),
-                                )
-                              }
+                                );
+                              }}
                             >
                               revoke
                             </button>
@@ -422,11 +431,19 @@ function AgentRow(props: {
                             <button
                               type="button"
                               class="text-[11px] text-muted hover:text-red-600 dark:hover:text-red-400"
-                              onClick={() =>
+                              onClick={async () => {
+                                if (
+                                  !(await confirmDestructive({
+                                    title: "Revoke token",
+                                    body: `Revoke the "${t.name}" token? Any service using it loses access immediately.`,
+                                    confirmLabel: "Revoke",
+                                  }))
+                                )
+                                  return;
                                 run(() =>
                                   api.revokeAgentToken(props.agent.id, t.id),
-                                )
-                              }
+                                );
+                              }}
                             >
                               revoke
                             </button>
