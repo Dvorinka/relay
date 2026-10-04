@@ -17,6 +17,7 @@ import {
   onCleanup,
   onMount,
   Show,
+  createMemo,
 } from "solid-js";
 import { Portal } from "solid-js/web";
 import {
@@ -30,6 +31,7 @@ import {
   PencilIcon,
   PinIcon,
   ReplyIcon,
+  TagIcon,
   ThreadIcon,
   TrashIcon,
   XIcon,
@@ -50,6 +52,7 @@ import { formatBytes, initials, messagePreview } from "../../lib/text";
 import { useProjects } from "../../stores/projects";
 import { useSession } from "../../stores/session";
 import { useChatStyle, useClock } from "../../stores/theme";
+import { refreshUnread } from "../../stores/unread";
 
 const PAGE_SIZE = 50;
 const MAX_FILE_MIB = 25;
@@ -393,6 +396,83 @@ function ConvertToIssueDialog(props: {
   );
 }
 
+// ClearChatDialog: confirmation for /clear and /new — wipes every message in
+// the channel for everyone. Owner/admin only server-side.
+function ClearChatDialog(props: {
+  open: boolean;
+  fresh: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: () => Promise<void>;
+}) {
+  const [pending, setPending] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+
+  async function submit(e: SubmitEvent) {
+    e.preventDefault();
+    if (pending()) return;
+    setPending(true);
+    setError(null);
+    try {
+      await props.onConfirm();
+      props.onOpenChange(false);
+    } catch (err) {
+      setError(
+        err instanceof ApiClientError && err.status === 403
+          ? "Only workspace owners and admins can clear the chat."
+          : err instanceof Error
+            ? err.message
+            : "Could not clear the chat",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <Dialog.Root
+      open={props.open}
+      onOpenChange={(d) => props.onOpenChange(d.open)}
+    >
+      <Portal>
+        <Dialog.Backdrop class="fixed inset-0 z-40 bg-black/40" />
+        <Dialog.Positioner class="fixed inset-0 z-40 flex items-start justify-center p-4 pt-[15vh]">
+          <Dialog.Content class="w-full max-w-md rounded-xl border border-border bg-surface p-4 shadow-lg outline-none">
+            <Dialog.Title class="text-[14px] font-semibold">
+              {props.fresh ? "Start a new chat" : "Clear chat"}
+            </Dialog.Title>
+            <Dialog.Description class="mt-1 text-[13px] text-muted">
+              Every message in this channel will be removed for everyone —
+              including pinned and agent-posted ones. This cannot be undone.
+            </Dialog.Description>
+            <form onSubmit={submit} class="mt-3">
+              <FormError message={error()} />
+              <div class="mt-3 flex justify-end gap-2">
+                <Dialog.CloseTrigger
+                  type="button"
+                  class="inline-flex h-8 items-center justify-center rounded-md px-3 text-[13px] text-muted transition-colors hover:bg-hover hover:text-fg"
+                >
+                  Cancel
+                </Dialog.CloseTrigger>
+                <button
+                  type="submit"
+                  disabled={pending()}
+                  class="inline-flex h-8 items-center justify-center rounded-md bg-red-600 px-3 text-[13px] font-medium text-white transition-colors hover:bg-red-500 disabled:opacity-60"
+                >
+                  {pending()
+                    ? "Clearing…"
+                    : props.fresh
+                      ? "Start fresh"
+                      : "Clear everything"}
+                </button>
+              </div>
+            </form>
+          </Dialog.Content>
+        </Dialog.Positioner>
+      </Portal>
+    </Dialog.Root>
+  );
+}
+
 function DeleteMessageDialog(props: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -668,6 +748,7 @@ function MessageRow(props: {
   onChanged: (m: Message) => void;
   onDeleted: (id: string) => void;
   onOpenThread?: (t: ThreadSummary) => void;
+  onTagClick?: (tag: string) => void;
 }) {
   const m = () => props.message;
   const { chatStyle } = useChatStyle();
@@ -851,6 +932,18 @@ function MessageRow(props: {
                 agent
               </span>
             </Show>
+            <For each={m().tags ?? []}>
+              {(t) => (
+                <button
+                  type="button"
+                  onClick={() => props.onTagClick?.(t)}
+                  title={`Filter by ${t}`}
+                  class="rounded-full border border-accent/40 bg-accent-soft/60 px-1.5 py-px font-mono text-[9.5px] font-medium lowercase tracking-wide text-accent-ink transition-colors hover:bg-accent-soft"
+                >
+                  {t}
+                </button>
+              )}
+            </For>
             <Show when={!bubbles()}>
               <span
                 class="text-[11.5px] text-faint"
@@ -1184,10 +1277,44 @@ function ConversationThread(props: {
   const [loadingMore, setLoadingMore] = createSignal(false);
   const [draft, setDraft] = createSignal("");
   const [sending, setSending] = createSignal(false);
+  // Message tags: draftTags ride on the next send; tagFilter narrows the
+  // view server-side (ListMessages accepts ?tag=).
+  const [draftTags, setDraftTags] = createSignal<string[]>([]);
+  const [tagPickerOpen, setTagPickerOpen] = createSignal(false);
+  const [customTag, setCustomTag] = createSignal("");
+  const [tagFilter, setTagFilter] = createSignal("");
+  const PRESET_TAGS = ["frontend", "backend", "visual", "mcp", "docs", "review"];
+
+  function normalizeTag(t: string): string {
+    return t.trim().toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 24);
+  }
+  function toggleDraftTag(t: string) {
+    setDraftTags((cur) =>
+      cur.includes(t)
+        ? cur.filter((x) => x !== t)
+        : cur.length < 8
+          ? [...cur, t]
+          : cur,
+    );
+  }
+  function addCustomTag() {
+    const t = normalizeTag(customTag());
+    if (t) toggleDraftTag(t);
+    setCustomTag("");
+  }
+  // Tags seen on loaded messages feed the filter chip row.
+  const seenTags = createMemo(() => {
+    const s = new Set<string>();
+    for (const m of messages()) for (const t of m.tags ?? []) s.add(t);
+    return [...s].sort();
+  });
   const [sendError, setSendError] = createSignal<string | null>(null);
   const [pending, setPending] = createSignal<PendingAttachment[]>([]);
   const [dragging, setDragging] = createSignal(false);
   const [replyTo, setReplyTo] = createSignal<Message | null>(null);
+  // /clear and /new both wipe the channel — confirmClear records which
+  // command was typed (false = /clear, true = /new) or null when closed.
+  const [confirmClear, setConfirmClear] = createSignal<boolean | null>(null);
 
   // Custom name colors come from the workspace member list, loaded once.
   createResource(() => props.projectId, async (id) => {
@@ -1233,8 +1360,9 @@ function ConversationThread(props: {
   let fileEl: HTMLInputElement | undefined;
 
   const [firstPage] = createResource(
-    () => props.conversationId,
-    (id) => api.listMessages(id, { limit: PAGE_SIZE }),
+    () => ({ id: props.conversationId, tag: tagFilter() }),
+    ({ id, tag }) =>
+      api.listMessages(id, { limit: PAGE_SIZE, tag: tag || undefined }),
   );
 
   const [pins, { refetch: refetchPins }] = createResource(
@@ -1249,10 +1377,12 @@ function ConversationThread(props: {
   );
 
   function markLatestRead() {
-    const last = messages().at(-1);
-    if (last) {
-      void api.markMessageRead(last.id).catch(() => {});
-    }
+    // Bulk: the badge counts every unread message, so marking only the
+    // latest leaves the rest flagged. Mark the whole conversation read.
+    void api
+      .markConversationRead(props.conversationId)
+      .then(() => refreshUnread())
+      .catch(() => {});
   }
 
   function replaceMessage(m: Message) {
@@ -1276,6 +1406,8 @@ function ConversationThread(props: {
     if (!data || data.conversation_id !== props.conversationId) return;
     if (e.type === "message.created") {
       const m = data.message as Message;
+      // Under an active tag filter only matching messages join the view.
+      if (tagFilter() && !(m.tags ?? []).includes(tagFilter())) return;
       setMessages((cur) =>
         cur.some((x) => x.id === m.id) ? cur : [...cur, m],
       );
@@ -1287,6 +1419,11 @@ function ConversationThread(props: {
     } else if (e.type === "message.deleted") {
       removeMessage(data.message_id as string);
       void refetchPins();
+    } else if (e.type === "conversation.cleared") {
+      setMessages([]);
+      setHasMore(false);
+      void refetchPins();
+      void refreshUnread();
     } else if (e.type === "reaction.updated") {
       const mid = data.message_id as string;
       const reactions = (data.reactions ?? []) as Reaction[];
@@ -1312,11 +1449,12 @@ function ConversationThread(props: {
   });
   onCleanup(unsub);
 
-  let seeded = false;
+  let seededFor = "";
   createEffect(() => {
     const page = firstPage();
-    if (page && !seeded) {
-      seeded = true;
+    const key = props.conversationId + "|" + tagFilter();
+    if (page && seededFor !== key) {
+      seededFor = key;
       setMessages(page.messages);
       setHasMore(page.has_more);
       markLatestRead();
@@ -1365,6 +1503,7 @@ function ConversationThread(props: {
       const page = await api.listMessages(props.conversationId, {
         limit: PAGE_SIZE,
         before: first.id,
+        tag: tagFilter() || undefined,
       });
       const heightBefore = scrollEl?.scrollHeight ?? 0;
       setMessages((cur) => [...page.messages, ...cur]);
@@ -1698,6 +1837,33 @@ function ConversationThread(props: {
     if (!canSend()) {
       return;
     }
+    // Slash commands run locally — never posted as messages. /clear and /new
+    // wipe the channel; /todo adds to the project's work list.
+    const cmd = body.toLowerCase();
+    if (cmd === "/clear" || cmd === "/new") {
+      setDraft("");
+      if (inputEl) inputEl.style.height = "auto";
+      setConfirmClear(cmd === "/new");
+      return;
+    }
+    if (cmd.startsWith("/todo ")) {
+      const content = body.slice(6).trim();
+      if (!content) return;
+      setSending(true);
+      setSendError(null);
+      try {
+        await api.createTodo(props.projectId, content);
+        setDraft("");
+        if (inputEl) inputEl.style.height = "auto";
+      } catch (err) {
+        setSendError(
+          err instanceof Error ? err.message : "Could not add todo",
+        );
+      } finally {
+        setSending(false);
+      }
+      return;
+    }
     const ids = readyIds();
     setSendError(null);
     setSending(true);
@@ -1707,13 +1873,17 @@ function ConversationThread(props: {
         body,
         ids,
         replyTo()?.id,
+        draftTags(),
       );
       // The SSE message.created frame can land before this POST resolves;
       // skip the local append when it already arrived.
-      setMessages((cur) =>
-        cur.some((x) => x.id === message.id) ? cur : [...cur, message],
-      );
+      if (!tagFilter() || (message.tags ?? []).includes(tagFilter())) {
+        setMessages((cur) =>
+          cur.some((x) => x.id === message.id) ? cur : [...cur, message],
+        );
+      }
       setDraft("");
+      setDraftTags([]);
       setReplyTo(null);
       // Drop the attachments that were sent; failed uploads stay listed.
       const sentIds = new Set(ids);
@@ -1740,6 +1910,15 @@ function ConversationThread(props: {
     } finally {
       setSending(false);
     }
+  }
+
+  async function doClear() {
+    await api.clearConversation(props.conversationId);
+    setMessages([]);
+    setHasMore(false);
+    setReplyTo(null);
+    void refetchPins();
+    void refreshUnread();
   }
 
   function startReply(m: Message) {
@@ -1810,6 +1989,37 @@ function ConversationThread(props: {
                   )}
                 </For>
               </div>
+            </Show>
+          </div>
+        </Show>
+        <Show when={tagFilter() || seenTags().length > 0}>
+          <div class="flex flex-wrap items-center gap-1.5 px-1 pb-1 pt-1">
+            <TagIcon class="h-3.5 w-3.5 text-faint" />
+            <For each={seenTags()}>
+              {(t) => (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setTagFilter((cur) => (cur === t ? "" : t))
+                  }
+                  class={`rounded-full border px-2 py-0.5 font-mono text-[10.5px] lowercase transition-colors ${
+                    tagFilter() === t
+                      ? "border-accent bg-accent-soft text-accent-ink"
+                      : "border-border text-muted hover:bg-hover hover:text-fg"
+                  }`}
+                >
+                  {t}
+                </button>
+              )}
+            </For>
+            <Show when={tagFilter()}>
+              <button
+                type="button"
+                onClick={() => setTagFilter("")}
+                class="text-[11px] text-muted underline-offset-2 hover:text-fg hover:underline"
+              >
+                Clear filter
+              </button>
             </Show>
           </div>
         </Show>
@@ -1890,6 +2100,7 @@ function ConversationThread(props: {
                     onChanged={replaceMessage}
                     onDeleted={removeMessage}
                     onOpenThread={props.onOpenThread}
+                    onTagClick={(t) => setTagFilter(t)}
                   />
                 </>
               );
@@ -2012,6 +2223,50 @@ function ConversationThread(props: {
               </For>
             </ul>
           </Show>
+          <Show when={draftTags().length > 0 || tagPickerOpen()}>
+            <div class="flex flex-wrap items-center gap-1.5 px-2.5 pt-2">
+              <For each={draftTags()}>
+                {(t) => (
+                  <button
+                    type="button"
+                    onClick={() => toggleDraftTag(t)}
+                    title="Remove tag"
+                    class="flex items-center gap-1 rounded-full border border-accent/40 bg-accent-soft px-2 py-0.5 font-mono text-[10.5px] lowercase text-accent-ink hover:bg-accent-soft/60"
+                  >
+                    {t}
+                    <XIcon class="h-2.5 w-2.5" />
+                  </button>
+                )}
+              </For>
+              <Show when={tagPickerOpen()}>
+                <For each={PRESET_TAGS.filter((t) => !draftTags().includes(t))}>
+                  {(t) => (
+                    <button
+                      type="button"
+                      onClick={() => toggleDraftTag(t)}
+                      class="rounded-full border border-border px-2 py-0.5 font-mono text-[10.5px] lowercase text-muted transition-colors hover:bg-hover hover:text-fg"
+                    >
+                      {t}
+                    </button>
+                  )}
+                </For>
+                <input
+                  value={customTag()}
+                  onInput={(e) => setCustomTag(e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addCustomTag();
+                    }
+                    if (e.key === "Escape") setTagPickerOpen(false);
+                  }}
+                  placeholder="custom tag"
+                  aria-label="Custom tag"
+                  class="w-24 rounded-full border border-border bg-transparent px-2 py-0.5 font-mono text-[10.5px] lowercase outline-none placeholder:text-faint focus:border-accent/50"
+                />
+              </Show>
+            </div>
+          </Show>
           <div class="flex items-end gap-1 p-1.5">
             <button
               type="button"
@@ -2021,6 +2276,19 @@ function ConversationThread(props: {
               class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-muted transition-colors hover:bg-hover hover:text-fg"
             >
               <PaperclipIcon class="h-4.5 w-4.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setTagPickerOpen((o) => !o)}
+              aria-label="Tag message"
+              title="Tag this message (frontend, backend, visual, mcp, …)"
+              class={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors hover:bg-hover ${
+                draftTags().length > 0 || tagPickerOpen()
+                  ? "text-accent-ink"
+                  : "text-muted hover:text-fg"
+              }`}
+            >
+              <TagIcon class="h-4.5 w-4.5" />
             </button>
             <textarea
               ref={(el) => {
@@ -2093,6 +2361,8 @@ function ConversationThread(props: {
           <div class="flex items-center gap-3 border-t border-border/60 px-3 py-1.5 text-[10.5px] text-faint">
             <span>Enter send</span>
             <span>Shift+Enter newline</span>
+            <span>/todo adds a task</span>
+            <span>/clear resets the chat</span>
             <span>Ctrl+V pastes an image</span>
             <Show when={hasUploading()}>
               <span class="ml-auto flex items-center gap-1.5 text-accent-ink">
@@ -2126,6 +2396,14 @@ function ConversationThread(props: {
           />
         )}
       </Show>
+      <ClearChatDialog
+        open={confirmClear() !== null}
+        fresh={confirmClear() === true}
+        onOpenChange={(open) => {
+          if (!open) setConfirmClear(null);
+        }}
+        onConfirm={doClear}
+      />
     </div>
   );
 }

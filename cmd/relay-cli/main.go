@@ -65,6 +65,7 @@ var (
 	flagStatus  = flag.String("status", "", "review status filter")
 	flagTimeout = flag.Int("timeout", 60, "review wait timeout in seconds")
 	flagReply   = flag.String("reply", "", "message id this send replies to")
+	flagTags    = flag.String("tags", "", "comma-separated message tags (say/messages)")
 	flagConv    = flag.String("conv", "", "conversation id (for messages/read in a specific thread)")
 	flagName    = flag.String("name", "", "agent name (redeem)")
 	flagTitle   = flag.String("title", "", "thread title (thread)")
@@ -314,6 +315,9 @@ func render(kind string, raw json.RawMessage) {
 			if f := asMap(m["forwarded"]); f != nil {
 				suffix += "  [fwd from " + str(f, "author") + "]"
 			}
+			for _, t := range list(m, "tags") {
+				suffix += fmt.Sprintf("  #%v", t)
+			}
 			fmt.Printf("%s %s  %s\n%s%s\n\n", str(m, "id"), name,
 				fmtTime(m["created_at"]), str(m, "body"), suffix)
 		}
@@ -387,9 +391,9 @@ Usage: relay-cli [--url URL] [--token rly_...] [--json] <command> [args] [flags]
 Chat
   projects                              list granted projects
   conversations <project_id>            list conversations
-  messages <project_id|conversation_id> list messages (use --conv for a thread)
+  messages <project_id|conversation_id> list messages (use --conv for a thread, --tags t to filter)
   read <project_id|conversation_id>     mark-read alias for messages
-  say <project_id> <body> [--reply id]  post a message (mentions: @user, KEY-1, repo#42)
+  say <project_id> <body> [--reply id] [--tags a,b]  post a message (mentions: @user, KEY-1, repo#42)
   react <message_id> <emoji>            toggle a reaction
   msg-edit <message_id> <body>          edit an unread agent message
   msg-del <message_id>                  delete an own unread message
@@ -503,6 +507,9 @@ Environment: RELAY_URL, RELAY_TOKEN.
 		} else {
 			a["project_id"] = pid
 		}
+		if *flagTags != "" {
+			a["tag"] = *flagTags
+		}
 		run("messages", "get_messages", a)
 
 	case "read":
@@ -516,6 +523,9 @@ Environment: RELAY_URL, RELAY_TOKEN.
 		a := map[string]any{"project_id": pid, "body": text}
 		if *flagReply != "" {
 			a["reply_to"] = *flagReply
+		}
+		if *flagTags != "" {
+			a["tags"] = *flagTags
 		}
 		run("", "send_message", a)
 

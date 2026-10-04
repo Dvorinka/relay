@@ -98,8 +98,9 @@ join workspace_members wm on wm.workspace_id = p.workspace_id
 where p.id = $1 and wm.user_id = $2;
 
 -- name: ListMessages :many
--- newest-first page; $2 is an optional "older than message id" cursor
-select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
+-- newest-first page; $2 is an optional "older than message id" cursor,
+-- narg(tag) filters to messages carrying that tag
+select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
        m.author_user_id, m.author_agent_id,
        coalesce(u.name, a.name, '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
@@ -126,6 +127,7 @@ left join users fu on fu.id = f.author_user_id
 left join agents fa on fa.id = f.author_agent_id
 where m.conversation_id = $1
   and m.deleted_at is null
+  and (sqlc.narg(tag)::text is null or sqlc.narg(tag)::text = any(m.tags))
   and (sqlc.narg(before)::uuid is null or
        (m.created_at, m.id) < (select m2.created_at, m2.id from messages m2 where m2.id = sqlc.narg(before)::uuid))
 order by m.created_at desc, m.id desc
@@ -133,7 +135,7 @@ limit sqlc.arg(lim)::int;
 
 -- name: ListPinnedMessages :many
 -- pinned messages in one conversation, most recently pinned first
-select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
        m.author_user_id, m.author_agent_id,
        coalesce(u.name, a.name, '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
@@ -175,8 +177,8 @@ where id = sqlc.arg(id) and deleted_at is null
 returning id, conversation_id;
 
 -- name: CreateMessage :one
-insert into messages (conversation_id, author_user_id, body, parent_id, mentions, forwarded_from)
-values ($1, $2, $3, sqlc.narg(parent_id), coalesce(sqlc.narg(mentions), '[]'::jsonb), sqlc.narg(forwarded_from))
+insert into messages (conversation_id, author_user_id, body, parent_id, mentions, forwarded_from, tags)
+values ($1, $2, $3, sqlc.narg(parent_id), coalesce(sqlc.narg(mentions), '[]'::jsonb), sqlc.narg(forwarded_from), coalesce(sqlc.narg(tags), '{}'::text[]))
 returning id;
 
 -- name: CopyMessageAttachments :exec
@@ -195,7 +197,7 @@ where m.id = sqlc.arg(id)
   and m.deleted_at is null;
 
 -- name: GetMessageByID :one
-select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
        m.author_user_id, m.author_agent_id,
        coalesce(u.name, a.name, '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
@@ -279,6 +281,20 @@ insert into message_reads (message_id, user_id)
 values ($1, $2)
 on conflict (message_id, user_id) where user_id is not null do nothing;
 
+-- name: MarkConversationRead :exec
+-- mark every message in the conversation read for the user (bulk, on view)
+insert into message_reads (message_id, user_id)
+select m.id, $2
+from messages m
+where m.conversation_id = $1
+  and m.deleted_at is null
+on conflict (message_id, user_id) where user_id is not null do nothing;
+
+-- name: ClearConversation :execrows
+-- /clear — soft-delete every message in the conversation at once
+update messages set deleted_at = now()
+where conversation_id = $1 and deleted_at is null;
+
 -- name: AddReactionUser :exec
 insert into message_reactions (message_id, user_id, emoji)
 values ($1, $2, $3)
@@ -298,7 +314,7 @@ where mr.message_id = any(sqlc.arg(ids)::uuid[])
 order by mr.created_at;
 
 -- name: RecentProjectMessages :many
-select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
        m.author_user_id, m.author_agent_id,
        coalesce(u.name, a.name, '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,

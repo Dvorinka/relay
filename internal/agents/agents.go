@@ -25,7 +25,8 @@ import (
 var Scopes = map[string]bool{
 	"project:read": true, "message:read": true, "message:write": true,
 	"attachment:read": true, "issue:read": true, "issue:write": true,
-	"review:read": true, "review:write": true,
+	"review:read": true, "review:write": true, "file:read": true,
+	"brief:read": true, "brief:write": true,
 }
 
 // ReviewModes is the valid set for agents.review_mode: 'gate' makes the
@@ -38,6 +39,7 @@ var ReviewModes = map[string]bool{"notify": true, "gate": true}
 var DefaultInviteScopes = []string{
 	"project:read", "message:read", "message:write", "attachment:read",
 	"issue:read", "issue:write", "review:read", "review:write",
+	"file:read", "brief:read", "brief:write",
 }
 
 type Service struct {

@@ -141,10 +141,10 @@ Rules of engagement:
 | `list_projects` | `projects` | granted projects |
 | `get_project` | — | one project |
 | `list_conversations` | `conversations <pid>` | threads in a project |
-| `get_messages` | `messages <pid|cid> [--limit]` | read a conversation |
+| `get_messages` | `messages <pid|cid> [--limit] [--tags t]` | read a conversation; `--tags` filters by tag |
 | `get_message` | `read <mid>` | one message + mark read |
 | `search_messages` | `search <pid> "query"` | FTS + `from:` `in:` `has:image` `has:file` `before:` `after:` |
-| `send_message` | `say <pid> "text" [--reply mid]` | post (project or conversation id) |
+| `send_message` | `say <pid> "text" [--reply mid] [--tags a,b]` | post (project or conversation id); `tags` classifies the message |
 | `edit_message` | `msg-edit <mid> "text"` | edit own, while unread |
 | `delete_message` | `msg-del <mid>` | delete own, while unread |
 | `react_to_message` | `react <mid> <emoji>` | toggle reaction |
@@ -202,6 +202,23 @@ KEY-42            a tracker issue           owner/repo#7  a GitHub issue/PR
 @file:path        a linked-folder file      @gh:repo:path a repo file
 @name             bare mention (agents first, then users)
 ```
+
+## 6b. Tags
+
+Every message carries optional `tags` — free-form lowercase slugs
+(`frontend`, `backend`, `visual`, `mcp`, …) that classify it for the
+humans watching the channel and for filtering:
+
+```bash
+relay-cli say <pid> "Login form is live on staging" --tags frontend,visual
+```
+
+- Rules: lowercase `a-z0-9-`, ≤24 chars, ≤8 tags per message. Invalid
+  entries are dropped silently; more than 8 is an error.
+- Tag your work — a PR link is `backend` or `frontend`, a mockup is
+  `visual`, an MCP status ping is `mcp`. It lets people filter the rail.
+- `get_messages` accepts `tag` to read only matching messages.
+- Forwards keep the original tags; replies don't inherit them.
 
 ## 7. Errors and edge cases
 

@@ -434,6 +434,82 @@ export function DownloadIcon(props: IconProps): JSX.Element {
   );
 }
 
+export function ArrowLeftIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <path d="M10 3L5 8l5 5" />
+      <path d="M5.5 8H14" />
+    </svg>
+  );
+}
+
+export function ExternalLinkIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <path d="M7 3H3.5A1.5 1.5 0 0 0 2 4.5v8A1.5 1.5 0 0 0 3.5 14h8a1.5 1.5 0 0 0 1.5-1.5V9" />
+      <path d="M10 2h4v4" />
+      <path d="M14 2L7.5 8.5" />
+    </svg>
+  );
+}
+
+export function GitBranchIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <circle cx="4.5" cy="3.5" r="1.8" />
+      <circle cx="4.5" cy="12.5" r="1.8" />
+      <circle cx="11.5" cy="6.5" r="1.8" />
+      <path d="M4.5 5.3v5.4" />
+      <path d="M11.5 8.3c0 1.7-1.4 2.7-3.2 2.7H6.3" />
+    </svg>
+  );
+}
+
+export function TagIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <path d="M2 7V3.5A1.5 1.5 0 0 1 3.5 2H7l6.5 6.5a1.2 1.2 0 0 1 0 1.7l-3.8 3.8a1.2 1.2 0 0 1-1.7 0Z" />
+      <circle cx="5" cy="5" r="1" />
+    </svg>
+  );
+}
+
 export function LockIcon(props: IconProps): JSX.Element {
   return (
     <svg

@@ -145,7 +145,17 @@ export function WebhooksSection(props: { projectId: string }) {
     (id) => api.listWebhooks(id),
   );
   const [url, setUrl] = createSignal("");
-  const [picked, setPicked] = createSignal<string[]>([]);
+  // Sensible defaults pre-picked — everything except wildcard; users toggle.
+  const [picked, setPicked] = createSignal<string[]>([
+    "message.created",
+    "issue.created",
+    "issue.updated",
+    "todo.created",
+    "todo.updated",
+    "review.created",
+    "review.responded",
+    "attachment.created",
+  ]);
   const [secret, setSecret] = createSignal("");
   const [err, setErr] = createSignal("");
   const [busy, setBusy] = createSignal(false);
@@ -154,18 +164,27 @@ export function WebhooksSection(props: { projectId: string }) {
     setPicked((p) =>
       p.includes(e) ? p.filter((x) => x !== e) : [...p, e],
     );
+  const groupEvents = () => {
+    const cat = data()?.catalog ?? [];
+    const groups: Record<string, string[]> = {};
+    for (const e of cat) {
+      const g = e.split(".")[0]!;
+      (groups[g] ??= []).push(e);
+    }
+    return groups;
+  };
 
-  const create = async () => {
+  const create = async (managed: boolean) => {
     setErr("");
     setBusy(true);
     try {
       const w = await api.createWebhook(props.projectId, {
-        url: url().trim(),
+        url: managed ? undefined : url().trim(),
         events: picked(),
+        relay_managed: managed || undefined,
       });
       setSecret(w.secret ?? "");
-      setUrl("");
-      setPicked([]);
+      if (!managed) setUrl("");
       refetch();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "create failed");
@@ -213,41 +232,95 @@ export function WebhooksSection(props: { projectId: string }) {
         <h3 class="mb-2 mt-6 text-[12px] font-semibold uppercase tracking-wider text-muted">
           New subscription
         </h3>
-        <input
-          class={inputClass}
-          placeholder="https://agent.example.com/relay/events"
-          value={url()}
-          onInput={(e) => setUrl(e.currentTarget.value)}
-        />
+
+        {/* Event scopes first — a managed listener needs nothing else. */}
         <Show when={data()?.catalog}>
-          {(cat) => (
-            <div class="mt-2 flex flex-wrap gap-1.5">
-              <For each={["*", ...cat()]}>
-                {(e) => (
+          <div class="mt-1 flex flex-col gap-2">
+            <For each={Object.entries(groupEvents())}>
+              {([group, events]) => (
+                <div class="flex flex-wrap items-center gap-1.5">
                   <button
                     type="button"
-                    onClick={() => toggleEvent(e)}
-                    class={`rounded-md border px-2 py-1 font-mono text-[11px] transition-colors ${
-                      picked().includes(e)
-                        ? "border-accent/50 bg-accent/10 text-fg"
-                        : "border-border text-muted hover:text-fg"
-                    }`}
+                    onClick={() =>
+                      setPicked((p) =>
+                        events.every((e) => p.includes(e))
+                          ? p.filter((x) => !events.includes(x))
+                          : [...new Set([...p, ...events])],
+                      )
+                    }
+                    class="w-24 shrink-0 rounded-md border border-border px-2 py-1 text-left font-mono text-[11px] font-semibold text-muted transition-colors hover:text-fg"
                   >
-                    {e}
+                    {group}.*
                   </button>
-                )}
-              </For>
-            </div>
-          )}
+                  <For each={events}>
+                    {(e) => (
+                      <label
+                        class={`flex cursor-pointer items-center gap-1 rounded-md border px-2 py-1 font-mono text-[11px] transition-colors ${
+                          picked().includes(e)
+                            ? "border-accent/50 bg-accent/10 text-fg"
+                            : "border-border text-muted hover:text-fg"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={picked().includes(e)}
+                          onChange={() => toggleEvent(e)}
+                          class="sr-only"
+                        />
+                        {e}
+                      </label>
+                    )}
+                  </For>
+                </div>
+              )}
+            </For>
+            <label
+              class={`flex w-fit cursor-pointer items-center gap-1 rounded-md border px-2 py-1 font-mono text-[11px] transition-colors ${
+                picked().includes("*")
+                  ? "border-amber-500/50 bg-amber-500/10 text-fg"
+                  : "border-border text-muted hover:text-fg"
+              }`}
+              title="Subscribe to every current and future event type"
+            >
+              <input
+                type="checkbox"
+                checked={picked().includes("*")}
+                onChange={() => toggleEvent("*")}
+                class="sr-only"
+              />
+              * (all events)
+            </label>
+          </div>
         </Show>
-        <button
-          type="button"
-          disabled={busy() || !url().trim() || picked().length === 0}
-          onClick={create}
-          class="mt-3 rounded-md bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white transition-opacity disabled:opacity-40"
-        >
-          {busy() ? "Creating…" : "Subscribe"}
-        </button>
+
+        <div class="mt-4 flex items-start gap-2">
+          <input
+            class={`${inputClass} flex-1`}
+            placeholder="https://agent.example.com/relay/events"
+            value={url()}
+            onInput={(e) => setUrl(e.currentTarget.value)}
+          />
+          <button
+            type="button"
+            disabled={busy() || !url().trim() || picked().length === 0}
+            onClick={() => void create(false)}
+            class="h-[34px] shrink-0 rounded-md bg-accent px-3 text-[12.5px] font-medium text-white transition-opacity disabled:opacity-40"
+          >
+            {busy() ? "Creating…" : "Subscribe"}
+          </button>
+        </div>
+        <p class="mt-1.5 text-[11.5px] text-muted">
+          Or{" "}
+          <button
+            type="button"
+            disabled={busy() || picked().length === 0}
+            onClick={() => void create(true)}
+            class="font-medium text-accent hover:underline disabled:opacity-40"
+          >
+            create a Relay-hosted test listener
+          </button>{" "}
+          — no URL needed; signed deliveries appear under Deliveries.
+        </p>
         <FormError message={err()} />
       </div>
     </div>

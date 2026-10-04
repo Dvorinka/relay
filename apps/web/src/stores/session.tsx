@@ -15,6 +15,7 @@ import {
   type WorkspaceWithRole,
 } from "@relay/api-client";
 import { api } from "../lib/api";
+import { rememberConnection } from "../lib/connections";
 import { desktopApplyConfig } from "../lib/desktop";
 import { net } from "../lib/net";
 
@@ -57,6 +58,8 @@ export function SessionProvider(props: ParentProps) {
       // cookie still rides along same-origin.
       const url = serverUrl ?? net.serverUrl();
       net.connect(url, res.token ?? "");
+      // Off-origin servers get remembered for the multi-server rail.
+      if (url) rememberConnection(url, res.token ?? "");
       // Inside the desktop shell, sync its config whenever the target
       // server changes — leaving local mode or switching servers — so the
       // next launch proxies this server instead of the embedded bundle.
@@ -69,6 +72,7 @@ export function SessionProvider(props: ParentProps) {
       );
       const url = serverUrl ?? net.serverUrl();
       net.connect(url, res.token ?? "");
+      if (url) rememberConnection(url, res.token ?? "");
       if (url) void desktopApplyConfig(url, false);
       mutate(res);
     },

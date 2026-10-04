@@ -29,8 +29,8 @@ func (q *Queries) AddReactionAgent(ctx context.Context, arg AddReactionAgentPara
 }
 
 const createAgentMessage = `-- name: CreateAgentMessage :one
-insert into messages (conversation_id, author_agent_id, body, parent_id, mentions, forwarded_from)
-values ($1, $2, $3, $4, coalesce($5, '[]'::jsonb), $6)
+insert into messages (conversation_id, author_agent_id, body, parent_id, mentions, forwarded_from, tags)
+values ($1, $2, $3, $4, coalesce($5, '[]'::jsonb), $6, coalesce($7, '{}'::text[]))
 returning id
 `
 
@@ -41,6 +41,7 @@ type CreateAgentMessageParams struct {
 	ParentID       pgtype.UUID `json:"parent_id"`
 	Mentions       interface{} `json:"mentions"`
 	ForwardedFrom  pgtype.UUID `json:"forwarded_from"`
+	Tags           interface{} `json:"tags"`
 }
 
 func (q *Queries) CreateAgentMessage(ctx context.Context, arg CreateAgentMessageParams) (pgtype.UUID, error) {
@@ -51,6 +52,7 @@ func (q *Queries) CreateAgentMessage(ctx context.Context, arg CreateAgentMessage
 		arg.ParentID,
 		arg.Mentions,
 		arg.ForwardedFrom,
+		arg.Tags,
 	)
 	var id pgtype.UUID
 	err := row.Scan(&id)
@@ -189,7 +191,7 @@ func (q *Queries) GetIssueForAgent(ctx context.Context, id pgtype.UUID) (GetIssu
 }
 
 const getMessageFull = `-- name: GetMessageFull :one
-select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
        m.author_user_id, m.author_agent_id,
        coalesce(u.name, a.name, '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
@@ -222,6 +224,7 @@ type GetMessageFullRow struct {
 	ConversationID    pgtype.UUID        `json:"conversation_id"`
 	Body              string             `json:"body"`
 	Mentions          []byte             `json:"mentions"`
+	Tags              []string           `json:"tags"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	EditedAt          pgtype.Timestamptz `json:"edited_at"`
 	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
@@ -251,6 +254,7 @@ func (q *Queries) GetMessageFull(ctx context.Context, id pgtype.UUID) (GetMessag
 		&i.ConversationID,
 		&i.Body,
 		&i.Mentions,
+		&i.Tags,
 		&i.CreatedAt,
 		&i.EditedAt,
 		&i.DeletedAt,
@@ -551,7 +555,7 @@ func (q *Queries) ResolveMessageProject(ctx context.Context, id pgtype.UUID) (pg
 }
 
 const searchMessagesInProject = `-- name: SearchMessagesInProject :many
-select m.id, m.conversation_id, m.body, m.created_at, m.edited_at,
+select m.id, m.conversation_id, m.body, m.tags, m.created_at, m.edited_at,
        m.author_user_id, m.author_agent_id,
        coalesce(u.name, a.name, '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar
@@ -576,6 +580,7 @@ type SearchMessagesInProjectRow struct {
 	ID             pgtype.UUID        `json:"id"`
 	ConversationID pgtype.UUID        `json:"conversation_id"`
 	Body           string             `json:"body"`
+	Tags           []string           `json:"tags"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	EditedAt       pgtype.Timestamptz `json:"edited_at"`
 	AuthorUserID   pgtype.UUID        `json:"author_user_id"`
@@ -597,6 +602,7 @@ func (q *Queries) SearchMessagesInProject(ctx context.Context, arg SearchMessage
 			&i.ID,
 			&i.ConversationID,
 			&i.Body,
+			&i.Tags,
 			&i.CreatedAt,
 			&i.EditedAt,
 			&i.AuthorUserID,

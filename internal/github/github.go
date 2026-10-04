@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -71,6 +72,9 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup, pub *gin.RouterGroup) {
 	g.GET("/projects/:id/development", s.projectMemberOnly, s.handleDevelopment)
 	g.GET("/projects/:id/github/files", s.projectMemberOnly, s.handleRepoTree)
 	g.GET("/projects/:id/github/files/read", s.projectMemberOnly, s.handleRepoFile)
+	g.GET("/projects/:id/github/pull", s.projectMemberOnly, s.handlePullDetail)
+	g.GET("/projects/:id/github/commits", s.projectMemberOnly, s.handleCommits)
+	g.GET("/projects/:id/github/branches", s.projectMemberOnly, s.handleBranches)
 	g.POST("/projects/:id/github/import", s.projectAdminOnly, s.handleImport)
 	// browser redirect targets / webhook entry
 	pub.GET("/github/callback", s.handleCallback)
@@ -322,12 +326,20 @@ func (s *Service) handleAvailableRepos(c *gin.Context) {
 		return
 	}
 	type repoOut struct {
-		InstallationID int64  `json:"installation_id"`
-		FullName       string `json:"full_name"`
-		Owner          string `json:"owner"`
-		Name           string `json:"name"`
-		DefaultBranch  string `json:"default_branch"`
-		Private        bool   `json:"private"`
+		InstallationID int64     `json:"installation_id"`
+		FullName       string    `json:"full_name"`
+		Owner          string    `json:"owner"`
+		Name           string    `json:"name"`
+		DefaultBranch  string    `json:"default_branch"`
+		Private        bool      `json:"private"`
+		Description    string    `json:"description,omitempty"`
+		OwnerAvatar    string    `json:"owner_avatar,omitempty"`
+		PushedAt       time.Time `json:"pushed_at,omitempty"`
+	}
+	toOut := func(installID int64, r Repo) repoOut {
+		owner, name, _ := strings.Cut(r.FullName, "/")
+		return repoOut{installID, r.FullName, owner, name,
+			r.DefaultBranch, r.Private, r.Description, r.Owner.AvatarURL, r.PushedAt}
 	}
 	var repos []repoOut
 	if cli.IsPAT() {
@@ -337,8 +349,7 @@ func (s *Service) handleAvailableRepos(c *gin.Context) {
 			return
 		}
 		for _, r := range list {
-			owner, name, _ := strings.Cut(r.FullName, "/")
-			repos = append(repos, repoOut{0, r.FullName, owner, name, r.DefaultBranch, r.Private})
+			repos = append(repos, toOut(0, r))
 		}
 		c.JSON(http.StatusOK, gin.H{"repos": repos})
 		return
@@ -350,10 +361,11 @@ func (s *Service) handleAvailableRepos(c *gin.Context) {
 			continue
 		}
 		for _, r := range list {
-			owner, name, _ := strings.Cut(r.FullName, "/")
-			repos = append(repos, repoOut{in.InstallationID, r.FullName, owner, name, r.DefaultBranch, r.Private})
+			repos = append(repos, toOut(in.InstallationID, r))
 		}
 	}
+	// installation/repos has no sort parameter — newest push first here
+	sort.Slice(repos, func(i, j int) bool { return repos[i].PushedAt.After(repos[j].PushedAt) })
 	c.JSON(http.StatusOK, gin.H{"repos": repos})
 }
 
@@ -519,6 +531,173 @@ func (s *Service) handleDevelopment(c *gin.Context) {
 	payload := gin.H{"repos": panels, "fetched_at": time.Now()}
 	s.cache.Store(key, cacheEntry{data: payload, expiry: time.Now().Add(60 * time.Second)})
 	c.JSON(http.StatusOK, payload)
+}
+
+// linkedRepo resolves the ?repo=owner/name query against the project's linked
+// repositories — PR details, commits and branches all take it.
+func (s *Service) linkedRepo(c *gin.Context, p db.GetProjectByIDRow) (db.Repository, bool) {
+	full := c.Query("repo")
+	rows, err := s.q.ListProjectRepos(c.Request.Context(), p.ID)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return db.Repository{}, false
+	}
+	if full == "" && len(rows) == 1 {
+		return rows[0], true // one linked repo — repo= is optional
+	}
+	for _, r := range rows {
+		if r.Owner+"/"+r.Name == full || r.ID.String() == full {
+			return r, true
+		}
+	}
+	httpx.Error(c, http.StatusNotFound, "not_found", "repository not linked to this project")
+	return db.Repository{}, false
+}
+
+// handlePullDetail bundles everything the in-app PR view needs: the pull
+// itself, its changed files, commits and CI check runs.
+func (s *Service) handlePullDetail(c *gin.Context) {
+	p := project(c)
+	repo, ok := s.linkedRepo(c, p)
+	if !ok {
+		return
+	}
+	number, err := strconv.Atoi(c.Query("number"))
+	if err != nil || number <= 0 {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "number is required")
+		return
+	}
+	cli, err := s.githubClient(c.Request.Context())
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "not_registered", "GitHub is not connected")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+
+	pr, err := cli.GetPR(ctx, repo.InstallationID, repo.Owner, repo.Name, number)
+	if err != nil {
+		httpx.Error(c, http.StatusBadGateway, "github_error", "could not load the pull request")
+		return
+	}
+	// files/commits/checks are supplementary — a failure degrades to an empty
+	// list rather than failing the whole detail view.
+	files, _ := cli.ListPRFiles(ctx, repo.InstallationID, repo.Owner, repo.Name, number)
+	commits, _ := cli.ListPRCommits(ctx, repo.InstallationID, repo.Owner, repo.Name, number)
+	var checks []CheckRun
+	if pr.Head.SHA != "" {
+		checks, _ = cli.ListCheckRuns(ctx, repo.InstallationID, repo.Owner, repo.Name, pr.Head.SHA)
+	}
+	mergeable := ""
+	if pr.Mergeable != nil {
+		if *pr.Mergeable {
+			mergeable = "clean"
+		} else {
+			mergeable = "conflicting"
+		}
+	}
+	labels := make([]string, 0, len(pr.Labels))
+	for _, l := range pr.Labels {
+		labels = append(labels, l.Name)
+	}
+	outFiles := make([]gin.H, 0, len(files))
+	for _, f := range files {
+		outFiles = append(outFiles, gin.H{
+			"filename": f.Filename, "status": f.Status,
+			"additions": f.Additions, "deletions": f.Deletions,
+		})
+	}
+	outCommits := make([]gin.H, 0, len(commits))
+	for _, cm := range commits {
+		msg, _, _ := strings.Cut(cm.Commit.Message, "\n")
+		outCommits = append(outCommits, gin.H{
+			"sha": cm.SHA, "message": msg, "url": cm.HTMLURL,
+			"author": cm.Commit.Author.Name, "date": cm.Commit.Author.Date,
+		})
+	}
+	outChecks := make([]gin.H, 0, len(checks))
+	for _, ch := range checks {
+		outChecks = append(outChecks, gin.H{
+			"name": ch.Name, "status": ch.Status,
+			"conclusion": ch.Conclusion, "url": ch.HTMLURL,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"pull": gin.H{
+			"number": pr.Number, "title": pr.Title, "state": pr.State,
+			"draft": pr.Draft, "merged": pr.Merged, "merged_at": pr.MergedAt,
+			"mergeable": mergeable, "mergeable_state": pr.MergeableState,
+			"body": pr.Body, "url": pr.HTMLURL, "author": pr.User.Login,
+			"head": pr.Head.Ref, "base": pr.Base.Ref,
+			"additions": pr.Additions, "deletions": pr.Deletions,
+			"changed_files": pr.ChangedFiles, "commit_count": pr.Commits,
+			"labels":     labels,
+			"created_at": pr.CreatedAt, "updated_at": pr.UpdatedAt,
+			"repo": repoJSON(repo),
+		},
+		"files":   outFiles,
+		"commits": outCommits,
+		"checks":  outChecks,
+	})
+}
+
+// handleCommits serves the git log view — commits on any branch of a linked
+// repo, ?branch= and ?per_page= (<=100) query params.
+func (s *Service) handleCommits(c *gin.Context) {
+	p := project(c)
+	repo, ok := s.linkedRepo(c, p)
+	if !ok {
+		return
+	}
+	branch := c.DefaultQuery("branch", repo.DefaultBranch)
+	perPage, _ := strconv.Atoi(c.DefaultQuery("per_page", "50"))
+	cli, err := s.githubClient(c.Request.Context())
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "not_registered", "GitHub is not connected")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	commits, err := cli.ListCommitsPaged(ctx, repo.InstallationID, repo.Owner, repo.Name, branch, perPage)
+	if err != nil {
+		httpx.Error(c, http.StatusBadGateway, "github_error", "could not load commits")
+		return
+	}
+	out := make([]gin.H, 0, len(commits))
+	for _, cm := range commits {
+		msg, _, _ := strings.Cut(cm.Commit.Message, "\n")
+		out = append(out, gin.H{
+			"sha": cm.SHA, "message": msg, "url": cm.HTMLURL,
+			"author": cm.Commit.Author.Name, "date": cm.Commit.Author.Date,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"commits": out, "branch": branch})
+}
+
+// handleBranches lists branches of a linked repo for the git log picker.
+func (s *Service) handleBranches(c *gin.Context) {
+	p := project(c)
+	repo, ok := s.linkedRepo(c, p)
+	if !ok {
+		return
+	}
+	cli, err := s.githubClient(c.Request.Context())
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "not_registered", "GitHub is not connected")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+	branches, err := cli.ListBranches(ctx, repo.InstallationID, repo.Owner, repo.Name)
+	if err != nil {
+		httpx.Error(c, http.StatusBadGateway, "github_error", "could not load branches")
+		return
+	}
+	out := make([]gin.H, 0, len(branches))
+	for _, b := range branches {
+		out = append(out, gin.H{"name": b.Name, "protected": b.Protected})
+	}
+	c.JSON(http.StatusOK, gin.H{"branches": out, "default_branch": repo.DefaultBranch})
 }
 
 // --- webhook ---

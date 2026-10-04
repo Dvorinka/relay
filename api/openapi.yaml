@@ -930,6 +930,10 @@ paths:
           in: query
           description: Return messages older than this message id
           schema: { type: string, format: uuid }
+        - name: tag
+          in: query
+          description: Only messages carrying this tag
+          schema: { type: string }
       responses:
         "200":
           description: Page of messages
@@ -969,6 +973,11 @@ paths:
                   type: string
                   format: uuid
                   description: Message this reply threads under (same conversation)
+                tags:
+                  type: array
+                  items: { type: string }
+                  maxItems: 8
+                  description: "Lowercase slugs (frontend, backend, visual, mcp, …); invalid entries are dropped, more than 8 is a 400"
       responses:
         "201":
           description: Posted
@@ -976,6 +985,24 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Message" }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    delete:
+      operationId: clearConversation
+      summary: Delete every message in the conversation - owner/admin only (the /clear and /new commands)
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/ConversationId" } ]
+      responses:
+        "200": { description: Conversation cleared }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/conversations/{conversationId}/read:
+    post:
+      operationId: markConversationRead
+      summary: Mark every visible message in the conversation read for the current user
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/ConversationId" } ]
+      responses:
+        "204": { description: All messages marked read }
         "403": { $ref: "#/components/responses/Forbidden" }
 
   /api/messages/{messageId}:
@@ -1940,6 +1967,100 @@ paths:
       responses:
         "200": { description: "Development data" }
 
+  /api/projects/{projectId}/github/pull:
+    get:
+      operationId: pullDetail
+      summary: In-app pull request detail — PR, changed files, commits, CI checks
+      tags: [github]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - { name: repo, in: query, schema: { type: string }, description: "owner/name or repo id; optional when only one repo is linked" }
+        - { name: number, in: query, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Pull request detail bundle
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pull:
+                    type: object
+                    description: "number, title, state, draft, merged, mergeable, body, url, author, head, base, additions, deletions, changed_files, commit_count, labels, created_at, updated_at, repo"
+                  files:
+                    type: array
+                    items: { type: object }
+                  commits:
+                    type: array
+                    items: { type: object }
+                  checks:
+                    type: array
+                    items: { type: object }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502": { description: "GitHub upstream error" }
+
+  /api/projects/{projectId}/github/commits:
+    get:
+      operationId: gitCommits
+      summary: Commit log (git log) of a branch on a linked repository
+      tags: [github]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - { name: repo, in: query, schema: { type: string }, description: "owner/name or repo id; optional when only one repo is linked" }
+        - { name: branch, in: query, schema: { type: string }, description: "Defaults to the repo's default branch" }
+        - { name: per_page, in: query, schema: { type: integer, default: 50, maximum: 100 } }
+      responses:
+        "200":
+          description: Commits, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  commits:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        sha: { type: string }
+                        message: { type: string }
+                        url: { type: string }
+                        author: { type: string }
+                        date: { type: string, format: date-time }
+                  branch: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502": { description: "GitHub upstream error" }
+
+  /api/projects/{projectId}/github/branches:
+    get:
+      operationId: gitBranches
+      summary: Branch list of a linked repository — feeds the git log picker
+      tags: [github]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - { name: repo, in: query, schema: { type: string }, description: "owner/name or repo id; optional when only one repo is linked" }
+      responses:
+        "200":
+          description: Branches
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  branches:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        protected: { type: boolean }
+                  default_branch: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502": { description: "GitHub upstream error" }
+
   /api/projects/{projectId}/todos:
     get:
       operationId: listTodos
@@ -2265,9 +2386,12 @@ paths:
           application/json:
             schema:
               type: object
-              required: [url, events]
+              required: [events]
               properties:
-                url: { type: string, format: uri }
+                url: { type: string, format: uri, description: "Delivery target; required unless relay_managed" }
+                relay_managed:
+                  type: boolean
+                  description: "True → Relay provisions a built-in listener at /api/webhooks/catch/{id} and points the subscription at it; deliveries are recorded and inspectable without standing up a server"
                 events:
                   type: array
                   items: { type: string }
@@ -2367,6 +2491,19 @@ paths:
         "202": { description: "Delivery queued" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/webhooks/catch/{webhookId}:
+    post:
+      operationId: webhookCatch
+      summary: Public listener endpoint for relay_managed subscriptions — accepts the signed envelope, always 204
+      tags: [webhooks]
+      parameters: [ { $ref: "#/components/parameters/WebhookId" } ]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "204": { description: "Accepted" }
 
   /api/me/unread:
     get:
@@ -2817,6 +2954,10 @@ components:
         conversation_id: { type: string, format: uuid }
         author: { $ref: "#/components/schemas/MessageAuthor" }
         body: { type: string, description: Markdown }
+        tags:
+          type: array
+          description: "Free-form classification tags (frontend, backend, visual, mcp, …); lowercase slug, max 8"
+          items: { type: string, pattern: "^[a-z0-9][a-z0-9-]{0,23}$" }
         mentions:
           type: array
           description: "Structured entity references extracted from the body"

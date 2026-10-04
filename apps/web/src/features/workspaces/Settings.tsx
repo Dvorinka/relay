@@ -1,4 +1,8 @@
-import { ApiClientError, type WorkspaceRole } from "@relay/api-client";
+import {
+  ApiClientError,
+  createClient,
+  type WorkspaceRole,
+} from "@relay/api-client";
 import {
   createResource,
   createSignal,
@@ -14,7 +18,19 @@ import {
   inputClass,
   primaryButtonClass,
 } from "../../components/ui";
-import { DownloadIcon, MoonIcon, SunIcon } from "../../components/icons";
+import {
+  DownloadIcon,
+  MoonIcon,
+  SunIcon,
+  TrashIcon,
+} from "../../components/icons";
+import {
+  activateConnection,
+  connectionHue,
+  connections,
+  forgetConnection,
+  rememberConnection,
+} from "../../lib/connections";
 import { api } from "../../lib/api";
 import { mediaURL, net } from "../../lib/net";
 import {
@@ -631,6 +647,32 @@ function ConnectionSection() {
     setConnectPending(false);
   }
 
+  // Add a second server WITHOUT leaving the current one: sign in there,
+  // stash the bearer, and its projects join the rail's foreign group.
+  const [adding, setAdding] = createSignal(false);
+  const [addPending, setAddPending] = createSignal(false);
+  async function onAddServer(e: SubmitEvent) {
+    e.preventDefault();
+    const data = new FormData(e.currentTarget as HTMLFormElement);
+    const url = String(data.get("server_url") ?? "").replace(/\/+$/, "");
+    setError(null);
+    setAddPending(true);
+    try {
+      const res = await createClient(url).login({
+        email: String(data.get("email") ?? ""),
+        password: String(data.get("password") ?? ""),
+      });
+      if (!res.token) throw new Error("server did not return a token");
+      rememberConnection(url, res.token);
+      (e.currentTarget as HTMLFormElement).reset();
+      setAdding(false);
+    } catch (err) {
+      setError(errorMessage(err, "Could not reach or sign in"));
+    } finally {
+      setAddPending(false);
+    }
+  }
+
   return (
     <div class="flex flex-col gap-4">
       <div class="flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2.5">
@@ -745,6 +787,108 @@ function ConnectionSection() {
             </SubmitButton>
           </div>
         </form>
+      </Show>
+
+      <Show when={!net.isLocal()}>
+        <div class="flex max-w-md flex-col gap-2 border-t border-border pt-4">
+          <div class="flex items-center justify-between">
+            <span class="text-[12.5px] font-medium">Saved servers</span>
+            <button
+              type="button"
+              onClick={() => setAdding((v) => !v)}
+              class="rounded-md border border-border px-2.5 py-1 text-[12px] text-muted transition-colors hover:bg-hover hover:text-fg"
+            >
+              Add server
+            </button>
+          </div>
+          <p class="text-[12px] text-muted">
+            Sign in to additional Relay servers — their projects appear in
+            the rail under their own label, and clicking one hops over.
+          </p>
+          <For each={connections()}>
+            {(c) => {
+              const active = () => c.url === net.serverUrl();
+              const hue = connectionHue(c.url);
+              return (
+                <div class="flex items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5">
+                  <span
+                    class="h-2 w-2 shrink-0 rounded-full"
+                    style={{ "background-color": `hsl(${hue} 65% 55%)` }}
+                  />
+                  <div class="min-w-0 flex-1">
+                    <p class="truncate text-[12.5px] font-medium">{c.label}</p>
+                    <p class="truncate text-[11px] text-muted">{c.url}</p>
+                  </div>
+                  <Show
+                    when={active()}
+                    fallback={
+                      <button
+                        type="button"
+                        onClick={() => activateConnection(c, "/app")}
+                        class="rounded-md border border-border px-2 py-0.5 text-[11.5px] text-muted transition-colors hover:bg-hover hover:text-fg"
+                      >
+                        Switch
+                      </button>
+                    }
+                  >
+                    <span class="rounded border border-accent/40 bg-accent-soft px-1.5 py-px text-[10px] font-medium uppercase tracking-wide text-accent-ink">
+                      active
+                    </span>
+                  </Show>
+                  <button
+                    type="button"
+                    aria-label={`Forget ${c.label}`}
+                    title="Forget this server"
+                    onClick={() => forgetConnection(c.id)}
+                    class="rounded p-1 text-muted transition-colors hover:text-red-500"
+                  >
+                    <TrashIcon class="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              );
+            }}
+          </For>
+          <Show when={connections().length === 0}>
+            <p class="text-[12px] text-muted/70">
+              No saved servers — signing in on another origin saves it here.
+            </p>
+          </Show>
+          <Show when={adding()}>
+            <form onSubmit={onAddServer} class="flex flex-col gap-2 pt-1">
+              <input
+                type="url"
+                name="server_url"
+                required
+                placeholder="https://relay.example.com"
+                aria-label="Server URL"
+                class={inputClass}
+              />
+              <input
+                type="email"
+                name="email"
+                required
+                autocomplete="email"
+                placeholder="you@example.com"
+                aria-label="Account email"
+                class={inputClass}
+              />
+              <input
+                type="password"
+                name="password"
+                required
+                autocomplete="off"
+                placeholder="Password"
+                aria-label="Account password"
+                class={inputClass}
+              />
+              <div>
+                <SubmitButton pending={addPending()}>
+                  {addPending() ? "Signing in…" : "Save connection"}
+                </SubmitButton>
+              </div>
+            </form>
+          </Show>
+        </div>
       </Show>
 
       <Show when={net.isLocal()}>
