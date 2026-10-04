@@ -26,6 +26,18 @@ const ALL_SCOPES: AgentScope[] = [
   "brief:write",
 ];
 
+// Mirrors agents.DefaultInviteScopes on the server.
+const DEFAULT_INVITE_SCOPES: AgentScope[] = [
+  "project:read",
+  "message:read",
+  "message:write",
+  "attachment:read",
+  "issue:read",
+  "issue:write",
+  "review:read",
+  "review:write",
+];
+
 function errorMessage(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
 }
@@ -250,7 +262,17 @@ function AgentRow(props: {
                     </For>
                   </ul>
                   <Show when={props.canManage}>
-                    <form onSubmit={onGrant} class="flex flex-col gap-2">
+                    <Show
+                      when={props.projects.some(
+                        (p) => !grantedIds().has(p.id),
+                      )}
+                      fallback={
+                        <p class="text-[11px] text-muted">
+                          All projects already granted.
+                        </p>
+                      }
+                    >
+                      <form onSubmit={onGrant} class="flex flex-col gap-2">
                       <select
                         class={inputClass}
                         value={grantProject()}
@@ -282,9 +304,12 @@ function AgentRow(props: {
                         </For>
                       </div>
                       <div>
-                        <SubmitButton pending={false}>Grant</SubmitButton>
+                        <SubmitButton pending={false} disabled={!grantProject()}>
+                          Grant
+                        </SubmitButton>
                       </div>
-                    </form>
+                      </form>
+                    </Show>
                   </Show>
                 </div>
 
@@ -537,16 +562,63 @@ export default function AgentsSection(props: {
   const [freshInvite, setFreshInvite] = createSignal<
     (AgentInvite & { token: string }) | null
   >(null);
+  // Invite options: unchecked project ids live in inviteDenied (empty = every
+  // project, present and future); scopes default to DefaultInviteScopes.
+  const [inviteOpen, setInviteOpen] = createSignal(false);
+  const [inviteDenied, setInviteDenied] = createSignal<Set<string>>(new Set());
+  const [inviteScopes, setInviteScopes] = createSignal<AgentScope[]>([
+    ...DEFAULT_INVITE_SCOPES,
+  ]);
 
   // Prefer the configured server URL over the page origin: the desktop app
   // serves the SPA from wails.localhost while talking to a real server.
   const apiBase = () => net.serverUrl() || window.location.origin;
 
-  async function onInvite() {
+  const inviteProjectIds = () => {
+    const denied = inviteDenied();
+    if (denied.size === 0) return undefined; // every project
+    return (projects() ?? [])
+      .filter((p) => !denied.has(p.id))
+      .map((p) => p.id);
+  };
+
+  function toggleInviteProject(id: string) {
+    setInviteDenied((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  function toggleInviteScope(s: AgentScope) {
+    setInviteScopes((cur) =>
+      cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s],
+    );
+  }
+
+  async function onInvite(e: SubmitEvent) {
+    e.preventDefault();
     setError(null);
     setPending(true);
     try {
-      setFreshInvite(await api.createAgentInvite(props.workspaceId, {}));
+      const scopes = inviteScopes();
+      setFreshInvite(
+        await api.createAgentInvite(props.workspaceId, {
+          project_ids: inviteProjectIds(),
+          // empty list means "server default" on the wire — only send a
+          // narrowed set when the user actually unchecked something
+          scopes:
+            scopes.length === DEFAULT_INVITE_SCOPES.length &&
+            DEFAULT_INVITE_SCOPES.every((s) => scopes.includes(s))
+              ? undefined
+              : scopes,
+        }),
+      );
+      setInviteOpen(false);
       await refetchInvites();
     } catch (err) {
       setError(errorMessage(err, "Could not create invite"));
@@ -627,14 +699,75 @@ export default function AgentsSection(props: {
           </div>
         </Show>
 
-        <div class="max-w-sm">
-          <SubmitButton
-            type="button"
-            pending={pending()}
-            onClick={() => void onInvite()}
+        <div class="max-w-lg">
+          <Show
+            when={inviteOpen()}
+            fallback={
+              <SubmitButton type="button" onClick={() => setInviteOpen(true)}>
+                Invite agent
+              </SubmitButton>
+            }
           >
-            {pending() ? "Creating invite..." : "Invite agent"}
-          </SubmitButton>
+            <form
+              onSubmit={onInvite}
+              class="flex flex-col gap-3 rounded-md border border-border p-3"
+            >
+              <div>
+                <h3 class="mb-1.5 text-[12px] font-semibold">Projects</h3>
+                <div class="flex flex-wrap gap-x-3 gap-y-1">
+                  <For each={projects() ?? []}>
+                    {(p) => (
+                      <label class="flex items-center gap-1.5 text-[12px]">
+                        <input
+                          type="checkbox"
+                          checked={!inviteDenied().has(p.id)}
+                          onChange={() => toggleInviteProject(p.id)}
+                          class="accent-accent"
+                        />
+                        {p.name}
+                      </label>
+                    )}
+                  </For>
+                </div>
+              </div>
+              <div>
+                <h3 class="mb-1.5 text-[12px] font-semibold">Permissions</h3>
+                <div class="flex flex-wrap gap-x-3 gap-y-1">
+                  <For each={ALL_SCOPES}>
+                    {(s) => (
+                      <label class="flex items-center gap-1.5 font-mono text-[11px] text-muted">
+                        <input
+                          type="checkbox"
+                          checked={inviteScopes().includes(s)}
+                          onChange={() => toggleInviteScope(s)}
+                          class="accent-accent"
+                        />
+                        {s}
+                      </label>
+                    )}
+                  </For>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <SubmitButton
+                  pending={pending()}
+                  disabled={
+                    inviteProjectIds()?.length === 0 ||
+                    inviteScopes().length === 0
+                  }
+                >
+                  {pending() ? "Creating invite..." : "Create invite"}
+                </SubmitButton>
+                <button
+                  type="button"
+                  class="text-[12px] text-muted hover:text-fg"
+                  onClick={() => setInviteOpen(false)}
+                >
+                  cancel
+                </button>
+              </div>
+            </form>
+          </Show>
           <p class="mt-1.5 text-[11px] text-muted">
             The agent registers itself with the invite - it picks its own name
             and receives a working MCP token. No manual setup on your side.
