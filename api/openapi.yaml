@@ -2531,6 +2531,17 @@ paths:
       responses:
         "200": { description: "Mention feed" }
 
+  /api/users/{userId}/profile:
+    get:
+      operationId: userProfile
+      summary: User details visible to the caller — profile plus activity inside workspaces both parties share
+      tags: [realtime]
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: "Profile, shared workspaces, stats, assigned issues, recent messages, mentions" }
+        "404": { description: "No shared workspace — or no such user" }
+
   /api/projects/{projectId}/issues/key/{key}:
     get:
       operationId: issueByKey
@@ -3034,9 +3045,9 @@ components:
       properties:
         kind:
           type: string
-          enum: [user, agent, issue, gh, file]
-          description: "user|agent|issue|gh|file — @user:, @agent:, KEY-N, owner/repo#N, @file:/@gh:"
-        ref: { type: string, description: "slug | KEY-1 | owner/repo#1 | path" }
+          enum: [user, agent, issue, gh, file, thread]
+          description: "user|agent|issue|gh|file|thread — @user:, @agent:, KEY-N, owner/repo#N, @file:/@gh:, or a thread link on a 'started a thread' notice"
+        ref: { type: string, description: "slug | KEY-1 | owner/repo#1 | path | thread conversation id" }
         label: { type: string }
         id: { type: string, description: "resolved entity uuid when found" }
         url: { type: string }

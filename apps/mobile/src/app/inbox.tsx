@@ -148,7 +148,18 @@ export default function Inbox() {
         return (
           <Pressable
             style={s.card}
-            onPress={() => router.push(`/p/${m.project_id}`)}
+            onPress={() => {
+              if (!m.is_read) void api.markMessageRead(m.id);
+              if (m.issue_id) {
+                router.push(`/p/${m.project_id}/issues`);
+              } else if (m.conversation_kind === "thread") {
+                router.push(
+                  `/p/${m.project_id}/thread?cid=${m.conversation_id}`,
+                );
+              } else {
+                router.push(`/p/${m.project_id}`);
+              }
+            }}
           >
             <Avatar name={m.author.name} url={avatar} C={C} s={s} />
             <View style={{ flex: 1 }}>

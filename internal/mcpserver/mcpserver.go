@@ -254,7 +254,7 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 	), s.getIssue)
 
 	srv.AddTool(mcp.NewTool("send_message",
-		mcp.WithDescription("Post a message as this agent. Give project_id to post in the project's main thread, or conversation_id to reply in a specific conversation. Pass reply_to (a message id) to thread the reply under that message."),
+		mcp.WithDescription("Post a message as this agent. For a direct, self-contained answer always pass reply_to so the reply threads under the triggering message. For anything bigger — plans, work in progress, open questions, anything needing back-and-forth — prefer create_thread first and post inside the thread. @username in the body notifies that user (their inbox + push): use it whenever a specific person's input is needed."),
 		mcp.WithString("project_id"),
 		mcp.WithString("conversation_id"),
 		mcp.WithString("body", mcp.Required(), mcp.Description("Markdown body")),
@@ -274,10 +274,17 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 	), s.deleteMessage)
 
 	srv.AddTool(mcp.NewTool("create_thread",
-		mcp.WithDescription("Open (or get) the thread rooted at a message: a side conversation so off-topic discussion leaves the channel readable. One thread per message; threads cannot nest."),
+		mcp.WithDescription("Open (or get) the thread rooted at a message: a focused side conversation. Use it for anything bigger than a quick answer — plans in progress, multi-step work, open questions, anything that needs back-and-forth — so the channel stays readable. Posts a 'started a thread' notice into the channel. One thread per message; threads cannot nest. Afterwards post into it via send_message with conversation_id=<thread id>."),
 		mcp.WithString("message_id", mcp.Required()),
 		mcp.WithString("title", mcp.Description("Optional thread title; defaults to the parent excerpt")),
 	), s.createThread)
+
+	srv.AddTool(mcp.NewTool("request_input",
+		mcp.WithDescription("Ask a person for input and keep the exchange in one place: opens a thread on the given message (if it isn't already in one), then posts your question inside it @mentioning the user so it lands in their inbox and push. Use this whenever you are blocked on a human — missing context, a decision, credentials — instead of leaving a bare channel message."),
+		mcp.WithString("message_id", mcp.Required(), mcp.Description("the message your question responds to; the thread roots on it (or on itself when it already lives in a thread)")),
+		mcp.WithString("user", mcp.Required(), mcp.Description("workspace member name to @mention, e.g. tdvorak")),
+		mcp.WithString("question", mcp.Required(), mcp.Description("what you need from them")),
+	), s.requestInput)
 
 	srv.AddTool(mcp.NewTool("pin_message",
 		mcp.WithDescription("Pin (or unpin) a message in its conversation. Pinned messages surface in the channel's pins list."),
@@ -1143,35 +1150,25 @@ func (s *Service) deleteMessage(ctx context.Context, req mcp.CallToolRequest) (*
 	return jsonResult(map[string]any{"deleted": true, "message_id": mid.String()})
 }
 
-// createThread mirrors POST /messages/:id/thread: idempotent per parent
-// message, titles fall back to the excerpt, nesting is refused.
-func (s *Service) createThread(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	mid, err := uuidArg(req, "message_id")
-	if err != nil {
-		return errResult(err)
-	}
-	pid, err := s.q.ResolveMessageProject(ctx, mid)
-	if err != nil {
-		return errResult(err)
-	}
-	if err := s.scope(ctx, pid, "message:write"); err != nil {
-		return errResult(err)
-	}
+// openThread gets or creates the thread rooted at mid — the shared core of
+// create_thread and request_input. Returns the GetThread row, whether it was
+// just created, and the parent conversation id.
+func (s *Service) openThread(ctx context.Context, mid, pid pgtype.UUID, title string) (db.GetThreadRow, bool, pgtype.UUID, error) {
+	var zero db.GetThreadRow
 	parentConvID, err := s.q.GetMessageConversation(ctx, mid)
 	if err != nil {
-		return errResult(err)
+		return zero, false, pgtype.UUID{}, err
 	}
 	parentConv, err := s.q.GetConversationByID(ctx, parentConvID)
 	if err != nil {
-		return errResult(err)
+		return zero, false, pgtype.UUID{}, err
 	}
 	if parentConv.Kind == "thread" {
-		return mcp.NewToolResultError("threads cannot be nested"), nil
+		return zero, false, pgtype.UUID{}, errors.New("threads cannot be nested")
 	}
-	title, _ := req.GetArguments()["title"].(string)
 	title = strings.TrimSpace(title)
 	if len([]rune(title)) > 120 {
-		return mcp.NewToolResultError("title too long (max 120)"), nil
+		return zero, false, pgtype.UUID{}, errors.New("title too long (max 120)")
 	}
 	if title == "" {
 		if m, err := s.q.GetMessageFull(ctx, mid); err == nil {
@@ -1194,7 +1191,7 @@ func (s *Service) createThread(ctx context.Context, req mcp.CallToolRequest) (*m
 			if existing, e2 := s.q.GetThreadByParentMessage(ctx, mid); e2 == nil {
 				conv = existing
 			} else {
-				return errResult(err)
+				return zero, false, pgtype.UUID{}, err
 			}
 		} else {
 			created = true
@@ -1202,9 +1199,25 @@ func (s *Service) createThread(ctx context.Context, req mcp.CallToolRequest) (*m
 	}
 	tr, err := s.q.GetThread(ctx, conv.ID)
 	if err != nil {
-		return errResult(err)
+		return zero, false, pgtype.UUID{}, err
 	}
-	out := map[string]any{
+	if created {
+		s.postThreadNotice(ctx, parentConvID, conv.ID, title)
+		s.publishThreadCreated(ctx, tr)
+	}
+	return tr, created, parentConvID, nil
+}
+
+func (s *Service) publishThreadCreated(ctx context.Context, tr db.GetThreadRow) {
+	s.publish(ctx, tr.ParentConversationID, "thread.created", map[string]any{
+		"conversation_id":   tr.ParentConversationID.String(),
+		"parent_message_id": tr.ParentMessageID.String(),
+		"thread":            threadOut(tr),
+	})
+}
+
+func threadOut(tr db.GetThreadRow) map[string]any {
+	return map[string]any{
 		"id":                  tr.ID.String(),
 		"parent_message_id":   tr.ParentMessageID.String(),
 		"parent_conversation": tr.ParentConversationID.String(),
@@ -1213,14 +1226,135 @@ func (s *Service) createThread(ctx context.Context, req mcp.CallToolRequest) (*m
 		"created_by":          tr.CreatorName,
 		"created_at":          tr.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
 	}
-	if created {
-		s.publish(ctx, tr.ParentConversationID, "thread.created", map[string]any{
-			"conversation_id":   tr.ParentConversationID.String(),
-			"parent_message_id": tr.ParentMessageID.String(),
-			"thread":            out,
+}
+
+// postThreadNotice drops a "started a thread" row into the parent channel so
+// the new thread is discoverable from the message stream; the thread id rides
+// in mentions (kind=thread) so clients can render the title as a link.
+func (s *Service) postThreadNotice(ctx context.Context, parentConvID, threadID pgtype.UUID, title string) {
+	refs, _ := json.Marshal([]gin.H{
+		{"kind": "thread", "ref": threadID.String(), "id": threadID.String(), "label": title},
+	})
+	body := "started a thread"
+	if title != "" {
+		body += ": " + title
+	}
+	mid, err := s.q.CreateAgentMessage(ctx, db.CreateAgentMessageParams{
+		ConversationID: parentConvID, AgentID: agent(ctx).ID, Body: body, Mentions: refs,
+	})
+	if err != nil {
+		return
+	}
+	if m, err := s.q.GetMessageFull(ctx, mid); err == nil {
+		s.publish(ctx, parentConvID, "message.created",
+			map[string]any{"conversation_id": parentConvID.String(), "message": messageJSON(m)})
+	}
+}
+
+// createThread mirrors POST /messages/:id/thread: idempotent per parent
+// message, titles fall back to the excerpt, nesting is refused.
+func (s *Service) createThread(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	mid, err := uuidArg(req, "message_id")
+	if err != nil {
+		return errResult(err)
+	}
+	pid, err := s.q.ResolveMessageProject(ctx, mid)
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "message:write"); err != nil {
+		return errResult(err)
+	}
+	title, _ := req.GetArguments()["title"].(string)
+	tr, _, _, err := s.openThread(ctx, mid, pid, title)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return jsonResult(gin.H{"thread": threadOut(tr)})
+}
+
+// requestInput opens (or finds) the thread on the triggering message and asks
+// the named user a question inside it, @mentioning them so it lands in their
+// inbox and push — the "blocked on a human" flow in one call.
+func (s *Service) requestInput(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	mid, err := uuidArg(req, "message_id")
+	if err != nil {
+		return errResult(err)
+	}
+	who, err := req.RequireString("user")
+	if err != nil {
+		return errResult(err)
+	}
+	who = strings.TrimSpace(strings.TrimPrefix(who, "@"))
+	question, err := req.RequireString("question")
+	if err != nil {
+		return errResult(err)
+	}
+	question = strings.TrimSpace(question)
+	if who == "" || question == "" {
+		return mcp.NewToolResultError("user and question are required"), nil
+	}
+	pid, err := s.q.ResolveMessageProject(ctx, mid)
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "message:write"); err != nil {
+		return errResult(err)
+	}
+	// target conversation: the message's own thread when it already lives in
+	// one, otherwise the thread rooted at it
+	target, err := s.q.GetMessageConversation(ctx, mid)
+	if err != nil {
+		return errResult(err)
+	}
+	conv, err := s.q.GetConversationByID(ctx, target)
+	if err != nil {
+		return errResult(err)
+	}
+	var tr db.GetThreadRow
+	if conv.Kind == "thread" {
+		tr, err = s.q.GetThread(ctx, conv.ID)
+		if err != nil {
+			return errResult(err)
+		}
+	} else {
+		var terr error
+		tr, _, _, terr = s.openThread(ctx, mid, pid, "")
+		if terr != nil {
+			return mcp.NewToolResultError(terr.Error()), nil
+		}
+	}
+	body := "@" + who + " " + question
+	mj, _ := json.Marshal(s.resolveMentions(ctx, pid, mentions.Extract(body)))
+	qid, err := s.q.CreateAgentMessage(ctx, db.CreateAgentMessageParams{
+		ConversationID: tr.ID, AgentID: agent(ctx).ID, Body: body,
+		ParentID: pgtype.UUID{Bytes: mid.Bytes, Valid: true}, Mentions: mj,
+	})
+	if err != nil {
+		return errResult(err)
+	}
+	m, err := s.q.GetMessageFull(ctx, qid)
+	if err != nil {
+		return errResult(err)
+	}
+	s.publish(ctx, tr.ID, "message.created",
+		map[string]any{"conversation_id": tr.ID.String(), "message": messageJSON(m)})
+	// the reply bumps the chip's count on the parent message
+	if tr2, err := s.q.GetThread(ctx, tr.ID); err == nil {
+		s.publish(ctx, tr2.ParentConversationID, "thread.updated", map[string]any{
+			"conversation_id":   tr2.ParentConversationID.String(),
+			"parent_message_id": tr2.ParentMessageID.String(),
+			"thread":            threadOut(tr2),
 		})
 	}
-	return jsonResult(gin.H{"thread": out})
+	if s.Push != nil {
+		s.Push.NotifyMessage(pid, pgtype.UUID{}, body, m.ID,
+			"/app/p/"+pid.String(), agent(ctx).Name)
+	}
+	return jsonResult(gin.H{
+		"thread":  threadOut(tr),
+		"message": messageJSON(m),
+	})
 }
 
 // pinMessage mirrors PUT/DELETE /messages/:id/pin — project members (and

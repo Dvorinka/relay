@@ -137,6 +137,8 @@ export const api = {
     req<{ message: Message }>("PATCH", `/api/messages/${messageId}`, { body }),
   deleteMessage: (messageId: string) =>
     req<void>("DELETE", `/api/messages/${messageId}`),
+  markMessageRead: (messageId: string) =>
+    req<void>("POST", `/api/messages/${messageId}/read`),
   createThread: (messageId: string, title?: string) =>
     req<{ thread: Thread }>("POST", `/api/messages/${messageId}/thread`, {
       ...(title ? { title } : {}),
@@ -377,6 +379,11 @@ export interface Mention {
   body: string;
   created_at: string;
   project_id: string;
+  conversation_id: string;
+  conversation_kind: string;
+  parent_message_id?: string;
+  parent_conversation_id?: string;
+  issue_id?: string;
   is_read: boolean;
   author: { name: string; avatar: string | null; kind: string };
 }

@@ -5,11 +5,13 @@ package realtime
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/Dvorinka/relay/internal/auth"
 	"github.com/Dvorinka/relay/internal/db"
 	"github.com/Dvorinka/relay/internal/events"
+	"github.com/Dvorinka/relay/internal/httpx"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -28,6 +30,7 @@ func (s *Service) RegisterRoutes(priv gin.IRoutes) {
 	priv.GET("/events", s.handleStream)
 	priv.GET("/me/unread", s.handleUnread)
 	priv.GET("/me/mentions", s.handleMentions)
+	priv.GET("/users/:id/profile", s.handleUserProfile)
 }
 
 // handleStream is the single SSE endpoint. Events carry a project_id; each
@@ -113,25 +116,116 @@ func (s *Service) handleMentions(c *gin.Context) {
 	out := make([]gin.H, 0, len(rows))
 	for _, m := range rows {
 		kind := "user"
-		if m.AuthorAgentID.Valid {
+		if m.AuthorAgentID.Valid || m.AuthorKindSnapshot == "agent" {
 			kind = "agent"
 		}
 		var avatar any
 		if m.AuthorAvatar.Valid && m.AuthorAvatar.String != "" {
 			avatar = m.AuthorAvatar.String
 		}
-		out = append(out, gin.H{
-			"id":         m.ID.String(),
-			"body":       m.Body,
-			"created_at": m.CreatedAt.Time,
-			"project_id": m.ProjectID.String(),
-			"is_read":    m.IsRead,
-			"author": gin.H{
-				"name":   m.AuthorName,
-				"avatar": avatar,
-				"kind":   kind,
-			},
-		})
+		item := gin.H{
+			"id":                m.ID.String(),
+			"body":              m.Body,
+			"created_at":        m.CreatedAt.Time,
+			"project_id":        m.ProjectID.String(),
+			"conversation_id":   m.ConversationID.String(),
+			"conversation_kind": m.ConversationKind,
+			"is_read":           m.IsRead,
+		}
+		if m.ConversationKind == "thread" && m.ParentMessageID.Valid {
+			item["parent_message_id"] = m.ParentMessageID.String()
+			item["parent_conversation_id"] = m.ParentConversationID.String()
+		}
+		if m.IssueID.Valid {
+			item["issue_id"] = m.IssueID.String()
+		}
+		item["author"] = gin.H{
+			"name":   m.AuthorName,
+			"avatar": avatar,
+			"kind":   kind,
+		}
+		out = append(out, item)
 	}
 	c.JSON(http.StatusOK, gin.H{"mentions": out})
+}
+
+// handleUserProfile returns what the caller may see of another user: profile
+// fields plus their footprint inside workspaces BOTH parties share. Nothing
+// leaks across a workspace the caller isn't in — no shared workspace, 404.
+func (s *Service) handleUserProfile(c *gin.Context) {
+	user := auth.CurrentUser(c)
+	target, ok := httpx.PathUUID(c, "id")
+	if !ok {
+		return
+	}
+	ctx := c.Request.Context()
+	shared, err := s.q.SharedWorkspaces(ctx, db.SharedWorkspacesParams{
+		UserID:   user.ID,
+		UserID_2: target,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"code": "internal", "message": "internal error"}})
+		return
+	}
+	if len(shared) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{"code": "not_found", "message": "user not found"}})
+		return
+	}
+	tu, err := s.q.GetUserByID(ctx, target)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{"code": "not_found", "message": "user not found"}})
+		return
+	}
+	issues, _ := s.q.ProfileAssignedIssues(ctx, db.ProfileAssignedIssuesParams{UserID: user.ID, AssigneeID: target})
+	recent, _ := s.q.ProfileRecentMessages(ctx, db.ProfileRecentMessagesParams{UserID: user.ID, AuthorUserID: target})
+	mentionRows, _ := s.q.ProfileMentionsOf(ctx, db.ProfileMentionsOfParams{UserID: user.ID, ID: target})
+	msgCount, _ := s.q.ProfileMessageCount(ctx, db.ProfileMessageCountParams{UserID: user.ID, AuthorUserID: target})
+
+	wss := make([]gin.H, 0, len(shared))
+	for _, w := range shared {
+		wss = append(wss, gin.H{
+			"id": w.ID.String(), "name": w.Name, "slug": w.Slug, "role": w.Role,
+		})
+	}
+	iout := make([]gin.H, 0, len(issues))
+	for _, i := range issues {
+		iout = append(iout, gin.H{
+			"id": i.ID.String(), "project_id": i.ProjectID.String(),
+			"key":   i.ProjectKey + "-" + strconv.Itoa(int(i.Number)),
+			"title": i.Title, "status": i.Status, "priority": i.Priority,
+			"project": i.ProjectName, "updated_at": i.UpdatedAt.Time,
+		})
+	}
+	mout := make([]gin.H, 0, len(recent))
+	for _, m := range recent {
+		mout = append(mout, gin.H{
+			"id": m.ID.String(), "body": m.Body,
+			"project_id": m.ProjectID.String(), "project": m.ProjectName,
+			"created_at": m.CreatedAt.Time,
+		})
+	}
+	ment := make([]gin.H, 0, len(mentionRows))
+	for _, m := range mentionRows {
+		kind := "user"
+		if m.AuthorIsAgent.Bool {
+			kind = "agent"
+		}
+		ment = append(ment, gin.H{
+			"id": m.ID.String(), "body": m.Body,
+			"project_id": m.ProjectID.String(),
+			"created_at": m.CreatedAt.Time,
+			"author":     gin.H{"name": m.AuthorName, "kind": kind},
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"user": gin.H{
+			"id": tu.ID.String(), "name": tu.Name, "name_color": tu.NameColor.String,
+			"avatar_key": tu.AvatarKey.String, "created_at": tu.CreatedAt.Time,
+		},
+		"workspaces":      wss,
+		"stats":           gin.H{"messages": msgCount, "issues": len(issues)},
+		"issues":          iout,
+		"recent_messages": mout,
+		"mentions":        ment,
+	})
 }

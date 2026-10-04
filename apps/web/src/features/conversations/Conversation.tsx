@@ -8,7 +8,7 @@ import {
   type Thread,
   type ThreadSummary,
 } from "@relay/api-client";
-import { useNavigate, useSearchParams } from "@solidjs/router";
+import { A, useNavigate, useSearchParams } from "@solidjs/router";
 import {
   createEffect,
   createResource,
@@ -52,6 +52,7 @@ import { formatBytes, initials, messagePreview } from "../../lib/text";
 import { useProjects } from "../../stores/projects";
 import { useSession } from "../../stores/session";
 import { useChatStyle, useClock } from "../../stores/theme";
+import { timeAgo } from "../../lib/time";
 import { refreshUnread } from "../../stores/unread";
 
 const PAGE_SIZE = 50;
@@ -738,6 +739,69 @@ function ForwardDialog(props: {
   );
 }
 
+// A "started a thread" notice — posted by the thread creator into the parent
+// channel, carrying the thread ref in mentions so the title links straight in.
+function ThreadNoticeRow(props: {
+  message: Message;
+  onOpenThread?: (t: ThreadSummary) => void;
+  onOpenThreads?: () => void;
+}) {
+  const m = () => props.message;
+  const ref = () => (m().mentions ?? []).find((r) => r.kind === "thread");
+  const open = () => {
+    const r = ref();
+    if (r?.id) {
+      props.onOpenThread?.({
+        id: r.id,
+        title: r.label || null,
+        reply_count: 0,
+      });
+    }
+  };
+  return (
+    <div class="group relative flex items-center gap-2 px-4 py-1 text-[12.5px] text-muted hover:bg-hover/60">
+      <MessageAvatar message={m()} small />
+      <Show
+        when={m().author.kind === "user" && m().author.id}
+        fallback={
+          <span class="font-medium" style={{ color: authorColor(m().author.name) }}>
+            {m().author.name}
+          </span>
+        }
+      >
+        <A
+          href={`/app/u/${m().author.id}`}
+          class="font-medium hover:underline"
+          style={{ color: authorColor(m().author.name) }}
+        >
+          {m().author.name}
+        </A>
+      </Show>
+      <span>started a thread:</span>
+      <button
+        type="button"
+        onClick={open}
+        class="max-w-[360px] truncate font-medium text-accent hover:underline"
+      >
+        {ref()?.label || "thread"}
+      </button>
+      <Show when={props.onOpenThreads}>
+        <span class="text-faint">·</span>
+        <button
+          type="button"
+          onClick={() => props.onOpenThreads?.()}
+          class="text-faint transition-colors hover:text-fg"
+        >
+          See all threads
+        </button>
+      </Show>
+      <span class="ml-auto shrink-0 text-[11px] text-faint">
+        {stamp(m().created_at)}
+      </span>
+    </div>
+  );
+}
+
 function MessageRow(props: {
   projectId: string;
   message: Message;
@@ -748,6 +812,7 @@ function MessageRow(props: {
   onChanged: (m: Message) => void;
   onDeleted: (id: string) => void;
   onOpenThread?: (t: ThreadSummary) => void;
+  onOpenThreads?: () => void;
   onTagClick?: (tag: string) => void;
 }) {
   const m = () => props.message;
@@ -863,6 +928,17 @@ function MessageRow(props: {
   const toolBtn =
     "flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-hover hover:text-fg";
 
+  // A "started a thread" notice renders as a slim system row, not a chat bubble.
+  if ((m().mentions ?? []).some((r) => r.kind === "thread")) {
+    return (
+      <ThreadNoticeRow
+        message={m()}
+        onOpenThread={props.onOpenThread}
+        onOpenThreads={props.onOpenThreads}
+      />
+    );
+  }
+
   return (
     <div
       id={`msg-${m().id}`}
@@ -921,12 +997,26 @@ function MessageRow(props: {
       >
         <Show when={!props.grouped && (!bubbles() || !mine())}>
           <div class="flex items-baseline gap-2">
-            <span
-              class="text-[14.5px] font-semibold"
-              style={{ color: authorColor(m().author.name) }}
+            <Show
+              when={m().author.kind === "user" && m().author.id}
+              fallback={
+                <span
+                  class="text-[14.5px] font-semibold"
+                  style={{ color: authorColor(m().author.name) }}
+                >
+                  {m().author.name}
+                </span>
+              }
             >
-              {m().author.name}
-            </span>
+              <A
+                href={`/app/u/${m().author.id}`}
+                class="text-[14.5px] font-semibold hover:underline"
+                style={{ color: authorColor(m().author.name) }}
+                title={`Open ${m().author.name}'s profile`}
+              >
+                {m().author.name}
+              </A>
+            </Show>
             <Show when={m().author.kind === "agent"}>
               <span class="rounded bg-accent-soft px-1 py-px font-mono text-[9.5px] font-semibold uppercase tracking-wide text-accent-ink">
                 agent
@@ -1263,6 +1353,93 @@ function PendingChip(props: {
   );
 }
 
+// ThreadsModal — the project's thread index ("See all threads"), most
+// recently active first. Picking one opens the thread panel.
+function ThreadsModal(props: {
+  projectId: string;
+  onPick: (t: ThreadSummary) => void;
+  onClose: () => void;
+}) {
+  const [threads] = createResource(
+    () => props.projectId,
+    async (id) => (await api.listThreads(id)).threads,
+  );
+  return (
+    <div
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) props.onClose();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") props.onClose();
+      }}
+    >
+      <div class="flex max-h-[80vh] w-full max-w-lg flex-col rounded-xl border border-border bg-surface shadow-xl">
+        <div class="flex items-center justify-between border-b border-border px-5 py-3">
+          <h2 class="flex items-center gap-2 text-[14px] font-semibold">
+            <ThreadIcon class="h-4 w-4" /> Threads
+          </h2>
+          <button
+            type="button"
+            onClick={props.onClose}
+            aria-label="Close"
+            class="rounded p-1 text-muted transition-colors hover:bg-hover hover:text-fg"
+          >
+            <XIcon class="h-4 w-4" />
+          </button>
+        </div>
+        <div class="min-h-0 flex-1 overflow-y-auto">
+          <Show
+            when={threads.latest}
+            fallback={
+              <div class="flex justify-center py-12">
+                <Spinner class="h-4 w-4" />
+              </div>
+            }
+          >
+            <ul class="divide-y divide-border">
+              <For
+                each={threads()}
+                fallback={
+                  <li class="px-5 py-10 text-center text-[13px] text-muted">
+                    No threads yet — start one from a message.
+                  </li>
+                }
+              >
+                {(t) => (
+                  <li>
+                    <button
+                      type="button"
+                      onClick={() => props.onPick(t)}
+                      class="block w-full px-5 py-3 text-left transition-colors hover:bg-hover"
+                    >
+                      <div class="flex items-baseline gap-2">
+                        <span class="min-w-0 flex-1 truncate text-[13.5px] font-medium">
+                          {t.title || "Thread"}
+                        </span>
+                        <span class="shrink-0 text-[11px] text-faint">
+                          {timeAgo(t.last_reply_at ?? t.created_at)}
+                        </span>
+                      </div>
+                      <p class="mt-0.5 truncate text-[12px] text-muted">
+                        {t.reply_count}{" "}
+                        {t.reply_count === 1 ? "reply" : "replies"}
+                        {t.parent?.preview
+                          ? ` · ${t.parent?.author ?? ""}: ${t.parent?.preview}`
+                          : ""}
+                      </p>
+                    </button>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </Show>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ConversationThread(props: {
   conversationId: string;
   projectId: string;
@@ -1273,6 +1450,7 @@ function ConversationThread(props: {
   const [messages, setMessages] = createSignal<Message[]>([]);
   const [highlightId, setHighlightId] = createSignal<string | null>(null);
   const [pinsOpen, setPinsOpen] = createSignal(false);
+  const [threadsOpen, setThreadsOpen] = createSignal(false);
   const [hasMore, setHasMore] = createSignal(false);
   const [loadingMore, setLoadingMore] = createSignal(false);
   const [draft, setDraft] = createSignal("");
@@ -1943,18 +2121,30 @@ function ConversationThread(props: {
         }}
         class="chat-scroll min-h-0 flex-1 overflow-y-auto"
       >
-        <Show when={(pins()?.length ?? 0) > 0}>
-          <div class="border-b border-border/60 px-4 py-1.5">
+        <div class="border-b border-border/60 px-4 py-1.5">
+          <div class="flex items-center gap-4">
+            <Show when={(pins()?.length ?? 0) > 0}>
+              <button
+                type="button"
+                onClick={() => setPinsOpen((v) => !v)}
+                class="flex items-center gap-2 text-[12px] text-muted transition-colors hover:text-fg"
+              >
+                <PinIcon class="h-3.5 w-3.5" />
+                <span class="font-medium">
+                  {pins()!.length} pinned
+                </span>
+              </button>
+            </Show>
             <button
               type="button"
-              onClick={() => setPinsOpen((v) => !v)}
-              class="flex w-full items-center gap-2 text-[12px] text-muted transition-colors hover:text-fg"
+              onClick={() => setThreadsOpen(true)}
+              class="flex items-center gap-2 text-[12px] text-muted transition-colors hover:text-fg"
             >
-              <PinIcon class="h-3.5 w-3.5" />
-              <span class="font-medium">
-                {pins()!.length} pinned
-              </span>
+              <ThreadIcon class="h-3.5 w-3.5" />
+              <span class="font-medium">Threads</span>
             </button>
+          </div>
+          <Show when={(pins()?.length ?? 0) > 0}>
             <Show when={pinsOpen()}>
               <div class="mt-1 flex flex-col gap-0.5 pb-1">
                 <For each={pins()}>
@@ -1993,8 +2183,8 @@ function ConversationThread(props: {
                 </For>
               </div>
             </Show>
-          </div>
-        </Show>
+          </Show>
+        </div>
         <Show when={tagFilter() || seenTags().length > 0}>
           <div class="flex flex-wrap items-center gap-1.5 px-1 pb-1 pt-1">
             <TagIcon class="h-3.5 w-3.5 text-faint" />
@@ -2103,6 +2293,7 @@ function ConversationThread(props: {
                     onChanged={replaceMessage}
                     onDeleted={removeMessage}
                     onOpenThread={props.onOpenThread}
+                    onOpenThreads={() => setThreadsOpen(true)}
                     onTagClick={(t) => setTagFilter(t)}
                   />
                 </>
@@ -2407,6 +2598,16 @@ function ConversationThread(props: {
         }}
         onConfirm={doClear}
       />
+      <Show when={threadsOpen()}>
+        <ThreadsModal
+          projectId={props.projectId}
+          onPick={(t) => {
+            setThreadsOpen(false);
+            props.onOpenThread?.(t);
+          }}
+          onClose={() => setThreadsOpen(false)}
+        />
+      </Show>
     </div>
   );
 }
