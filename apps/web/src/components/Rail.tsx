@@ -37,9 +37,15 @@ import {
   foreignConnections,
   foreignProjects,
 } from "../lib/connections";
-import { InboxIcon, PlusIcon, SettingsIcon } from "./icons";
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  InboxIcon,
+  PlusIcon,
+  SettingsIcon,
+} from "./icons";
 import { RepoPicker } from "./RepoPicker";
-import { FormError, inputClass, SubmitButton } from "./ui";
+import { FormError, inputClass, SubmitButton, Tip } from "./ui";
 
 const navClass =
   "flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-muted transition-colors hover:bg-hover hover:text-fg";
@@ -89,12 +95,15 @@ function ProjectRow(props: { project: Project }) {
       </Show>
       <span class="truncate">{props.project.name}</span>
       <Show when={pending() > 0}>
-        <span
-          class="ml-auto rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-medium leading-none text-amber-600 dark:text-amber-400"
-          title={`${pending()} agent review(s) awaiting a verdict`}
+        <Tip
+          text="Pending reviews"
+          hint={`${pending()} agent review(s) awaiting a verdict`}
+          class="ml-auto"
         >
-          {pending()}
-        </span>
+          <span class="ml-auto rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-medium leading-none text-amber-600 dark:text-amber-400">
+            {pending()}
+          </span>
+        </Tip>
       </Show>
       <Show when={n() > 0}>
         <span
@@ -271,6 +280,103 @@ function NewProjectForm(props: { onDone: () => void }) {
   );
 }
 
+// Collapsed icon strip: project icons carry unread/review badges, matching
+// the "icons with numbers" minimized look. Clicks navigate as usual.
+function CollapsedRail(props: { onExpand: () => void }) {
+  const projects = useProjects();
+  const { unread } = useUnread();
+  const { pendingReviews } = usePendingReviews();
+  const list = () => projects.projects() ?? [];
+  const totalUnread = () =>
+    Object.values(unread()).reduce((s, n) => s + n, 0);
+  return (
+    <div class="flex w-14 flex-col items-center gap-1 py-2">
+      <Tip text="Expand sidebar" hint="Show project names and navigation">
+        <button
+          type="button"
+          onClick={props.onExpand}
+          aria-label="Expand sidebar"
+          class="mb-1 flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-hover hover:text-fg"
+        >
+          <ChevronRightIcon class="h-4 w-4" />
+        </button>
+      </Tip>
+      <Tip text="Inbox" hint="">
+        <A
+          href="/app/inbox"
+          aria-label="Inbox"
+          class="relative flex h-9 w-9 items-center justify-center rounded-md text-muted transition-colors hover:bg-hover hover:text-fg"
+        >
+          <InboxIcon class="h-4 w-4" />
+          <Show when={totalUnread() > 0}>
+            <span class="absolute -bottom-0.5 -right-0.5 rounded-full bg-accent px-1 font-mono text-[8.5px] font-bold leading-3 text-white">
+              {totalUnread() > 99 ? "99+" : totalUnread()}
+            </span>
+          </Show>
+        </A>
+      </Tip>
+      <For each={list()}>
+        {(p) => {
+          const n = () => unread()[p.id] ?? 0;
+          const pending = () => pendingReviews()[p.id] ?? 0;
+          return (
+            <Tip text={p.name} hint="">
+              <A
+                href={`/app/p/${p.id}`}
+                aria-label={p.name}
+                class="relative flex h-9 w-9 items-center justify-center rounded-md text-muted transition-colors hover:bg-hover hover:text-fg"
+              >
+                <Show
+                  when={p.icon_url}
+                  fallback={
+                    <span
+                      class="flex h-6 w-6 items-center justify-center rounded-md text-[9px] font-semibold uppercase text-white"
+                      style={{
+                        "background-color": p.color ?? "var(--accent)",
+                      }}
+                    >
+                      {initials(p.name)}
+                    </span>
+                  }
+                >
+                  {(url) => (
+                    <img
+                      src={mediaURL(url())}
+                      alt=""
+                      class="h-6 w-6 rounded-md object-cover"
+                    />
+                  )}
+                </Show>
+                <Show when={pending() > 0}>
+                  <span class="absolute -right-0.5 -top-0.5 rounded-full bg-amber-500 px-1 font-mono text-[8.5px] font-bold leading-3 text-white">
+                    {pending()}
+                  </span>
+                </Show>
+                <Show when={n() > 0}>
+                  <span class="absolute -bottom-0.5 -right-0.5 rounded-full bg-accent px-1 font-mono text-[8.5px] font-bold leading-3 text-white">
+                    {n() > 99 ? "99+" : n()}
+                  </span>
+                </Show>
+              </A>
+            </Tip>
+          );
+        }}
+      </For>
+      <div class="mt-auto">
+        <Tip text="Settings" hint="">
+          <A
+            href="/app/settings"
+            aria-label="Settings"
+            class="flex h-9 w-9 items-center justify-center rounded-md text-muted transition-colors hover:bg-hover hover:text-fg"
+          >
+            <SettingsIcon class="h-4 w-4" />
+          </A>
+        </Tip>
+      </div>
+    </div>
+  );
+}
+
 export function Rail() {
   const session = useSession();
   const projects = useProjects();
@@ -294,6 +400,38 @@ export function Rail() {
   });
   const list = () => projects.projects() ?? [];
 
+  // Width + collapse persist; dragging the right edge resizes (left rail, so
+  // dragging right grows it). The mobile drawer ignores both and stays w-64.
+  const [railW, setRailW] = createSignal(
+    Math.min(400, Math.max(160, Number(localStorage.getItem("relay.leftrail.w")) || 224)),
+  );
+  const [collapsed, setCollapsed] = createSignal(
+    localStorage.getItem("relay.leftrail.collapsed") === "1",
+  );
+  function startDrag(e: PointerEvent) {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = railW();
+    const el = e.currentTarget as HTMLElement;
+    el.setPointerCapture(e.pointerId);
+    const move = (ev: PointerEvent) => {
+      setRailW(Math.min(400, Math.max(160, startW + (ev.clientX - startX))));
+    };
+    const up = () => {
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+      localStorage.setItem("relay.leftrail.w", String(railW()));
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+  }
+  function toggleCollapsed() {
+    setCollapsed((v) => {
+      localStorage.setItem("relay.leftrail.collapsed", v ? "0" : "1");
+      return !v;
+    });
+  }
+
   return (
     <>
       <Show when={navOpen()}>
@@ -305,15 +443,47 @@ export function Rail() {
         />
       </Show>
       <aside
-        class={`flex w-64 shrink-0 flex-col border-r border-border bg-rail md:w-56 ${
+        class={`relative flex shrink-0 flex-col border-r border-border bg-rail ${
           navOpen()
-            ? "fixed inset-y-0 left-0 z-40 shadow-2xl"
+            ? "fixed inset-y-0 left-0 z-40 w-64 shadow-2xl"
             : "hidden md:flex"
         }`}
+        style={
+          navOpen()
+            ? undefined
+            : { width: collapsed() ? "3.5rem" : `${railW()}px` }
+        }
+      >
+      <Show when={!collapsed() && !navOpen()}>
+        <div
+          class="absolute inset-y-0 right-0 z-10 w-1.5 cursor-col-resize transition-colors hover:bg-accent/40"
+          onPointerDown={startDrag}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize sidebar"
+        />
+      </Show>
+      <Show when={!collapsed() && !navOpen()}>
+        <div class="absolute right-2 top-2.5 z-10">
+          <Tip text="Collapse sidebar" hint="Shrink to icons — badges stay visible">
+            <button
+              type="button"
+              onClick={toggleCollapsed}
+              aria-label="Collapse sidebar"
+              class="flex h-6 w-6 items-center justify-center rounded-md text-muted transition-colors hover:bg-hover hover:text-fg"
+            >
+              <ChevronLeftIcon class="h-3.5 w-3.5" />
+            </button>
+          </Tip>
+        </div>
+      </Show>
+      <Show
+        when={!collapsed() || navOpen()}
+        fallback={<CollapsedRail onExpand={toggleCollapsed} />}
       >
       <Show when={session.workspaces()[0]}>
         {(ws) => (
-          <div class="border-b border-border px-4 py-2.5">
+          <div class="border-b border-border px-4 py-2.5 pr-8">
             <p class="flex items-center gap-2 truncate text-[13px] font-medium">
               <Show when={ws().avatar_url}>
                 {(url) => (
@@ -397,6 +567,7 @@ export function Rail() {
           Settings
         </NavItem>
       </div>
+      </Show>
       </aside>
     </>
   );

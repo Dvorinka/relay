@@ -104,7 +104,6 @@ export function ProjectConfigSections(props: {
               />
               <label
                 class="flex shrink-0 items-center gap-1 text-[11px] text-muted"
-                title="Terminal state — maps to GitHub 'closed'"
               >
                 <input
                   type="checkbox"

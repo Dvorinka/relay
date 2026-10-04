@@ -584,3 +584,79 @@ export function MinimizeIcon(props: IconProps): JSX.Element {
     </svg>
   );
 }
+
+export function UsersIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <circle cx="6" cy="5" r="2.5" />
+      <path d="M2 13.5c0-2.2 1.8-4 4-4s4 1.8 4 4" />
+      <circle cx="11.5" cy="6" r="1.8" />
+      <path d="M12.5 9.7c1.5.4 2.5 1.7 2.5 3.3" />
+    </svg>
+  );
+}
+
+export function BotIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <rect x="3" y="5.5" width="10" height="7" rx="1.8" />
+      <path d="M8 5.5V3" />
+      <circle cx="8" cy="2.3" r="0.9" />
+      <circle cx="6" cy="8.6" r="0.8" fill="currentColor" stroke="none" />
+      <circle cx="10" cy="8.6" r="0.8" fill="currentColor" stroke="none" />
+      <path d="M6.2 10.8h3.6" />
+    </svg>
+  );
+}
+
+export function ChevronRightIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <path d="M6 3.5L10.5 8L6 12.5" />
+    </svg>
+  );
+}
+
+export function ChevronLeftIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <path d="M10 3.5L5.5 8L10 12.5" />
+    </svg>
+  );
+}

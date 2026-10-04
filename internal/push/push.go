@@ -152,16 +152,24 @@ func (s *Service) Notify(ctx context.Context, users []pgtype.UUID, p Payload) {
 	}
 }
 
-// NotifyMessage targets users mentioned as @name plus the replied-to author,
-// minus the sender. Runs detached — a slow push gateway must not stall chat.
+// NotifyMessage targets resolved mention refs (mentionIDs) plus the
+// replied-to author, minus the sender. The legacy body-substring scan stays
+// as a fallback for refs that failed to resolve. Runs detached — a slow
+// push gateway must not stall chat.
 func (s *Service) NotifyMessage(projectID pgtype.UUID, sender pgtype.UUID,
-	body string, messageID pgtype.UUID, projectURL, authorName string) {
+	body string, messageID pgtype.UUID, projectURL, authorName string,
+	mentionIDs []pgtype.UUID) {
 	if s.pub == "" {
 		return
 	}
 	go func() {
 		ctx := context.Background()
 		targets := map[[16]byte]bool{}
+		for _, id := range mentionIDs {
+			if id.Valid {
+				targets[id.Bytes] = true
+			}
+		}
 		if ids, err := s.q.MentionedUserIDs(ctx, db.MentionedUserIDsParams{
 			ID: projectID, Lower: body,
 		}); err == nil {

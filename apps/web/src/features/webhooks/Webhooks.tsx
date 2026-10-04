@@ -1,8 +1,20 @@
 // Outbound webhook management for a project. Agents point their listener
 // here; Relay POSTs a signed event envelope for each matching domain event.
 import type { WebhookDelivery, WebhookSubscription } from "@relay/api-client";
-import { createResource, createSignal, For, Show } from "solid-js";
-import { ConfirmDialog, FormError, inputClass, Spinner } from "../../components/ui";
+import {
+  createEffect,
+  createResource,
+  createSignal,
+  For,
+  Show,
+} from "solid-js";
+import {
+  ConfirmDialog,
+  FormError,
+  inputClass,
+  Spinner,
+  Tip,
+} from "../../components/ui";
 import { api } from "../../lib/api";
 import { net } from "../../lib/net";
 import { timeAgo } from "../../lib/time";
@@ -154,10 +166,6 @@ export function WebhooksSection(props: { projectId: string }) {
     () => props.projectId,
     (id) => api.listWebhooks(id),
   );
-  // Prefill with this server's base URL — most hooks land back on it.
-  const [url, setUrl] = createSignal(
-    (net.serverUrl() || window.location.origin) + "/",
-  );
   // Sensible defaults pre-picked — everything except wildcard; users toggle.
   const [picked, setPicked] = createSignal<string[]>([
     "message.created",
@@ -169,6 +177,20 @@ export function WebhooksSection(props: { projectId: string }) {
     "review.responded",
     "attachment.created",
   ]);
+  // Prefill with this server's base URL — most hooks land back on it. The
+  // ?events= suffix tracks the picked scopes so the URL describes its own
+  // subscription; it stops tracking once the user edits the field.
+  const baseUrl = () => (net.serverUrl() || window.location.origin) + "/";
+  const scopedUrl = () =>
+    picked().length > 0
+      ? `${baseUrl()}?events=${picked().join(",")}`
+      : baseUrl();
+  const [url, setUrl] = createSignal(baseUrl());
+  const [urlTouched, setUrlTouched] = createSignal(false);
+  createEffect(() => {
+    picked(); // track
+    if (!urlTouched()) setUrl(scopedUrl());
+  });
   const [secret, setSecret] = createSignal("");
   const [err, setErr] = createSignal("");
   const [busy, setBusy] = createSignal(false);
@@ -197,7 +219,10 @@ export function WebhooksSection(props: { projectId: string }) {
         relay_managed: managed || undefined,
       });
       setSecret(w.secret ?? "");
-      if (!managed) setUrl("");
+      if (!managed) {
+        setUrlTouched(false);
+        setUrl(scopedUrl());
+      }
       refetch();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "create failed");
@@ -287,22 +312,26 @@ export function WebhooksSection(props: { projectId: string }) {
                 </div>
               )}
             </For>
-            <label
-              class={`flex w-fit cursor-pointer items-center gap-1 rounded-md border px-2 py-1 font-mono text-[11px] transition-colors ${
-                picked().includes("*")
-                  ? "border-amber-500/50 bg-amber-500/10 text-fg"
-                  : "border-border text-muted hover:text-fg"
-              }`}
-              title="Subscribe to every current and future event type"
+            <Tip
+              text="All events"
+              hint="Subscribe to every current and future event type"
             >
-              <input
-                type="checkbox"
-                checked={picked().includes("*")}
-                onChange={() => toggleEvent("*")}
-                class="sr-only"
-              />
-              * (all events)
-            </label>
+              <label
+                class={`flex w-fit cursor-pointer items-center gap-1 rounded-md border px-2 py-1 font-mono text-[11px] transition-colors ${
+                  picked().includes("*")
+                    ? "border-amber-500/50 bg-amber-500/10 text-fg"
+                    : "border-border text-muted hover:text-fg"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={picked().includes("*")}
+                  onChange={() => toggleEvent("*")}
+                  class="sr-only"
+                />
+                * (all events)
+              </label>
+            </Tip>
           </div>
         </Show>
 
@@ -311,7 +340,10 @@ export function WebhooksSection(props: { projectId: string }) {
             class={`${inputClass} flex-1`}
             placeholder="https://agent.example.com/relay/events"
             value={url()}
-            onInput={(e) => setUrl(e.currentTarget.value)}
+            onInput={(e) => {
+              setUrlTouched(true);
+              setUrl(e.currentTarget.value);
+            }}
           />
           <button
             type="button"

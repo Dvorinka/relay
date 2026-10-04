@@ -1160,7 +1160,8 @@ func (s *Service) sendMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 	// silent = no push; an @mention still earns one — that is the contract
 	if s.Push != nil && (!silent || len(refs) > 0) {
 		s.Push.NotifyMessage(pid, pgtype.UUID{}, body, m.ID,
-			"/app/p/"+pid.String(), agent(ctx).Name)
+			"/app/p/"+pid.String(), agent(ctx).Name,
+			mentions.UserIDs(refs))
 	}
 	return jsonResult(out)
 }
@@ -1490,7 +1491,8 @@ func (s *Service) requestInput(ctx context.Context, req mcp.CallToolRequest) (*m
 		}
 	}
 	body := "@" + who + " " + question
-	mj, _ := json.Marshal(s.resolveMentions(ctx, pid, mentions.Extract(body)))
+	refs := s.resolveMentions(ctx, pid, mentions.Extract(body))
+	mj, _ := json.Marshal(refs)
 	qid, err := s.q.CreateAgentMessage(ctx, db.CreateAgentMessageParams{
 		ConversationID: tr.ID, AgentID: agent(ctx).ID, Body: body,
 		ParentID: pgtype.UUID{Bytes: mid.Bytes, Valid: true}, Mentions: mj,
@@ -1515,7 +1517,8 @@ func (s *Service) requestInput(ctx context.Context, req mcp.CallToolRequest) (*m
 	}
 	if s.Push != nil {
 		s.Push.NotifyMessage(pid, pgtype.UUID{}, body, m.ID,
-			"/app/p/"+pid.String(), agent(ctx).Name)
+			"/app/p/"+pid.String(), agent(ctx).Name,
+			mentions.UserIDs(refs))
 	}
 	return jsonResult(gin.H{
 		"thread":  threadOut(tr),

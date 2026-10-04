@@ -22,6 +22,12 @@ where m.deleted_at is null
         where ma.message_id = m.id and att.content_type like 'image/%'))
   and (sqlc.narg(has_file)::bool is not true or exists (
         select 1 from message_attachments ma where ma.message_id = m.id))
+  and (sqlc.narg(has_link)::bool is not true or m.body ~* 'https?://')
+  and (sqlc.arg(mentions) = '' or exists (
+        select 1 from jsonb_array_elements(coalesce(m.mentions, '[]'::jsonb)) elem
+        where elem->>'kind' in ('user', 'agent')
+          and (lower(elem->>'ref') = lower(sqlc.arg(mentions))
+               or lower(elem->>'label') = lower(sqlc.arg(mentions)))))
   and (sqlc.narg(before)::timestamptz is null or m.created_at < sqlc.narg(before)::timestamptz)
   and (sqlc.narg(after)::timestamptz is null or m.created_at >= sqlc.narg(after)::timestamptz)
 order by rank desc, m.created_at desc

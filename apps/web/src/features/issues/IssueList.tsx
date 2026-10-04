@@ -351,14 +351,15 @@ export function IssueList(props: { project: Project }) {
         <For each={savedFilters() ?? []}>
           {(f) => (
             <span class="inline-flex items-center gap-0.5 rounded-full border border-border bg-surface pl-2.5 pr-1 text-[12px]">
-              <button
-                type="button"
-                onClick={() => applySaved(f)}
-                class="py-0.5 text-muted transition-colors hover:text-fg"
-                title="Apply saved view"
-              >
-                {f.name}
-              </button>
+              <Tip text={f.name} hint="Apply this saved view">
+                <button
+                  type="button"
+                  onClick={() => applySaved(f)}
+                  class="py-0.5 text-muted transition-colors hover:text-fg"
+                >
+                  {f.name}
+                </button>
+              </Tip>
               <button
                 type="button"
                 aria-label={`Delete filter ${f.name}`}

@@ -14,6 +14,9 @@ package mentions
 
 import (
 	"regexp"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // Ref is one structured mention on a message.
@@ -136,4 +139,20 @@ func Extract(body string) []Ref {
 		add(Ref{Kind: "issue", Ref: key, Label: key})
 	}
 	return out
+}
+
+// UserIDs pulls resolved user IDs out of a ref list — the authoritative
+// mention target set. Substring matching against the body misses names
+// with spaces or alternates; resolved refs carry the real user id.
+func UserIDs(refs []Ref) []pgtype.UUID {
+	var ids []pgtype.UUID
+	for _, r := range refs {
+		if r.Kind != "user" || !r.Found || r.ID == "" {
+			continue
+		}
+		if id, err := uuid.Parse(r.ID); err == nil {
+			ids = append(ids, pgtype.UUID{Bytes: id, Valid: true})
+		}
+	}
+	return ids
 }

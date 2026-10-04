@@ -14,6 +14,7 @@ import {
   ImageURLField,
   SubmitButton,
   inputClass,
+  Tip,
 } from "../../components/ui";
 import { api } from "../../lib/api";
 import { mediaURL, net } from "../../lib/net";
@@ -136,33 +137,32 @@ function AgentRow(props: {
           )}
         </Show>
         <div class="min-w-0 flex-1">
-          <A
-            href={`/app/ag/${props.agent.id}`}
-            onClick={(e) => e.stopPropagation()}
-            class="block truncate text-[13px] font-medium hover:underline"
-            title={`Open ${props.agent.name}'s details`}
-          >
-            {props.agent.name}
-          </A>
+          <Tip text={props.agent.name} hint="Open this agent's details">
+            <A
+              href={`/app/ag/${props.agent.id}`}
+              onClick={(e) => e.stopPropagation()}
+              class="block truncate text-[13px] font-medium hover:underline"
+            >
+              {props.agent.name}
+            </A>
+          </Tip>
           <p class="truncate font-mono text-[11px] text-muted">
             @{props.agent.slug}
           </p>
         </div>
         <Show when={props.agent.grant_all}>
-          <span
-            class="rounded-full border border-accent/40 bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-accent-ink"
-            title="Can access every workspace project, including ones created later"
-          >
-            all projects
-          </span>
+          <Tip text="All projects" hint="Can access every workspace project, including ones created later">
+            <span class="rounded-full border border-accent/40 bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-accent-ink">
+              all projects
+            </span>
+          </Tip>
         </Show>
         <Show when={props.agent.review_mode === "gate"}>
-          <span
-            class="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
-            title="Agent must wait for a human verdict on each submitted review"
-          >
-            review-gated
-          </span>
+          <Tip text="Review-gated" hint="Must wait for a human verdict on each submitted review">
+            <span class="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+              review-gated
+            </span>
+          </Tip>
         </Show>
         <span class="text-[11px] text-muted">
           {props.agent.last_seen_at

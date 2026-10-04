@@ -44,8 +44,10 @@ import {
   primaryButtonClass,
   Spinner,
   SubmitButton,
+  Tip,
 } from "../../components/ui";
 import { api } from "../../lib/api";
+import { openProfile } from "../../components/ProfileModal";
 import { subscribe } from "../../lib/events";
 import { loadNameColors, nameColorFor } from "../../lib/namecolors";
 import { mediaURL, net } from "../../lib/net";
@@ -192,7 +194,8 @@ function MessageAvatar(props: { message: Message; small?: boolean; tiny?: boolea
       {(h) => (
         <A
           href={h}
-          title={`Open ${m().author.name}'s profile`}
+          onClick={(e) => profileClick(e, m().author.id!, m().author.kind)}
+          aria-label={`Open ${m().author.name}'s profile`}
           class="shrink-0 rounded-full transition-opacity hover:opacity-80"
         >
           {avatar}
@@ -200,6 +203,15 @@ function MessageAvatar(props: { message: Message; small?: boolean; tiny?: boolea
       )}
     </Show>
   );
+}
+
+// Plain left-click opens the profile modal; middle-/modified-clicks still
+// navigate to the full profile page.
+function profileClick(e: MouseEvent, id: string, kind: string) {
+  if (e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+    e.preventDefault();
+    openProfile(id, kind);
+  }
 }
 
 // The reply strip above a replied message: curved arrow + parent author +
@@ -868,6 +880,7 @@ function ThreadNoticeRow(props: {
       >
         <A
           href={`/app/u/${m().author.id}`}
+          onClick={(e) => profileClick(e, m().author.id!, "user")}
           class="font-medium hover:underline"
           style={{ color: authorColor(m().author.name) }}
         >
@@ -1183,9 +1196,11 @@ function MessageRow(props: {
                     ? `/app/ag/${m().author.id}`
                     : `/app/u/${m().author.id}`
                 }
+                onClick={(e) =>
+                  profileClick(e, m().author.id!, m().author.kind)
+                }
                 class="text-[14.5px] font-semibold hover:underline"
                 style={{ color: authorColor(m().author.name) }}
-                title={`Open ${m().author.name}'s profile`}
               >
                 {m().author.name}
               </A>
@@ -1742,14 +1757,53 @@ function ConversationThread(props: {
   const [messages, setMessages] = createSignal<Message[]>([]);
   const [highlightId, setHighlightId] = createSignal<string | null>(null);
   const [pinsOpen, setPinsOpen] = createSignal(false);
+  const [pinFilter, setPinFilter] = createSignal("");
+  const filteredPins = () => {
+    const list = pins() ?? [];
+    const q = pinFilter().trim().toLowerCase();
+    if (!q) return list;
+    return list.filter(
+      (p) =>
+        p.body.toLowerCase().includes(q) ||
+        p.author.name.toLowerCase().includes(q),
+    );
+  };
   const [threadsOpen, setThreadsOpen] = createSignal(false);
   const [hasMore, setHasMore] = createSignal(false);
   const [loadingMore, setLoadingMore] = createSignal(false);
-  const [draft, setDraft] = createSignal("");
+  // Drafts persist per conversation — navigating to the board and back keeps
+  // an unsent message (and its tags) intact. Stored locally; cleared on send.
+  const draftKey = `relay.draft.${props.conversationId}`;
+  const savedDraft = (() => {
+    try {
+      const raw = localStorage.getItem(draftKey);
+      return raw
+        ? (JSON.parse(raw) as { body?: string; tags?: string[] })
+        : null;
+    } catch {
+      return null;
+    }
+  })();
+  const [draft, setDraft] = createSignal(savedDraft?.body ?? "");
   const [sending, setSending] = createSignal(false);
   // Message tags: draftTags ride on the next send; tagFilter narrows the
   // view server-side (ListMessages accepts ?tag=).
-  const [draftTags, setDraftTags] = createSignal<string[]>([]);
+  const [draftTags, setDraftTags] = createSignal<string[]>(
+    savedDraft?.tags ?? [],
+  );
+  createEffect(() => {
+    const body = draft();
+    const tags = draftTags();
+    try {
+      if (!body.trim() && tags.length === 0) {
+        localStorage.removeItem(draftKey);
+      } else {
+        localStorage.setItem(draftKey, JSON.stringify({ body, tags }));
+      }
+    } catch {
+      /* storage full/denied — drafts are best-effort */
+    }
+  });
   const [tagPickerOpen, setTagPickerOpen] = createSignal(false);
   const [customTag, setCustomTag] = createSignal("");
   const [tagFilter, setTagFilter] = createSignal("");
@@ -1779,6 +1833,9 @@ function ConversationThread(props: {
     return [...s].sort();
   });
   const [sendError, setSendError] = createSignal<string | null>(null);
+  // Messages that arrived while the reader was scrolled up — drives the
+  // Discord-style "New messages" jump pill above the composer.
+  const [newBelow, setNewBelow] = createSignal(0);
   const [pending, setPending] = createSignal<PendingAttachment[]>([]);
   const [dragging, setDragging] = createSignal(false);
   const [replyTo, setReplyTo] = createSignal<Message | null>(null);
@@ -1881,6 +1938,7 @@ function ConversationThread(props: {
       setMessages((cur) =>
         cur.some((x) => x.id === m.id) ? cur : [...cur, m],
       );
+      if (!stickToBottom) setNewBelow((n) => n + 1);
       markLatestRead();
     } else if (e.type === "message.updated") {
       replaceMessage(data.message as Message);
@@ -2226,7 +2284,11 @@ function ConversationThread(props: {
     if (d.projectId !== props.projectId || !d.path) return;
     setPreview({ src: d.src, repo: d.repo, path: d.path });
   };
-  onMount(() => window.addEventListener("relay:open-file", onOpenFile));
+  onMount(() => {
+    window.addEventListener("relay:open-file", onOpenFile);
+    // A restored draft needs the composer sized to its content.
+    requestAnimationFrame(autogrow);
+  });
   onCleanup(() => window.removeEventListener("relay:open-file", onOpenFile));
 
   // --- attachments ---
@@ -2390,6 +2452,14 @@ function ConversationThread(props: {
           cur.some((x) => x.id === message.id) ? cur : [...cur, message],
         );
       }
+      // Own sends always land at the bottom — even when the reader was
+      // scrolled up composing. Without this the new message posts but stays
+      // out of view, which reads as "send did nothing".
+      stickToBottom = true;
+      setNewBelow(0);
+      requestAnimationFrame(() => {
+        if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
+      });
       setDraft("");
       setDraftTags([]);
       setReplyTo(null);
@@ -2435,7 +2505,23 @@ function ConversationThread(props: {
   }
 
   return (
-    <div class="flex min-h-0 flex-1 flex-col">
+    <div class="relative flex min-h-0 flex-1 flex-col">
+      <Show when={newBelow() > 0}>
+        <button
+          type="button"
+          class="absolute bottom-24 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-accent px-3 py-1.5 text-[12px] font-semibold text-white shadow-lg transition-transform hover:scale-[1.03]"
+          onClick={() => {
+            stickToBottom = true;
+            setNewBelow(0);
+            scrollEl?.scrollTo({ top: scrollEl.scrollHeight });
+          }}
+        >
+          <span class="rounded-full bg-white/25 px-1.5 font-mono text-[10.5px]">
+            {newBelow()}
+          </span>
+          New messages ↓
+        </button>
+      </Show>
       <div
         ref={(el) => {
           scrollEl = el;
@@ -2445,8 +2531,9 @@ function ConversationThread(props: {
           const gap =
             scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight;
           stickToBottom = gap < 60;
+          if (stickToBottom) setNewBelow(0);
         }}
-        class="chat-scroll min-h-0 flex-1 overflow-y-auto"
+        class="chat-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden"
       >
         <div class="border-b border-border/60 px-4 py-1.5">
           <div class="flex items-center gap-4">
@@ -2476,7 +2563,16 @@ function ConversationThread(props: {
           <Show when={(pins()?.length ?? 0) > 0}>
             <Show when={pinsOpen()}>
               <div class="mt-1 flex flex-col gap-0.5 pb-1">
-                <For each={pins()}>
+                <Show when={pins()!.length > 3}>
+                  <input
+                    type="text"
+                    value={pinFilter()}
+                    onInput={(e) => setPinFilter(e.currentTarget.value)}
+                    placeholder="Filter pinned messages"
+                    class="mb-1 h-7 w-full rounded-md border border-border bg-surface px-2 text-[12px] text-fg placeholder:text-faint focus:border-accent focus:outline-none"
+                  />
+                </Show>
+                <For each={filteredPins()}>
                   {(p) => (
                     <div class="group/pin flex items-center gap-2 rounded-md px-2 py-1 text-[12.5px] hover:bg-hover">
                       <button
@@ -2494,22 +2590,28 @@ function ConversationThread(props: {
                           {messagePreview(p.body).slice(0, 80) || "(attachment)"}
                         </span>
                       </button>
-                      <button
-                        type="button"
-                        title="Unpin"
-                        aria-label="Unpin message"
-                        onClick={() =>
-                          void api
-                            .pinMessage(p.id, false)
-                            .then(() => refetchPins())
-                        }
-                        class="hidden shrink-0 rounded p-0.5 text-muted hover:text-fg group-hover/pin:block"
-                      >
-                        <XIcon class="h-3 w-3" />
-                      </button>
+                      <Tip text="Unpin" hint="Remove this message from pinned">
+                        <button
+                          type="button"
+                          aria-label="Unpin message"
+                          onClick={() =>
+                            void api
+                              .pinMessage(p.id, false)
+                              .then(() => refetchPins())
+                          }
+                          class="hidden shrink-0 rounded p-0.5 text-muted hover:text-fg group-hover/pin:block"
+                        >
+                          <XIcon class="h-3 w-3" />
+                        </button>
+                      </Tip>
                     </div>
                   )}
                 </For>
+                <Show when={filteredPins().length === 0}>
+                  <p class="px-2 py-1 text-[12px] text-faint">
+                    No pinned messages match "{pinFilter()}"
+                  </p>
+                </Show>
               </div>
             </Show>
           </Show>

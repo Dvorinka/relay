@@ -381,7 +381,12 @@ func (a *App) setupPage(w http.ResponseWriter, r *http.Request) {
 		serveChoiceBridge(w, offline)
 		return
 	}
-	offline := ""
+	// Local mode is always offered; without the embedded SPA bundle the button
+	// explains why it's disabled instead of vanishing silently.
+	offline := `<button type="button" disabled
+	  title="Local mode needs a build that embeds the web app — release builds include it">
+	  Work offline — this device only</button>
+	<small>Local mode needs a bundled web app — release builds include one.</small>`
 	if offlineAvailable() {
 		offline = `<button type="button" onclick="location.search='?offline=1'">Work offline — this device only</button>`
 	}
@@ -399,6 +404,7 @@ func (a *App) setupPage(w http.ResponseWriter, r *http.Request) {
   input{background:#131416;color:#e9e9eb}
   button{background:#06b6d4;color:#062a30;font-weight:600;border:0;cursor:pointer}
   .wrap>button{background:transparent;color:#9c9fa7;border-color:#232427}
+  .wrap>button:disabled{opacity:.45;cursor:not-allowed}
   small{color:#9c9fa7}
 </style>
 <div class="wrap">
@@ -406,7 +412,8 @@ func (a *App) setupPage(w http.ResponseWriter, r *http.Request) {
   <h2>Connect to a Relay server</h2>
   <input name="server_url" placeholder="https://relay.example.com" autofocus required>
   <button>Connect</button>
-  <small>Self-hosted URL — or http://localhost:8080 while developing.</small>
+  <small>Self-hosted URL — or http://localhost:8080 while developing.
+  After connecting, sign in in the app or through your browser.</small>
 </form>
 %s
 </div>`, offline)
