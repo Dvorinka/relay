@@ -161,3 +161,22 @@ export async function desktopApplyConfig(
     return false;
   }
 }
+
+// Launch-at-login state from the desktop shell (HKCU Run key on Windows,
+// freedesktop entry on Linux, LaunchAgent on macOS). Same-origin fetch —
+// wails.localhost is routed by the shell's mux, not the proxied server.
+export async function desktopAutostart(): Promise<{
+  enabled: boolean;
+  supported: boolean;
+}> {
+  const r = await fetch("/~desktop-autostart", { cache: "no-store" });
+  if (!r.ok) throw new Error("autostart status unavailable");
+  return r.json();
+}
+
+export async function desktopSetAutostart(on: boolean): Promise<void> {
+  const r = await fetch(`/~desktop-autostart?enabled=${on ? 1 : 0}`, {
+    method: "POST",
+  });
+  if (!r.ok) throw new Error("could not update autostart");
+}

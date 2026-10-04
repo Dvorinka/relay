@@ -1,6 +1,7 @@
 import { createResource, createSignal, For, Show } from "solid-js";
 import { FormError, SubmitButton } from "../../components/ui";
 import { api } from "../../lib/api";
+import { confirmDestructive } from "../../components/Confirm";
 import { desktopOpen } from "../../lib/desktop";
 import { markGitHub } from "./GitHub";
 
@@ -59,6 +60,14 @@ export default function GitHubAppSection(props: {
     setPending(true);
     setError(null);
     try {
+      if (
+        !(await confirmDestructive({
+          title: "Disconnect GitHub App",
+          body: "Remove the GitHub App connection for this workspace? Linked repos stop syncing and mirrors go stale.",
+          confirmLabel: "Disconnect",
+        }))
+      )
+        return;
       await api.deleteGitHubApp();
       setConfirmDelete(false);
       refetchApp();

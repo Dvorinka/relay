@@ -16,6 +16,7 @@ import {
 } from "solid-js";
 import { Spinner } from "../../components/ui";
 import { api } from "../../lib/api";
+import { confirmDestructive } from "../../components/Confirm";
 import { timeAgo } from "../../lib/time";
 
 export function markGitHub(path: string, cls = "h-4 w-4") {
@@ -369,6 +370,14 @@ export function DevelopmentPanel(props: {
                   <button
                     type="button"
                     onClick={async () => {
+                      if (
+                        !(await confirmDestructive({
+                          title: "Unlink repository",
+                          body: `Unlink ${repo.full_name ?? repo.id}? Mirrored issues and PRs stay; syncing stops.`,
+                          confirmLabel: "Unlink",
+                        }))
+                      )
+                        return;
                       await api.unlinkRepo(props.projectId, repo.id);
                       setConfirm(null);
                       refetchLinked();

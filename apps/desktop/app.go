@@ -93,6 +93,7 @@ func (a *App) buildHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/~desktop-open", a.openExternal)
 	mux.HandleFunc("/~desktop-config", a.configFromSPA)
+	mux.HandleFunc("/~desktop-autostart", a.autostart)
 	switch {
 	case a.cfg.Offline:
 		mux.Handle("/", spaHandler(webDist()))
@@ -148,6 +149,29 @@ func (a *App) openExternal(w http.ResponseWriter, r *http.Request) {
 		go wailsruntime.BrowserOpenURL(a.ctx, u)
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// autostart reports and toggles launch-at-login for the Settings page.
+// GET returns {enabled, supported}; POST ?enabled=1|0 writes the per-OS
+// mechanism (HKCU Run key on Windows, freedesktop entry on Linux,
+// LaunchAgent on macOS) and returns the same shape.
+func (a *App) autostart(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		if err := setAutostart(r.URL.Query().Get("enabled") == "1"); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	on, err := autostartEnabled()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"enabled":   on,
+		"supported": true,
+	})
 }
 
 type proxyResult struct {

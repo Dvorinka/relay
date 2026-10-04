@@ -15,6 +15,7 @@ import {
   Field,
   FormError,
   ImageURLField,
+  Spinner,
   SubmitButton,
   inputClass,
   primaryButtonClass,
@@ -44,7 +45,11 @@ import {
   setNotifyEnabled,
   type NotifyCategory,
 } from "../../lib/notify";
-import { isDesktop } from "../../lib/desktop";
+import {
+  desktopAutostart,
+  desktopSetAutostart,
+  isDesktop,
+} from "../../lib/desktop";
 import { syncToServer } from "../../lib/sync";
 import { useSession } from "../../stores/session";
 import {
@@ -268,6 +273,51 @@ function NewWorkspaceForm(props: { onCreated: () => void }) {
         </SubmitButton>
       </div>
     </form>
+  );
+}
+
+// Launch-at-login for the desktop shell — backed by the OS mechanism the
+// shell manages (HKCU Run key / freedesktop entry / LaunchAgent).
+function DesktopSection() {
+  const [state, { refetch }] = createResource(desktopAutostart);
+  const [busy, setBusy] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+
+  async function toggle(on: boolean) {
+    setBusy(true);
+    setError(null);
+    try {
+      await desktopSetAutostart(on);
+      refetch();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "could not update");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div class="flex flex-col gap-2">
+      <Show
+        when={state.state === "ready"}
+        fallback={<Spinner class="h-3.5 w-3.5" />}
+      >
+        <label class="flex w-fit cursor-pointer items-center gap-2 text-[12.5px] text-muted transition-colors hover:text-fg">
+          <input
+            type="checkbox"
+            checked={state()!.enabled}
+            disabled={busy()}
+            onChange={(e) => void toggle(e.currentTarget.checked)}
+            class="h-3.5 w-3.5 accent-accent"
+          />
+          Launch Relay when you sign in
+        </label>
+        <p class="text-[11.5px] text-faint">
+          Starts the desktop app automatically on system startup.
+        </p>
+      </Show>
+      <FormError message={error()} />
+    </div>
   );
 }
 
@@ -996,6 +1046,12 @@ export default function Settings() {
       <Section title="Appearance">
         <AppearanceSection />
       </Section>
+
+      <Show when={isDesktop()}>
+        <Section title="Desktop">
+          <DesktopSection />
+        </Section>
+      </Show>
 
       <Show when={!net.isLocal()}>
         <Section title="Notifications">

@@ -44,6 +44,7 @@ import {
   Tip,
 } from "../../components/ui";
 import { api } from "../../lib/api";
+import { confirmDestructive } from "../../components/Confirm";
 import { openProfile } from "../../components/ProfileModal";
 import { mediaURL, net } from "../../lib/net";
 import { subscribe } from "../../lib/events";
@@ -189,6 +190,13 @@ function TodoList(props: {
 
   async function remove(t: Todo) {
     try {
+      if (
+        !(await confirmDestructive({
+          title: "Delete todo",
+          body: `Delete "${t.content.slice(0, 80)}"? This cannot be undone.`,
+        }))
+      )
+        return;
       await api.deleteTodo(t.id);
       props.onChanged();
     } catch (ex) {
@@ -1087,6 +1095,14 @@ function ProjectRepoSection(props: { project: Project }) {
   async function unlink(repoId: string) {
     setError(null);
     try {
+      if (
+        !(await confirmDestructive({
+          title: "Unlink repository",
+          body: "Unlink this repo? Mirrored issues and PRs stay; syncing stops.",
+          confirmLabel: "Unlink",
+        }))
+      )
+        return;
       await api.unlinkRepo(props.project.id, repoId);
       await refetch();
     } catch (err) {
