@@ -74,6 +74,69 @@ export interface LinkedRepo {
   url: string;
 }
 
+// PullDetail is the in-app PR view payload: the pull plus its changed files,
+// commits and CI checks.
+export interface PullDetail {
+  pull: {
+    number: number;
+    title: string;
+    state: string;
+    draft: boolean;
+    merged: boolean;
+    merged_at?: string | null;
+    mergeable: string; // "clean" | "conflicting" | ""
+    mergeable_state: string;
+    body: string;
+    url: string;
+    author: string;
+    head: string;
+    base: string;
+    additions: number;
+    deletions: number;
+    changed_files: number;
+    commit_count: number;
+    labels: string[];
+    created_at: string;
+    updated_at: string;
+    repo: LinkedRepo;
+  };
+  files: {
+    filename: string;
+    status: string;
+    additions: number;
+    deletions: number;
+  }[];
+  commits: RepoCommit[];
+  checks: {
+    name: string;
+    status: string;
+    conclusion: string;
+    url: string;
+  }[];
+}
+
+export interface RepoCommit {
+  sha: string;
+  message: string;
+  url: string;
+  author: string;
+  date: string;
+}
+
+// An installable repository offered by the GitHub App / PAT — carries enough
+// metadata for the picker (search, recent-first sort, project prefill).
+export interface AvailableRepo {
+  installation_id: number;
+  full_name: string;
+  owner: string;
+  name: string;
+  default_branch: string;
+  private: boolean;
+  description?: string;
+  owner_avatar?: string;
+  pushed_at?: string;
+}
+
 export interface DevRepoPanel {
   repo: LinkedRepo;
   issues: {
@@ -289,7 +352,7 @@ export function createClient(baseUrl: string, token?: string) {
     // Conversations
     listMessages: (
       conversationId: string,
-      opts?: { limit?: number; before?: string },
+      opts?: { limit?: number; before?: string; tag?: string },
     ) => {
       const query = new URLSearchParams();
       if (opts?.limit !== undefined) {
@@ -297,6 +360,9 @@ export function createClient(baseUrl: string, token?: string) {
       }
       if (opts?.before) {
         query.set("before", opts.before);
+      }
+      if (opts?.tag) {
+        query.set("tag", opts.tag);
       }
       const qs = query.toString();
       return request<{ messages: Message[]; has_more: boolean }>(
@@ -308,11 +374,13 @@ export function createClient(baseUrl: string, token?: string) {
       body: string,
       attachmentIds?: string[],
       parentId?: string,
+      tags?: string[],
     ) =>
       post<Message>(`/api/conversations/${conversationId}/messages`, {
         body,
         attachment_ids: attachmentIds,
         parent_id: parentId,
+        ...(tags && tags.length ? { tags } : {}),
       }),
     editMessage: (messageId: string, body: string) =>
       patch<Message>(`/api/messages/${messageId}`, { body }),
@@ -324,6 +392,13 @@ export function createClient(baseUrl: string, token?: string) {
       }),
     markMessageRead: (messageId: string) =>
       post<void>(`/api/messages/${messageId}/read`),
+    markConversationRead: (conversationId: string) =>
+      post<void>(`/api/conversations/${conversationId}/read`),
+    clearConversation: (conversationId: string) =>
+      request<{ cleared: number }>(
+        `/api/conversations/${conversationId}/messages`,
+        { method: "DELETE" },
+      ),
     createThread: (messageId: string, title?: string) =>
       post<{ thread: Thread }>(`/api/messages/${messageId}/thread`, {
         ...(title ? { title } : {}),
@@ -480,14 +555,7 @@ export function createClient(baseUrl: string, token?: string) {
       }>(`/api/workspaces/${workspaceId}/github/installations`),
     listAvailableRepos: (workspaceId: string) =>
       request<{
-        repos: {
-          installation_id: number;
-          full_name: string;
-          owner: string;
-          name: string;
-          default_branch: string;
-          private: boolean;
-        }[];
+        repos: AvailableRepo[];
       }>(`/api/workspaces/${workspaceId}/github/repos`),
     listProjectRepos: (projectId: string) =>
       request<{ repos: LinkedRepo[] }>(
@@ -509,6 +577,18 @@ export function createClient(baseUrl: string, token?: string) {
       }),
     projectDevelopment: (projectId: string) =>
       request<DevelopmentPanel>(`/api/projects/${projectId}/development`),
+    pullDetail: (projectId: string, repo: string, number: number) =>
+      request<PullDetail>(
+        `/api/projects/${projectId}/github/pull?repo=${encodeURIComponent(repo)}&number=${number}`,
+      ),
+    repoCommits: (projectId: string, repo: string, branch?: string) =>
+      request<{ commits: RepoCommit[]; branch: string }>(
+        `/api/projects/${projectId}/github/commits?repo=${encodeURIComponent(repo)}${branch ? `&branch=${encodeURIComponent(branch)}` : ""}`,
+      ),
+    repoBranches: (projectId: string, repo: string) =>
+      request<{ branches: { name: string; protected: boolean }[]; default_branch: string }>(
+        `/api/projects/${projectId}/github/branches?repo=${encodeURIComponent(repo)}`,
+      ),
     importGitHub: (projectId: string, repoId?: string) =>
       post<{
         results: {
@@ -574,7 +654,12 @@ export function createClient(baseUrl: string, token?: string) {
       ),
     createWebhook: (
       projectId: string,
-      body: { url: string; events: string[]; active?: boolean },
+      body: {
+        url?: string;
+        events: string[];
+        active?: boolean;
+        relay_managed?: boolean;
+      },
     ) =>
       post<WebhookSubscription>(`/api/projects/${projectId}/webhooks`, body),
     updateWebhook: (

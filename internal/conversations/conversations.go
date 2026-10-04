@@ -5,7 +5,9 @@ package conversations
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -54,6 +56,8 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
 	g.GET("/conversations/:id/pins", s.memberOnly, s.handleListPins)
 	g.PUT("/messages/:id/reactions", s.handleToggleReaction)
 	g.POST("/messages/:id/read", s.handleMarkRead)
+	g.POST("/conversations/:id/read", s.memberOnly, s.handleMarkConversationRead)
+	g.DELETE("/conversations/:id/messages", s.memberOnly, s.handleClearConversation)
 }
 
 // --- access gate ---
@@ -142,9 +146,13 @@ func (s *Service) handleListMessages(c *gin.Context) {
 			return
 		}
 	}
+	var tag pgtype.Text
+	if v := strings.ToLower(strings.TrimSpace(c.Query("tag"))); v != "" {
+		tag = pgtype.Text{String: v, Valid: true}
+	}
 	// one extra row decides has_more
 	rows, err := s.q.ListMessages(c.Request.Context(), db.ListMessagesParams{
-		ConversationID: conv.ID, Before: before, Lim: int32(limit + 1),
+		ConversationID: conv.ID, Before: before, Tag: tag, Lim: int32(limit + 1),
 	})
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
@@ -165,7 +173,7 @@ func (s *Service) handleListMessages(c *gin.Context) {
 		m := rows[i]
 		msgs = append(msgs, MessageJSON(MessageView{
 			ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
-			Body: m.Body, Mentions: m.Mentions, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+			Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 			AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 			AuthorName: m.AuthorName, AuthorAvatar: m.AuthorAvatar,
 			ParentAuthorName: m.ParentAuthorName, ParentBody: m.ParentBody,
@@ -189,6 +197,7 @@ func (s *Service) handlePostMessage(c *gin.Context) {
 		Body          string   `json:"body"`
 		AttachmentIDs []string `json:"attachment_ids"`
 		ParentID      string   `json:"parent_id"`
+		Tags          []string `json:"tags"`
 	}
 	if !httpx.BindJSON(c, &req) {
 		return
@@ -226,12 +235,17 @@ func (s *Service) handlePostMessage(c *gin.Context) {
 			return
 		}
 	}
+	tags, terr := NormalizeTags(req.Tags)
+	if terr != nil {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", terr.Error())
+		return
+	}
 	user := auth.CurrentUser(c)
 	refs := s.resolveMentions(c, conv.ProjectID, mentions.Extract(req.Body))
 	mj, _ := json.Marshal(refs)
 	id, err := s.q.CreateMessage(c.Request.Context(), db.CreateMessageParams{
 		ConversationID: conv.ID, AuthorUserID: user.ID, Body: req.Body,
-		ParentID: parent, Mentions: mj,
+		ParentID: parent, Mentions: mj, Tags: tags,
 	})
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
@@ -254,7 +268,7 @@ func (s *Service) handlePostMessage(c *gin.Context) {
 	atts := s.attachmentsFor(c, []pgtype.UUID{m.ID})
 	out := MessageJSON(MessageView{
 		ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
-		Body: m.Body, Mentions: m.Mentions, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 		AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 		AuthorName: m.AuthorName, AuthorAvatar: m.AuthorAvatar,
 		ParentAuthorName: m.ParentAuthorName, ParentBody: m.ParentBody,
@@ -337,7 +351,7 @@ func (s *Service) handleEditMessage(c *gin.Context) {
 	}
 	out := MessageJSON(MessageView{
 		ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
-		Body: m.Body, Mentions: m.Mentions, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 		AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 		AuthorName: m.AuthorName, AuthorAvatar: m.AuthorAvatar,
 		ParentAuthorName: m.ParentAuthorName, ParentBody: m.ParentBody,
@@ -413,7 +427,7 @@ func (s *Service) messagePayload(c *gin.Context, id pgtype.UUID) (gin.H, bool) {
 	read := s.agentReadSet(c, []pgtype.UUID{m.ID})
 	return MessageJSON(MessageView{
 		ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
-		Body: m.Body, Mentions: m.Mentions, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 		AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 		AuthorName: m.AuthorName, AuthorAvatar: m.AuthorAvatar,
 		ParentAuthorName: m.ParentAuthorName, ParentBody: m.ParentBody,
@@ -498,7 +512,7 @@ func (s *Service) handleListPins(c *gin.Context) {
 	for _, m := range rows {
 		msgs = append(msgs, MessageJSON(MessageView{
 			ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
-			Body: m.Body, Mentions: m.Mentions, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+			Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 			AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 			AuthorName: m.AuthorName, AuthorAvatar: m.AuthorAvatar,
 			ParentAuthorName: m.ParentAuthorName, ParentBody: m.ParentBody,
@@ -570,7 +584,7 @@ func (s *Service) handleForwardMessage(c *gin.Context) {
 	}
 	newID, err := s.q.CreateMessage(c.Request.Context(), db.CreateMessageParams{
 		ConversationID: target.ID, AuthorUserID: user.ID, Body: src.Body,
-		ForwardedFrom: root,
+		ForwardedFrom: root, Tags: src.Tags,
 	})
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
@@ -840,6 +854,55 @@ func (s *Service) handleMarkRead(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// handleMarkConversationRead marks every message in the conversation read —
+// the "viewed the channel" action that clears the unread badge.
+func (s *Service) handleMarkConversationRead(c *gin.Context) {
+	id, ok := httpx.PathUUID(c, "id")
+	if !ok {
+		return
+	}
+	if err := s.q.MarkConversationRead(c.Request.Context(), db.MarkConversationReadParams{
+		ConversationID: id, UserID: auth.CurrentUser(c).ID,
+	}); err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// handleClearConversation wipes the channel: soft-deletes every message.
+// Unlike single-message delete this is a moderation action — owner/admin only,
+// and agent-read locks do not apply (the chat itself is being discarded).
+func (s *Service) handleClearConversation(c *gin.Context) {
+	conv := c.MustGet(ctxConversation).(db.Conversation)
+	user := auth.CurrentUser(c)
+	pid, err := s.q.ResolveConversationProject(c.Request.Context(), conv.ID)
+	if err != nil {
+		httpx.Error(c, http.StatusNotFound, "not_found", "conversation not found")
+		return
+	}
+	role, err := s.q.ProjectWorkspaceRole(c.Request.Context(),
+		db.ProjectWorkspaceRoleParams{ID: pid, UserID: user.ID})
+	if err != nil || (role != "owner" && role != "admin") {
+		httpx.Error(c, http.StatusForbidden, "forbidden", "only workspace owners and admins can clear the chat")
+		return
+	}
+	n, err := s.q.ClearConversation(c.Request.Context(), conv.ID)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	if s.Bus != nil {
+		p, _ := uuid.FromBytes(pid.Bytes[:])
+		s.Bus.Publish(events.Event{Type: "conversation.cleared", ProjectID: p,
+			Data: map[string]any{
+				"conversation_id": conv.ID.String(),
+				"cleared_by":      user.ID.String(),
+			}})
+	}
+	c.JSON(http.StatusOK, gin.H{"cleared": n})
+}
+
 // attachmentsFor batches attachment rows for a page of messages, keyed by
 // message id. Missing/failed lookups degrade to empty lists.
 func (s *Service) attachmentsFor(c *gin.Context, ids []pgtype.UUID) map[string][]gin.H {
@@ -969,6 +1032,7 @@ type MessageView struct {
 	ID, ConversationID, ParentID pgtype.UUID
 	Body                         string
 	Mentions                     []byte
+	Tags                         []string
 	CreatedAt, EditedAt          pgtype.Timestamptz
 	AuthorUserID, AuthorAgentID  pgtype.UUID
 	AuthorName                   string
@@ -1066,6 +1130,7 @@ func MessageJSON(v MessageView) gin.H {
 		},
 		"body":        v.Body,
 		"mentions":    mrefs,
+		"tags":        nonEmptyTags(v.Tags),
 		"parent":      parent,
 		"thread":      thread,
 		"pinned_at":   pinned,
@@ -1083,6 +1148,40 @@ func nonEmpty(l []gin.H) []gin.H {
 		return []gin.H{}
 	}
 	return l
+}
+
+func nonEmptyTags(l []string) []string {
+	if l == nil {
+		return []string{}
+	}
+	return l
+}
+
+var tagRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,23}$`)
+
+// NormalizeTags lowercases, trims, validates and dedupes free-form message
+// tags ("frontend", "backend", "visual", "mcp", …). Invalid entries are
+// dropped; more than 8 is an error worth reporting.
+func NormalizeTags(in []string) ([]string, error) {
+	out := make([]string, 0, len(in))
+	seen := map[string]bool{}
+	for _, t := range in {
+		t = strings.ToLower(strings.TrimSpace(t))
+		if t == "" {
+			continue
+		}
+		if !tagRe.MatchString(t) {
+			continue
+		}
+		if !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	if len(out) > 8 {
+		return nil, errors.New("at most 8 tags per message")
+	}
+	return out, nil
 }
 
 func (s *Service) convProjectID(c *gin.Context, convID pgtype.UUID) pgtype.UUID {

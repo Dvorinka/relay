@@ -28,6 +28,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Dvorinka/relay/internal/avatars"
+	"github.com/Dvorinka/relay/internal/conversations"
 	"github.com/Dvorinka/relay/internal/db"
 	"github.com/Dvorinka/relay/internal/events"
 	"github.com/Dvorinka/relay/internal/github"
@@ -221,6 +222,7 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithString("conversation_id"),
 		mcp.WithString("project_id", mcp.Description("Resolves the project's main conversation")),
 		mcp.WithNumber("limit", mcp.Description("Max messages, default 50, cap 200")),
+		mcp.WithString("tag", mcp.Description("Only messages carrying this tag")),
 	), s.getMessages)
 
 	srv.AddTool(mcp.NewTool("get_message",
@@ -257,6 +259,7 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithString("conversation_id"),
 		mcp.WithString("body", mcp.Required(), mcp.Description("Markdown body")),
 		mcp.WithString("reply_to", mcp.Description("Message UUID this message replies to")),
+		mcp.WithString("tags", mcp.Description("Comma-separated tags classifying the message, e.g. frontend,backend,visual,mcp")),
 	), s.sendMessage)
 
 	srv.AddTool(mcp.NewTool("edit_message",
@@ -541,6 +544,7 @@ func messageJSON(m db.GetMessageFullRow) gin.H {
 		"conversation_id": m.ConversationID,
 		"body":            m.Body,
 		"mentions":        mrefs,
+		"tags":            m.Tags,
 		"parent":          parent,
 		"thread":          thread,
 		"pinned_at":       pinnedAt,
@@ -724,8 +728,12 @@ func (s *Service) getMessages(ctx context.Context, req mcp.CallToolRequest) (*mc
 		return errResult(err)
 	}
 	lim := clampInt(req.GetInt("limit", 50), 1, 200)
+	var tag pgtype.Text
+	if v := strings.ToLower(strings.TrimSpace(req.GetString("tag", ""))); v != "" {
+		tag = pgtype.Text{String: v, Valid: true}
+	}
 	rows, err := s.q.ListMessages(ctx, db.ListMessagesParams{
-		ConversationID: cid, Lim: int32(lim),
+		ConversationID: cid, Lim: int32(lim), Tag: tag,
 	})
 	if err != nil {
 		return errResult(err)
@@ -960,10 +968,15 @@ func (s *Service) sendMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError("reply_to is not a message in this conversation"), nil
 		}
 	}
+	tags, terr := conversations.NormalizeTags(strings.Split(
+		req.GetString("tags", ""), ","))
+	if terr != nil {
+		return mcp.NewToolResultError(terr.Error()), nil
+	}
 	mj, _ := json.Marshal(s.resolveMentions(ctx, pid, mentions.Extract(body)))
 	id, err := s.q.CreateAgentMessage(ctx, db.CreateAgentMessageParams{
 		ConversationID: cid, AgentID: agent(ctx).ID, Body: body, ParentID: parent,
-		Mentions: mj,
+		Mentions: mj, Tags: tags,
 	})
 	if err != nil {
 		return errResult(err)

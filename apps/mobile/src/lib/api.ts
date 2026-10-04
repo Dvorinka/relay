@@ -95,6 +95,7 @@ export const api = {
         email: string;
         name: string;
         avatar_url: string | null;
+        name_color: string | null;
       };
       workspace?: { id: string; name: string };
     }>("GET", "/api/auth/session"),
@@ -168,6 +169,18 @@ export const api = {
       response: response ?? "",
     }),
   workspaces: () => req<{ workspaces: Workspace[] }>("GET", "/api/workspaces"),
+  updateMe: (patch: { name_color?: string }) =>
+    req<{ user: { name_color: string | null } }>("PATCH", "/api/auth/me", patch),
+  workspaceMembers: (workspaceId: string) =>
+    req<{
+      members: {
+        role: string;
+        user: { id: string; name: string; name_color: string | null };
+      }[];
+    }>("GET", `/api/workspaces/${workspaceId}/members`),
+  // Every PUT image endpoint accepts {"url"} — the server fetches it.
+  setImageURL: (path: string, url: string) =>
+    req<{ avatar_url?: string; icon_url?: string }>("PUT", path, { url }),
   briefs: (projectId: string, issueId?: string) =>
     req<{ briefs: Brief[]; policy: string }>(
       "GET",
@@ -240,6 +253,8 @@ export interface Project {
   id: string;
   name: string;
   key: string;
+  workspace_id?: string;
+  color?: string | null;
 }
 export interface Issue {
   id: string;
@@ -302,6 +317,7 @@ export interface Message {
   edited_at: string | null;
   agent_read: boolean;
   author: { id: string; name: string; kind: string; avatar_url: string | null };
+  tags?: string[];
   parent: MessageParent | null;
   thread?: ThreadChip | null;
   pinned_at?: string | null;

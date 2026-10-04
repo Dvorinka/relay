@@ -4,6 +4,7 @@ import {
   type Issue,
   type Project,
   type SearchResults,
+  type Todo,
 } from "@relay/api-client";
 import { A, useNavigate, useParams, useSearchParams } from "@solidjs/router";
 import {
@@ -18,10 +19,14 @@ import {
 import { Avatar } from "@ark-ui/solid";
 import {
   BriefsIcon,
+  CheckIcon,
   DownloadIcon,
+  GitBranchIcon,
   GitPullRequestIcon,
   IssueIcon,
+  PlusIcon,
   SettingsIcon,
+  TrashIcon,
   XIcon,
 } from "../../components/icons";
 import {
@@ -38,8 +43,10 @@ import { initials } from "../../lib/text";
 import { timeAgo } from "../../lib/time";
 import { useProjects } from "../../stores/projects";
 import { useSession } from "../../stores/session";
+import { RepoPicker } from "../../components/RepoPicker";
 import { Conversation } from "../conversations/Conversation";
 import { DevelopmentPanel, markGitHub } from "../github/GitHub";
+import { GitLog } from "../github/GitLog";
 import { PullRequestList } from "../github/PullRequestList";
 import { IssueList } from "../issues/IssueList";
 import { isClosed, statusDefs, StatusDot } from "../issues/meta";
@@ -47,13 +54,20 @@ import { Reviews } from "../reviews/Reviews";
 import { WebhooksSection } from "../webhooks/Webhooks";
 import { BriefsPanel } from "../briefs/BriefsPanel";
 
-type View = "issues" | "pulls" | "reviews" | "development" | "settings";
+type View =
+  | "issues"
+  | "pulls"
+  | "reviews"
+  | "development"
+  | "commits"
+  | "settings";
 
 const VIEWS: { id: View; label: string }[] = [
   { id: "issues", label: "Issues" },
   { id: "pulls", label: "Pull requests" },
   { id: "reviews", label: "Reviews" },
   { id: "development", label: "Development" },
+  { id: "commits", label: "Commits" },
   { id: "settings", label: "Project settings" },
 ];
 
@@ -116,6 +130,118 @@ function RailSection(props: {
       </h3>
       {props.children}
     </section>
+  );
+}
+
+// TodoList: the project's shared work list in the right rail — add, check
+// off, delete. Agents write to the same list via the todo_* MCP tools.
+function TodoList(props: {
+  projectId: string;
+  todos: Todo[];
+  onChanged: () => void;
+}) {
+  const [text, setText] = createSignal("");
+  const [err, setErr] = createSignal("");
+  const sorted = () =>
+    [...props.todos].sort((a, b) => Number(a.done) - Number(b.done));
+
+  async function add(e: SubmitEvent) {
+    e.preventDefault();
+    const content = text().trim();
+    if (!content) return;
+    setErr("");
+    try {
+      await api.createTodo(props.projectId, content);
+      setText("");
+      props.onChanged();
+    } catch (ex) {
+      setErr(ex instanceof Error ? ex.message : "could not add todo");
+    }
+  }
+
+  async function toggle(t: Todo) {
+    try {
+      await api.updateTodo(t.id, { done: !t.done });
+      props.onChanged();
+    } catch (ex) {
+      setErr(ex instanceof Error ? ex.message : "could not update todo");
+    }
+  }
+
+  async function remove(t: Todo) {
+    try {
+      await api.deleteTodo(t.id);
+      props.onChanged();
+    } catch (ex) {
+      setErr(ex instanceof Error ? ex.message : "could not delete todo");
+    }
+  }
+
+  return (
+    <div class="flex flex-col gap-1">
+      <form onSubmit={add} class="flex gap-1.5">
+        <input
+          type="text"
+          value={text()}
+          onInput={(e) => setText(e.currentTarget.value)}
+          placeholder="Add a todo…"
+          aria-label="New todo"
+          class={`${inputClass} !py-1 text-[12.5px]`}
+        />
+        <button
+          type="submit"
+          disabled={!text().trim()}
+          aria-label="Add todo"
+          class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border text-muted transition-colors hover:bg-hover hover:text-fg disabled:opacity-40"
+        >
+          <PlusIcon class="h-3.5 w-3.5" />
+        </button>
+      </form>
+      <For
+        each={sorted()}
+        fallback={<p class="text-[12px] text-muted">Nothing tracked yet.</p>}
+      >
+        {(t) => (
+          <div class="group flex items-start gap-2 rounded-md px-1 py-1 transition-colors hover:bg-hover">
+            <button
+              type="button"
+              role="checkbox"
+              aria-checked={t.done}
+              aria-label={t.done ? "Mark not done" : "Mark done"}
+              onClick={() => void toggle(t)}
+              class={`mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border transition-colors ${
+                t.done
+                  ? "border-accent bg-accent text-white"
+                  : "border-muted/60 text-transparent hover:border-accent"
+              }`}
+            >
+              <CheckIcon class="h-2.5 w-2.5" />
+            </button>
+            <span
+              class={`min-w-0 flex-1 text-[12.5px] leading-snug ${
+                t.done ? "text-muted line-through" : ""
+              }`}
+            >
+              {t.content}
+              <Show when={t.agent}>
+                <span class="ml-1 text-[10.5px] text-muted">
+                  · {t.agent!.name}
+                </span>
+              </Show>
+            </span>
+            <button
+              type="button"
+              onClick={() => void remove(t)}
+              aria-label="Delete todo"
+              class="invisible shrink-0 rounded p-0.5 text-muted transition-colors hover:text-red-500 group-hover:visible"
+            >
+              <TrashIcon class="h-3 w-3" />
+            </button>
+          </div>
+        )}
+      </For>
+      <FormError message={err() || null} />
+    </div>
   );
 }
 
@@ -316,6 +442,10 @@ function ContextRail(props: {
     () => props.project.id,
     async (id) => (await api.listReviews(id, "pending")).reviews,
   );
+  const [todos, { refetch: refetchTodos }] = createResource(
+    () => props.project.id,
+    async (id) => (await api.listTodos(id)).todos,
+  );
   const [repos] = createResource(
     () => props.project.id,
     async (id) => (await api.listProjectRepos(id)).repos,
@@ -333,6 +463,9 @@ function ContextRail(props: {
   const unsub = subscribe((e) => {
     if (e.project_id === props.project.id && e.type.startsWith("issue.")) {
       refetchIssues();
+    }
+    if (e.project_id === props.project.id && e.type.startsWith("todo.")) {
+      refetchTodos();
     }
   });
   onCleanup(unsub);
@@ -487,6 +620,17 @@ function ContextRail(props: {
         </RailSection>
       </Show>
 
+      <RailSection
+        label="Todos"
+        count={(todos() ?? []).filter((t) => !t.done).length}
+      >
+        <TodoList
+          projectId={props.project.id}
+          todos={todos() ?? []}
+          onChanged={refetchTodos}
+        />
+      </RailSection>
+
       <RailSection label="Workspace">
         <button
           type="button"
@@ -561,6 +705,9 @@ function ViewSheet(props: {
               projectId={props.project.id}
               workspaceId={props.project.workspace_id}
             />
+          </Show>
+          <Show when={props.view === "commits"}>
+            <GitLog projectId={props.project.id} />
           </Show>
           <Show when={props.view === "settings"}>
             <div class="min-h-0 flex-1 overflow-y-auto">
@@ -753,22 +900,14 @@ function ProjectRepoSection(props: { project: Project }) {
           </Show>
         }
       >
-        <form onSubmit={link} class="flex items-center gap-2">
-          <select
-            value={picked()}
-            onChange={(e) => setPicked(e.currentTarget.value)}
-            class={`${inputClass} max-w-xs`}
-            aria-label="Repository to link"
-          >
-            <option value="">Pick a repository…</option>
-            <For each={linkable()}>
-              {(r) => (
-                <option value={`${r.owner}/${r.name}`}>
-                  {r.owner}/{r.name}
-                </option>
-              )}
-            </For>
-          </select>
+        <form onSubmit={link} class="flex items-start gap-2">
+          <div class="w-72">
+            <RepoPicker
+              repos={linkable()}
+              value={picked()}
+              onPick={(r) => setPicked(r?.full_name ?? "")}
+            />
+          </div>
           <SubmitButton pending={pending()} disabled={!picked()}>
             Link
           </SubmitButton>
@@ -829,8 +968,8 @@ function ProjectIconSection(props: { project: Project }) {
         <Show
           when={props.project.icon_url}
           fallback={
-            <span class="flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-surface font-mono text-[13px] text-muted">
-              {props.project.key.slice(0, 2)}
+            <span class="flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-surface text-[13px] font-medium text-muted">
+              {initials(props.project.name)}
             </span>
           }
         >
@@ -977,9 +1116,6 @@ export default function ProjectPage() {
                 <h1 class="truncate text-[14.5px] font-semibold tracking-tight">
                   {p().name}
                 </h1>
-                <span class="rounded border border-border px-1.5 py-0.5 font-mono text-[10.5px] text-muted">
-                  {p().key}
-                </span>
                 <Show when={p().description}>
                   <span class="hidden truncate text-[12.5px] text-muted md:inline">
                     {p().description}
@@ -1012,6 +1148,15 @@ export default function ProjectPage() {
               }
             >
               <GitPullRequestIcon class="h-4 w-4" />
+            </HeadButton>
+            <HeadButton
+              title="Commits"
+              active={view() === "commits"}
+              onClick={() =>
+                openView(view() === "commits" ? undefined : "commits")
+              }
+            >
+              <GitBranchIcon class="h-4 w-4" />
             </HeadButton>
             <HeadButton
               title="Visual briefs"

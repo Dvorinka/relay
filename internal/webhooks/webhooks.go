@@ -51,22 +51,26 @@ type Service struct {
 	log  *zap.Logger
 	pool *pgxpool.Pool
 	hc   *http.Client
+	// publicURL is the deployment's external base — managed ("relay:managed")
+	// subscriptions point at <publicURL>/api/webhooks/catch/<id>.
+	publicURL string
 
 	mu    sync.Mutex
 	cache map[pgtype.UUID][]db.WebhookSubscription // project -> subs, short TTL
 	exp   map[pgtype.UUID]time.Time
 }
 
-func NewService(log *zap.Logger, pool *pgxpool.Pool) *Service {
+func NewService(log *zap.Logger, pool *pgxpool.Pool, publicURL string) *Service {
 	return &Service{
 		q: db.New(pool), log: log, pool: pool,
-		hc:    &http.Client{Timeout: 10 * time.Second},
-		cache: map[pgtype.UUID][]db.WebhookSubscription{},
-		exp:   map[pgtype.UUID]time.Time{},
+		hc:        &http.Client{Timeout: 10 * time.Second},
+		publicURL: strings.TrimRight(publicURL, "/"),
+		cache:     map[pgtype.UUID][]db.WebhookSubscription{},
+		exp:       map[pgtype.UUID]time.Time{},
 	}
 }
 
-func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
+func (s *Service) RegisterRoutes(g *gin.RouterGroup, pub *gin.RouterGroup) {
 	g.GET("/projects/:id/webhooks", s.projectGate, s.handleList)
 	g.POST("/projects/:id/webhooks", s.projectAdmin, s.handleCreate)
 	g.GET("/webhooks/:id", s.webhookGate, s.handleGet)
@@ -74,6 +78,25 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
 	g.DELETE("/webhooks/:id", s.webhookAdmin, s.handleDelete)
 	g.GET("/webhooks/:id/deliveries", s.webhookGate, s.handleDeliveries)
 	g.POST("/webhooks/:id/test", s.webhookAdmin, s.handleTest)
+	// The managed listener endpoint — Relay-hosted sink for generated
+	// subscriptions. Unauthenticated; the delivery is already HMAC-signed,
+	// and the id being an existing subscription is the gate.
+	pub.POST("/webhooks/catch/:id", s.handleCatch)
+}
+
+// handleCatch is the Relay-managed listener: verify the subscription id
+// exists, accept the envelope, return 204. The dispatcher records the
+// delivery as usual, so users see real signed deliveries in-app.
+func (s *Service) handleCatch(c *gin.Context) {
+	id, ok := httpx.PathUUID(c, "id")
+	if !ok {
+		return
+	}
+	if _, err := s.q.GetWebhookByID(c.Request.Context(), id); err != nil {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 // --- gates ---
@@ -164,6 +187,9 @@ type createReq struct {
 	URL    string   `json:"url"`
 	Events []string `json:"events"`
 	Active *bool    `json:"active"`
+	// RelayManaged creates a Relay-hosted listener instead of an external
+	// URL — one click, deliveries land in the Deliveries panel.
+	RelayManaged bool `json:"relay_managed"`
 }
 
 func validURL(u string) bool {
@@ -241,7 +267,12 @@ func (s *Service) handleCreate(c *gin.Context) {
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	if !validURL(req.URL) {
+	if req.RelayManaged {
+		if s.publicURL == "" {
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "server has no public URL configured")
+			return
+		}
+	} else if !validURL(req.URL) {
 		httpx.Error(c, http.StatusBadRequest, "bad_request", "url must be http(s) and <= 500 chars")
 		return
 	}
@@ -264,6 +295,17 @@ func (s *Service) handleCreate(c *gin.Context) {
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
+	}
+	if req.RelayManaged {
+		// Point at the built-in catch endpoint now that the id exists.
+		row, err = s.q.UpdateWebhook(c.Request.Context(), db.UpdateWebhookParams{
+			ID:  row.ID,
+			Url: pgtype.Text{String: s.publicURL + "/api/webhooks/catch/" + row.ID.String(), Valid: true},
+		})
+		if err != nil {
+			httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
 	}
 	out := subJSON(row, true)
 	s.invalidate(row.ProjectID)

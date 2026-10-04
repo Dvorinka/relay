@@ -12,8 +12,16 @@ import {
 } from "solid-js";
 import { api } from "../lib/api";
 import { mediaURL, net } from "../lib/net";
+import {
+  checkForUpdates,
+  loadServerVersion,
+  RELEASES_PAGE,
+  updateAvailable,
+  useUpdates,
+  useVersion,
+} from "../lib/updates";
 import { subscribe } from "../lib/events";
-import { deriveKey } from "../lib/text";
+import { deriveKey, initials } from "../lib/text";
 import { useNav } from "../stores/nav";
 import { useProjects } from "../stores/projects";
 import { useSession } from "../stores/session";
@@ -22,7 +30,14 @@ import {
   usePendingReviews,
   useUnread,
 } from "../stores/unread";
+import {
+  activateConnection,
+  connectionHue,
+  foreignConnections,
+  foreignProjects,
+} from "../lib/connections";
 import { InboxIcon, PlusIcon, SettingsIcon } from "./icons";
+import { RepoPicker } from "./RepoPicker";
 import { FormError, inputClass, SubmitButton } from "./ui";
 
 const navClass =
@@ -58,8 +73,8 @@ function ProjectRow(props: { project: Project }) {
       <Show
         when={props.project.icon_url}
         fallback={
-          <span class="shrink-0 font-mono text-[11px] text-muted">
-            {props.project.key}
+          <span class="shrink-0 text-[11px] font-medium text-muted">
+            {initials(props.project.name)}
           </span>
         }
       >
@@ -98,6 +113,9 @@ function NewProjectForm(props: { onDone: () => void }) {
   const [name, setName] = createSignal("");
   const [key, setKey] = createSignal("");
   const [keyEdited, setKeyEdited] = createSignal(false);
+  const [nameEdited, setNameEdited] = createSignal(false);
+  const [desc, setDesc] = createSignal("");
+  const [descEdited, setDescEdited] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [pending, setPending] = createSignal(false);
   const [repo, setRepo] = createSignal("");
@@ -122,6 +140,7 @@ function NewProjectForm(props: { onDone: () => void }) {
         workspace_id: workspace.id,
         name: name().trim(),
         key: key().trim(),
+        ...(desc().trim() ? { description: desc().trim() } : {}),
       });
       const selected = repoList().find((r) => r.full_name === repo());
       if (selected) {
@@ -134,6 +153,7 @@ function NewProjectForm(props: { onDone: () => void }) {
             name: selected.name,
             default_branch: selected.default_branch,
           })
+          .then(() => api.adoptGithubIcon(project.id).catch(() => {}))
           .catch(() => {});
       }
       props.onDone();
@@ -164,9 +184,21 @@ function NewProjectForm(props: { onDone: () => void }) {
         value={name()}
         onInput={(e) => {
           setName(e.currentTarget.value);
+          setNameEdited(true);
           if (!keyEdited()) {
             setKey(deriveKey(e.currentTarget.value));
           }
+        }}
+        class={inputClass}
+      />
+      <input
+        type="text"
+        placeholder="Description (optional)"
+        aria-label="Project description"
+        value={desc()}
+        onInput={(e) => {
+          setDesc(e.currentTarget.value);
+          setDescEdited(true);
         }}
         class={inputClass}
       />
@@ -186,17 +218,23 @@ function NewProjectForm(props: { onDone: () => void }) {
         class={`${inputClass} font-mono uppercase`}
       />
       <Show when={repoList().length > 0}>
-        <select
-          aria-label="GitHub repository"
+        <RepoPicker
+          repos={repoList()}
           value={repo()}
-          onChange={(e) => setRepo(e.currentTarget.value)}
-          class={`${inputClass} font-mono`}
-        >
-          <option value="">Link GitHub repo (optional)</option>
-          <For each={repoList()}>
-            {(r) => <option value={r.full_name}>{r.full_name}</option>}
-          </For>
-        </select>
+          placeholder="Link GitHub repo (optional)"
+          onPick={(r) => {
+            setRepo(r?.full_name ?? "");
+            if (r) {
+              // Prefill from GitHub metadata — only while the user hasn't
+              // typed their own, so a re-pick still updates the fields.
+              if (!nameEdited()) {
+                setName(r.name);
+                if (!keyEdited()) setKey(deriveKey(r.name));
+              }
+              if (!descEdited() && r.description) setDesc(r.description);
+            }
+          }}
+        />
       </Show>
       <Show when={repos() === null}>
         <p class="px-0.5 text-[11.5px] text-muted">
@@ -347,9 +385,12 @@ export function Rail() {
         <Show when={list().length === 0 && !projects.loading()}>
           <p class="px-2 py-1.5 text-[13px] text-muted/60">No projects yet</p>
         </Show>
+
+        <ForeignProjects />
       </div>
 
       <div class="mt-auto flex flex-col gap-0.5 border-t border-border p-2">
+        <VersionFooter />
         <NavItem href="/app/settings">
           <SettingsIcon class="h-3.5 w-3.5" />
           Settings
@@ -357,5 +398,116 @@ export function Rail() {
       </div>
       </aside>
     </>
+  );
+}
+
+// Other signed-in servers contribute their project lists under a labeled
+// group; a click swaps the session onto that server (connections.ts).
+function ForeignProjects() {
+  const conns = foreignConnections;
+  return (
+    <For each={conns()}>
+      {(c) => {
+        const [remote] = createResource(() => c.id, () => foreignProjects(c));
+        const hue = connectionHue(c.url);
+        return (
+          <Show when={(remote() ?? []).length > 0}>
+            <div class="flex items-center gap-1.5 px-2 pb-1 pt-3">
+              <span
+                class="h-1.5 w-1.5 shrink-0 rounded-full"
+                style={{ "background-color": `hsl(${hue} 65% 55%)` }}
+              />
+              <span class="truncate text-[11px] font-medium uppercase tracking-wider text-muted">
+                {c.label}
+              </span>
+            </div>
+            <div class="flex flex-col gap-0.5">
+              <For each={remote() ?? []}>
+                {(p) => (
+                  <button
+                    type="button"
+                    title={`${p.name} — on ${c.label}`}
+                    onClick={() =>
+                      activateConnection(c, `/app/p/${p.id}`)
+                    }
+                    class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] text-muted transition-colors hover:bg-hover hover:text-fg"
+                  >
+                    <span
+                      class="h-2 w-2 shrink-0 rounded-full"
+                      style={{
+                        "background-color": p.color ?? `hsl(${hue} 65% 55%)`,
+                      }}
+                    />
+                    <span class="truncate">{p.name}</span>
+                    <span
+                      class="ml-auto shrink-0 rounded border px-1 py-px font-mono text-[9px] uppercase tracking-wide"
+                      style={{
+                        color: `hsl(${hue} 65% 55%)`,
+                        "border-color": `hsl(${hue} 65% 55% / 0.4)`,
+                      }}
+                    >
+                      {c.label}
+                    </span>
+                  </button>
+                )}
+              </For>
+            </div>
+          </Show>
+        );
+      }}
+    </For>
+  );
+}
+
+// VersionFooter: build + server versions and a manual update check, sitting
+// above Settings at the bottom of the rail.
+function VersionFooter() {
+  const { appVersion, serverVersion } = useVersion();
+  const { latest, checking, checked, checkError } = useUpdates();
+  onMount(() => {
+    void loadServerVersion();
+  });
+
+  return (
+    <div class="px-2 py-1 text-[11px] leading-4 text-faint">
+      <div class="flex flex-wrap items-baseline gap-x-1.5">
+        <span>Relay {appVersion}</span>
+        <Show when={serverVersion() && serverVersion() !== appVersion}>
+          <span class="truncate text-faint/80">· server {serverVersion()}</span>
+        </Show>
+      </div>
+      <Show
+        when={!checked()}
+        fallback={
+          <Show
+            when={!checkError()}
+            fallback={<span class="text-faint/80">Update check failed</span>}
+          >
+            <Show
+              when={updateAvailable()}
+              fallback={<span class="text-faint/80">Up to date</span>}
+            >
+              <a
+                href={RELEASES_PAGE}
+                class="text-accent hover:underline"
+                target="_blank"
+                rel="noopener"
+              >
+                {latest()} available — download
+              </a>
+            </Show>
+          </Show>
+        }
+      >
+        <button
+          type="button"
+          onClick={() => void checkForUpdates()}
+          disabled={checking()}
+          class="text-faint transition-colors hover:text-fg disabled:opacity-60"
+        >
+          {checking() ? "Checking…" : "Check for updates"}
+        </button>
+      </Show>
+    </div>
   );
 }

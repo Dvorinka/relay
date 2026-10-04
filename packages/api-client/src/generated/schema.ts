@@ -608,6 +608,24 @@ export interface paths {
         put?: never;
         /** Send a markdown message as the current user */
         post: operations["postMessage"];
+        /** Delete every message in the conversation - owner/admin only (the /clear and /new commands) */
+        delete: operations["clearConversation"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/conversations/{conversationId}/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark every visible message in the conversation read for the current user */
+        post: operations["markConversationRead"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1271,6 +1289,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{projectId}/github/pull": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** In-app pull request detail — PR, changed files, commits, CI checks */
+        get: operations["pullDetail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/github/commits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Commit log (git log) of a branch on a linked repository */
+        get: operations["gitCommits"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/github/branches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Branch list of a linked repository — feeds the git log picker */
+        get: operations["gitBranches"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{projectId}/todos": {
         parameters: {
             query?: never;
@@ -1564,6 +1633,23 @@ export interface paths {
         put?: never;
         /** Queue a synthetic webhook.test delivery through the real pipeline */
         post: operations["testWebhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/webhooks/catch/{webhookId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Public listener endpoint for relay_managed subscriptions — accepts the signed envelope, always 204 */
+        post: operations["webhookCatch"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1896,6 +1982,8 @@ export interface components {
             author: components["schemas"]["MessageAuthor"];
             /** @description Markdown */
             body: string;
+            /** @description Free-form classification tags (frontend, backend, visual, mcp, …); lowercase slug, max 8 */
+            tags?: string[];
             /** @description Structured entity references extracted from the body */
             mentions?: components["schemas"]["MentionRef"][];
             parent?: components["schemas"]["MessageParent"] | null;
@@ -3481,6 +3569,8 @@ export interface operations {
                 limit?: number;
                 /** @description Return messages older than this message id */
                 before?: string;
+                /** @description Only messages carrying this tag */
+                tag?: string;
             };
             header?: never;
             path: {
@@ -3525,6 +3615,8 @@ export interface operations {
                      * @description Message this reply threads under (same conversation)
                      */
                     parent_id?: string;
+                    /** @description Lowercase slugs (frontend, backend, visual, mcp, …); invalid entries are dropped, more than 8 is a 400 */
+                    tags?: string[];
                 };
             };
         };
@@ -3539,6 +3631,48 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    clearConversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversationId: components["parameters"]["ConversationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Conversation cleared */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    markConversationRead: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversationId: components["parameters"]["ConversationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description All messages marked read */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             403: components["responses"]["Forbidden"];
         };
     };
@@ -4889,6 +5023,134 @@ export interface operations {
             };
         };
     };
+    pullDetail: {
+        parameters: {
+            query: {
+                /** @description owner/name or repo id; optional when only one repo is linked */
+                repo?: string;
+                number: number;
+            };
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pull request detail bundle */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description number, title, state, draft, merged, mergeable, body, url, author, head, base, additions, deletions, changed_files, commit_count, labels, created_at, updated_at, repo */
+                        pull?: Record<string, never>;
+                        files?: Record<string, never>[];
+                        commits?: Record<string, never>[];
+                        checks?: Record<string, never>[];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            /** @description GitHub upstream error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    gitCommits: {
+        parameters: {
+            query?: {
+                /** @description owner/name or repo id; optional when only one repo is linked */
+                repo?: string;
+                /** @description Defaults to the repo's default branch */
+                branch?: string;
+                per_page?: number;
+            };
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Commits, newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        commits?: {
+                            sha?: string;
+                            message?: string;
+                            url?: string;
+                            author?: string;
+                            /** Format: date-time */
+                            date?: string;
+                        }[];
+                        branch?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            /** @description GitHub upstream error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    gitBranches: {
+        parameters: {
+            query?: {
+                /** @description owner/name or repo id; optional when only one repo is linked */
+                repo?: string;
+            };
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Branches */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        branches?: {
+                            name?: string;
+                            protected?: boolean;
+                        }[];
+                        default_branch?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            /** @description GitHub upstream error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     listTodos: {
         parameters: {
             query?: never;
@@ -5410,8 +5672,13 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** Format: uri */
-                    url: string;
+                    /**
+                     * Format: uri
+                     * @description Delivery target; required unless relay_managed
+                     */
+                    url?: string;
+                    /** @description True → Relay provisions a built-in listener at /api/webhooks/catch/{id} and points the subscription at it; deliveries are recorded and inspectable without standing up a server */
+                    relay_managed?: boolean;
                     /** @description Event names from the catalog, 'prefix.*' wildcards, or '*' */
                     events: string[];
                     active?: boolean;
@@ -5562,6 +5829,30 @@ export interface operations {
             };
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    webhookCatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                webhookId: components["parameters"]["WebhookId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     unreadCounts: {

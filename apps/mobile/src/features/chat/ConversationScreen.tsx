@@ -33,6 +33,10 @@ import {
   type QueuedMessage,
 } from "../../lib/outbox";
 import { useTheme, type Palette } from "../../lib/theme";
+import {
+  loadNameColorsForProject,
+  nameColorFor,
+} from "../../lib/namecolors";
 
 interface LocalPick {
   uri: string;
@@ -42,6 +46,20 @@ interface LocalPick {
 
 const QUICK_EMOJI = ["👀", "✅", "❤️", "🎉", "👍"];
 const GROUP_GAP_MS = 5 * 60 * 1000;
+
+// Author palette: deterministic hue per name, same values as the web app.
+const AUTHOR_COLORS = [
+  "#0d9488", "#3b82f6", "#8b5cf6", "#db2777",
+  "#ca8a04", "#16a34a", "#f43f5e", "#0ea5e9",
+] as const;
+
+function authorColor(name: string): string {
+  const custom = nameColorFor(name);
+  if (custom) return custom;
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return AUTHOR_COLORS[h % AUTHOR_COLORS.length] ?? "#0d9488";
+}
 
 type Row =
   | { type: "day"; key: string; label: string }
@@ -200,6 +218,15 @@ export function ConversationScreen(props: {
   useEffect(() => {
     api.me().then((r) => setMeId(r.user.id)).catch(() => {});
   }, []);
+
+  // Member colors load once per workspace; the tick repaints author names
+  // when the map arrives.
+  const [, setColorsTick] = useState(0);
+  useEffect(() => {
+    void loadNameColorsForProject(id).then(() =>
+      setColorsTick((n) => n + 1),
+    );
+  }, [id]);
 
   useEffect(() => {
     if (props.title) nav.setOptions({ title: props.title });
@@ -476,10 +503,15 @@ export function ConversationScreen(props: {
                 <View style={s.msgBody}>
                   {item.first && (
                     <View style={s.msgHead}>
-                      <Text style={s.author}>{m.author.name}</Text>
+                      <Text style={[s.author, { color: authorColor(m.author.name) }]}>
+                        {m.author.name}
+                      </Text>
                       {m.author.kind === "agent" && (
                         <Text style={s.agentBadge}>AGENT</Text>
                       )}
+                      {(m.tags ?? []).map((t) => (
+                        <Text key={t} style={s.tagChip}>{t}</Text>
+                      ))}
                       <Text style={s.time}>{timeLabel(m.created_at)}</Text>
                     </View>
                   )}
@@ -777,6 +809,17 @@ const themedStyles = (C: Palette) =>
     avatarSpacer: { width: 38 },
     msgHead: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10 },
     author: { color: C.text, fontWeight: "600", fontSize: 14 },
+    tagChip: {
+      color: C.accent,
+      fontSize: 9.5,
+      fontWeight: "600",
+      fontFamily: "monospace" as const,
+      borderWidth: 1,
+      borderColor: C.accent,
+      borderRadius: 8,
+      paddingHorizontal: 4,
+      overflow: "hidden" as const,
+    },
     agentBadge: {
       color: C.accent,
       fontSize: 9,

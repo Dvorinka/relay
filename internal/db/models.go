@@ -217,6 +217,7 @@ type Message struct {
 	Mentions       []byte             `json:"mentions"`
 	PinnedAt       pgtype.Timestamptz `json:"pinned_at"`
 	ForwardedFrom  pgtype.UUID        `json:"forwarded_from"`
+	Tags           []string           `json:"tags"`
 }
 
 type MessageAttachment struct {

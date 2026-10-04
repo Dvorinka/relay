@@ -24,6 +24,9 @@ jobs:
           cache: npm
 
       - name: Build web bundle
+        env:
+          # baked into the SPA — the desktop shell embeds this same dist
+          VITE_APP_VERSION: ${{ github.ref_name }}
         run: |
           npm ci
           npm run build --prefix apps/web

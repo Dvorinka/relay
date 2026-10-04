@@ -125,11 +125,16 @@ func (c *Client) do(ctx context.Context, method, url, token string, body io.Read
 // --- payloads ---
 
 type Repo struct {
-	ID            int64  `json:"id"`
-	Name          string `json:"name"`
-	FullName      string `json:"full_name"`
-	DefaultBranch string `json:"default_branch"`
-	Private       bool   `json:"private"`
+	ID            int64     `json:"id"`
+	Name          string    `json:"name"`
+	FullName      string    `json:"full_name"`
+	DefaultBranch string    `json:"default_branch"`
+	Private       bool      `json:"private"`
+	Description   string    `json:"description"`
+	PushedAt      time.Time `json:"pushed_at"`
+	Owner         struct {
+		AvatarURL string `json:"avatar_url"`
+	} `json:"owner"`
 }
 
 type GHIssue struct {
@@ -151,24 +156,59 @@ type GHIssue struct {
 }
 
 type PR struct {
-	Number   int        `json:"number"`
-	Title    string     `json:"title"`
-	State    string     `json:"state"`
-	Draft    bool       `json:"draft"`
-	Body     string     `json:"body"`
-	NodeID   string     `json:"node_id"`
-	MergedAt *time.Time `json:"merged_at"`
-	HTMLURL  string     `json:"html_url"`
-	User     struct {
+	Number         int        `json:"number"`
+	Title          string     `json:"title"`
+	State          string     `json:"state"`
+	Draft          bool       `json:"draft"`
+	Body           string     `json:"body"`
+	NodeID         string     `json:"node_id"`
+	Merged         bool       `json:"merged"`
+	MergedAt       *time.Time `json:"merged_at"`
+	Mergeable      *bool      `json:"mergeable"`
+	MergeableState string     `json:"mergeable_state"`
+	Additions      int        `json:"additions"`
+	Deletions      int        `json:"deletions"`
+	ChangedFiles   int        `json:"changed_files"`
+	Commits        int        `json:"commits"`
+	HTMLURL        string     `json:"html_url"`
+	User           struct {
 		Login string `json:"login"`
 	} `json:"user"`
 	Head struct {
 		Ref string `json:"ref"`
+		SHA string `json:"sha"`
 	} `json:"head"`
 	Base struct {
 		Ref string `json:"ref"`
 	} `json:"base"`
+	Labels []struct {
+		Name string `json:"name"`
+	} `json:"labels"`
+	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// PRFile is one file touched by a pull request.
+type PRFile struct {
+	Filename  string `json:"filename"`
+	Status    string `json:"status"` // added | modified | removed | renamed
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+}
+
+// CheckRun is one CI check on a commit (statuses endpoint covers the
+// aggregate; check-runs gives the detail list).
+type CheckRun struct {
+	Name       string `json:"name"`
+	Status     string `json:"status"`     // queued | in_progress | completed
+	Conclusion string `json:"conclusion"` // success | failure | neutral | skipped | …
+	HTMLURL    string `json:"html_url"`
+}
+
+// Branch is a repo ref for the branch picker.
+type Branch struct {
+	Name      string `json:"name"`
+	Protected bool   `json:"protected"`
 }
 
 type Commit struct {
@@ -372,6 +412,79 @@ func (c *Client) GetPR(ctx context.Context, installID int64, owner, repo string,
 		fmt.Sprintf("%s/repos/%s/%s/pulls/%d", apiBase, owner, repo, number),
 		tok, nil, &out)
 	return &out, err
+}
+
+// ListPRFiles returns the files changed by a pull request (first page, up to
+// 100 — enough for a review surface; GitHub paginates beyond that).
+func (c *Client) ListPRFiles(ctx context.Context, installID int64, owner, repo string, number int) ([]PRFile, error) {
+	tok, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return nil, err
+	}
+	var out []PRFile
+	err = c.do(ctx, "GET",
+		fmt.Sprintf("%s/repos/%s/%s/pulls/%d/files?per_page=100", apiBase, owner, repo, number),
+		tok, nil, &out)
+	return out, err
+}
+
+// ListPRCommits returns the commits on a pull request, oldest first.
+func (c *Client) ListPRCommits(ctx context.Context, installID int64, owner, repo string, number int) ([]Commit, error) {
+	tok, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return nil, err
+	}
+	var out []Commit
+	err = c.do(ctx, "GET",
+		fmt.Sprintf("%s/repos/%s/%s/pulls/%d/commits?per_page=100", apiBase, owner, repo, number),
+		tok, nil, &out)
+	return out, err
+}
+
+// ListCheckRuns returns the check runs for a commit SHA — the CI detail list
+// behind a PR's merge box.
+func (c *Client) ListCheckRuns(ctx context.Context, installID int64, owner, repo, sha string) ([]CheckRun, error) {
+	tok, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		CheckRuns []CheckRun `json:"check_runs"`
+	}
+	err = c.do(ctx, "GET",
+		fmt.Sprintf("%s/repos/%s/%s/commits/%s/check-runs?per_page=100", apiBase, owner, repo, sha),
+		tok, nil, &out)
+	return out.CheckRuns, err
+}
+
+// ListBranches returns the repo's branches (first 100).
+func (c *Client) ListBranches(ctx context.Context, installID int64, owner, repo string) ([]Branch, error) {
+	tok, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return nil, err
+	}
+	var out []Branch
+	err = c.do(ctx, "GET",
+		fmt.Sprintf("%s/repos/%s/%s/branches?per_page=100", apiBase, owner, repo),
+		tok, nil, &out)
+	return out, err
+}
+
+// ListCommitsPaged is ListCommits with an explicit page size — the git log
+// view wants more history than the dev panel's 15.
+func (c *Client) ListCommitsPaged(ctx context.Context, installID int64, owner, repo, branch string, perPage int) ([]Commit, error) {
+	tok, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return nil, err
+	}
+	if perPage <= 0 || perPage > 100 {
+		perPage = 30
+	}
+	var out []Commit
+	err = c.do(ctx, "GET",
+		fmt.Sprintf("%s/repos/%s/%s/commits?sha=%s&per_page=%d", apiBase, owner, repo, branch, perPage),
+		tok, nil, &out)
+	return out, err
 }
 
 func (c *Client) ListCommits(ctx context.Context, installID int64, owner, repo, branch string) ([]Commit, error) {

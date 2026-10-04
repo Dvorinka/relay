@@ -11,9 +11,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
-	"strings"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 

@@ -430,10 +430,11 @@ const impl = {
 
   listMessages: async (
     conversationId: string,
-    opts?: { limit?: number; before?: string },
+    opts?: { limit?: number; before?: string; tag?: string },
   ) => {
     const all = db.messages
       .filter((m) => m.conversation_id === conversationId)
+      .filter((m) => !opts?.tag || (m.tags ?? []).includes(opts.tag))
       .sort((a, b) => a.created_at.localeCompare(b.created_at));
     let end = all.length;
     if (opts?.before) {
@@ -454,12 +455,14 @@ const impl = {
     body: string,
     attachmentIds?: string[],
     parentId?: string,
+    tags?: string[],
   ): Promise<Message> => {
     const m: Message = {
       id: uuid(),
       conversation_id: conversationId,
       author: me(),
       body,
+      tags: tags ?? [],
       parent: parentPreview(parentId),
       attachments: (attachmentIds ?? [])
         .map((id) => db.attachments[id])
@@ -502,6 +505,13 @@ const impl = {
     }
     save();
     notifyThread(convId);
+  },
+  clearConversation: async (conversationId: string) => {
+    db.messages = db.messages.filter(
+      (m) => m.conversation_id !== conversationId,
+    );
+    save();
+    return { cleared: 0 };
   },
   pinMessage: async (messageId: string, pinned: boolean): Promise<Message> => {
     const m = findMessage(messageId);
@@ -576,6 +586,7 @@ const impl = {
     return { reactions: m.reactions };
   },
   markMessageRead: async () => undefined,
+  markConversationRead: async () => undefined,
 
   listIssues: async (
     projectId: string,

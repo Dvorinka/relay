@@ -1,9 +1,16 @@
 import tailwindcss from "@tailwindcss/vite";
 import solid from "vite-plugin-solid";
+import { loadEnv } from "vite";
 import { defineConfig } from "vitest/config";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [solid(), tailwindcss()],
+  // Stamped by release CI (VITE_APP_VERSION=v1.2.3); "dev" locally.
+  define: {
+    __APP_VERSION__: JSON.stringify(
+      loadEnv(mode, "", "VITE_").VITE_APP_VERSION ?? "dev",
+    ),
+  },
   // The Excalidraw island must share one React copy with react-dom —
   // without this, the dep optimizer gives each its own react instance and
   // hooks blow up ("invalid hook call").
@@ -23,4 +30,4 @@ export default defineConfig({
   test: {
     environment: "node",
   },
-});
+}));

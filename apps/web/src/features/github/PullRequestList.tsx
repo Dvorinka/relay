@@ -1,15 +1,21 @@
-import { createResource, For, Show } from "solid-js";
+import { createResource, createSignal, For, Show } from "solid-js";
 import { api } from "../../lib/api";
 import { Spinner } from "../../components/ui";
 import { markGitHub } from "./GitHub";
+import { PullRequestDetail } from "./PullRequestDetail";
 
 // Compact PR list across the project's linked repos — same data as the
-// Development panel's PR section, minus issues/commits.
+// Development panel's PR section, minus issues/commits. Clicking a row opens
+// the in-app detail view; the GitHub link lives inside it.
 export function PullRequestList(props: { projectId: string }) {
   const [dev] = createResource(
     () => props.projectId,
     (id) => api.projectDevelopment(id),
   );
+  const [selected, setSelected] = createSignal<{
+    repo: string;
+    number: number;
+  } | null>(null);
 
   const rows = () =>
     (dev()?.repos ?? []).flatMap((r) =>
@@ -17,6 +23,17 @@ export function PullRequestList(props: { projectId: string }) {
     );
 
   return (
+    <Show
+      when={selected() === null}
+      fallback={
+        <PullRequestDetail
+          projectId={props.projectId}
+          repo={selected()!.repo}
+          number={selected()!.number}
+          onBack={() => setSelected(null)}
+        />
+      }
+    >
     <div class="min-h-0 flex-1 overflow-y-auto">
       <Show
         when={dev()}
@@ -47,11 +64,12 @@ export function PullRequestList(props: { projectId: string }) {
                 <For each={rows()}>
                   {(pr) => (
                     <li>
-                      <a
-                        href={pr.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        class="flex items-center gap-3 px-5 py-3 transition-colors hover:bg-hover"
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSelected({ repo: pr.repo, number: pr.number })
+                        }
+                        class="flex w-full items-center gap-3 px-5 py-3 text-left transition-colors hover:bg-hover"
                       >
                         <span
                           class={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border ${
@@ -94,7 +112,7 @@ export function PullRequestList(props: { projectId: string }) {
                             <span>· {pr.author}</span>
                           </p>
                         </div>
-                      </a>
+                      </button>
                     </li>
                   )}
                 </For>
@@ -104,5 +122,6 @@ export function PullRequestList(props: { projectId: string }) {
         )}
       </Show>
     </div>
+    </Show>
   );
 }
