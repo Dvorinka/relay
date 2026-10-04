@@ -111,7 +111,6 @@ export default function BoardPage() {
                   setSaving(true);
                   queueMicrotask(() => nameEl?.focus());
                 }}
-                title="Save this board as a named view"
                 class="flex h-6 items-center gap-1 rounded px-1.5 text-[11.5px] text-muted/70 transition-colors hover:bg-hover hover:text-fg"
               >
                 <PlusIcon class="h-3 w-3" />

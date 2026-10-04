@@ -95,8 +95,14 @@ where m.deleted_at is null
         where ma.message_id = m.id and att.content_type like 'image/%'))
   and ($6::bool is not true or exists (
         select 1 from message_attachments ma where ma.message_id = m.id))
-  and ($7::timestamptz is null or m.created_at < $7::timestamptz)
-  and ($8::timestamptz is null or m.created_at >= $8::timestamptz)
+  and ($7::bool is not true or m.body ~* 'https?://')
+  and ($8 = '' or exists (
+        select 1 from jsonb_array_elements(coalesce(m.mentions, '[]'::jsonb)) elem
+        where elem->>'kind' in ('user', 'agent')
+          and (lower(elem->>'ref') = lower($8)
+               or lower(elem->>'label') = lower($8))))
+  and ($9::timestamptz is null or m.created_at < $9::timestamptz)
+  and ($10::timestamptz is null or m.created_at >= $10::timestamptz)
 order by rank desc, m.created_at desc
 limit 20
 `
@@ -108,6 +114,8 @@ type SearchMessagesParams struct {
 	ProjectKey interface{}        `json:"project_key"`
 	HasImage   pgtype.Bool        `json:"has_image"`
 	HasFile    pgtype.Bool        `json:"has_file"`
+	HasLink    pgtype.Bool        `json:"has_link"`
+	Mentions   interface{}        `json:"mentions"`
 	Before     pgtype.Timestamptz `json:"before"`
 	After      pgtype.Timestamptz `json:"after"`
 }
@@ -132,6 +140,8 @@ func (q *Queries) SearchMessages(ctx context.Context, arg SearchMessagesParams) 
 		arg.ProjectKey,
 		arg.HasImage,
 		arg.HasFile,
+		arg.HasLink,
+		arg.Mentions,
 		arg.Before,
 		arg.After,
 	)

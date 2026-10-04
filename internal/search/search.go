@@ -1,7 +1,8 @@
 // Package search serves the global search endpoint — Postgres FTS over
 // messages, issues, projects, and todos, restricted to the caller's
 // workspaces. Discord-style qualifiers narrow message results:
-// from:name, in:KEY, has:image|file, before:/after:YYYY-MM-DD.
+// from:name, in:KEY, has:image|file|link, mentions:name,
+// before:/after:YYYY-MM-DD, during:YYYY[-MM[-DD]].
 package search
 
 import (
@@ -30,10 +31,10 @@ func (s *Service) RegisterRoutes(priv gin.IRoutes) {
 	priv.GET("/search", s.handle)
 }
 
-var qualifier = regexp.MustCompile(`^(from|in|has|before|after):(\S+)`)
+var qualifier = regexp.MustCompile(`^(from|in|has|before|after|during|mentions):(\S+)`)
 
 // splitQuery extracts Discord-style qualifiers; the remainder is FTS text.
-func splitQuery(raw string) (text, author, projectKey, has string, before, after pgtype.Timestamptz) {
+func splitQuery(raw string) (text, author, projectKey, has, mention string, before, after pgtype.Timestamptz) {
 	var words []string
 	for _, w := range strings.Fields(raw) {
 		if m := qualifier.FindStringSubmatch(w); m != nil {
@@ -47,6 +48,9 @@ func splitQuery(raw string) (text, author, projectKey, has string, before, after
 			case "has":
 				has = strings.ToLower(m[2])
 				continue
+			case "mentions":
+				mention = m[2]
+				continue
 			case "before", "after":
 				if t, err := time.Parse("2006-01-02", m[2]); err == nil {
 					ts := pgtype.Timestamptz{Time: t, Valid: true}
@@ -55,6 +59,23 @@ func splitQuery(raw string) (text, author, projectKey, has string, before, after
 					} else {
 						after = ts
 					}
+					continue
+				}
+			case "during":
+				// during:YYYY / YYYY-MM / YYYY-MM-DD — a period, not a bound.
+				layout := "2006-01-02"[:min(len(m[2]), 10)]
+				if t, err := time.Parse(layout, m[2]); err == nil {
+					var end time.Time
+					switch len(m[2]) {
+					case 4:
+						end = t.AddDate(1, 0, 0)
+					case 7:
+						end = t.AddDate(0, 1, 0)
+					default:
+						end = t.AddDate(0, 0, 1)
+					}
+					after = pgtype.Timestamptz{Time: t, Valid: true}
+					before = pgtype.Timestamptz{Time: end, Valid: true}
 					continue
 				}
 			}
@@ -74,21 +95,27 @@ func (s *Service) handle(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
-	text, author, projectKey, has, before, after := splitQuery(raw)
+	text, author, projectKey, has, mention, before, after := splitQuery(raw)
 
 	hasImage := pgtype.Bool{}
 	hasFile := pgtype.Bool{}
+	hasLink := pgtype.Bool{}
 	switch has {
 	case "image":
 		hasImage = pgtype.Bool{Bool: true, Valid: true}
 	case "file", "attachment":
 		hasFile = pgtype.Bool{Bool: true, Valid: true}
+	case "link":
+		hasLink = pgtype.Bool{Bool: true, Valid: true}
 	}
 
 	// Qualifier-only searches skip the other entity kinds — a bare
 	// "from:me" should not flood results with every issue and todo.
 	if author == "me" {
 		author = user.Name
+	}
+	if mention == "me" {
+		mention = user.Name
 	}
 	authorLike, keyEq := "", ""
 	if author != "" {
@@ -104,6 +131,8 @@ func (s *Service) handle(c *gin.Context) {
 		ProjectKey: keyEq,
 		HasImage:   hasImage,
 		HasFile:    hasFile,
+		HasLink:    hasLink,
+		Mentions:   mention,
 		Before:     before,
 		After:      after,
 	})

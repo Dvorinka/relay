@@ -18,6 +18,7 @@ import {
   SubmitButton,
   inputClass,
   primaryButtonClass,
+  Tip,
 } from "../../components/ui";
 import {
   DownloadIcon,
@@ -869,15 +870,16 @@ function ConnectionSection() {
                       active
                     </span>
                   </Show>
-                  <button
-                    type="button"
-                    aria-label={`Forget ${c.label}`}
-                    title="Forget this server"
-                    onClick={() => forgetConnection(c.id)}
-                    class="rounded p-1 text-muted transition-colors hover:text-red-500"
-                  >
-                    <TrashIcon class="h-3.5 w-3.5" />
-                  </button>
+                  <Tip text="Forget server" hint="Remove this server from the list — sign-in required to reconnect">
+                    <button
+                      type="button"
+                      aria-label={`Forget ${c.label}`}
+                      onClick={() => forgetConnection(c.id)}
+                      class="rounded p-1 text-muted transition-colors hover:text-red-500"
+                    >
+                      <TrashIcon class="h-3.5 w-3.5" />
+                    </button>
+                  </Tip>
                 </div>
               );
             }}
@@ -1044,15 +1046,16 @@ export default function Settings() {
           </label>
           <Show when={session.user()?.avatar_url}>
             {(url) => (
-              <a
-                href={url().startsWith("blob:") ? url() : mediaURL(`${url()}?download=1`)}
-                download="avatar"
-                title="Download avatar"
-                aria-label="Download avatar"
-                class="rounded-md border border-border bg-surface p-1.5 text-muted hover:bg-hover hover:text-fg"
-              >
-                <DownloadIcon class="h-3.5 w-3.5" />
-              </a>
+              <Tip text="Download avatar">
+                <a
+                  href={url().startsWith("blob:") ? url() : mediaURL(`${url()}?download=1`)}
+                  download="avatar"
+                  aria-label="Download avatar"
+                  class="rounded-md border border-border bg-surface p-1.5 text-muted hover:bg-hover hover:text-fg"
+                >
+                  <DownloadIcon class="h-3.5 w-3.5" />
+                </a>
+              </Tip>
             )}
           </Show>
         </div>
@@ -1127,15 +1130,16 @@ export default function Settings() {
                 </div>
                 <Show when={ws().avatar_url}>
                   {(url) => (
-                    <a
-                      href={url().startsWith("blob:") ? url() : mediaURL(`${url()}?download=1`)}
-                      download="workspace-icon"
-                      title="Download icon"
-                      aria-label="Download workspace icon"
-                      class="rounded-md border border-border bg-surface p-1.5 text-muted hover:bg-hover hover:text-fg"
-                    >
-                      <DownloadIcon class="h-3.5 w-3.5" />
-                    </a>
+                    <Tip text="Download icon">
+                      <a
+                        href={url().startsWith("blob:") ? url() : mediaURL(`${url()}?download=1`)}
+                        download="workspace-icon"
+                        aria-label="Download workspace icon"
+                        class="rounded-md border border-border bg-surface p-1.5 text-muted hover:bg-hover hover:text-fg"
+                      >
+                        <DownloadIcon class="h-3.5 w-3.5" />
+                      </a>
+                    </Tip>
                   )}
                 </Show>
                 <Show when={canInvite()}>

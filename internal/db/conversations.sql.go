@@ -962,7 +962,11 @@ left join messages pm on pm.id = c.parent_message_id
 left join message_reads r on r.message_id = m.id and r.user_id = $1
 where m.deleted_at is null
   and (m.author_user_id is null or m.author_user_id <> $1)
-  and position(lower('@' || me.name) in lower(m.body)) > 0
+  and (position(lower('@' || me.name) in lower(m.body)) > 0
+       or exists (select 1
+                  from jsonb_array_elements(coalesce(m.mentions, '[]'::jsonb)) elem
+                  where elem->>'kind' = 'user'
+                    and elem->>'id' = me.id::text))
 order by m.created_at desc, m.id desc
 limit 50
 `

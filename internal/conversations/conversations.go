@@ -293,7 +293,8 @@ func (s *Service) handlePostMessage(c *gin.Context) {
 	}
 	if s.Push != nil {
 		s.Push.NotifyMessage(conv.ProjectID, user.ID, req.Body, m.ID,
-			"/app/p/"+conv.ProjectID.String(), m.AuthorName)
+			"/app/p/"+conv.ProjectID.String(), m.AuthorName,
+			mentions.UserIDs(refs))
 	}
 	c.JSON(http.StatusCreated, out)
 }

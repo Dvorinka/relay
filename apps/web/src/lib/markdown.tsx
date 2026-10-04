@@ -160,7 +160,7 @@ function linkifyExtension(projectId?: string) {
                   : `/app/u/${hit.id}`;
               return (
                 `<a href="${href}" class="md-ref md-mention md-mention-${hit.kind}" ` +
-                `data-pkind="${hit.kind}">@${escapeHtml(hit.label)}</a>`
+                `data-uid="${hit.id}" data-pkind="${hit.kind}">@${escapeHtml(hit.label)}</a>`
               );
             }
             // bare @names that didn't resolve render as plain text —
@@ -251,6 +251,22 @@ export function Markdown(props: {
       class={`md ${props.class ?? ""}`}
       innerHTML={html()}
       onClick={(e) => {
+        // Mention chips open the profile modal — navigation stays as
+        // fallback via the real href for middle-click/new-tab.
+        const mention = (e.target as HTMLElement).closest(".md-mention");
+        if (mention) {
+          const uid = mention.getAttribute("data-uid");
+          const kind = mention.getAttribute("data-pkind");
+          if (uid && kind) {
+            e.preventDefault();
+            window.dispatchEvent(
+              new CustomEvent("relay:open-profile", {
+                detail: { id: uid, kind },
+              }),
+            );
+            return;
+          }
+        }
         const file = (e.target as HTMLElement).closest(".md-file");
         if (file) {
           e.preventDefault();

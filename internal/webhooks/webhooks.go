@@ -297,10 +297,16 @@ func (s *Service) handleCreate(c *gin.Context) {
 		return
 	}
 	if req.RelayManaged {
-		// Point at the built-in catch endpoint now that the id exists.
+		// Point at the built-in catch endpoint now that the id exists. The
+		// ?events= suffix is cosmetic — it makes the subscribed scopes visible
+		// in the URL itself; the catch handler ignores the query.
+		catchURL := s.publicURL + "/api/webhooks/catch/" + row.ID.String()
+		if len(req.Events) > 0 {
+			catchURL += "?events=" + url.QueryEscape(strings.Join(req.Events, ","))
+		}
 		row, err = s.q.UpdateWebhook(c.Request.Context(), db.UpdateWebhookParams{
 			ID:  row.ID,
-			Url: pgtype.Text{String: s.publicURL + "/api/webhooks/catch/" + row.ID.String(), Valid: true},
+			Url: pgtype.Text{String: catchURL, Valid: true},
 		})
 		if err != nil {
 			httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")

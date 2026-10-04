@@ -1,5 +1,6 @@
 import type { ParentProps } from "solid-js";
 import { CommandPalette } from "./components/CommandPalette";
+import { ProfileModalHost } from "./components/ProfileModal";
 import { Rail } from "./components/Rail";
 import { TopBar } from "./components/TopBar";
 import { RequireAuth } from "./features/auth/guards";
@@ -13,9 +14,12 @@ export default function App(props: ParentProps) {
           <TopBar />
           <div class="flex min-h-0 flex-1">
             <Rail />
-            <main class="min-w-0 flex-1 overflow-y-auto">{props.children}</main>
+            <main class="min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
+              {props.children}
+            </main>
           </div>
           <CommandPalette />
+          <ProfileModalHost />
         </div>
       </ProjectsProvider>
     </RequireAuth>
