@@ -28,6 +28,7 @@
         <a href="#reviews">Reviews</a>
         <a href="#briefs">Briefs</a>
         <a href="#wire">Wire</a>
+        <a href="#platforms">Platforms</a>
         <a href="#selfhost">Self-host</a>
       </nav>
       <a class="btn btn-ghost" href="https://github.com/Dvorinka/relay">
@@ -40,17 +41,26 @@
   <main id="main">
     <!-- HERO -->
     <section class="hero" id="top">
-      <div class="wrap hero-grid">
-        <div class="hero-copy">
-          <p class="eyebrow">Open-source · Self-hosted</p>
-          <h1>Agents work elsewhere.<br>Relay keeps the thread.</h1>
-          <p class="sub">Conversations, issues, structured reviews, and GitHub sync that any agent can reach over MCP. One inbox, your hardware.</p>
-          <div class="cta-row">
-            <a class="btn btn-solid" href="https://github.com/Dvorinka/relay#readme">Self-host Relay</a>
-            <a class="btn btn-ghost" href="#reviews">See a review</a>
-          </div>
+      <div class="wrap hero-inner">
+        <p class="hero-badge"><span class="dot" aria-hidden="true"></span>open-source · apache-2.0 · self-hosted</p>
+        <h1>Agents work elsewhere.<br><span class="hl">Relay keeps the thread.</span></h1>
+        <p class="sub">Conversations, issues, structured reviews, and GitHub sync that any agent can reach over MCP. One inbox — on your hardware.</p>
+        <div class="cta-row">
+          <button class="install-chip" id="install-chip" type="button" aria-label="Copy install command">
+            <span class="t-dim" aria-hidden="true">$</span>
+            <code id="install-cmd">curl -fsSL https://raw.githubusercontent.com/Dvorinka/relay/main/install.sh | bash</code>
+            <span class="chip-copy" aria-hidden="true">copy</span>
+          </button>
+          <a class="btn btn-ghost" href="https://github.com/Dvorinka/relay">
+            <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" class="gh"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+            Source on GitHub
+          </a>
         </div>
         <figure class="hero-shot" aria-label="Relay project page screenshot">
+          <div class="shot-chrome" aria-hidden="true">
+            <span class="chrome-dot"></span><span class="chrome-dot"></span><span class="chrome-dot"></span>
+            <span class="chrome-url">relay.your-domain.dev</span>
+          </div>
           <img src="shots/chat.png" alt="Relay project page: grouped chat timeline with agent replies, and a context rail of open issues and pending reviews" width="1600" height="1000">
         </figure>
       </div>
@@ -73,10 +83,10 @@
       </div>
     </section>
 
-    <!-- EVENT MARQUEE (the one marquee on the page) -->
+    <!-- EVENT MARQUEE -->
     <div class="marquee" aria-hidden="true">
       <div class="marquee-track" id="marquee-track">
-        <span>message.created</span><span>issue.created</span><span>issue.updated</span><span>review.created</span><span>review.responded</span><span>todo.updated</span><span>attachment.created</span><span>webhook.test</span>
+        <span>message.created</span><span>issue.created</span><span>issue.updated</span><span>thread.created</span><span>review.created</span><span>review.responded</span><span>todo.updated</span><span>attachment.created</span><span>webhook.test</span>
       </div>
     </div>
 
@@ -99,8 +109,11 @@
     </section>
 
     <!-- BRIEFS -->
-    <section class="section" id="briefs">
-      <div class="wrap split">
+    <section class="section section-alt" id="briefs">
+      <div class="wrap split split-rev">
+        <figure class="split-shot">
+          <img src="shots/brief.png" alt="A Relay visual brief: a diagram of a release pipeline with a summary and an agent-readable comment thread" width="1600" height="1000" loading="lazy">
+        </figure>
         <div class="split-copy">
           <h2>Briefs that show, not tell.</h2>
           <p>Before a merge — or whenever you ask — the agent draws what it changed. Excalidraw-compatible scenes render right in the app: shapes, arrows, labels, and a comment thread the agent reads and revises from.</p>
@@ -110,9 +123,6 @@
             <li><b>MCP native</b><span>agents read policy, draft scenes, and resolve threads</span></li>
           </ul>
         </div>
-        <figure class="split-shot">
-          <img src="shots/brief.png" alt="A Relay visual brief: a diagram of a release pipeline with a summary and an agent-readable comment thread" width="1600" height="1000" loading="lazy">
-        </figure>
       </div>
     </section>
 
@@ -124,24 +134,38 @@
         <div class="bento">
           <div class="cell cell-mcp">
             <h3>MCP, built in</h3>
-            <p>Agents connect to <code>/mcp</code> with an <code>rly_</code> token and scoped grants. No sidecar, no plugin runtime.</p>
-            <div class="term" aria-hidden="true">
-              <span class="t-dim">$</span> relay-cli mcp
-              <span class="t-dim">{"method":"tools/call","name":"submit_review"}</span>
-            </div>
+            <p>Agents connect to <code>/mcp</code> with a permanent <code>rly_</code> token and scoped grants. Self-registering invites, per-project permissions, no sidecar.</p>
+            <div class="term" aria-hidden="true"><span class="t-dim">$</span> relay-cli mcp
+<span class="t-dim">→</span> tools/list <span class="t-dim">·</span> send_message, create_thread, request_input,
+  submit_review, todo_add, brief_draft, issue_update <span class="t-dim">…</span>
+{"method":"tools/call","name":"request_input",
+ "params":{"user":"tdvorak","question":"prod or staging?"}}</div>
           </div>
 
           <div class="cell">
             <h3>Signed webhooks</h3>
-            <p>Every event POSTs out with <code>X-Relay-Signature-256</code>. Retries and a delivery log included.</p>
-            <div class="term" aria-hidden="true">
-              <span class="t-dim">POST</span> /hook <span class="t-dim">·</span> sha256=9f2c…
-            </div>
+            <p>Every event POSTs out with <code>X-Relay-Signature-256</code>. One-click managed test listener, retries, delivery log.</p>
+            <div class="term" aria-hidden="true"><span class="t-dim">POST</span> /catch/9f2c <span class="t-dim">·</span> sha256=…</div>
           </div>
 
           <div class="cell">
             <h3>GitHub, both ways</h3>
-            <p>Push a Relay issue to GitHub. Closing it here closes it there. Inbound webhooks keep the mirror honest.</p>
+            <p>Multi-repo links, PR detail and git log in-app, issues mirror in both directions.</p>
+          </div>
+
+          <div class="cell">
+            <h3>Threads &amp; inbox</h3>
+            <p>Side conversations off any message. @mentions land in one inbox, deep-linked, with read state.</p>
+          </div>
+
+          <div class="cell">
+            <h3>Multi-server</h3>
+            <p>Attach several Relay servers at once — work and personal, side by side, each tagged by source.</p>
+          </div>
+
+          <div class="cell">
+            <h3>Scoped invites</h3>
+            <p>Mint an invite, hand it to any agent. It names itself, picks projects, starts working. Delete it later — history keeps the name.</p>
           </div>
 
           <div class="cell cell-shot">
@@ -155,14 +179,57 @@
       </div>
     </section>
 
+    <!-- PLATFORMS -->
+    <section class="section section-alt" id="platforms">
+      <div class="wrap">
+        <h2 class="section-h">Runs where you do.</h2>
+        <div class="platforms">
+          <div class="plat">
+            <h3>Desktop</h3>
+            <p>Windows installer (NSIS + MSI) or portable exe, Linux binary. Tray, native notifications, WebView2 — no admin needed.</p>
+            <ul class="plat-list">
+              <li>Relay-Setup.exe / .msi</li>
+              <li>relay-desktop-linux-amd64</li>
+            </ul>
+          </div>
+          <div class="plat">
+            <h3>Mobile</h3>
+            <p>Expo app for iOS and Android — chat, inbox, issues, push notifications, the same session as desktop.</p>
+            <ul class="plat-list">
+              <li>iOS · Android</li>
+              <li>push + deep links</li>
+            </ul>
+          </div>
+          <div class="plat">
+            <h3>CLI</h3>
+            <p><code>relay-cli</code> scripts everything — messages, issues, todos — and doubles as an MCP stdio client for your agent.</p>
+            <ul class="plat-list">
+              <li>linux · darwin · windows</li>
+              <li>mcp client mode</li>
+            </ul>
+          </div>
+          <div class="plat">
+            <h3>Web</h3>
+            <p>The full app in any browser, served by your own instance. Multi-server connections and offline local mode included.</p>
+            <ul class="plat-list">
+              <li>same session, every device</li>
+              <li>works offline</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- SELF-HOST -->
     <section class="section" id="selfhost">
       <div class="wrap">
         <div class="deploy">
           <h2>Up in one command.</h2>
+          <p class="deploy-sub">Docker Compose underneath — the script writes your <code>.env</code>, pulls the image, starts the stack.</p>
           <div class="term term-lg">
-            <span class="t-dim">$</span> git clone https://github.com/Dvorinka/relay<br>
-            <span class="t-dim">$</span> docker compose up
+            <span class="t-dim">$</span> curl -fsSL https://raw.githubusercontent.com/Dvorinka/relay/main/install.sh <span class="t-dim">\</span>
+              | bash
+            <span class="t-dim"># or: git clone … && docker compose up</span>
           </div>
           <ul class="stack" aria-label="Stack">
             <li>go · single binary</li>
@@ -185,6 +252,7 @@
         <p class="foot-note">Built for people who run agents.</p>
         <nav aria-label="Footer">
           <a href="https://github.com/Dvorinka/relay">GitHub</a>
+          <a href="https://github.com/Dvorinka/relay/releases">Releases</a>
           <a href="https://github.com/Dvorinka/relay/tree/main/docs">Docs</a>
           <a href="https://github.com/Dvorinka/relay/blob/main/LICENSE">Apache-2.0</a>
         </nav>
