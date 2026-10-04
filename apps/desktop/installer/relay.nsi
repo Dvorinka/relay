@@ -1,8 +1,12 @@
 ; Relay desktop installer — NSIS 3.x, per-user install (no admin required).
 ;
 ;   makensis -DVERSION=1.2.3 -DVI_VERSION=1.2.3.0 \
-;     -DEXE=build\bin\relay-desktop.exe -DOUTFILE=dist\Relay-Setup-1.2.3.exe \
-;     apps\desktop\installer\relay.nsi
+;     -DEXE=build\bin\relay-desktop.exe -DCLI_EXE=dist\relay-cli-windows-amd64.exe \
+;     -DOUTFILE=dist\Relay-Setup-1.2.3.exe apps\desktop\installer\relay.nsi
+;
+; CLI_EXE is optional: when defined, the components page offers "Relay CLI"
+; (checked by default) which installs relay-cli.exe next to the app and adds
+; the install dir to the user PATH.
 
 !ifndef VERSION
   !define VERSION "0.0.0"
@@ -57,6 +61,10 @@ VIAddVersionKey "LegalCopyright"  "Apache-2.0"
 
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
+!include "StrFunc.nsh"
+
+${StrLoc}
+${UnStrLoc}
 
 !define MUI_ICON   "${ICON}"
 !define MUI_UNICON "${ICON}"
@@ -64,6 +72,9 @@ VIAddVersionKey "LegalCopyright"  "Apache-2.0"
 !define MUI_FINISHPAGE_RUN_TEXT "Launch Relay"
 
 !insertmacro MUI_PAGE_WELCOME
+!ifdef CLI_EXE
+  !insertmacro MUI_PAGE_COMPONENTS
+!endif
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
@@ -141,13 +152,63 @@ Section "Install"
   WriteRegDWORD HKCU "${UNINST_REG}" "NoRepair" 1
 SectionEnd
 
+!ifdef CLI_EXE
+; Checked by default: one setup covers the desktop app and the terminal
+; client. Uncheck to skip; the app runs fine without it.
+Section "Relay CLI (relay-cli.exe)" SecCLI
+  SetOutPath "$INSTDIR"
+  File /oname=relay-cli.exe "${CLI_EXE}"
+
+  ; Put $INSTDIR on the user PATH (skip if already listed). Wrapping the
+  ; current value as ";…;" makes the match boundary-exact, so a longer
+  ; sibling like "…\Relay2" can't suppress it. REG_EXPAND_SZ keeps any
+  ; %VARS% already in Path intact; the broadcast refreshes new consoles
+  ; without a sign-out.
+  ReadRegStr $0 HKCU "Environment" "Path"
+  StrCpy $1 ";$0;"
+  ${StrLoc} $2 $1 ";$INSTDIR;" ">"
+  ${If} $2 == ""
+    ${If} $0 != ""
+      StrCpy $0 "$0;$INSTDIR"
+    ${Else}
+      StrCpy $0 "$INSTDIR"
+    ${EndIf}
+    WriteRegExpandStr HKCU "Environment" "Path" "$0"
+    SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
+    DetailPrint "Added $INSTDIR to the user PATH."
+  ${EndIf}
+SectionEnd
+!endif
+
 Section "Uninstall"
   Delete "$INSTDIR\${APP_EXE}"
+  Delete "$INSTDIR\relay-cli.exe"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"
   Delete "$SMPROGRAMS\Relay\Relay.lnk"
   RMDir "$SMPROGRAMS\Relay"
   Delete "$DESKTOP\Relay.lnk"
   DeleteRegKey HKCU "${UNINST_REG}"
+
+  ; Drop $INSTDIR from the user PATH if present. The wrapped ";…;" form
+  ; makes first/last/only entries all match the same ";dir;" pattern.
+  ReadRegStr $0 HKCU "Environment" "Path"
+  StrCpy $1 ";$0;"
+  ${UnStrLoc} $2 $1 ";$INSTDIR;" ">"
+  ${If} $2 != ""
+    StrLen $3 "$INSTDIR"
+    IntOp $4 $2 + $3
+    IntOp $4 $4 + 1              ; skip ";$INSTDIR", keep the trailing ';'
+    StrCpy $5 $1 $2              ; head, incl. synthetic leading ';'
+    StrCpy $6 $1 "" $4           ; tail, starting at the ';' after the dir
+    StrCpy $0 "$5$6"             ; ";…head…;…tail…;"
+    StrCpy $0 $0 -1 1            ; unwrap the synthetic ';'s
+    ${If} $0 == ""
+      DeleteRegValue HKCU "Environment" "Path"
+    ${Else}
+      WriteRegExpandStr HKCU "Environment" "Path" "$0"
+    ${EndIf}
+    SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
+  ${EndIf}
   ; Server config in %APPDATA%\relay is kept deliberately — survives reinstalls.
 SectionEnd

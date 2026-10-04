@@ -33,10 +33,20 @@ export async function deliver(title: string, body: string) {
 }
 
 export async function requestNotifyPermission(): Promise<boolean> {
-  if (isDesktop()) return true; // the bridge needs no web permission
-  if (typeof Notification === "undefined") return false;
-  if (Notification.permission === "granted") return true;
-  return (await Notification.requestPermission()) === "granted";
+  // Ask the web API first — WebView2 (Windows desktop) has a real
+  // Notification implementation we want granted; on Linux the webview
+  // lacks it entirely and the Wails bridge needs no permission anyway.
+  if (typeof Notification !== "undefined") {
+    try {
+      if (Notification.permission === "granted") return true;
+      if ((await Notification.requestPermission()) === "granted") {
+        return true;
+      }
+    } catch {
+      /* some webviews throw on permission calls */
+    }
+  }
+  return isDesktop();
 }
 
 interface Me {

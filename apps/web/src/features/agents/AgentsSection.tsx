@@ -6,8 +6,10 @@ import {
   type MintedToken,
   type Project,
 } from "@relay/api-client";
+import { A } from "@solidjs/router";
 import { createResource, createSignal, For, Show } from "solid-js";
 import {
+  ConfirmDialog,
   FormError,
   ImageURLField,
   SubmitButton,
@@ -68,6 +70,7 @@ function AgentRow(props: {
     "project:read",
     "message:read",
   ]);
+  const [deleteOpen, setDeleteOpen] = createSignal(false);
 
   async function run(fn: () => Promise<unknown>) {
     setError(null);
@@ -133,11 +136,26 @@ function AgentRow(props: {
           )}
         </Show>
         <div class="min-w-0 flex-1">
-          <p class="truncate text-[13px] font-medium">{props.agent.name}</p>
+          <A
+            href={`/app/ag/${props.agent.id}`}
+            onClick={(e) => e.stopPropagation()}
+            class="block truncate text-[13px] font-medium hover:underline"
+            title={`Open ${props.agent.name}'s details`}
+          >
+            {props.agent.name}
+          </A>
           <p class="truncate font-mono text-[11px] text-muted">
             @{props.agent.slug}
           </p>
         </div>
+        <Show when={props.agent.grant_all}>
+          <span
+            class="rounded-full border border-accent/40 bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-accent-ink"
+            title="Can access every workspace project, including ones created later"
+          >
+            all projects
+          </span>
+        </Show>
         <Show when={props.agent.review_mode === "gate"}>
           <span
             class="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
@@ -242,6 +260,39 @@ function AgentRow(props: {
 
                 <div>
                   <h3 class="mb-2 text-[12px] font-semibold">Project access</h3>
+                  <Show when={d().agent.grant_all}>
+                    <div class="mb-2 flex items-center gap-2 rounded-md border border-accent/40 bg-accent-soft/50 px-2 py-1.5 text-[13px]">
+                      <span class="font-medium text-accent-ink">
+                        Every project
+                      </span>
+                      <span class="text-[11px] text-muted">
+                        including ones created later
+                      </span>
+                      <span class="flex-1" />
+                      <For each={d().agent.grant_scopes ?? []}>
+                        {(s) => (
+                          <span class="rounded border border-border px-1 font-mono text-[10px] text-muted">
+                            {s}
+                          </span>
+                        )}
+                      </For>
+                      <Show when={props.canManage}>
+                        <button
+                          type="button"
+                          class="text-[11px] text-muted hover:text-red-600 dark:hover:text-red-400"
+                          onClick={() =>
+                            run(() =>
+                              api.updateAgent(props.agent.id, {
+                                grant_all: false,
+                              }),
+                            )
+                          }
+                        >
+                          revoke all
+                        </button>
+                      </Show>
+                    </div>
+                  </Show>
                   <ul class="mb-2 flex flex-col gap-1.5">
                     <For each={d().agent.grants}>
                       {(g) => (
@@ -279,6 +330,21 @@ function AgentRow(props: {
                     </For>
                   </ul>
                   <Show when={props.canManage}>
+                    <Show when={!d().agent.grant_all}>
+                      <button
+                        type="button"
+                        class="mb-2 text-[11.5px] font-medium text-accent-ink underline-offset-2 hover:underline"
+                        onClick={() =>
+                          run(() =>
+                            api.updateAgent(props.agent.id, {
+                              grant_all: true,
+                            }),
+                          )
+                        }
+                      >
+                        Grant every project, including future ones
+                      </button>
+                    </Show>
                     <Show
                       when={props.projects.some(
                         (p) => !grantedIds().has(p.id),
@@ -409,15 +475,7 @@ function AgentRow(props: {
                     <button
                       type="button"
                       class="text-[12px] text-red-600 hover:underline dark:text-red-400"
-                      onClick={() => {
-                        if (
-                          confirm(
-                            `Delete agent ${props.agent.name}? Its tokens and project access are revoked; past messages stay.`,
-                          )
-                        ) {
-                          void run(() => api.deleteAgent(props.agent.id));
-                        }
-                      }}
+                      onClick={() => setDeleteOpen(true)}
                     >
                       Delete agent
                     </button>
@@ -429,6 +487,17 @@ function AgentRow(props: {
           <FormError message={error()} />
         </div>
       </Show>
+      <ConfirmDialog
+        open={deleteOpen()}
+        onOpenChange={setDeleteOpen}
+        title={`Delete ${props.agent.name}?`}
+        body="Its tokens and project access are revoked immediately; past messages stay."
+        confirmLabel="Delete agent"
+        onConfirm={() => {
+          setDeleteOpen(false);
+          void run(() => api.deleteAgent(props.agent.id));
+        }}
+      />
     </li>
   );
 }
@@ -459,119 +528,87 @@ function copyText(text: string, el: HTMLButtonElement) {
   }
 }
 
-// A fresh invite renders as a complete setup bundle the user can paste to the
-// agent: the redeem call, then the MCP config with the returned token.
+// A fresh invite renders as one self-contained prompt the user pastes into
+// the agent: register with the rli_ token, then wire the returned rly_ token
+// into MCP config or the CLI.
 function InviteCard(props: {
   invite: AgentInvite & { token: string };
   apiBase: string;
   workspaceId: string;
   onRevoked: () => void;
 }) {
-  const redeem = () =>
-    `curl -sS -X POST ${props.apiBase}/api/agent-invites/redeem \\
-  -H "Content-Type: application/json" \\
-  -d '{"token":"${props.invite.token}","name":"my-agent","review_mode":"notify"}'`;
+  const [revokeOpen, setRevokeOpen] = createSignal(false);
 
-  const mcpConfig = () =>
-    `{
-  "mcpServers": {
-    "relay": {
-      "url": "${props.apiBase}/mcp",
-      "headers": { "Authorization": "Bearer <token from the redeem response>" }
-    }
-  }
-}`;
+  const scopeText = () =>
+    props.invite.project_ids.length === 0
+      ? "every project in this workspace (including ones created later)"
+      : `${props.invite.project_ids.length} project(s)`;
 
-  const cliSetup = () =>
-    `export RELAY_URL=${props.apiBase}
-export RELAY_TOKEN=$(relay-cli redeem ${props.invite.token} --name my-agent)
-relay-cli projects   # you're in`
+  const promptText = () => `You have been invited to a Relay workspace at ${props.apiBase}.
+
+1. Register yourself with this one-shot invite token (pick any name for yourself):
+   curl -sS -X POST ${props.apiBase}/api/agent-invites/redeem \\
+     -H "Content-Type: application/json" \\
+     -d '{"token":"${props.invite.token}","name":"my-agent","review_mode":"notify"}'
+   The response returns a live rly_ MCP token - shown exactly once, keep it secret.
+
+2. Point your MCP client at Relay using that token:
+   {"mcpServers":{"relay":{"url":"${props.apiBase}/mcp","headers":{"Authorization":"Bearer <token from step 1>"}}}}
+   Or from a terminal instead:
+   export RELAY_URL=${props.apiBase}
+   export RELAY_TOKEN=$(relay-cli redeem ${props.invite.token} --name my-agent)
+   relay-cli projects
+
+Your scopes: ${props.invite.scopes.join(", ")} on ${scopeText()}.
+You can set your own profile picture with the set_avatar MCP tool.`;
 
   return (
     <div class="rounded-md border border-accent bg-surface p-3">
       <div class="mb-2 flex items-center justify-between">
         <p class="text-[12px] font-semibold">
-          Invite created - send this bundle to your agent
+          Invite created - paste this prompt into your agent
         </p>
         <p class="text-[11px] text-muted">
           expires {timeUntil(props.invite.expires_at)}
         </p>
       </div>
-      <ol class="mb-3 flex list-decimal flex-col gap-2.5 pl-4 text-[12px]">
-        <li>
-          <p class="mb-1 text-muted">
-            The agent registers itself - no console setup needed:
-          </p>
-          <div class="relative">
-            <pre class="overflow-x-auto rounded-md border border-border bg-bg p-2 font-mono text-[11px] leading-relaxed">
-              {redeem()}
-            </pre>
-            <button
-              type="button"
-              class="absolute right-1.5 top-1.5 text-[11px] text-accent"
-              onClick={(e) => copyText(redeem(), e.currentTarget)}
-            >
-              copy
-            </button>
-          </div>
-        </li>
-        <li>
-          <p class="mb-1 text-muted">
-            The response returns a live <code>rly_</code> token. Wire it into
-            the agent's MCP config:
-          </p>
-          <div class="relative">
-            <pre class="overflow-x-auto rounded-md border border-border bg-bg p-2 font-mono text-[11px] leading-relaxed">
-              {mcpConfig()}
-            </pre>
-            <button
-              type="button"
-              class="absolute right-1.5 top-1.5 text-[11px] text-accent"
-              onClick={(e) => copyText(mcpConfig(), e.currentTarget)}
-            >
-              copy
-            </button>
-          </div>
-        </li>
-        <li>
-          <p class="mb-1 text-muted">
-            Or connect straight from a terminal with the CLI:
-          </p>
-          <div class="relative">
-            <pre class="overflow-x-auto rounded-md border border-border bg-bg p-2 font-mono text-[11px] leading-relaxed">
-              {cliSetup()}
-            </pre>
-            <button
-              type="button"
-              class="absolute right-1.5 top-1.5 text-[11px] text-accent"
-              onClick={(e) => copyText(cliSetup(), e.currentTarget)}
-            >
-              copy
-            </button>
-          </div>
-        </li>
-      </ol>
+      <div class="relative mb-2">
+        <pre class="overflow-x-auto whitespace-pre-wrap rounded-md border border-border bg-bg p-2 font-mono text-[11px] leading-relaxed">
+          {promptText()}
+        </pre>
+        <button
+          type="button"
+          class="absolute right-1.5 top-1.5 rounded bg-surface/80 px-1 text-[11px] text-accent"
+          onClick={(e) => copyText(promptText(), e.currentTarget)}
+        >
+          copy
+        </button>
+      </div>
       <p class="mb-2 text-[11px] text-muted">
-        Scopes: <span class="font-mono">{props.invite.scopes.join(", ")}</span>
-        {props.invite.project_ids.length === 0
-          ? " on every project in this workspace."
-          : ` on ${props.invite.project_ids.length} project(s).`}
-        {" "}Agents can set their own profile picture with the{" "}
-        <code class="font-mono">set_avatar</code> MCP tool.
+        The agent registers itself - no console setup needed. The invite is
+        single-use and expires {timeUntil(props.invite.expires_at)}.
       </p>
       <button
         type="button"
         class="text-[11px] text-muted hover:text-red-600 dark:hover:text-red-400"
-        onClick={async (e) => {
-          e.preventDefault();
-          await api
-            .deleteAgentInvite(props.workspaceId, props.invite.id)
-            .catch(() => {});
-          props.onRevoked();
-        }}
+        onClick={() => setRevokeOpen(true)}
       >
         revoke invite
       </button>
+      <ConfirmDialog
+        open={revokeOpen()}
+        onOpenChange={setRevokeOpen}
+        title="Revoke invite?"
+        body="The invite token stops working immediately. Agents that already registered keep their access."
+        confirmLabel="Revoke"
+        onConfirm={() => {
+          setRevokeOpen(false);
+          void api
+            .deleteAgentInvite(props.workspaceId, props.invite.id)
+            .catch(() => {})
+            .then(() => props.onRevoked());
+        }}
+      />
     </div>
   );
 }
@@ -602,10 +639,11 @@ export default function AgentsSection(props: {
   const [freshInvite, setFreshInvite] = createSignal<
     (AgentInvite & { token: string }) | null
   >(null);
-  // Invite options: unchecked project ids live in inviteDenied (empty = every
-  // project, present and future); scopes default to DefaultInviteScopes.
+  // Invite options: inviteAll = every workspace project including ones
+  // created later; otherwise invitePicked lists the granted set explicitly.
   const [inviteOpen, setInviteOpen] = createSignal(false);
-  const [inviteDenied, setInviteDenied] = createSignal<Set<string>>(new Set());
+  const [inviteAll, setInviteAll] = createSignal(true);
+  const [invitePicked, setInvitePicked] = createSignal<Set<string>>(new Set());
   const [inviteScopes, setInviteScopes] = createSignal<AgentScope[]>([
     ...DEFAULT_INVITE_SCOPES,
   ]);
@@ -615,15 +653,12 @@ export default function AgentsSection(props: {
   const apiBase = () => net.serverUrl() || window.location.origin;
 
   const inviteProjectIds = () => {
-    const denied = inviteDenied();
-    if (denied.size === 0) return undefined; // every project
-    return (projects() ?? [])
-      .filter((p) => !denied.has(p.id))
-      .map((p) => p.id);
+    if (inviteAll()) return undefined; // every project, present and future
+    return [...invitePicked()];
   };
 
   function toggleInviteProject(id: string) {
-    setInviteDenied((cur) => {
+    setInvitePicked((cur) => {
       const next = new Set(cur);
       if (next.has(id)) {
         next.delete(id);
@@ -671,6 +706,8 @@ export default function AgentsSection(props: {
     (invites() ?? []).filter(
       (i) => !i.used_by && new Date(i.expires_at) > new Date(),
     );
+  const [revokingInvite, setRevokingInvite] =
+    createSignal<AgentInvite | null>(null);
 
   return (
     <div class="flex flex-col gap-4">
@@ -732,12 +769,38 @@ export default function AgentsSection(props: {
                         : `${i.project_ids.length} project(s)`}
                     </span>
                     <span>expires {timeUntil(i.expires_at)}</span>
+                    <button
+                      type="button"
+                      class="ml-auto text-muted underline-offset-2 hover:text-red-600 hover:underline dark:hover:text-red-400"
+                      onClick={() => setRevokingInvite(i)}
+                    >
+                      revoke
+                    </button>
                   </li>
                 )}
               </For>
             </ul>
           </div>
         </Show>
+        <ConfirmDialog
+          open={revokingInvite() !== null}
+          onOpenChange={(o) => {
+            if (!o) setRevokingInvite(null);
+          }}
+          title="Revoke invite?"
+          body="The invite token stops working immediately. Agents that already registered keep their access."
+          confirmLabel="Revoke"
+          onConfirm={() => {
+            const i = revokingInvite();
+            setRevokingInvite(null);
+            if (i) {
+              void api
+                .deleteAgentInvite(props.workspaceId, i.id)
+                .catch(() => {})
+                .then(() => refetchInvites());
+            }
+          }}
+        />
 
         <div class="max-w-lg">
           <Show
@@ -754,20 +817,47 @@ export default function AgentsSection(props: {
             >
               <div>
                 <h3 class="mb-1.5 text-[12px] font-semibold">Projects</h3>
-                <div class="flex flex-wrap gap-x-3 gap-y-1">
-                  <For each={projects() ?? []}>
-                    {(p) => (
-                      <label class="flex items-center gap-1.5 text-[12px]">
-                        <input
-                          type="checkbox"
-                          checked={!inviteDenied().has(p.id)}
-                          onChange={() => toggleInviteProject(p.id)}
-                          class="accent-accent"
-                        />
-                        {p.name}
-                      </label>
-                    )}
-                  </For>
+                <div class="flex flex-col gap-1.5">
+                  <label class="flex items-center gap-1.5 text-[12px]">
+                    <input
+                      type="radio"
+                      name="invite-projects"
+                      checked={inviteAll()}
+                      onChange={() => setInviteAll(true)}
+                      class="accent-accent"
+                    />
+                    All projects
+                    <span class="text-[11px] text-muted">
+                      - including ones created later
+                    </span>
+                  </label>
+                  <label class="flex items-center gap-1.5 text-[12px]">
+                    <input
+                      type="radio"
+                      name="invite-projects"
+                      checked={!inviteAll()}
+                      onChange={() => setInviteAll(false)}
+                      class="accent-accent"
+                    />
+                    Only the projects checked below
+                  </label>
+                  <Show when={!inviteAll()}>
+                    <div class="flex flex-wrap gap-x-3 gap-y-1 pl-5 pt-0.5">
+                      <For each={projects() ?? []}>
+                        {(p) => (
+                          <label class="flex items-center gap-1.5 text-[12px]">
+                            <input
+                              type="checkbox"
+                              checked={invitePicked().has(p.id)}
+                              onChange={() => toggleInviteProject(p.id)}
+                              class="accent-accent"
+                            />
+                            {p.name}
+                          </label>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
                 </div>
               </div>
               <div>

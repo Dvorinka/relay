@@ -213,10 +213,11 @@ func (a *App) Notify(title, body string) error {
 			return exec.Command(path, "-e", script).Run()
 		}
 	case "windows":
-		// WebView2 implements the Notification API natively — the SPA only
-		// reaches this bridge when that path failed, so a shell toast would
-		// need a packaged app identity. No-op rather than error.
-		return nil
+		// WebView2 implements the Notification API natively — report
+		// unsupported so the SPA falls back to it instead of swallowing
+		// the notification. A shell toast would need a packaged app
+		// identity we don't install.
+		return errors.New("webview handles notifications on windows")
 	}
 	return errors.New("no notification facility on this platform")
 }

@@ -29,6 +29,9 @@ export interface SessionStore {
   register: (input: RegisterRequest, serverUrl?: string) => Promise<void>;
   /** Enter local mode: no server, all data on this device. */
   enterLocal: () => Promise<void>;
+  /** Adopt a session token minted elsewhere (browser-auth approval) and
+   *  resolve the full session against the issuing server. */
+  adoptToken: (serverUrl: string, token: string) => Promise<void>;
   logout: () => Promise<void>;
   /** Re-fetch /api/auth/session (e.g. after creating a workspace). */
   refresh: () => Promise<void>;
@@ -82,6 +85,12 @@ export function SessionProvider(props: ParentProps) {
       // bundle next launch, not proxy the old server.
       void desktopApplyConfig("", true);
       await refetch(); // api.session resolves the local workspace
+    },
+    adoptToken: async (serverUrl, token) => {
+      net.connect(serverUrl, token);
+      if (serverUrl) rememberConnection(serverUrl, token);
+      if (serverUrl) void desktopApplyConfig(serverUrl, false);
+      await refetch();
     },
     logout: async () => {
       try {

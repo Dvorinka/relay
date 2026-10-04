@@ -308,7 +308,8 @@ func (s *Service) handleEditMessage(c *gin.Context) {
 	}
 	user := auth.CurrentUser(c)
 	var req struct {
-		Body string `json:"body"`
+		Body          string   `json:"body"`
+		AttachmentIDs []string `json:"attachment_ids"` // appended, not replaced
 	}
 	if !httpx.BindJSON(c, &req) {
 		return
@@ -332,11 +333,45 @@ func (s *Service) handleEditMessage(c *gin.Context) {
 		httpx.Error(c, http.StatusConflict, "message_locked", "an agent has read this message; it can no longer be edited")
 		return
 	}
+	attIDs, bad := parseUUIDs(req.AttachmentIDs)
+	if bad {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "invalid attachment id")
+		return
+	}
+	if len(attIDs) > 0 {
+		existing, err := s.q.CountMessageAttachments(c.Request.Context(), id)
+		if err != nil {
+			httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
+		if int(existing)+len(attIDs) > 20 {
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "at most 20 attachments per message")
+			return
+		}
+		// attachment project must match the message's project
+		projectID := s.convProjectID(c, conversationIDFor(c, s.q, id))
+		n, err := s.q.CountUsableAttachmentsInProject(c.Request.Context(),
+			db.CountUsableAttachmentsInProjectParams{ProjectID: projectID, Ids: attIDs})
+		if err != nil || int(n) != len(attIDs) {
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "unknown or pending attachment id")
+			return
+		}
+	}
 	if _, err := s.q.UpdateMessageBody(c.Request.Context(), db.UpdateMessageBodyParams{
 		ID: id, AuthorUserID: user.ID, Body: req.Body,
 	}); err != nil {
 		httpx.Error(c, http.StatusForbidden, "forbidden", "only the author can edit a message")
 		return
+	}
+	if len(attIDs) > 0 {
+		base, _ := s.q.CountMessageAttachments(c.Request.Context(), id)
+		for i, aid := range attIDs {
+			if err := s.q.LinkMessageAttachment(c.Request.Context(), db.LinkMessageAttachmentParams{
+				MessageID: id, AttachmentID: aid, Position: int32(int(base) + i),
+			}); err != nil {
+				s.log.Error("link attachment failed", zap.Error(err))
+			}
+		}
 	}
 	m, err := s.q.GetMessageByID(c.Request.Context(), id)
 	if err != nil {

@@ -9,7 +9,7 @@ import type {
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { CheckIcon, ChevronDownIcon } from "../../components/icons";
-import { inputClass } from "../../components/ui";
+import { ColorField, inputClass } from "../../components/ui";
 import { api } from "../../lib/api";
 import {
   ISSUE_PRIORITIES,
@@ -338,12 +338,10 @@ export function LabelsPicker(props: {
       </Show>
 
       <div class="mt-2 flex items-center gap-1.5">
-        <input
-          type="color"
+        <ColorField
           value={newColor()}
-          onInput={(e) => setNewColor(e.currentTarget.value)}
-          aria-label="New label color"
-          class="h-8 w-8 shrink-0 cursor-pointer rounded-md border border-border bg-bg p-1"
+          onPick={setNewColor}
+          label="New label color"
         />
         <input
           type="text"

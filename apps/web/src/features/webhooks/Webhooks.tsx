@@ -2,7 +2,7 @@
 // here; Relay POSTs a signed event envelope for each matching domain event.
 import type { WebhookDelivery, WebhookSubscription } from "@relay/api-client";
 import { createResource, createSignal, For, Show } from "solid-js";
-import { FormError, inputClass, Spinner } from "../../components/ui";
+import { ConfirmDialog, FormError, inputClass, Spinner } from "../../components/ui";
 import { api } from "../../lib/api";
 import { timeAgo } from "../../lib/time";
 
@@ -48,6 +48,7 @@ function WebhookRow(props: {
   onChanged: () => void;
 }) {
   const [showDeliveries, setShowDeliveries] = createSignal(false);
+  const [confirmDelete, setConfirmDelete] = createSignal(false);
   const [err, setErr] = createSignal("");
   const w = () => props.w;
 
@@ -60,7 +61,7 @@ function WebhookRow(props: {
     }
   };
   const remove = async () => {
-    if (!confirm(`Delete webhook for ${w().url}?`)) return;
+    setConfirmDelete(false);
     try {
       await api.deleteWebhook(w().id!);
       props.onChanged();
@@ -125,7 +126,7 @@ function WebhookRow(props: {
         </button>
         <button
           type="button"
-          onClick={remove}
+          onClick={() => setConfirmDelete(true)}
           class="text-[11.5px] text-red-500/80 transition-colors hover:text-red-500"
         >
           Delete
@@ -135,6 +136,14 @@ function WebhookRow(props: {
       <Show when={showDeliveries()}>
         <Deliveries webhookId={w().id!} />
       </Show>
+      <ConfirmDialog
+        open={confirmDelete()}
+        onOpenChange={setConfirmDelete}
+        title="Delete webhook"
+        body={`Delete the webhook for ${w().url}? Deliveries stop immediately; history stays.`}
+        confirmLabel="Delete"
+        onConfirm={() => void remove()}
+      />
     </li>
   );
 }

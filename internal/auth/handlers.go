@@ -18,12 +18,15 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
 	pub.POST("/login", s.RateLimit("login", 10, 60), s.handleLogin)
 	pub.POST("/password/forgot", s.RateLimit("forgot", 5, 3600), s.handleForgot)
 	pub.POST("/password/reset", s.RateLimit("reset", 10, 60), s.handleReset)
+	pub.POST("/browser/start", s.RateLimit("browser-start", 10, 60), s.handleBrowserStart)
+	pub.GET("/browser/poll", s.RateLimit("browser-poll", 60, 60), s.handleBrowserPoll)
 
 	priv := g.Group("/auth", s.RequireAuth)
 	priv.POST("/logout", s.handleLogout)
 	priv.GET("/session", s.handleSession)
 	priv.POST("/password/change", s.handleChangePassword)
 	priv.PATCH("/me", s.handleUpdateMe)
+	priv.POST("/browser/approve", s.RateLimit("browser-approve", 20, 60), s.handleBrowserApprove)
 }
 
 // --- request/response shapes (mirrors api/openapi.yaml) ---

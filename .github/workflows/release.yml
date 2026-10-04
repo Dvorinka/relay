@@ -74,6 +74,8 @@ jobs:
           ./scripts/sign-windows.sh dist/relay-cli-windows-amd64.exe
 
       # makensis File paths resolve relative to the .nsi — pass absolute paths.
+      # CLI_EXE adds the optional (default-on) relay-cli component to the
+      # setup: one installer covers desktop + terminal client + PATH entry.
       # With a signing cert present, !finalize/!uninstfinalize also sign the
       # generated uninstaller and the installer itself.
       - name: Build Windows installer
@@ -89,15 +91,9 @@ jobs:
           makensis -DVERSION="$VERSION" -DVI_VERSION="$VI_VERSION" \
             $SIGNCMD_FLAG \
             -DEXE="$GITHUB_WORKSPACE/dist/relay-desktop-windows-amd64.exe" \
+            -DCLI_EXE="$GITHUB_WORKSPACE/dist/relay-cli-windows-amd64.exe" \
             -DOUTFILE="$GITHUB_WORKSPACE/dist/Relay-Setup-$VERSION.exe" \
             apps/desktop/installer/relay.nsi
-
-      - name: Upload desktop exe for the MSI job
-        uses: actions/upload-artifact@v4
-        with:
-          name: desktop-exe
-          path: dist/relay-desktop-windows-amd64.exe
-          retention-days: 1
 
       - name: Release
         uses: softprops/action-gh-release@v3
@@ -150,58 +146,6 @@ jobs:
         run: |
           cp apps/mobile/android/app/build/outputs/apk/release/app-release.apk relay-android.apk
           gh release upload "$GITHUB_REF_NAME" relay-android.apk --clobber
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # Windows MSI installer — WiX only supports building on Windows
-  # (wixtoolset/issues#7154). Produces Relay-Setup-<ver>.msi: per-user
-  # install to %LOCALAPPDATA%\Programs\Relay, Start Menu + Desktop
-  # shortcuts, ARP registration, in-place upgrades via MajorUpgrade.
-  # Does NOT bootstrap WebView2 — present on Win11/patched Win10.
-  msi:
-    needs: build
-    runs-on: windows-latest
-    env:
-      SIGNING_CERT_B64: ${{ secrets.SIGNING_CERT_B64 }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v4
-        with:
-          name: desktop-exe
-          path: dist
-      - run: dotnet tool install --global wix --version 5.0.2
-      - name: Build MSI
-        run: |
-          $v = $env:GITHUB_REF_NAME.TrimStart('v')
-          & "$env:USERPROFILE\.dotnet\tools\wix.exe" build -arch x64 `
-            -o "dist\Relay-Setup-$v.msi" `
-            -d "VERSION=$v" `
-            -d "EXE=$PWD\dist\relay-desktop-windows-amd64.exe" `
-            -d "ICON=$PWD\apps\desktop\build\windows\icon.ico" `
-            apps\desktop\installer\relay.wxs
-      - name: Decode signing certificate
-        if: env.SIGNING_CERT_B64 != ''
-        run: |
-          [IO.File]::WriteAllBytes(
-            "$env:RUNNER_TEMP\relay-signing.pfx",
-            [Convert]::FromBase64String($env:SIGNING_CERT_B64))
-          "SIGNING_CERT_PFX=$env:RUNNER_TEMP\relay-signing.pfx" |
-            Out-File $env:GITHUB_ENV -Append
-      - name: Sign MSI
-        if: env.SIGNING_CERT_PFX != ''
-        env:
-          SIGNING_CERT_PASSWORD: ${{ secrets.SIGNING_CERT_PASSWORD }}
-        run: |
-          $v = $env:GITHUB_REF_NAME.TrimStart('v')
-          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
-            Sort-Object FullName | Select-Object -Last 1
-          & $signtool.FullName sign /fd sha256 /tr http://timestamp.digicert.com `
-            /td sha256 /f $env:SIGNING_CERT_PFX /p $env:SIGNING_CERT_PASSWORD `
-            "dist\Relay-Setup-$v.msi"
-      - name: Attach MSI to release
-        run: |
-          $v = $env:GITHUB_REF_NAME.TrimStart('v')
-          gh release upload $env:GITHUB_REF_NAME "dist\Relay-Setup-$v.msi" --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

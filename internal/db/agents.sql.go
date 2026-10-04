@@ -23,7 +23,10 @@ func (q *Queries) AgentLastSeen(ctx context.Context, agentID pgtype.UUID) (pgtyp
 }
 
 const agentScopeForProject = `-- name: AgentScopeForProject :one
-select coalesce(g.scopes, '{}'::text[]) as scopes
+select coalesce(
+    g.scopes,
+    case when a.grant_all then a.grant_scopes else '{}'::text[] end
+) as scopes
 from agents a
 left join agent_project_permissions g
        on g.agent_id = a.id and g.project_id = $1
@@ -35,7 +38,9 @@ type AgentScopeForProjectParams struct {
 	AgentID   pgtype.UUID `json:"agent_id"`
 }
 
-// scopes the agent holds on a project; empty set when ungranted
+// scopes the agent holds on a project; empty set when ungranted. An
+// explicit grant row wins; grant_all agents fall back to grant_scopes,
+// which is what lets workspace-wide invites cover future projects.
 func (q *Queries) AgentScopeForProject(ctx context.Context, arg AgentScopeForProjectParams) ([]string, error) {
 	row := q.db.QueryRow(ctx, agentScopeForProject, arg.ProjectID, arg.AgentID)
 	var scopes []string
@@ -83,7 +88,7 @@ func (q *Queries) AgentWorkspaceRole(ctx context.Context, arg AgentWorkspaceRole
 const createAgent = `-- name: CreateAgent :one
 insert into agents (workspace_id, name, slug, description, review_mode, created_by)
 values ($1, $2, $3, $4, $5, $6)
-returning id, workspace_id, name, slug, description, avatar_key, created_by, created_at, updated_at, review_mode
+returning id, workspace_id, name, slug, description, avatar_key, created_by, created_at, updated_at, review_mode, grant_all, grant_scopes
 `
 
 type CreateAgentParams struct {
@@ -116,6 +121,8 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReviewMode,
+		&i.GrantAll,
+		&i.GrantScopes,
 	)
 	return i, err
 }
@@ -228,7 +235,7 @@ func (q *Queries) DeleteAgentInvite(ctx context.Context, id pgtype.UUID) error {
 }
 
 const getAgentByID = `-- name: GetAgentByID :one
-select id, workspace_id, name, slug, description, avatar_key, created_by, created_at, updated_at, review_mode from agents where id = $1
+select id, workspace_id, name, slug, description, avatar_key, created_by, created_at, updated_at, review_mode, grant_all, grant_scopes from agents where id = $1
 `
 
 func (q *Queries) GetAgentByID(ctx context.Context, id pgtype.UUID) (Agent, error) {
@@ -245,12 +252,14 @@ func (q *Queries) GetAgentByID(ctx context.Context, id pgtype.UUID) (Agent, erro
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReviewMode,
+		&i.GrantAll,
+		&i.GrantScopes,
 	)
 	return i, err
 }
 
 const getAgentForUser = `-- name: GetAgentForUser :one
-select a.id, a.workspace_id, a.name, a.slug, a.description, a.avatar_key, a.created_by, a.created_at, a.updated_at, a.review_mode from agents a
+select a.id, a.workspace_id, a.name, a.slug, a.description, a.avatar_key, a.created_by, a.created_at, a.updated_at, a.review_mode, a.grant_all, a.grant_scopes from agents a
 join workspace_members wm on wm.workspace_id = a.workspace_id and wm.user_id = $1
 where a.id = $2
 `
@@ -275,6 +284,8 @@ func (q *Queries) GetAgentForUser(ctx context.Context, arg GetAgentForUserParams
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReviewMode,
+		&i.GrantAll,
+		&i.GrantScopes,
 	)
 	return i, err
 }
@@ -304,7 +315,7 @@ func (q *Queries) GetAgentInviteByHash(ctx context.Context, tokenHash []byte) (A
 }
 
 const getTokenAgent = `-- name: GetTokenAgent :one
-select t.id as token_id, a.id, a.workspace_id, a.name, a.slug, a.description, a.avatar_key, a.created_by, a.created_at, a.updated_at, a.review_mode from mcp_tokens t
+select t.id as token_id, a.id, a.workspace_id, a.name, a.slug, a.description, a.avatar_key, a.created_by, a.created_at, a.updated_at, a.review_mode, a.grant_all, a.grant_scopes from mcp_tokens t
 join agents a on a.id = t.agent_id
 where t.token_hash = $1
   and t.revoked_at is null
@@ -323,6 +334,8 @@ type GetTokenAgentRow struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 	ReviewMode  string             `json:"review_mode"`
+	GrantAll    bool               `json:"grant_all"`
+	GrantScopes []string           `json:"grant_scopes"`
 }
 
 // resolve a presented bearer token to its agent when usable
@@ -341,6 +354,8 @@ func (q *Queries) GetTokenAgent(ctx context.Context, tokenHash []byte) (GetToken
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReviewMode,
+		&i.GrantAll,
+		&i.GrantScopes,
 	)
 	return i, err
 }
@@ -441,7 +456,7 @@ func (q *Queries) ListAgentInvites(ctx context.Context, workspaceID pgtype.UUID)
 }
 
 const listAgentsForWorkspace = `-- name: ListAgentsForWorkspace :many
-select a.id, a.workspace_id, a.name, a.slug, a.description, a.avatar_key, a.created_by, a.created_at, a.updated_at, a.review_mode, cast((
+select a.id, a.workspace_id, a.name, a.slug, a.description, a.avatar_key, a.created_by, a.created_at, a.updated_at, a.review_mode, a.grant_all, a.grant_scopes, cast((
     select max(t.last_used_at) from mcp_tokens t where t.agent_id = a.id
 ) as timestamptz) as last_seen_at
 from agents a
@@ -460,6 +475,8 @@ type ListAgentsForWorkspaceRow struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 	ReviewMode  string             `json:"review_mode"`
+	GrantAll    bool               `json:"grant_all"`
+	GrantScopes []string           `json:"grant_scopes"`
 	LastSeenAt  pgtype.Timestamptz `json:"last_seen_at"`
 }
 
@@ -483,6 +500,8 @@ func (q *Queries) ListAgentsForWorkspace(ctx context.Context, workspaceID pgtype
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ReviewMode,
+			&i.GrantAll,
+			&i.GrantScopes,
 			&i.LastSeenAt,
 		); err != nil {
 			return nil, err
@@ -496,12 +515,20 @@ func (q *Queries) ListAgentsForWorkspace(ctx context.Context, workspaceID pgtype
 }
 
 const listGrantedProjects = `-- name: ListGrantedProjects :many
-select p.id, p.workspace_id, p.key, p.name, p.description, p.icon, p.color, p.created_by, p.created_at, p.updated_at, p.statuses, p.local_path, p.brief_policy, p.avatar_key from agent_project_permissions g
-join projects p on p.id = g.project_id
-where g.agent_id = $1 and 'project:read' = any(g.scopes)
+select p.id, p.workspace_id, p.key, p.name, p.description, p.icon, p.color, p.created_by, p.created_at, p.updated_at, p.statuses, p.local_path, p.brief_policy, p.avatar_key from projects p
+join agents a on a.id = $1
+left join agent_project_permissions g
+       on g.agent_id = a.id and g.project_id = p.id
+where p.workspace_id = a.workspace_id
+  and (
+    'project:read' = any(g.scopes)
+    or (a.grant_all and 'project:read' = any(a.grant_scopes))
+  )
 order by p.name
 `
 
+// explicit grants plus, for grant_all agents carrying project:read, every
+// project in the workspace
 func (q *Queries) ListGrantedProjects(ctx context.Context, agentID pgtype.UUID) ([]Project, error) {
 	rows, err := q.db.Query(ctx, listGrantedProjects, agentID)
 	if err != nil {
@@ -583,28 +610,34 @@ func (q *Queries) ListMcpTokens(ctx context.Context, agentID pgtype.UUID) ([]Lis
 }
 
 const listProjectAgents = `-- name: ListProjectAgents :many
-select a.id, a.workspace_id, a.name, a.slug, a.description, a.avatar_key, a.created_by, a.created_at, a.updated_at, a.review_mode, g.scopes as grant_scopes
+select a.id, a.workspace_id, a.name, a.slug, a.description, a.avatar_key, a.created_by, a.created_at, a.updated_at, a.review_mode, a.grant_all, a.grant_scopes, coalesce(g.scopes, a.grant_scopes) as effective_scopes
 from agents a
-join agent_project_permissions g on g.agent_id = a.id
-where g.project_id = $1
+join projects p on p.id = $1
+left join agent_project_permissions g
+       on g.agent_id = a.id and g.project_id = p.id
+where a.workspace_id = p.workspace_id
+  and (g.agent_id is not null or a.grant_all)
 order by a.name
 `
 
 type ListProjectAgentsRow struct {
-	ID          pgtype.UUID        `json:"id"`
-	WorkspaceID pgtype.UUID        `json:"workspace_id"`
-	Name        string             `json:"name"`
-	Slug        string             `json:"slug"`
-	Description string             `json:"description"`
-	AvatarKey   pgtype.Text        `json:"avatar_key"`
-	CreatedBy   pgtype.UUID        `json:"created_by"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
-	ReviewMode  string             `json:"review_mode"`
-	GrantScopes []string           `json:"grant_scopes"`
+	ID              pgtype.UUID        `json:"id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	Name            string             `json:"name"`
+	Slug            string             `json:"slug"`
+	Description     string             `json:"description"`
+	AvatarKey       pgtype.Text        `json:"avatar_key"`
+	CreatedBy       pgtype.UUID        `json:"created_by"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	ReviewMode      string             `json:"review_mode"`
+	GrantAll        bool               `json:"grant_all"`
+	GrantScopes     []string           `json:"grant_scopes"`
+	EffectiveScopes []string           `json:"effective_scopes"`
 }
 
-// agents holding a grant on a project; surfaced in the project's member list
+// agents holding a grant on a project (explicit or workspace-wide);
+// surfaced in the project's member list
 func (q *Queries) ListProjectAgents(ctx context.Context, projectID pgtype.UUID) ([]ListProjectAgentsRow, error) {
 	rows, err := q.db.Query(ctx, listProjectAgents, projectID)
 	if err != nil {
@@ -625,7 +658,9 @@ func (q *Queries) ListProjectAgents(ctx context.Context, projectID pgtype.UUID) 
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ReviewMode,
+			&i.GrantAll,
 			&i.GrantScopes,
+			&i.EffectiveScopes,
 		); err != nil {
 			return nil, err
 		}
@@ -734,6 +769,43 @@ func (q *Queries) RevokeMcpToken(ctx context.Context, arg RevokeMcpTokenParams) 
 	return err
 }
 
+const setAgentGrantAll = `-- name: SetAgentGrantAll :one
+update agents set
+    grant_all = $1,
+    grant_scopes = case when $1
+                        then $2::text[]
+                        else '{}'::text[] end,
+    updated_at = now()
+where id = $3
+returning id, workspace_id, name, slug, description, avatar_key, created_by, created_at, updated_at, review_mode, grant_all, grant_scopes
+`
+
+type SetAgentGrantAllParams struct {
+	GrantAll    bool        `json:"grant_all"`
+	GrantScopes []string    `json:"grant_scopes"`
+	ID          pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) SetAgentGrantAll(ctx context.Context, arg SetAgentGrantAllParams) (Agent, error) {
+	row := q.db.QueryRow(ctx, setAgentGrantAll, arg.GrantAll, arg.GrantScopes, arg.ID)
+	var i Agent
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Name,
+		&i.Slug,
+		&i.Description,
+		&i.AvatarKey,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ReviewMode,
+		&i.GrantAll,
+		&i.GrantScopes,
+	)
+	return i, err
+}
+
 const touchMcpToken = `-- name: TouchMcpToken :exec
 update mcp_tokens set last_used_at = now() where id = $1
 `
@@ -750,7 +822,7 @@ update agents set
     review_mode = coalesce($3, review_mode),
     updated_at = now()
 where id = $4
-returning id, workspace_id, name, slug, description, avatar_key, created_by, created_at, updated_at, review_mode
+returning id, workspace_id, name, slug, description, avatar_key, created_by, created_at, updated_at, review_mode, grant_all, grant_scopes
 `
 
 type UpdateAgentParams struct {
@@ -779,13 +851,15 @@ func (q *Queries) UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReviewMode,
+		&i.GrantAll,
+		&i.GrantScopes,
 	)
 	return i, err
 }
 
 const updateAgentAvatar = `-- name: UpdateAgentAvatar :one
 update agents set avatar_key = $1, updated_at = now() where id = $2
-returning id, workspace_id, name, slug, description, avatar_key, created_by, created_at, updated_at, review_mode
+returning id, workspace_id, name, slug, description, avatar_key, created_by, created_at, updated_at, review_mode, grant_all, grant_scopes
 `
 
 type UpdateAgentAvatarParams struct {
@@ -807,6 +881,8 @@ func (q *Queries) UpdateAgentAvatar(ctx context.Context, arg UpdateAgentAvatarPa
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReviewMode,
+		&i.GrantAll,
+		&i.GrantScopes,
 	)
 	return i, err
 }

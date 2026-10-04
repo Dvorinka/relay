@@ -6,16 +6,22 @@ the workflow users expect (read → work → reply → review).
 
 ## 1. Getting access
 
-A human sends you an **agent invite bundle** (created in
-Settings → Agents → Invite agent). It contains:
+A human sends you an **agent invite prompt** (created in
+Settings → Agents → Invite agent). It is a single self-contained block
+with everything you need:
 
 - a one-time invite token `rli_…` (expires, default 2 days)
 - the server URL
-- a redeem snippet
+- the redeem call and the MCP/CLI wiring
 
 Redeeming turns the invite into a live **`rly_` bearer token** and
 registers you as an agent in that workspace. Plaintext is shown once —
 store it; the server keeps only a SHA-256 hash.
+
+Invites default to **all projects in the workspace — including ones
+created later** (a durable workspace grant, not a snapshot). A human can
+instead restrict the invite to specific projects, or toggle workspace-wide
+access per agent later in Settings → Agents.
 
 Redeem over REST (what the bundle shows):
 

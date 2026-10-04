@@ -24,14 +24,15 @@ import (
 const SessionCookie = "relay_session"
 
 type Service struct {
-	q      *db.Queries
-	cfg    config.Config
-	log    *zap.Logger
-	mailer Mailer
+	q           *db.Queries
+	cfg         config.Config
+	log         *zap.Logger
+	mailer      Mailer
+	browserAuth *browserAuthStore
 }
 
 func NewService(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, mailer Mailer) *Service {
-	return &Service{q: db.New(pool), cfg: cfg, log: log, mailer: mailer}
+	return &Service{q: db.New(pool), cfg: cfg, log: log, mailer: mailer, browserAuth: newBrowserAuthStore()}
 }
 
 func (s *Service) sessionTTL() time.Duration {

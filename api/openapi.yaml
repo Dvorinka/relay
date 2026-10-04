@@ -136,6 +136,80 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/auth/browser/start:
+    post:
+      operationId: browserAuthStart
+      summary: Start a browser sign-in flow (desktop shell)
+      description: "Mints a one-shot code. The desktop opens {publicUrl}/connect?code=… in the system browser and polls /browser/poll until a signed-in user approves."
+      tags: [auth]
+      security: []
+      responses:
+        "201":
+          description: Pending sign-in created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, expires_in]
+                properties:
+                  code: { type: string }
+                  expires_in: { type: integer }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/auth/browser/poll:
+    get:
+      operationId: browserAuthPoll
+      summary: Poll a pending browser sign-in (desktop shell)
+      tags: [auth]
+      security: []
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: "pending, or approved with a session token (consumed once)"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [pending, approved] }
+                  token: { type: string, description: "Present only when approved" }
+        "404":
+          description: Unknown or expired code
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/auth/browser/approve:
+    post:
+      operationId: browserAuthApprove
+      summary: Approve a browser sign-in code (signed-in user)
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string }
+      responses:
+        "204": { description: Approved; token is parked for the polling desktop }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: Unknown or expired code
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
   /api/auth/password/forgot:
     post:
       operationId: forgotPassword
@@ -1008,7 +1082,7 @@ paths:
   /api/messages/{messageId}:
     patch:
       operationId: editMessage
-      summary: Edit a message's body - author only, locked once any agent has read it
+      summary: Edit a message's body and append attachments - author only, locked once any agent has read it
       tags: [conversations]
       parameters: [ { $ref: "#/components/parameters/MessageId" } ]
       requestBody:
@@ -1020,6 +1094,10 @@ paths:
               required: [body]
               properties:
                 body: { type: string, minLength: 1, maxLength: 20000 }
+                attachment_ids:
+                  type: array
+                  items: { type: string, format: uuid }
+                  description: "New ready attachments to append; existing links are preserved"
       responses:
         "200":
           description: Updated message
@@ -1559,7 +1637,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
       operationId: updateAgent
-      summary: Rename/redescribe an agent (owner/admin)
+      summary: Rename/redescribe an agent, or toggle its workspace-wide grant (owner/admin)
       tags: [agents]
       parameters: [ { $ref: "#/components/parameters/AgentId" } ]
       requestBody:
@@ -1572,6 +1650,13 @@ paths:
                 name: { type: string, minLength: 1, maxLength: 60 }
                 description: { type: string, maxLength: 500 }
                 review_mode: { type: string, enum: [notify, gate] }
+                grant_all:
+                  type: boolean
+                  description: "true grants every workspace project (incl. future ones) with grant_scopes; false returns to explicit per-project grants"
+                grant_scopes:
+                  type: array
+                  items: { $ref: "#/components/schemas/AgentScope" }
+                  description: "Scope set used when grant_all is on; defaults to the standard invite set"
       responses:
         "200":
           description: Updated
@@ -1680,7 +1765,7 @@ paths:
       description: >-
         The user invites; the agent registers itself by redeeming the token at
         POST /api/agent-invites/redeem. Empty project_ids means every workspace
-        project at redeem time; empty scopes means the default full set.
+        project, including ones created later; empty scopes means the default full set.
       tags: [agents]
       parameters: [ { $ref: "#/components/parameters/WorkspaceId" } ]
       requestBody:
@@ -3157,6 +3242,13 @@ components:
           type: string
           enum: [notify, gate]
           description: "gate: agent must wait for a human verdict on each review; notify: reviews are informational."
+        grant_all:
+          type: boolean
+          description: "Workspace-wide grant - every current and future project with grant_scopes"
+        grant_scopes:
+          type: array
+          items: { $ref: "#/components/schemas/AgentScope" }
+          description: "Scope set applied by grant_all; also the fallback scopes in project agent listings"
         grants:
           type: array
           items: { $ref: "#/components/schemas/AgentGrant" }
@@ -3292,7 +3384,7 @@ components:
         project_ids:
           type: array
           items: { type: string, format: uuid }
-          description: "Empty = every workspace project at redeem time."
+          description: "Empty = every workspace project, including ones created later."
         scopes:
           type: array
           items: { $ref: "#/components/schemas/AgentScope" }

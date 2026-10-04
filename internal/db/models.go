@@ -19,6 +19,8 @@ type Agent struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 	ReviewMode  string             `json:"review_mode"`
+	GrantAll    bool               `json:"grant_all"`
+	GrantScopes []string           `json:"grant_scopes"`
 }
 
 type AgentInvite struct {

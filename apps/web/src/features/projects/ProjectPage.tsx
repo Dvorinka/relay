@@ -30,6 +30,7 @@ import {
   XIcon,
 } from "../../components/icons";
 import {
+  ColorField,
   FormError,
   ImageURLField,
   inputClass,
@@ -732,6 +733,7 @@ function ProjectDetailsSection(props: { project: Project }) {
   const [error, setError] = createSignal<string | null>(null);
   const [saved, setSaved] = createSignal(false);
   const [pending, setPending] = createSignal(false);
+  const [color, setColor] = createSignal(props.project.color || "#06b6d4");
 
   async function onSubmit(e: SubmitEvent) {
     e.preventDefault();
@@ -771,13 +773,11 @@ function ProjectDetailsSection(props: { project: Project }) {
             value={props.project.name}
             class={`${inputClass} max-w-xs`}
           />
-          <input
-            type="color"
-            name="color"
-            value={props.project.color || "#06b6d4"}
-            aria-label="Project color"
-            title="Rail color"
-            class="h-8 w-9 shrink-0 cursor-pointer rounded border border-border bg-surface p-0.5"
+          <input type="hidden" name="color" value={color()} />
+          <ColorField
+            value={color()}
+            onPick={setColor}
+            label="Project color"
           />
         </div>
         <div class="flex items-start gap-3">

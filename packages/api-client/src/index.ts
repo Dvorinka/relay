@@ -355,6 +355,16 @@ export function createClient(baseUrl: string, token?: string) {
       }),
     updateMe: (input: { name_color: string }) =>
       patch<{ user: User }>("/api/auth/me", input),
+    // Browser sign-in for the desktop shell: start, approve (signed-in),
+    // poll until approved. The approve call rides the existing session.
+    browserAuthStart: () =>
+      post<{ code: string; expires_in: number }>("/api/auth/browser/start"),
+    browserAuthApprove: (code: string) =>
+      post<void>("/api/auth/browser/approve", { code }),
+    browserAuthPoll: (code: string) =>
+      request<{ status: "pending" | "approved"; token?: string }>(
+        `/api/auth/browser/poll?code=${encodeURIComponent(code)}`,
+      ),
 
     // Workspaces
     listWorkspaces: () =>
@@ -423,8 +433,11 @@ export function createClient(baseUrl: string, token?: string) {
         parent_id: parentId,
         ...(tags && tags.length ? { tags } : {}),
       }),
-    editMessage: (messageId: string, body: string) =>
-      patch<Message>(`/api/messages/${messageId}`, { body }),
+    editMessage: (messageId: string, body: string, attachmentIds?: string[]) =>
+      patch<Message>(`/api/messages/${messageId}`, {
+        body,
+        attachment_ids: attachmentIds,
+      }),
     deleteMessage: (messageId: string) =>
       request<void>(`/api/messages/${messageId}`, { method: "DELETE" }),
     toggleReaction: (messageId: string, emoji: string) =>
@@ -521,7 +534,13 @@ export function createClient(baseUrl: string, token?: string) {
       ),
     updateAgent: (
       agentId: string,
-      input: { name?: string; description?: string; review_mode?: "notify" | "gate" },
+      input: {
+        name?: string;
+        description?: string;
+        review_mode?: "notify" | "gate";
+        grant_all?: boolean;
+        grant_scopes?: AgentScope[];
+      },
     ) => patch<Agent>(`/api/agents/${agentId}`, input),
     deleteAgent: (agentId: string) =>
       request<void>(`/api/agents/${agentId}`, { method: "DELETE" }),

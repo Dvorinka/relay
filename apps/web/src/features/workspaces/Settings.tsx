@@ -11,6 +11,7 @@ import {
   type ParentProps,
 } from "solid-js";
 import {
+  ColorField,
   Field,
   FormError,
   ImageURLField,
@@ -554,13 +555,11 @@ function NameColorRow() {
   return (
     <div class="mt-4 flex items-center gap-2">
       <span class="w-20 text-[12px] text-muted">Name color</span>
-      <input
-        type="color"
+      <ColorField
         value={value() || "#3b82f6"}
         disabled={busy()}
-        aria-label="Chat name color"
-        onInput={(e) => void save(e.currentTarget.value)}
-        class="h-7 w-9 cursor-pointer rounded border border-border bg-surface p-0.5"
+        label="Chat name color"
+        onPick={(hex) => void save(hex)}
       />
       <span class="font-mono text-[11.5px] text-muted">
         {value() || "palette default"}

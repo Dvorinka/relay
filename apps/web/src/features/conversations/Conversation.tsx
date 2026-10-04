@@ -132,16 +132,45 @@ function stamp(iso: string): string {
   return `${dayLabel(iso)} at ${shortTime(iso)}`;
 }
 
-function MessageAvatar(props: { message: Message; small?: boolean }) {
+// Clipboard write that never touches window.prompt: async clipboard API
+// first, then the legacy execCommand path for insecure contexts.
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const el = document.createElement("textarea");
+    el.value = text;
+    el.style.cssText = "position:fixed;top:-9999px;opacity:0";
+    document.body.appendChild(el);
+    el.select();
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch {
+      /* unsupported */
+    }
+    el.remove();
+    return ok;
+  }
+}
+
+function MessageAvatar(props: { message: Message; small?: boolean; tiny?: boolean }) {
   const m = () => props.message;
-  return (
+  // Clicking an avatar opens the author's detail page - user or agent.
+  const href = () => {
+    const a = m().author;
+    if (a.id) return a.kind === "agent" ? `/app/ag/${a.id}` : `/app/u/${a.id}`;
+    return undefined;
+  };
+  const size = () =>
+    props.tiny ? "h-4 w-4" : props.small ? "h-7 w-7" : "h-10 w-10";
+  const avatar = (
     <Avatar.Root
-      class={`mt-0.5 flex shrink-0 items-center justify-center rounded-full border border-border ${
-        props.small ? "h-7 w-7" : "h-10 w-10"
-      }`}
+      class={`mt-0.5 flex shrink-0 items-center justify-center rounded-full border border-border ${size()}`}
     >
       <Avatar.Fallback
-        class={props.small ? "text-[10px] font-semibold" : "text-[13px] font-semibold"}
+        class={props.tiny ? "text-[7px] font-semibold" : props.small ? "text-[10px] font-semibold" : "text-[13px] font-semibold"}
         style={{
           color: authorColor(m().author.name),
           "background-color": `color-mix(in srgb, ${authorColor(m().author.name)} 14%, transparent)`,
@@ -155,6 +184,19 @@ function MessageAvatar(props: { message: Message; small?: boolean }) {
         class="h-full w-full rounded-full object-cover"
       />
     </Avatar.Root>
+  );
+  return (
+    <Show when={href()} fallback={avatar} keyed>
+      {(h) => (
+        <A
+          href={h}
+          title={`Open ${m().author.name}'s profile`}
+          class="shrink-0 rounded-full transition-opacity hover:opacity-80"
+        >
+          {avatar}
+        </A>
+      )}
+    </Show>
   );
 }
 
@@ -854,15 +896,20 @@ function MessageRow(props: {
   async function copyLink() {
     const base = net.serverUrl() || location.origin;
     const url = `${base}${location.pathname}?msg=${m().id}`;
-    try {
-      await navigator.clipboard.writeText(url);
-    } catch {
-      // clipboard API unavailable (insecure context) - prompt is the fallback
-      window.prompt("Copy link", url);
-      return;
+    if (await copyText(url)) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
     }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+  }
+
+  const [copiedId, setCopiedId] = createSignal(false);
+  async function copyId() {
+    // Agents take raw message ids (get_message, edit_message, threads) -
+    // one click hands the exact id over.
+    if (await copyText(m().id)) {
+      setCopiedId(true);
+      setTimeout(() => setCopiedId(false), 1500);
+    }
   }
 
   async function react(emoji: string) {
@@ -884,17 +931,90 @@ function MessageRow(props: {
     });
   }
 
+  // Files staged while editing upload immediately and are linked on save -
+  // the message keeps its existing attachments; new ones append after them.
+  const [editFiles, setEditFiles] = createSignal<PendingAttachment[]>([]);
+  let editFileInput: HTMLInputElement | undefined;
+
+  function removeEditFile(localId: string) {
+    const item = editFiles().find((p) => p.localId === localId);
+    if (item?.previewUrl) URL.revokeObjectURL(item.previewUrl);
+    setEditFiles((cur) => cur.filter((p) => p.localId !== localId));
+  }
+
+  function addEditFiles(files: readonly File[]) {
+    for (const file of files) {
+      const localId = `${Date.now().toString(36)}-${Math.random()
+        .toString(36)
+        .slice(2)}`;
+      const entry: PendingAttachment = {
+        localId,
+        file,
+        previewUrl: file.type.startsWith("image/")
+          ? URL.createObjectURL(file)
+          : null,
+        status: file.size > MAX_FILE_BYTES ? "error" : "uploading",
+        error:
+          file.size > MAX_FILE_BYTES
+            ? `Files can be at most ${MAX_FILE_MIB} MiB`
+            : undefined,
+      };
+      setEditFiles((cur) => [...cur, entry]);
+      if (entry.status === "uploading") {
+        void api
+          .uploadAttachment(props.projectId, file)
+          .then((att) =>
+            setEditFiles((cur) =>
+              cur.map((p) =>
+                p.localId === localId
+                  ? { ...p, status: "ready", attachmentId: att.id }
+                  : p,
+              ),
+            ),
+          )
+          .catch((err) =>
+            setEditFiles((cur) =>
+              cur.map((p) =>
+                p.localId === localId
+                  ? {
+                      ...p,
+                      status: "error",
+                      error:
+                        err instanceof Error ? err.message : "Upload failed",
+                    }
+                  : p,
+              ),
+            ),
+          );
+      }
+    }
+  }
+
+  const editFilesReady = () =>
+    editFiles().every((p) => p.status !== "uploading");
+
   async function saveEdit() {
     const body = editDraft().trim();
-    if (!body || body === m().body.trim()) {
+    const newIds = editFiles().flatMap((p) =>
+      p.attachmentId === undefined ? [] : [p.attachmentId],
+    );
+    if (!body || (body === m().body.trim() && newIds.length === 0)) {
       setEditing(false);
+      return;
+    }
+    if (!editFilesReady()) {
+      setEditError("Wait for uploads to finish");
       return;
     }
     setSavingEdit(true);
     setEditError(null);
     try {
-      const updated = await api.editMessage(m().id, body);
+      const updated = await api.editMessage(m().id, body, newIds);
       props.onChanged(updated);
+      for (const p of editFiles()) {
+        if (p.previewUrl) URL.revokeObjectURL(p.previewUrl);
+      }
+      setEditFiles([]);
       setEditing(false);
     } catch (err) {
       if (err instanceof ApiClientError && err.status === 409) {
@@ -976,18 +1096,12 @@ function MessageRow(props: {
           <MessageAvatar message={m()} />
         </Show>
       </Show>
-      <Show when={bubbles() && !mine()}>
-        {/* fixed slot keeps the left bubble edge aligned across a group */}
-        <div class="mr-1.5 flex w-7 shrink-0 items-end">
-          <Show when={!props.grouped}>
-            <MessageAvatar message={m()} small />
-          </Show>
-        </div>
-      </Show>
       <div
         class={
           bubbles()
-            ? `min-w-0 max-w-[78%] rounded-2xl px-3 py-1.5 ${
+            ? `min-w-0 rounded-2xl px-3 py-1.5 ${
+                editing() ? "w-full" : "max-w-[78%]"
+              } ${
                 mine()
                   ? "rounded-br-md bg-accent-soft"
                   : "rounded-bl-md border border-border bg-surface"
@@ -995,10 +1109,10 @@ function MessageRow(props: {
             : "min-w-0 flex-1"
         }
       >
-        <Show when={!props.grouped && (!bubbles() || !mine())}>
+        <Show when={!props.grouped && !bubbles()}>
           <div class="flex items-baseline gap-2">
             <Show
-              when={m().author.kind === "user" && m().author.id}
+              when={m().author.id}
               fallback={
                 <span
                   class="text-[14.5px] font-semibold"
@@ -1009,7 +1123,11 @@ function MessageRow(props: {
               }
             >
               <A
-                href={`/app/u/${m().author.id}`}
+                href={
+                  m().author.kind === "agent"
+                    ? `/app/ag/${m().author.id}`
+                    : `/app/u/${m().author.id}`
+                }
                 class="text-[14.5px] font-semibold hover:underline"
                 style={{ color: authorColor(m().author.name) }}
                 title={`Open ${m().author.name}'s profile`}
@@ -1042,6 +1160,22 @@ function MessageRow(props: {
                 {stamp(m().created_at)}
               </span>
             </Show>
+          </div>
+        </Show>
+        <Show when={bubbles() && (m().tags ?? []).length > 0}>
+          <div class="mb-0.5 flex flex-wrap gap-1">
+            <For each={m().tags ?? []}>
+              {(t) => (
+                <button
+                  type="button"
+                  onClick={() => props.onTagClick?.(t)}
+                  title={`Filter by ${t}`}
+                  class="rounded-full border border-accent/40 bg-accent-soft/60 px-1.5 py-px font-mono text-[9.5px] font-medium lowercase tracking-wide text-accent-ink transition-colors hover:bg-accent-soft"
+                >
+                  {t}
+                </button>
+              )}
+            </For>
           </div>
         </Show>
         <Show when={m().pinned_at}>
@@ -1080,12 +1214,21 @@ function MessageRow(props: {
             <textarea
               ref={(el) => {
                 editEl = el;
+                requestAnimationFrame(() => {
+                  el.style.height = "auto";
+                  el.style.height = `${Math.min(el.scrollHeight, 320)}px`;
+                });
               }}
               value={editDraft()}
               rows={2}
               aria-label="Edit message"
               disabled={savingEdit()}
-              onInput={(e) => setEditDraft(e.currentTarget.value)}
+              onInput={(e) => {
+                setEditDraft(e.currentTarget.value);
+                const el = e.currentTarget;
+                el.style.height = "auto";
+                el.style.height = `${Math.min(el.scrollHeight, 320)}px`;
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
@@ -1095,14 +1238,49 @@ function MessageRow(props: {
                   setEditing(false);
                 }
               }}
-              class="max-h-60 w-full resize-none bg-transparent px-2 py-1.5 text-[14px] leading-6 outline-none"
+              class="max-h-80 w-full resize-none bg-transparent px-2 py-1.5 text-[14px] leading-6 outline-none"
             />
-            <div class="flex items-center justify-between px-1.5 pb-0.5 pt-1 text-[10.5px] text-faint">
-              <span>Esc to cancel · Enter to save</span>
+            <Show when={editFiles().length > 0}>
+              <ul class="mt-1 flex flex-col gap-1.5 px-1">
+                <For each={editFiles()}>
+                  {(p) => (
+                    <PendingChip
+                      item={p}
+                      onRemove={() => removeEditFile(p.localId)}
+                    />
+                  )}
+                </For>
+              </ul>
+            </Show>
+            <div class="flex items-center justify-between gap-2 px-1.5 pb-0.5 pt-1 text-[10.5px] text-faint">
+              <div class="flex items-center gap-1">
+                <button
+                  type="button"
+                  title="Attach an image or file"
+                  aria-label="Attach an image or file"
+                  onClick={() => editFileInput?.click()}
+                  class="flex h-6 w-6 items-center justify-center rounded-md text-muted transition-colors hover:bg-hover hover:text-fg"
+                >
+                  <PaperclipIcon class="h-3.5 w-3.5" />
+                </button>
+                <span>Esc to cancel · Enter to save</span>
+              </div>
               <Show when={editError()}>
                 <span class="text-red-500">{editError()}</span>
               </Show>
             </div>
+            <input
+              ref={(el) => {
+                editFileInput = el;
+              }}
+              type="file"
+              multiple
+              class="hidden"
+              onChange={(e) => {
+                addEditFiles(Array.from(e.currentTarget.files ?? []));
+                e.currentTarget.value = "";
+              }}
+            />
           </div>
         </Show>
         <Show when={m().attachments.length > 0}>
@@ -1137,7 +1315,43 @@ function MessageRow(props: {
           )}
         </Show>
         <Show when={bubbles()}>
-          <div class="mt-0.5 flex items-center justify-end gap-1.5 text-[10px] leading-3 text-faint">
+          {/* Author signature: avatar + name anchored to the bottom of the
+              bubble so the sender is visible even in a long group. */}
+          <div
+            class={`mt-1 flex items-center gap-1.5 text-[10px] leading-3 text-faint ${
+              mine() ? "flex-row-reverse" : ""
+            }`}
+          >
+            <MessageAvatar message={m()} tiny />
+            <Show
+              when={m().author.id}
+              fallback={
+                <span
+                  class="font-semibold"
+                  style={{ color: authorColor(m().author.name) }}
+                >
+                  {m().author.name}
+                </span>
+              }
+            >
+              <A
+                href={
+                  m().author.kind === "agent"
+                    ? `/app/ag/${m().author.id}`
+                    : `/app/u/${m().author.id}`
+                }
+                class="font-semibold hover:underline"
+                style={{ color: authorColor(m().author.name) }}
+                title={`Open ${m().author.name}'s profile`}
+              >
+                {m().author.name}
+              </A>
+            </Show>
+            <Show when={m().author.kind === "agent"}>
+              <span class="rounded bg-accent-soft px-1 py-px font-mono text-[8.5px] font-semibold uppercase tracking-wide text-accent-ink">
+                agent
+              </span>
+            </Show>
             <Show when={m().edited_at}>
               <span>(edited)</span>
             </Show>
@@ -1149,7 +1363,7 @@ function MessageRow(props: {
       </div>
       <div
         class={`msg-actions absolute -top-3 hidden items-center gap-0.5 rounded-lg border border-border bg-surface px-1 py-0.5 shadow-sm group-hover:flex ${
-          bubbles() && !mine() ? "left-[46px]" : "right-3"
+          bubbles() && !mine() ? "left-4" : "right-3"
         }`}
         style={{ display: tapped() ? "flex" : undefined }}
       >
@@ -1204,6 +1418,17 @@ function MessageRow(props: {
             class={toolBtn}
           >
             <ForwardIcon class="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            title={copiedId() ? "Copied" : "Copy message ID"}
+            aria-label="Copy message ID"
+            onClick={() => void copyId()}
+            class={toolBtn}
+          >
+            <Show when={!copiedId()} fallback={<CheckIcon class="h-4 w-4 text-accent-ink" />}>
+              <TagIcon class="h-4 w-4" />
+            </Show>
           </button>
         </Show>
         <Show when={props.onOpenThread && !m().thread}>
@@ -1633,9 +1858,27 @@ function ConversationThread(props: {
     const key = props.conversationId + "|" + tagFilter();
     if (page && seededFor !== key) {
       seededFor = key;
+      // Re-anchor: a fresh page always starts pinned to the bottom,
+      // whatever the previous conversation's scroll position was. The
+      // reset must precede setMessages so the lastId effect below fires
+      // with stickToBottom already true.
+      stickToBottom = true;
+      lastSeenId = undefined;
       setMessages(page.messages);
       setHasMore(page.has_more);
       markLatestRead();
+      // Fonts/images decode after this paint and can push content taller —
+      // two snaps cover the common late-layout cases (RO catches the rest).
+      requestAnimationFrame(() => {
+        if (stickToBottom && scrollEl) {
+          scrollEl.scrollTop = scrollEl.scrollHeight;
+        }
+      });
+      setTimeout(() => {
+        if (stickToBottom && scrollEl) {
+          scrollEl.scrollTop = scrollEl.scrollHeight;
+        }
+      }, 120);
     }
   });
 
