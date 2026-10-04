@@ -13,8 +13,10 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 
@@ -183,6 +185,40 @@ func (a *App) ProxyRequest(method, reqPath, contentType, bodyB64, token string) 
 		return proxyResult{}, err
 	}
 	return proxyResult{Status: resp.StatusCode, Body: string(raw)}, nil
+}
+
+// Notify raises an OS notification from the SPA — the webview's
+// Notification API doesn't exist under WebKitGTK and WebView2 toasts only
+// honor the same permission flow, so foreground alerts cross the bridge.
+// Bound as window.go.main.App.Notify.
+func (a *App) Notify(title, body string) error {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return errors.New("title required")
+	}
+	if len(title) > 200 {
+		title = title[:200]
+	}
+	if len(body) > 500 {
+		body = body[:500]
+	}
+	switch runtime.GOOS {
+	case "linux":
+		if path, err := exec.LookPath("notify-send"); err == nil {
+			return exec.Command(path, "-a", "Relay", title, body).Run()
+		}
+	case "darwin":
+		if path, err := exec.LookPath("osascript"); err == nil {
+			script := fmt.Sprintf(`display notification %q with title %q`, body, title)
+			return exec.Command(path, "-e", script).Run()
+		}
+	case "windows":
+		// WebView2 implements the Notification API natively — the SPA only
+		// reaches this bridge when that path failed, so a shell toast would
+		// need a packaged app identity. No-op rather than error.
+		return nil
+	}
+	return errors.New("no notification facility on this platform")
 }
 
 func webDist() fs.FS {

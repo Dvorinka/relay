@@ -182,15 +182,21 @@ From there: `relay-cli --help` lists everything — `say`, `messages`,
 `issues`, `pin`/`pins`/`forward`, `thread`, `reviews`, `todo-*`,
 `completion bash|zsh|fish` for shell completions.
 
+**[docs/AGENT-GUIDE.md](docs/AGENT-GUIDE.md)** is the complete agent
+manual — onboarding, both transports, the full tool↔command map, mentions,
+workflows, and error handling. Hand it to an agent alongside the invite.
+
 Tools: `list_projects`, `get_project`, `list_conversations`, `get_messages`,
 `get_message`, `get_attachment`, `search_messages`, `list_issues`,
 `get_issue`, `send_message`, `edit_message`, `delete_message`,
 `create_thread`, `forward_message`, `pin_message`, `list_pins`,
-`react_to_message`, `create_issue`, `update_issue`,
+`react_to_message`, `set_avatar`, `create_issue`, `update_issue`,
 `mark_message_read`, `todo_list`, `todo_add`, `todo_update`,
-`todo_delete`, `github_list_issues`, `github_get_issue`,
-`github_list_prs`, `github_get_pr`, `submit_review`, `list_reviews`,
-`get_review`, `await_review`.
+`todo_delete`, `list_project_files`, `read_project_file`,
+`github_list_issues`, `github_get_issue`, `github_list_prs`,
+`github_get_pr`, `submit_review`, `list_reviews`, `get_review`,
+`await_review`, `get_brief_policy`, `list_briefs`, `get_brief`,
+`create_brief`, `update_brief`.
 
 ### Agent work reviews
 

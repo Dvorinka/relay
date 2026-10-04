@@ -25,7 +25,7 @@ from workspaces
 where id = $1;
 
 -- name: ListWorkspaceMembers :many
-select u.id, u.email, u.name, u.avatar_key, u.created_at, wm.role
+select u.id, u.email, u.name, u.name_color, u.avatar_key, u.created_at, wm.role
 from workspace_members wm
 join users u on u.id = wm.user_id
 where wm.workspace_id = $1

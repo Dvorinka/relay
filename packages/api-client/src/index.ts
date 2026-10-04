@@ -249,6 +249,8 @@ export function createClient(baseUrl: string, token?: string) {
         current_password: currentPassword,
         new_password: newPassword,
       }),
+    updateMe: (input: { name_color: string }) =>
+      patch<{ user: User }>("/api/auth/me", input),
 
     // Workspaces
     listWorkspaces: () =>
@@ -273,6 +275,10 @@ export function createClient(baseUrl: string, token?: string) {
       post<Project>("/api/projects", input),
     getProject: (projectId: string) =>
       request<Project>(`/api/projects/${projectId}`),
+    updateProject: (
+      projectId: string,
+      input: { name?: string; description?: string; icon?: string; color?: string },
+    ) => patch<Project>(`/api/projects/${projectId}`, input),
     projectOverview: (projectId: string) =>
       request<ProjectOverview>(`/api/projects/${projectId}/overview`),
     projectConversation: (projectId: string) =>

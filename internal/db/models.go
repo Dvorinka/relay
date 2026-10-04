@@ -333,6 +333,7 @@ type User struct {
 	AvatarKey    pgtype.Text        `json:"avatar_key"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	NameColor    pgtype.Text        `json:"name_color"`
 }
 
 type WebhookDelivery struct {

@@ -5,14 +5,17 @@
 set -eu
 
 src="$(cd "$(dirname "$0")/.." && pwd)"
+web="$src/../web"
 data="${XDG_DATA_HOME:-$HOME/.local/share}"
 bin="$HOME/.local/bin"
 apps="$data/applications"
-icons="$data/icons/hicolor/256x256/apps"
+icons="$data/icons/hicolor"
 
-mkdir -p "$bin" "$apps" "$icons"
+mkdir -p "$bin" "$apps" "$icons/scalable/apps" "$icons/1024x1024/apps"
 cp "$src/build/bin/relay-desktop" "$bin/relay-desktop"
-cp "$src/build/appicon.png" "$icons/relay.png"
+# Scalable SVG (crisp at every size) plus the raster fallback.
+cp "$web/public/favicon.svg" "$icons/scalable/apps/relay.svg"
+cp "$src/build/appicon.png" "$icons/1024x1024/apps/relay.png"
 
 cat > "$apps/relay.desktop" <<EOF
 [Desktop Entry]

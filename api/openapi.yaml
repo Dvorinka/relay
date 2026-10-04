@@ -109,6 +109,33 @@ paths:
               schema: { $ref: "#/components/schemas/AuthSession" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /api/auth/me:
+    patch:
+      operationId: updateMe
+      tags: [auth]
+      summary: Update profile fields (chat name color)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name_color:
+                  type: string
+                  description: "#rrggbb, or empty string to clear"
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /api/auth/password/forgot:
     post:
       operationId: forgotPassword
@@ -2551,6 +2578,9 @@ components:
         id: { type: string, format: uuid }
         email: { type: string, format: email }
         name: { type: string }
+        name_color:
+          type: ["string", "null"]
+          description: Chat name color as #rrggbb; null = palette default.
         avatar_url: { type: ["string", "null"] }
         created_at: { type: string, format: date-time }
 

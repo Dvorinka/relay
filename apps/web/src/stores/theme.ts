@@ -72,3 +72,22 @@ export function setChatStyle(s: ChatStyle) {
   setChatStyleSignal(s);
   localStorage.setItem("relay.chatStyle", s);
 }
+
+// --- clock ---
+// "system" follows the OS locale; "12"/"24" pin the hour format for message
+// timestamps regardless of locale.
+
+export type ClockFormat = "system" | "12" | "24";
+
+const [clockFormat, setClockSignal] = createSignal<ClockFormat>(
+  (localStorage.getItem("relay.clock") as ClockFormat) || "system",
+);
+
+export function useClock() {
+  return { clockFormat };
+}
+
+export function setClockFormat(f: ClockFormat) {
+  setClockSignal(f);
+  localStorage.setItem("relay.clock", f);
+}

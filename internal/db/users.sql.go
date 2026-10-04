@@ -43,7 +43,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateU
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-select id, email, password_hash, name, avatar_key, created_at
+select id, email, password_hash, name, name_color, avatar_key, created_at
 from users
 where lower(email) = lower($1)
 `
@@ -53,6 +53,7 @@ type GetUserByEmailRow struct {
 	Email        string             `json:"email"`
 	PasswordHash string             `json:"password_hash"`
 	Name         string             `json:"name"`
+	NameColor    pgtype.Text        `json:"name_color"`
 	AvatarKey    pgtype.Text        `json:"avatar_key"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 }
@@ -65,6 +66,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (GetUserByEm
 		&i.Email,
 		&i.PasswordHash,
 		&i.Name,
+		&i.NameColor,
 		&i.AvatarKey,
 		&i.CreatedAt,
 	)
@@ -72,7 +74,7 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (GetUserByEm
 }
 
 const getUserByID = `-- name: GetUserByID :one
-select id, email, name, avatar_key, created_at
+select id, email, name, name_color, avatar_key, created_at
 from users
 where id = $1
 `
@@ -81,6 +83,7 @@ type GetUserByIDRow struct {
 	ID        pgtype.UUID        `json:"id"`
 	Email     string             `json:"email"`
 	Name      string             `json:"name"`
+	NameColor pgtype.Text        `json:"name_color"`
 	AvatarKey pgtype.Text        `json:"avatar_key"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
@@ -92,6 +95,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (GetUserByIDR
 		&i.ID,
 		&i.Email,
 		&i.Name,
+		&i.NameColor,
 		&i.AvatarKey,
 		&i.CreatedAt,
 	)
@@ -100,7 +104,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (GetUserByIDR
 
 const updateUserAvatar = `-- name: UpdateUserAvatar :one
 update users set avatar_key = $2 where id = $1
-returning id, email, name, avatar_key, created_at
+returning id, email, name, name_color, avatar_key, created_at
 `
 
 type UpdateUserAvatarParams struct {
@@ -112,6 +116,7 @@ type UpdateUserAvatarRow struct {
 	ID        pgtype.UUID        `json:"id"`
 	Email     string             `json:"email"`
 	Name      string             `json:"name"`
+	NameColor pgtype.Text        `json:"name_color"`
 	AvatarKey pgtype.Text        `json:"avatar_key"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
@@ -123,6 +128,40 @@ func (q *Queries) UpdateUserAvatar(ctx context.Context, arg UpdateUserAvatarPara
 		&i.ID,
 		&i.Email,
 		&i.Name,
+		&i.NameColor,
+		&i.AvatarKey,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const updateUserNameColor = `-- name: UpdateUserNameColor :one
+update users set name_color = $2 where id = $1
+returning id, email, name, name_color, avatar_key, created_at
+`
+
+type UpdateUserNameColorParams struct {
+	ID        pgtype.UUID `json:"id"`
+	NameColor pgtype.Text `json:"name_color"`
+}
+
+type UpdateUserNameColorRow struct {
+	ID        pgtype.UUID        `json:"id"`
+	Email     string             `json:"email"`
+	Name      string             `json:"name"`
+	NameColor pgtype.Text        `json:"name_color"`
+	AvatarKey pgtype.Text        `json:"avatar_key"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) UpdateUserNameColor(ctx context.Context, arg UpdateUserNameColorParams) (UpdateUserNameColorRow, error) {
+	row := q.db.QueryRow(ctx, updateUserNameColor, arg.ID, arg.NameColor)
+	var i UpdateUserNameColorRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Name,
+		&i.NameColor,
 		&i.AvatarKey,
 		&i.CreatedAt,
 	)

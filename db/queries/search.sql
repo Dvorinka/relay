@@ -1,8 +1,11 @@
 -- name: SearchMessages :many
--- global message FTS across the user's workspaces, ranked
+-- global message FTS across the user's workspaces, ranked.
+-- Optional qualifiers parsed by the handler: author ilike, project key,
+-- has-image/has-file attachment filters, created_at bounds.
 select m.id, m.body, m.created_at, c.project_id,
        coalesce(u.name, a.name, '') as author_name,
-       ts_rank(to_tsvector('english', m.body), websearch_to_tsquery('english', $2)) as rank
+       coalesce(ts_rank(to_tsvector('english', m.body),
+               websearch_to_tsquery('english', nullif(sqlc.arg(q), ''))), 0) as rank
 from messages m
 join conversations c on c.id = m.conversation_id
 join projects p on p.id = c.project_id
@@ -10,7 +13,17 @@ join workspace_members wm on wm.workspace_id = p.workspace_id and wm.user_id = $
 left join users u on u.id = m.author_user_id
 left join agents a on a.id = m.author_agent_id
 where m.deleted_at is null
-  and to_tsvector('english', m.body) @@ websearch_to_tsquery('english', $2)
+  and (sqlc.arg(q) = '' or to_tsvector('english', m.body) @@ websearch_to_tsquery('english', sqlc.arg(q)))
+  and (sqlc.arg(author) = '' or coalesce(u.name, a.name, '') ilike sqlc.arg(author))
+  and (sqlc.arg(project_key) = '' or upper(p.key) = upper(sqlc.arg(project_key)))
+  and (sqlc.narg(has_image)::bool is not true or exists (
+        select 1 from message_attachments ma
+        join attachments att on att.id = ma.attachment_id
+        where ma.message_id = m.id and att.content_type like 'image/%'))
+  and (sqlc.narg(has_file)::bool is not true or exists (
+        select 1 from message_attachments ma where ma.message_id = m.id))
+  and (sqlc.narg(before)::timestamptz is null or m.created_at < sqlc.narg(before)::timestamptz)
+  and (sqlc.narg(after)::timestamptz is null or m.created_at >= sqlc.narg(after)::timestamptz)
 order by rank desc, m.created_at desc
 limit 20;
 

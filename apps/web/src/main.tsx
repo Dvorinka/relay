@@ -2,6 +2,7 @@ import { Navigate, Route, Router } from "@solidjs/router";
 import { render } from "solid-js/web";
 import App from "./App";
 import { desktopOpen } from "./lib/desktop";
+import { initNotify } from "./lib/notify";
 import ForgotPassword from "./features/auth/ForgotPassword";
 import Login from "./features/auth/Login";
 import Register from "./features/auth/Register";
@@ -14,7 +15,15 @@ import ProjectPage from "./features/projects/ProjectPage";
 import "./index.css";
 import Home from "./pages/Home";
 import Inbox from "./pages/Inbox";
-import { SessionProvider } from "./stores/session";
+import { SessionProvider, useSession } from "./stores/session";
+
+// Foreground mention/reply alerts — the path that works in the desktop
+// shell, where web-push plumbing doesn't.
+function NotificationsRoot() {
+  const session = useSession();
+  initNotify(() => session.user());
+  return null;
+}
 
 // Push notifications ride this worker; harmless when the server has no
 // VAPID keys (the subscribe call then reports disabled).
@@ -46,6 +55,7 @@ document.addEventListener(
 render(
   () => (
     <SessionProvider>
+      <NotificationsRoot />
       <Router>
         <Route path="/login" component={Login} />
         <Route path="/register" component={Register} />

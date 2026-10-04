@@ -103,7 +103,7 @@ func (q *Queries) GetWorkspaceRole(ctx context.Context, arg GetWorkspaceRolePara
 }
 
 const listWorkspaceMembers = `-- name: ListWorkspaceMembers :many
-select u.id, u.email, u.name, u.avatar_key, u.created_at, wm.role
+select u.id, u.email, u.name, u.name_color, u.avatar_key, u.created_at, wm.role
 from workspace_members wm
 join users u on u.id = wm.user_id
 where wm.workspace_id = $1
@@ -114,6 +114,7 @@ type ListWorkspaceMembersRow struct {
 	ID        pgtype.UUID        `json:"id"`
 	Email     string             `json:"email"`
 	Name      string             `json:"name"`
+	NameColor pgtype.Text        `json:"name_color"`
 	AvatarKey pgtype.Text        `json:"avatar_key"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	Role      string             `json:"role"`
@@ -132,6 +133,7 @@ func (q *Queries) ListWorkspaceMembers(ctx context.Context, workspaceID pgtype.U
 			&i.ID,
 			&i.Email,
 			&i.Name,
+			&i.NameColor,
 			&i.AvatarKey,
 			&i.CreatedAt,
 			&i.Role,

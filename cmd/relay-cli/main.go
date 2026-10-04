@@ -11,6 +11,13 @@
 //	relay-cli say <project_id> "text" [--reply <message_id>]
 //	relay-cli react <message_id> <emoji>
 //	relay-cli msg-edit <message_id> "new text"
+//	relay-cli msg-del <message_id>
+//	relay-cli pin|unpin <message_id>
+//	relay-cli pins <project_id|conversation_id>
+//	relay-cli forward <message_id> <project_id>
+//	relay-cli thread <message_id> [--title t]
+//	relay-cli avatar <file-or-https-url>
+//	relay-cli redeem <rli_…> [--name x] [--mode notify]
 //	relay-cli issues <project_id>
 //	relay-cli issue <issue_id>
 //	relay-cli issue-new <project_id> "title" ["description"]

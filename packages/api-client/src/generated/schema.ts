@@ -89,6 +89,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update profile fields (chat name color) */
+        patch: operations["updateMe"];
+        trace?: never;
+    };
     "/api/auth/password/forgot": {
         parameters: {
             query?: never;
@@ -1672,6 +1689,8 @@ export interface components {
             /** Format: email */
             email: string;
             name: string;
+            /** @description Chat name color as */
+            name_color?: string | null;
             avatar_url?: string | null;
             /** Format: date-time */
             created_at?: string;
@@ -2394,6 +2413,37 @@ export interface operations {
                     "application/json": components["schemas"]["AuthSession"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    updateMe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description #rrggbb, or empty string to clear */
+                    name_color?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated user */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        user?: components["schemas"]["User"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
         };
     };

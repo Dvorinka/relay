@@ -153,7 +153,7 @@ func (s *Service) handleMembers(c *gin.Context) {
 		out = append(out, gin.H{
 			"role": m.Role,
 			"user": auth.UserOut(db.GetUserByIDRow{
-				ID: m.ID, Email: m.Email, Name: m.Name,
+				ID: m.ID, Email: m.Email, Name: m.Name, NameColor: m.NameColor,
 				AvatarKey: m.AvatarKey, CreatedAt: m.CreatedAt,
 			}),
 		})
@@ -198,7 +198,8 @@ func (s *Service) handleInvite(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{
 		"role": role,
 		"user": auth.UserOut(db.GetUserByIDRow{
-			ID: user.ID, Email: user.Email, Name: user.Name, AvatarKey: user.AvatarKey, CreatedAt: user.CreatedAt,
+			ID: user.ID, Email: user.Email, Name: user.Name, NameColor: user.NameColor,
+			AvatarKey: user.AvatarKey, CreatedAt: user.CreatedAt,
 		}),
 	})
 }
