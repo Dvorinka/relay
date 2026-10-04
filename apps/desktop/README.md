@@ -46,6 +46,25 @@ makensis -DVERSION=1.0.0 -DVI_VERSION=1.0.0.0 \
 The release workflow produces `Relay-Setup-<version>.exe` alongside the raw
 `relay-desktop-windows-amd64.exe` on every `v*` tag.
 
+## Windows MSI
+
+`installer/relay.wxs` builds a per-user MSI via WiX — same install location
+(`%LOCALAPPDATA%\Programs\Relay`), shortcuts, and ARP entry as the NSIS
+installer, plus in-place `MajorUpgrade` semantics. Useful for scripted or
+managed installs (`msiexec /i Relay-Setup-x.y.z.msi /qn`). WiX only builds on
+Windows (CI uses `windows-latest`):
+
+```powershell
+dotnet tool install --global wix
+wix build -arch x64 -o Relay-Setup-1.0.0.msi `
+  -d VERSION=1.0.0 -d EXE=dist\relay-desktop-windows-amd64.exe `
+  -d ICON=build\windows\icon.ico installer\relay.wxs
+```
+
+Unlike the NSIS installer, the MSI does not bootstrap the WebView2 Runtime —
+present on Windows 11 and patched Windows 10, deploy separately on bare
+images.
+
 ## Linux install
 
 `installer/install-linux.sh` does a per-user install — binary to
