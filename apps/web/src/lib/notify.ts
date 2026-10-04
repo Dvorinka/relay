@@ -6,6 +6,7 @@
 import type { Message } from "@relay/api-client";
 import { desktopNotify, isDesktop } from "./desktop";
 import { subscribe, type RelayEvent } from "./events";
+import { notifySound, playSound } from "./sounds";
 
 const K_NOTIFY = "relay.notify";
 const K_NOTIFY_CATS = "relay.notify.categories";
@@ -57,6 +58,7 @@ export function setNotifyCategory(cat: NotifyCategory, on: boolean) {
 // deliver routes to the OS: the Wails bridge inside the desktop app, the
 // Notification API in a real browser. Silent no-op without permission.
 export async function deliver(title: string, body: string) {
+  playSound(notifySound());
   if (isDesktop()) {
     if (await desktopNotify(title, body)) return;
   }

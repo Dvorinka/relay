@@ -293,7 +293,7 @@ export function WebhooksSection(props: { projectId: string }) {
                   <For each={events}>
                     {(e) => (
                       <label
-                        class={`flex cursor-pointer items-center gap-1 rounded-md border px-2 py-1 font-mono text-[11px] transition-colors ${
+                        class={`relative flex cursor-pointer items-center gap-1 rounded-md border px-2 py-1 font-mono text-[11px] transition-colors ${
                           picked().includes(e)
                             ? "border-accent/50 bg-accent/10 text-fg"
                             : "border-border text-muted hover:text-fg"
@@ -317,7 +317,7 @@ export function WebhooksSection(props: { projectId: string }) {
               hint="Subscribe to every current and future event type"
             >
               <label
-                class={`flex w-fit cursor-pointer items-center gap-1 rounded-md border px-2 py-1 font-mono text-[11px] transition-colors ${
+                class={`relative flex w-fit cursor-pointer items-center gap-1 rounded-md border px-2 py-1 font-mono text-[11px] transition-colors ${
                   picked().includes("*")
                     ? "border-amber-500/50 bg-amber-500/10 text-fg"
                     : "border-border text-muted hover:text-fg"

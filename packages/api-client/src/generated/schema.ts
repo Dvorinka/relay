@@ -2378,6 +2378,8 @@ export interface components {
                 agent_id?: string;
                 name?: string;
             } | null;
+            /** @description Display name of the user who minted the invite */
+            created_by?: string;
             /** Format: date-time */
             created_at: string;
         };

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"log"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // web/dist holds the built SPA (copied from apps/web/dist in CI). Only a stub
@@ -45,6 +47,27 @@ func main() {
 		Bind:             []any{app},
 		BackgroundColour: &options.RGBA{R: 10, G: 10, B: 11, A: 255},
 		OnStartup:        app.startup,
+		// Close-to-background: with run_in_background on, closing the window
+		// hides it — notifications keep working. Single-instance relaunch is
+		// how the user brings the window back (double-clicking the exe).
+		OnBeforeClose: func(ctx context.Context) bool {
+			if app.cfg.RunInBackground {
+				wailsruntime.WindowHide(ctx)
+				return true
+			}
+			return false
+		},
+		SingleInstanceLock: &options.SingleInstanceLock{
+			UniqueId: "dev.tdvorak.relay",
+			OnSecondInstanceLaunch: func(_ options.SecondInstanceData) {
+				if app.ctx != nil {
+					wailsruntime.WindowShow(app.ctx)
+					wailsruntime.WindowUnminimise(app.ctx)
+					wailsruntime.WindowSetAlwaysOnTop(app.ctx, true)
+					wailsruntime.WindowSetAlwaysOnTop(app.ctx, false)
+				}
+			},
+		},
 		Windows: &windows.Options{
 			WebviewIsTransparent: false,
 			Theme:                windows.SystemDefault,

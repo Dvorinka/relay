@@ -776,25 +776,64 @@ export default function AgentsSection(props: {
         <Show when={pendingInvites().length > 0}>
           <div>
             <h3 class="mb-1.5 text-[12px] font-semibold">Open invites</h3>
-            <ul class="flex flex-col gap-1">
+            <ul class="flex flex-col gap-1.5">
               <For each={pendingInvites()}>
-                {(i) => (
-                  <li class="flex items-center gap-2 text-[12px] text-muted">
-                    <span class="font-mono">
-                      {i.project_ids.length === 0
-                        ? "all projects"
-                        : `${i.project_ids.length} project(s)`}
-                    </span>
-                    <span>expires {timeUntil(i.expires_at)}</span>
-                    <button
-                      type="button"
-                      class="ml-auto text-muted underline-offset-2 hover:text-red-600 hover:underline dark:hover:text-red-400"
-                      onClick={() => setRevokingInvite(i)}
-                    >
-                      revoke
-                    </button>
-                  </li>
-                )}
+                {(i) => {
+                  const projNames = () =>
+                    i.project_ids
+                      .map((id) => projects()?.find((p) => p.id === id)?.name)
+                      .filter((n): n is string => !!n);
+                  const allProjects = () => i.project_ids.length === 0;
+                  const scopes = () =>
+                    i.scopes.length === 0 ? DEFAULT_INVITE_SCOPES : i.scopes;
+                  return (
+                    <li class="rounded-lg border border-border bg-surface px-3 py-2">
+                      <div class="flex items-center gap-2">
+                        <span class="font-mono text-[11px] text-faint">
+                          #{i.id.slice(0, 8)}
+                        </span>
+                        <span class="min-w-0 flex-1 truncate text-[12.5px] text-fg">
+                          {allProjects()
+                            ? "All workspace projects — current and future"
+                            : projNames().length > 0
+                              ? projNames().join(", ")
+                              : `${i.project_ids.length} project(s)`}
+                        </span>
+                        <Tip
+                          text={`Expires ${new Date(i.expires_at).toLocaleString()}`}
+                          side="top"
+                        >
+                          <span class="shrink-0 rounded-full border border-accent/40 bg-accent-soft/60 px-1.5 py-px font-mono text-[10px] text-accent-ink">
+                            {timeUntil(i.expires_at)} left
+                          </span>
+                        </Tip>
+                        <button
+                          type="button"
+                          class="shrink-0 rounded px-1.5 py-0.5 text-[11.5px] text-muted transition-colors hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
+                          onClick={() => setRevokingInvite(i)}
+                        >
+                          Revoke
+                        </button>
+                      </div>
+                      <div class="mt-1 flex flex-wrap items-center gap-1">
+                        <For each={scopes()}>
+                          {(s) => (
+                            <span class="rounded bg-surface-2 px-1.5 py-px font-mono text-[10px] text-muted">
+                              {s}
+                            </span>
+                          )}
+                        </For>
+                      </div>
+                      <p class="mt-1 text-[11px] text-faint">
+                        <Show when={i.created_by} fallback="Created">
+                          Created by {i.created_by}
+                        </Show>{" "}
+                        {timeAgo(i.created_at)} · single-use · agent registers
+                        itself with the token
+                      </p>
+                    </li>
+                  );
+                }}
               </For>
             </ul>
           </div>

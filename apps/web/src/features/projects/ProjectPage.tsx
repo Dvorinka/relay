@@ -359,14 +359,49 @@ function MiniReview(props: { review: AgentReview; onOpen: () => void }) {
 
 // Discord-style rail search: field pinned above the issues list, results
 // scoped to this project swap in while typing; Esc/✕ returns to context.
-function RailSearch(props: { projectId: string }) {
+// Qualifier autocomplete — Discord-style: typing "from:" offers members,
+// "has:" offers content kinds, "in:" offers projects, date qualifiers offer
+// formats. The active token is the whitespace-separated word at the caret.
+type QualifierKind = "from" | "in" | "has" | "mentions" | "before" | "after" | "during";
+
+const QUALIFIER_HINTS: Record<QualifierKind, string> = {
+  from: "author is…",
+  in: "project key",
+  has: "has a…",
+  mentions: "mentions…",
+  before: "before YYYY-MM-DD",
+  after: "after YYYY-MM-DD",
+  during: "during YYYY[-MM[-DD]]",
+};
+
+const HAS_VALUES = ["image", "file", "link"] as const;
+
+// parseToken splits the query at the caret — qualifier + partial value.
+function activeToken(value: string, caret: number): { qual: QualifierKind; partial: string } | null {
+  const head = value.slice(0, caret);
+  const m = head.match(/(^|\s)(from|in|has|mentions|before|after|during):([^\s]*)$/);
+  if (!m || !m[2]) return null;
+  return { qual: m[2] as QualifierKind, partial: m[3] ?? "" };
+}
+
+function RailSearch(props: {
+  projectId: string;
+  members: { name: string }[];
+  agents: { name: string }[];
+  projects: { key: string; name: string }[];
+}) {
   const [q, setQ] = createSignal("");
   const [results, setResults] = createSignal<SearchResults | null>(null);
+  const [caret, setCaret] = createSignal(0);
+  const [suggestIdx, setSuggestIdx] = createSignal(0);
+  let inputEl: HTMLInputElement | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   onCleanup(() => clearTimeout(timer));
 
-  function onInput(v: string) {
+  function onInput(v: string, pos: number) {
     setQ(v);
+    setCaret(pos);
+    setSuggestIdx(0);
     clearTimeout(timer);
     const needle = v.trim();
     if (needle.length < 2) {
@@ -389,6 +424,59 @@ function RailSearch(props: { projectId: string }) {
     }, 250);
   }
 
+  // Suggestions for the qualifier under the caret.
+  const suggestions = createMemo(() => {
+    const tok = activeToken(q(), caret());
+    if (!tok) return [] as { value: string; label: string; detail: string }[];
+    const needle = tok.partial.toLowerCase();
+    const match = (s: string) => s.toLowerCase().includes(needle);
+    switch (tok.qual) {
+      case "from":
+      case "mentions":
+        return [
+          ...props.members.map((m) => ({
+            value: m.name,
+            label: m.name,
+            detail: "member",
+          })),
+          ...props.agents.map((a) => ({
+            value: a.name,
+            label: a.name,
+            detail: "agent",
+          })),
+          ...(tok.qual === "mentions"
+            ? [{ value: "me", label: "me", detail: "yourself" }]
+            : []),
+        ].filter((s) => match(s.value));
+      case "in":
+        return props.projects
+          .filter((p) => match(p.key) || match(p.name))
+          .map((p) => ({ value: p.key, label: p.key, detail: p.name }));
+      case "has":
+        return HAS_VALUES.filter((v) => v.includes(needle)).map((v) => ({
+          value: v,
+          label: `has:${v}`,
+          detail: { image: "image attachments", file: "any attachment", link: "URLs" }[v],
+        }));
+      case "before":
+      case "after":
+      case "during":
+        return [{ value: "", label: `${tok.qual}:`, detail: QUALIFIER_HINTS[tok.qual] }];
+    }
+  });
+
+  function applySuggestion(value: string) {
+    const tok = activeToken(q(), caret());
+    if (!tok || !inputEl) return;
+    const head = q().slice(0, caret());
+    const tail = q().slice(caret());
+    // Replace the partial token, keep a trailing space for the next term.
+    const next = head.replace(/(from|in|has|mentions|before|after|during):[^\s]*$/, `$1:${value} `) + tail;
+    setQ(next);
+    onInput(next, head.replace(/[^\s]*$/, `${tok.qual}:${value} `).length);
+    inputEl.focus();
+  }
+
   return (
     <div class="px-4 pt-4">
       <div class="relative">
@@ -399,12 +487,33 @@ function RailSearch(props: { projectId: string }) {
           class="block"
         >
           <input
+            ref={(el) => (inputEl = el)}
             type="text"
             value={q()}
             placeholder="Search"
             aria-label="Search this project"
-            onInput={(e) => onInput(e.currentTarget.value)}
+            onInput={(e) => onInput(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
+            onKeyUp={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
+            onClick={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
             onKeyDown={(e) => {
+              const list = suggestions();
+              if (list.length > 0) {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setSuggestIdx((i) => Math.min(i + 1, list.length - 1));
+                  return;
+                }
+                if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setSuggestIdx((i) => Math.max(i - 1, 0));
+                  return;
+                }
+                if (e.key === "Tab" || e.key === "Enter") {
+                  e.preventDefault();
+                  applySuggestion(list[suggestIdx()]!.value);
+                  return;
+                }
+              }
               if (e.key === "Escape") {
                 setQ("");
                 setResults(null);
@@ -414,6 +523,30 @@ function RailSearch(props: { projectId: string }) {
             class="h-8 w-full rounded-md border border-transparent bg-surface px-2.5 pr-7 text-[12.5px] placeholder:text-muted/70 focus:border-accent/50 focus:outline-none"
           />
         </Tip>
+        <Show when={suggestions().length > 0}>
+          <div class="absolute inset-x-0 top-full z-30 mt-1 overflow-hidden rounded-lg border border-border bg-surface shadow-lg">
+            <p class="border-b border-border/60 px-2.5 py-1 text-[10px] font-medium uppercase tracking-wide text-faint">
+              {QUALIFIER_HINTS[activeToken(q(), caret())!.qual]}
+            </p>
+            <For each={suggestions().slice(0, 8)}>
+              {(s, i) => (
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    applySuggestion(s.value);
+                  }}
+                  class={`flex w-full items-baseline gap-2 px-2.5 py-1.5 text-left text-[12.5px] ${
+                    i() === suggestIdx() ? "bg-accent-soft text-fg" : "text-muted hover:bg-hover"
+                  }`}
+                >
+                  <span class="min-w-0 flex-1 truncate font-medium">{s.label}</span>
+                  <span class="shrink-0 text-[10.5px] text-faint">{s.detail}</span>
+                </button>
+              )}
+            </For>
+          </div>
+        </Show>
         <Show when={q()}>
           <button
             type="button"
@@ -520,6 +653,7 @@ function ContextRail(props: {
   onOpenBriefs: () => void;
 }) {
   const session = useSession();
+  const projects = useProjects();
   const [issues, { refetch: refetchIssues }] = createResource(
     () => props.project.id,
     async (id) => (await api.listIssues(id)).issues,
@@ -673,7 +807,12 @@ function ContextRail(props: {
             </button>
           </Tip>
         </div>
-      <RailSearch projectId={props.project.id} />
+      <RailSearch
+        projectId={props.project.id}
+        members={(members.latest ?? []).map((m) => ({ name: m.user.name }))}
+        agents={(agents.latest ?? []).map((a) => ({ name: a.name }))}
+        projects={projects.projects() ?? []}
+      />
       <RailSection label="Open issues" count={openIssues().length}>
         <div class="flex flex-col gap-1.5">
           <For
@@ -1239,7 +1378,7 @@ function ProjectIconSection(props: { project: Project }) {
           )}
         </Show>
         <label
-          class={`cursor-pointer rounded-md border border-border bg-surface px-2.5 py-1 text-[12px] hover:bg-hover ${pending() ? "pointer-events-none opacity-60" : ""}`}
+          class={`relative cursor-pointer rounded-md border border-border bg-surface px-2.5 py-1 text-[12px] hover:bg-hover ${pending() ? "pointer-events-none opacity-60" : ""}`}
         >
           <input
             type="file"

@@ -545,7 +545,7 @@ func (s *Service) handleCreateInvite(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
-	out := inviteJSON(row, "")
+	out := inviteJSON(row, "", "")
 	out["token"] = token
 	c.JSON(http.StatusCreated, out)
 }
@@ -563,7 +563,7 @@ func (s *Service) handleListInvites(c *gin.Context) {
 			ID: r.ID, WorkspaceID: r.WorkspaceID, ProjectIds: r.ProjectIds,
 			Scopes: r.Scopes, ExpiresAt: r.ExpiresAt, UsedBy: r.UsedBy,
 			CreatedBy: r.CreatedBy, CreatedAt: r.CreatedAt,
-		}, r.UsedByName.String))
+		}, r.UsedByName.String, r.CreatedByName.String))
 	}
 	c.JSON(http.StatusOK, gin.H{"invites": out})
 }
@@ -702,7 +702,7 @@ func mintInviteToken() (string, []byte, error) {
 	return token, sum[:], nil
 }
 
-func inviteJSON(r db.AgentInvite, usedByName string) gin.H {
+func inviteJSON(r db.AgentInvite, usedByName, createdByName string) gin.H {
 	var used any
 	if r.UsedBy.Valid {
 		used = gin.H{"agent_id": r.UsedBy.String(), "name": usedByName}
@@ -715,6 +715,7 @@ func inviteJSON(r db.AgentInvite, usedByName string) gin.H {
 		"id": r.ID.String(), "project_ids": projs, "scopes": r.Scopes,
 		"expires_at": r.ExpiresAt.Time.Format("2006-01-02T15:04:05Z07:00"),
 		"used_by":    used,
+		"created_by": createdByName,
 		"created_at": r.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
 	}
 }

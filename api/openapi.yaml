@@ -3419,6 +3419,9 @@ components:
           properties:
             agent_id: { type: string, format: uuid }
             name: { type: string }
+        created_by:
+          type: string
+          description: "Display name of the user who minted the invite"
         created_at: { type: string, format: date-time }
 
     AgentRedeemResult:

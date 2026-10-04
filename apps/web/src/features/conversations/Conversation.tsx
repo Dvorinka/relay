@@ -2537,18 +2537,19 @@ function ConversationThread(props: {
       >
         <div class="border-b border-border/60 px-4 py-1.5">
           <div class="flex items-center gap-4">
-            <Show when={(pins()?.length ?? 0) > 0}>
-              <button
-                type="button"
-                onClick={() => setPinsOpen((v) => !v)}
-                class="flex items-center gap-2 text-[12px] text-muted transition-colors hover:text-fg"
-              >
-                <PinIcon class="h-3.5 w-3.5" />
-                <span class="font-medium">
-                  {pins()!.length} pinned
-                </span>
-              </button>
-            </Show>
+            <button
+              type="button"
+              onClick={() => setPinsOpen((v) => !v)}
+              aria-label="Show pinned messages"
+              class={`flex items-center gap-2 text-[12px] transition-colors hover:text-fg ${
+                (pins()?.length ?? 0) > 0 ? "text-muted" : "text-faint"
+              }`}
+            >
+              <PinIcon class="h-3.5 w-3.5" />
+              <span class="font-medium">
+                {(pins()?.length ?? 0) > 0 ? `${pins()!.length} pinned` : "Pinned"}
+              </span>
+            </button>
             <Show when={props.onOpenThread}>
               <button
                 type="button"
@@ -2560,8 +2561,15 @@ function ConversationThread(props: {
               </button>
             </Show>
           </div>
-          <Show when={(pins()?.length ?? 0) > 0}>
-            <Show when={pinsOpen()}>
+          <Show when={pinsOpen()}>
+            <Show
+              when={(pins()?.length ?? 0) > 0}
+              fallback={
+                <p class="mt-1 pb-1 text-[12px] text-faint">
+                  No pinned messages — hover a message and pin it.
+                </p>
+              }
+            >
               <div class="mt-1 flex flex-col gap-0.5 pb-1">
                 <Show when={pins()!.length > 3}>
                   <input
