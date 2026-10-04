@@ -2,6 +2,7 @@ import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { subscribe } from "../../lib/events";
 import { A } from "@solidjs/router";
 import { api } from "../../lib/api";
+import { confirmDestructive } from "../../components/Confirm";
 import { Tip } from "../../components/ui";
 import type { Issue, IssueStatus, Project, Todo } from "@relay/api-client";
 import { GitHubBadge, LabelChip, PriorityGlyph, statusDefs, StatusDot } from "./meta";
@@ -205,7 +206,13 @@ function TodoStrip(props: {
                 <button
                   type="button"
                   class="invisible px-1 text-muted transition-colors group-hover:visible hover:text-red-500"
-                  onClick={() => void api.deleteTodo(t.id).then(props.onChange)}
+                  onClick={async () => {
+                    if (
+                      !(await confirmDestructive({ title: "Delete todo" }))
+                    )
+                      return;
+                    void api.deleteTodo(t.id).then(props.onChange);
+                  }}
                   aria-label="Remove todo"
                 >
                   ×

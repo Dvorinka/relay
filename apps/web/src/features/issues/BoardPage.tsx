@@ -1,6 +1,7 @@
 import { A, useParams } from "@solidjs/router";
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api } from "../../lib/api";
+import { confirmDestructive } from "../../components/Confirm";
 import { Spinner, Tip } from "../../components/ui";
 import { IssueIcon, PlusIcon, SettingsIcon, XIcon } from "../../components/icons";
 import { Board } from "./Board";
@@ -91,6 +92,13 @@ export default function BoardPage() {
                   type="button"
                   aria-label={`Delete board ${b.name}`}
                   onClick={async () => {
+                    if (
+                      !(await confirmDestructive({
+                        title: "Delete board",
+                        body: `Delete the "${b.name}" view? Issues are unaffected.`,
+                      }))
+                    )
+                      return;
                     await api.deleteBoard(params.projectId, b.id);
                     if (activeBoard() === b.id) setActiveBoard(null);
                     refetchBoards();

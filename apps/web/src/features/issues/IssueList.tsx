@@ -14,6 +14,7 @@ import { XIcon, PlusIcon, SearchIcon, IssueIcon } from "../../components/icons";
 import { Spinner, Tip } from "../../components/ui";
 import { markGitHub } from "../github/GitHub";
 import { api } from "../../lib/api";
+import { confirmDestructive } from "../../components/Confirm";
 import { subscribe } from "../../lib/events";
 import { mediaURL } from "../../lib/net";
 import { initials } from "../../lib/text";
@@ -364,6 +365,13 @@ export function IssueList(props: { project: Project }) {
                 type="button"
                 aria-label={`Delete filter ${f.name}`}
                 onClick={async () => {
+                  if (
+                    !(await confirmDestructive({
+                      title: "Delete saved view",
+                      body: `Delete "${f.name}"?`,
+                    }))
+                  )
+                    return;
                   await api.deleteSavedFilter(props.project.id, f.id);
                   refetchSaved();
                 }}
