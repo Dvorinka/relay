@@ -125,7 +125,7 @@ const createProjectConversation = `-- name: CreateProjectConversation :one
 insert into conversations (project_id, kind)
 values ($1, 'project')
 on conflict do nothing
-returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent
+returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot
 `
 
 func (q *Queries) CreateProjectConversation(ctx context.Context, projectID pgtype.UUID) (Conversation, error) {
@@ -142,6 +142,7 @@ func (q *Queries) CreateProjectConversation(ctx context.Context, projectID pgtyp
 		&i.Title,
 		&i.CreatedByUser,
 		&i.CreatedByAgent,
+		&i.CreatorNameSnapshot,
 	)
 	return i, err
 }
@@ -151,7 +152,7 @@ insert into conversations (project_id, kind, parent_message_id, title, created_b
 values ($1, 'thread', $2,
         $3, $4)
 on conflict (parent_message_id) where kind = 'thread' do nothing
-returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent
+returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot
 `
 
 type CreateThreadParams struct {
@@ -181,6 +182,7 @@ func (q *Queries) CreateThread(ctx context.Context, arg CreateThreadParams) (Con
 		&i.Title,
 		&i.CreatedByUser,
 		&i.CreatedByAgent,
+		&i.CreatorNameSnapshot,
 	)
 	return i, err
 }
@@ -190,7 +192,7 @@ insert into conversations (project_id, kind, parent_message_id, title, created_b
 values ($1, 'thread', $2,
         $3, $4)
 on conflict (parent_message_id) where kind = 'thread' do nothing
-returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent
+returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot
 `
 
 type CreateThreadAgentParams struct {
@@ -219,12 +221,13 @@ func (q *Queries) CreateThreadAgent(ctx context.Context, arg CreateThreadAgentPa
 		&i.Title,
 		&i.CreatedByUser,
 		&i.CreatedByAgent,
+		&i.CreatorNameSnapshot,
 	)
 	return i, err
 }
 
 const getConversationByID = `-- name: GetConversationByID :one
-select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent
+select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot
 from conversations
 where id = $1
 `
@@ -243,12 +246,13 @@ func (q *Queries) GetConversationByID(ctx context.Context, id pgtype.UUID) (Conv
 		&i.Title,
 		&i.CreatedByUser,
 		&i.CreatedByAgent,
+		&i.CreatorNameSnapshot,
 	)
 	return i, err
 }
 
 const getConversationForUser = `-- name: GetConversationForUser :one
-select c.id, c.project_id, c.kind, c.issue_id, c.created_at, c.brief_id, c.parent_message_id, c.title, c.created_by_user, c.created_by_agent
+select c.id, c.project_id, c.kind, c.issue_id, c.created_at, c.brief_id, c.parent_message_id, c.title, c.created_by_user, c.created_by_agent, c.creator_name_snapshot
 from conversations c
 join projects p on p.id = c.project_id
 join workspace_members wm on wm.workspace_id = p.workspace_id
@@ -275,16 +279,17 @@ func (q *Queries) GetConversationForUser(ctx context.Context, arg GetConversatio
 		&i.Title,
 		&i.CreatedByUser,
 		&i.CreatedByAgent,
+		&i.CreatorNameSnapshot,
 	)
 	return i, err
 }
 
 const getMessageByID = `-- name: GetMessageByID :one
 select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
-       m.author_user_id, m.author_agent_id,
-       coalesce(u.name, a.name, '') as author_name,
+       m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
+       coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
-       coalesce(pu.name, pa.name, '') as parent_author_name,
+       coalesce(pu.name, pa.name, nullif(pm.author_name_snapshot, ''), '') as parent_author_name,
        pm.body as parent_body,
        (pm.id is not null and pm.deleted_at is not null) as parent_deleted,
        t.id as thread_id, t.title as thread_title,
@@ -293,7 +298,7 @@ select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.created_at, m.edit
        m.pinned_at, m.forwarded_from,
        f.conversation_id as fwd_conversation_id,
        fcp.project_id as fwd_project_id,
-       coalesce(fu.name, fa.name, '') as fwd_author_name
+       coalesce(fu.name, fa.name, nullif(f.author_name_snapshot, ''), '') as fwd_author_name
 from messages m
 left join users u on u.id = m.author_user_id
 left join agents a on a.id = m.author_agent_id
@@ -309,30 +314,31 @@ where m.id = $1
 `
 
 type GetMessageByIDRow struct {
-	ID                pgtype.UUID        `json:"id"`
-	ConversationID    pgtype.UUID        `json:"conversation_id"`
-	Body              string             `json:"body"`
-	Mentions          []byte             `json:"mentions"`
-	Tags              []string           `json:"tags"`
-	CreatedAt         pgtype.Timestamptz `json:"created_at"`
-	EditedAt          pgtype.Timestamptz `json:"edited_at"`
-	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
-	ParentID          pgtype.UUID        `json:"parent_id"`
-	AuthorUserID      pgtype.UUID        `json:"author_user_id"`
-	AuthorAgentID     pgtype.UUID        `json:"author_agent_id"`
-	AuthorName        string             `json:"author_name"`
-	AuthorAvatar      pgtype.Text        `json:"author_avatar"`
-	ParentAuthorName  string             `json:"parent_author_name"`
-	ParentBody        pgtype.Text        `json:"parent_body"`
-	ParentDeleted     pgtype.Bool        `json:"parent_deleted"`
-	ThreadID          pgtype.UUID        `json:"thread_id"`
-	ThreadTitle       pgtype.Text        `json:"thread_title"`
-	ThreadReplyCount  int32              `json:"thread_reply_count"`
-	PinnedAt          pgtype.Timestamptz `json:"pinned_at"`
-	ForwardedFrom     pgtype.UUID        `json:"forwarded_from"`
-	FwdConversationID pgtype.UUID        `json:"fwd_conversation_id"`
-	FwdProjectID      pgtype.UUID        `json:"fwd_project_id"`
-	FwdAuthorName     string             `json:"fwd_author_name"`
+	ID                 pgtype.UUID        `json:"id"`
+	ConversationID     pgtype.UUID        `json:"conversation_id"`
+	Body               string             `json:"body"`
+	Mentions           []byte             `json:"mentions"`
+	Tags               []string           `json:"tags"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	EditedAt           pgtype.Timestamptz `json:"edited_at"`
+	DeletedAt          pgtype.Timestamptz `json:"deleted_at"`
+	ParentID           pgtype.UUID        `json:"parent_id"`
+	AuthorUserID       pgtype.UUID        `json:"author_user_id"`
+	AuthorAgentID      pgtype.UUID        `json:"author_agent_id"`
+	AuthorKindSnapshot string             `json:"author_kind_snapshot"`
+	AuthorName         string             `json:"author_name"`
+	AuthorAvatar       pgtype.Text        `json:"author_avatar"`
+	ParentAuthorName   string             `json:"parent_author_name"`
+	ParentBody         pgtype.Text        `json:"parent_body"`
+	ParentDeleted      pgtype.Bool        `json:"parent_deleted"`
+	ThreadID           pgtype.UUID        `json:"thread_id"`
+	ThreadTitle        pgtype.Text        `json:"thread_title"`
+	ThreadReplyCount   int32              `json:"thread_reply_count"`
+	PinnedAt           pgtype.Timestamptz `json:"pinned_at"`
+	ForwardedFrom      pgtype.UUID        `json:"forwarded_from"`
+	FwdConversationID  pgtype.UUID        `json:"fwd_conversation_id"`
+	FwdProjectID       pgtype.UUID        `json:"fwd_project_id"`
+	FwdAuthorName      string             `json:"fwd_author_name"`
 }
 
 func (q *Queries) GetMessageByID(ctx context.Context, id pgtype.UUID) (GetMessageByIDRow, error) {
@@ -350,6 +356,7 @@ func (q *Queries) GetMessageByID(ctx context.Context, id pgtype.UUID) (GetMessag
 		&i.ParentID,
 		&i.AuthorUserID,
 		&i.AuthorAgentID,
+		&i.AuthorKindSnapshot,
 		&i.AuthorName,
 		&i.AuthorAvatar,
 		&i.ParentAuthorName,
@@ -404,7 +411,7 @@ func (q *Queries) GetMessageForUser(ctx context.Context, arg GetMessageForUserPa
 }
 
 const getProjectConversation = `-- name: GetProjectConversation :one
-select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent
+select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot
 from conversations
 where project_id = $1 and kind = 'project'
 `
@@ -423,6 +430,7 @@ func (q *Queries) GetProjectConversation(ctx context.Context, projectID pgtype.U
 		&i.Title,
 		&i.CreatedByUser,
 		&i.CreatedByAgent,
+		&i.CreatorNameSnapshot,
 	)
 	return i, err
 }
@@ -477,8 +485,8 @@ func (q *Queries) GetProjectForUser(ctx context.Context, arg GetProjectForUserPa
 const getThread = `-- name: GetThread :one
 select c.id, c.project_id, c.parent_message_id, c.title, c.created_at,
        pm.conversation_id as parent_conversation_id,
-       coalesce(u.name, a.name, '') as creator_name,
-       case when pm.deleted_at is null then coalesce(pu.name, pa.name, '')
+       coalesce(u.name, a.name, nullif(c.creator_name_snapshot, ''), '') as creator_name,
+       case when pm.deleted_at is null then coalesce(pu.name, pa.name, nullif(pm.author_name_snapshot, ''), '')
             else 'Deleted' end as parent_author_name,
        case when pm.deleted_at is null then left(pm.body, 160)
             else 'Original message was deleted' end as parent_preview,
@@ -525,7 +533,7 @@ func (q *Queries) GetThread(ctx context.Context, id pgtype.UUID) (GetThreadRow, 
 }
 
 const getThreadByParentMessage = `-- name: GetThreadByParentMessage :one
-select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent
+select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot
 from conversations
 where parent_message_id = $1 and kind = 'thread'
 `
@@ -544,16 +552,17 @@ func (q *Queries) GetThreadByParentMessage(ctx context.Context, parentMessageID 
 		&i.Title,
 		&i.CreatedByUser,
 		&i.CreatedByAgent,
+		&i.CreatorNameSnapshot,
 	)
 	return i, err
 }
 
 const listMessages = `-- name: ListMessages :many
 select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
-       m.author_user_id, m.author_agent_id,
-       coalesce(u.name, a.name, '') as author_name,
+       m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
+       coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
-       coalesce(pu.name, pa.name, '') as parent_author_name,
+       coalesce(pu.name, pa.name, nullif(pm.author_name_snapshot, ''), '') as parent_author_name,
        pm.body as parent_body,
        (pm.id is not null and pm.deleted_at is not null) as parent_deleted,
        t.id as thread_id, t.title as thread_title,
@@ -562,7 +571,7 @@ select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.created_at, m.edit
        m.pinned_at, m.forwarded_from,
        f.conversation_id as fwd_conversation_id,
        fcp.project_id as fwd_project_id,
-       coalesce(fu.name, fa.name, '') as fwd_author_name
+       coalesce(fu.name, fa.name, nullif(f.author_name_snapshot, ''), '') as fwd_author_name
 from messages m
 left join users u on u.id = m.author_user_id
 left join agents a on a.id = m.author_agent_id
@@ -591,30 +600,31 @@ type ListMessagesParams struct {
 }
 
 type ListMessagesRow struct {
-	ID                pgtype.UUID        `json:"id"`
-	ConversationID    pgtype.UUID        `json:"conversation_id"`
-	Body              string             `json:"body"`
-	Mentions          []byte             `json:"mentions"`
-	Tags              []string           `json:"tags"`
-	CreatedAt         pgtype.Timestamptz `json:"created_at"`
-	EditedAt          pgtype.Timestamptz `json:"edited_at"`
-	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
-	ParentID          pgtype.UUID        `json:"parent_id"`
-	AuthorUserID      pgtype.UUID        `json:"author_user_id"`
-	AuthorAgentID     pgtype.UUID        `json:"author_agent_id"`
-	AuthorName        string             `json:"author_name"`
-	AuthorAvatar      pgtype.Text        `json:"author_avatar"`
-	ParentAuthorName  string             `json:"parent_author_name"`
-	ParentBody        pgtype.Text        `json:"parent_body"`
-	ParentDeleted     pgtype.Bool        `json:"parent_deleted"`
-	ThreadID          pgtype.UUID        `json:"thread_id"`
-	ThreadTitle       pgtype.Text        `json:"thread_title"`
-	ThreadReplyCount  int32              `json:"thread_reply_count"`
-	PinnedAt          pgtype.Timestamptz `json:"pinned_at"`
-	ForwardedFrom     pgtype.UUID        `json:"forwarded_from"`
-	FwdConversationID pgtype.UUID        `json:"fwd_conversation_id"`
-	FwdProjectID      pgtype.UUID        `json:"fwd_project_id"`
-	FwdAuthorName     string             `json:"fwd_author_name"`
+	ID                 pgtype.UUID        `json:"id"`
+	ConversationID     pgtype.UUID        `json:"conversation_id"`
+	Body               string             `json:"body"`
+	Mentions           []byte             `json:"mentions"`
+	Tags               []string           `json:"tags"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	EditedAt           pgtype.Timestamptz `json:"edited_at"`
+	DeletedAt          pgtype.Timestamptz `json:"deleted_at"`
+	ParentID           pgtype.UUID        `json:"parent_id"`
+	AuthorUserID       pgtype.UUID        `json:"author_user_id"`
+	AuthorAgentID      pgtype.UUID        `json:"author_agent_id"`
+	AuthorKindSnapshot string             `json:"author_kind_snapshot"`
+	AuthorName         string             `json:"author_name"`
+	AuthorAvatar       pgtype.Text        `json:"author_avatar"`
+	ParentAuthorName   string             `json:"parent_author_name"`
+	ParentBody         pgtype.Text        `json:"parent_body"`
+	ParentDeleted      pgtype.Bool        `json:"parent_deleted"`
+	ThreadID           pgtype.UUID        `json:"thread_id"`
+	ThreadTitle        pgtype.Text        `json:"thread_title"`
+	ThreadReplyCount   int32              `json:"thread_reply_count"`
+	PinnedAt           pgtype.Timestamptz `json:"pinned_at"`
+	ForwardedFrom      pgtype.UUID        `json:"forwarded_from"`
+	FwdConversationID  pgtype.UUID        `json:"fwd_conversation_id"`
+	FwdProjectID       pgtype.UUID        `json:"fwd_project_id"`
+	FwdAuthorName      string             `json:"fwd_author_name"`
 }
 
 // newest-first page; $2 is an optional "older than message id" cursor,
@@ -645,6 +655,7 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]L
 			&i.ParentID,
 			&i.AuthorUserID,
 			&i.AuthorAgentID,
+			&i.AuthorKindSnapshot,
 			&i.AuthorName,
 			&i.AuthorAvatar,
 			&i.ParentAuthorName,
@@ -671,10 +682,10 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]L
 
 const listPinnedMessages = `-- name: ListPinnedMessages :many
 select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
-       m.author_user_id, m.author_agent_id,
-       coalesce(u.name, a.name, '') as author_name,
+       m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
+       coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
-       coalesce(pu.name, pa.name, '') as parent_author_name,
+       coalesce(pu.name, pa.name, nullif(pm.author_name_snapshot, ''), '') as parent_author_name,
        pm.body as parent_body,
        (pm.id is not null and pm.deleted_at is not null) as parent_deleted,
        t.id as thread_id, t.title as thread_title,
@@ -683,7 +694,7 @@ select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.created_at, m.edit
        m.pinned_at, m.forwarded_from,
        f.conversation_id as fwd_conversation_id,
        fcp.project_id as fwd_project_id,
-       coalesce(fu.name, fa.name, '') as fwd_author_name
+       coalesce(fu.name, fa.name, nullif(f.author_name_snapshot, ''), '') as fwd_author_name
 from messages m
 left join users u on u.id = m.author_user_id
 left join agents a on a.id = m.author_agent_id
@@ -702,30 +713,31 @@ order by m.pinned_at desc
 `
 
 type ListPinnedMessagesRow struct {
-	ID                pgtype.UUID        `json:"id"`
-	ConversationID    pgtype.UUID        `json:"conversation_id"`
-	Body              string             `json:"body"`
-	Mentions          []byte             `json:"mentions"`
-	Tags              []string           `json:"tags"`
-	CreatedAt         pgtype.Timestamptz `json:"created_at"`
-	EditedAt          pgtype.Timestamptz `json:"edited_at"`
-	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
-	ParentID          pgtype.UUID        `json:"parent_id"`
-	AuthorUserID      pgtype.UUID        `json:"author_user_id"`
-	AuthorAgentID     pgtype.UUID        `json:"author_agent_id"`
-	AuthorName        string             `json:"author_name"`
-	AuthorAvatar      pgtype.Text        `json:"author_avatar"`
-	ParentAuthorName  string             `json:"parent_author_name"`
-	ParentBody        pgtype.Text        `json:"parent_body"`
-	ParentDeleted     pgtype.Bool        `json:"parent_deleted"`
-	ThreadID          pgtype.UUID        `json:"thread_id"`
-	ThreadTitle       pgtype.Text        `json:"thread_title"`
-	ThreadReplyCount  int32              `json:"thread_reply_count"`
-	PinnedAt          pgtype.Timestamptz `json:"pinned_at"`
-	ForwardedFrom     pgtype.UUID        `json:"forwarded_from"`
-	FwdConversationID pgtype.UUID        `json:"fwd_conversation_id"`
-	FwdProjectID      pgtype.UUID        `json:"fwd_project_id"`
-	FwdAuthorName     string             `json:"fwd_author_name"`
+	ID                 pgtype.UUID        `json:"id"`
+	ConversationID     pgtype.UUID        `json:"conversation_id"`
+	Body               string             `json:"body"`
+	Mentions           []byte             `json:"mentions"`
+	Tags               []string           `json:"tags"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	EditedAt           pgtype.Timestamptz `json:"edited_at"`
+	DeletedAt          pgtype.Timestamptz `json:"deleted_at"`
+	ParentID           pgtype.UUID        `json:"parent_id"`
+	AuthorUserID       pgtype.UUID        `json:"author_user_id"`
+	AuthorAgentID      pgtype.UUID        `json:"author_agent_id"`
+	AuthorKindSnapshot string             `json:"author_kind_snapshot"`
+	AuthorName         string             `json:"author_name"`
+	AuthorAvatar       pgtype.Text        `json:"author_avatar"`
+	ParentAuthorName   string             `json:"parent_author_name"`
+	ParentBody         pgtype.Text        `json:"parent_body"`
+	ParentDeleted      pgtype.Bool        `json:"parent_deleted"`
+	ThreadID           pgtype.UUID        `json:"thread_id"`
+	ThreadTitle        pgtype.Text        `json:"thread_title"`
+	ThreadReplyCount   int32              `json:"thread_reply_count"`
+	PinnedAt           pgtype.Timestamptz `json:"pinned_at"`
+	ForwardedFrom      pgtype.UUID        `json:"forwarded_from"`
+	FwdConversationID  pgtype.UUID        `json:"fwd_conversation_id"`
+	FwdProjectID       pgtype.UUID        `json:"fwd_project_id"`
+	FwdAuthorName      string             `json:"fwd_author_name"`
 }
 
 // pinned messages in one conversation, most recently pinned first
@@ -750,6 +762,7 @@ func (q *Queries) ListPinnedMessages(ctx context.Context, conversationID pgtype.
 			&i.ParentID,
 			&i.AuthorUserID,
 			&i.AuthorAgentID,
+			&i.AuthorKindSnapshot,
 			&i.AuthorName,
 			&i.AuthorAvatar,
 			&i.ParentAuthorName,
@@ -777,8 +790,8 @@ func (q *Queries) ListPinnedMessages(ctx context.Context, conversationID pgtype.
 const listProjectThreads = `-- name: ListProjectThreads :many
 select c.id, c.parent_message_id, c.title, c.created_at,
        pm.conversation_id as parent_conversation_id,
-       coalesce(u.name, a.name, '') as creator_name,
-       case when pm.deleted_at is null then coalesce(pu.name, pa.name, '')
+       coalesce(u.name, a.name, nullif(c.creator_name_snapshot, ''), '') as creator_name,
+       case when pm.deleted_at is null then coalesce(pu.name, pa.name, nullif(pm.author_name_snapshot, ''), '')
             else 'Deleted' end as parent_author_name,
        case when pm.deleted_at is null then left(pm.body, 160)
             else 'Original message was deleted' end as parent_preview,
@@ -924,8 +937,8 @@ func (q *Queries) MarkMessageRead(ctx context.Context, arg MarkMessageReadParams
 
 const mentionsForUser = `-- name: MentionsForUser :many
 select m.id, m.conversation_id, m.body, m.created_at, m.edited_at,
-       m.author_user_id, m.author_agent_id,
-       coalesce(u.name, a.name, '') as author_name,
+       m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
+       coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
        c.project_id,
        (r.message_id is not null) as is_read
@@ -946,17 +959,18 @@ limit 50
 `
 
 type MentionsForUserRow struct {
-	ID             pgtype.UUID        `json:"id"`
-	ConversationID pgtype.UUID        `json:"conversation_id"`
-	Body           string             `json:"body"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	EditedAt       pgtype.Timestamptz `json:"edited_at"`
-	AuthorUserID   pgtype.UUID        `json:"author_user_id"`
-	AuthorAgentID  pgtype.UUID        `json:"author_agent_id"`
-	AuthorName     string             `json:"author_name"`
-	AuthorAvatar   pgtype.Text        `json:"author_avatar"`
-	ProjectID      pgtype.UUID        `json:"project_id"`
-	IsRead         interface{}        `json:"is_read"`
+	ID                 pgtype.UUID        `json:"id"`
+	ConversationID     pgtype.UUID        `json:"conversation_id"`
+	Body               string             `json:"body"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	EditedAt           pgtype.Timestamptz `json:"edited_at"`
+	AuthorUserID       pgtype.UUID        `json:"author_user_id"`
+	AuthorAgentID      pgtype.UUID        `json:"author_agent_id"`
+	AuthorKindSnapshot string             `json:"author_kind_snapshot"`
+	AuthorName         string             `json:"author_name"`
+	AuthorAvatar       pgtype.Text        `json:"author_avatar"`
+	ProjectID          pgtype.UUID        `json:"project_id"`
+	IsRead             interface{}        `json:"is_read"`
 }
 
 // messages mentioning the user (@<name>), newest first
@@ -977,6 +991,7 @@ func (q *Queries) MentionsForUser(ctx context.Context, userID pgtype.UUID) ([]Me
 			&i.EditedAt,
 			&i.AuthorUserID,
 			&i.AuthorAgentID,
+			&i.AuthorKindSnapshot,
 			&i.AuthorName,
 			&i.AuthorAvatar,
 			&i.ProjectID,
@@ -1067,10 +1082,10 @@ func (q *Queries) PinMessage(ctx context.Context, id pgtype.UUID) (PinMessageRow
 
 const recentProjectMessages = `-- name: RecentProjectMessages :many
 select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
-       m.author_user_id, m.author_agent_id,
-       coalesce(u.name, a.name, '') as author_name,
+       m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
+       coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
-       coalesce(pu.name, pa.name, '') as parent_author_name,
+       coalesce(pu.name, pa.name, nullif(pm.author_name_snapshot, ''), '') as parent_author_name,
        pm.body as parent_body,
        (pm.id is not null and pm.deleted_at is not null) as parent_deleted
 from messages m
@@ -1086,22 +1101,23 @@ limit 10
 `
 
 type RecentProjectMessagesRow struct {
-	ID               pgtype.UUID        `json:"id"`
-	ConversationID   pgtype.UUID        `json:"conversation_id"`
-	Body             string             `json:"body"`
-	Mentions         []byte             `json:"mentions"`
-	Tags             []string           `json:"tags"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	EditedAt         pgtype.Timestamptz `json:"edited_at"`
-	DeletedAt        pgtype.Timestamptz `json:"deleted_at"`
-	ParentID         pgtype.UUID        `json:"parent_id"`
-	AuthorUserID     pgtype.UUID        `json:"author_user_id"`
-	AuthorAgentID    pgtype.UUID        `json:"author_agent_id"`
-	AuthorName       string             `json:"author_name"`
-	AuthorAvatar     pgtype.Text        `json:"author_avatar"`
-	ParentAuthorName string             `json:"parent_author_name"`
-	ParentBody       pgtype.Text        `json:"parent_body"`
-	ParentDeleted    pgtype.Bool        `json:"parent_deleted"`
+	ID                 pgtype.UUID        `json:"id"`
+	ConversationID     pgtype.UUID        `json:"conversation_id"`
+	Body               string             `json:"body"`
+	Mentions           []byte             `json:"mentions"`
+	Tags               []string           `json:"tags"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	EditedAt           pgtype.Timestamptz `json:"edited_at"`
+	DeletedAt          pgtype.Timestamptz `json:"deleted_at"`
+	ParentID           pgtype.UUID        `json:"parent_id"`
+	AuthorUserID       pgtype.UUID        `json:"author_user_id"`
+	AuthorAgentID      pgtype.UUID        `json:"author_agent_id"`
+	AuthorKindSnapshot string             `json:"author_kind_snapshot"`
+	AuthorName         string             `json:"author_name"`
+	AuthorAvatar       pgtype.Text        `json:"author_avatar"`
+	ParentAuthorName   string             `json:"parent_author_name"`
+	ParentBody         pgtype.Text        `json:"parent_body"`
+	ParentDeleted      pgtype.Bool        `json:"parent_deleted"`
 }
 
 func (q *Queries) RecentProjectMessages(ctx context.Context, projectID pgtype.UUID) ([]RecentProjectMessagesRow, error) {
@@ -1125,6 +1141,7 @@ func (q *Queries) RecentProjectMessages(ctx context.Context, projectID pgtype.UU
 			&i.ParentID,
 			&i.AuthorUserID,
 			&i.AuthorAgentID,
+			&i.AuthorKindSnapshot,
 			&i.AuthorName,
 			&i.AuthorAvatar,
 			&i.ParentAuthorName,

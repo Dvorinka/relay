@@ -614,7 +614,7 @@ func (s *Service) resolveMentions(ctx context.Context, projectID pgtype.UUID, re
 }
 
 func authorKind(m db.GetMessageFullRow) string {
-	if m.AuthorAgentID.Valid {
+	if m.AuthorAgentID.Valid || m.AuthorKindSnapshot == "agent" {
 		return "agent"
 	}
 	return "user"
