@@ -400,6 +400,25 @@ function AgentRow(props: {
                     </form>
                   </Show>
                 </div>
+                <Show when={props.canManage}>
+                  <div class="border-t border-border pt-3">
+                    <button
+                      type="button"
+                      class="text-[12px] text-red-600 hover:underline dark:text-red-400"
+                      onClick={() => {
+                        if (
+                          confirm(
+                            `Delete agent ${props.agent.name}? Its tokens and project access are revoked; past messages stay.`,
+                          )
+                        ) {
+                          void run(() => api.deleteAgent(props.agent.id));
+                        }
+                      }}
+                    >
+                      Delete agent
+                    </button>
+                  </div>
+                </Show>
               </>
             )}
           </Show>
