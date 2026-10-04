@@ -30,10 +30,38 @@ const maxBytes = 2 << 20
 const prefix = "avatars/"
 
 var imageTypes = map[string]bool{
-	"image/png":  true,
-	"image/jpeg": true,
-	"image/gif":  true,
-	"image/webp": true,
+	"image/png":    true,
+	"image/jpeg":   true,
+	"image/gif":    true,
+	"image/webp":   true,
+	"image/avif":   true,
+	"image/bmp":    true,
+	"image/x-icon": true,
+}
+
+// imageType sniffs an upload's magic bytes. http.DetectContentType has no
+// ISO-BMFF table, so an AVIF (a common "saved as .png" trap — browsers save
+// the actual bytes with a suggested name) arrives as octet-stream; check the
+// ftyp major brand by hand. HEIC intentionally stays unclaimed: browsers
+// can't render it.
+func imageType(data []byte) string {
+	ct, _, _ := strings.Cut(http.DetectContentType(data), ";")
+	ct = strings.TrimSpace(ct)
+	if ct == "application/octet-stream" && len(data) >= 12 &&
+		string(data[4:8]) == "ftyp" {
+		switch string(data[8:12]) {
+		case "avif", "avis":
+			return "image/avif"
+		}
+	}
+	return ct
+}
+
+// AcceptedImageType reports the sniffed content type and whether it's an
+// acceptable avatar/icon image.
+func AcceptedImageType(data []byte) (string, bool) {
+	ct := imageType(data)
+	return ct, imageTypes[ct]
 }
 
 // extensionFor maps stored content types back to filenames for downloads.
@@ -47,6 +75,12 @@ func extensionFor(contentType string) string {
 		return ".gif"
 	case "image/webp":
 		return ".webp"
+	case "image/avif":
+		return ".avif"
+	case "image/bmp":
+		return ".bmp"
+	case "image/x-icon":
+		return ".ico"
 	}
 	return ""
 }
@@ -99,11 +133,10 @@ func (s *Service) readUpload(c *gin.Context) (data []byte, contentType string, o
 		httpx.Error(c, http.StatusRequestEntityTooLarge, "too_large", "avatar exceeds the 2 MiB cap")
 		return nil, "", false
 	}
-	ct, _, _ := strings.Cut(http.DetectContentType(data), ";")
-	ct = strings.TrimSpace(ct)
-	if !imageTypes[ct] {
+	ct, ok2 := AcceptedImageType(data)
+	if !ok2 {
 		httpx.Error(c, http.StatusBadRequest, "unsupported_type",
-			"avatars accept png, jpeg, gif or webp images (detected "+ct+")")
+			"avatars accept png, jpeg, gif, webp or avif images (detected "+ct+")")
 		return nil, "", false
 	}
 	return data, ct, true

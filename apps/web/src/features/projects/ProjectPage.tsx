@@ -621,7 +621,7 @@ function ProjectIconSection(props: { project: Project }) {
         >
           <input
             type="file"
-            accept="image/png,image/jpeg,image/gif,image/webp"
+            accept="image/png,image/jpeg,image/gif,image/webp,image/avif,image/bmp,image/x-icon"
             class="sr-only"
             onChange={onFile}
           />

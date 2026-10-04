@@ -175,7 +175,7 @@ function AgentRow(props: {
                       </Show>
                       <input
                         type="file"
-                        accept="image/png,image/jpeg,image/gif,image/webp"
+                        accept="image/png,image/jpeg,image/gif,image/webp,image/avif,image/bmp,image/x-icon"
                         aria-label="Agent logo"
                         class="text-[12px] text-muted file:mr-3 file:rounded-md file:border file:border-border file:bg-surface file:px-2.5 file:py-1 file:text-[12px] file:text-fg hover:file:bg-hover"
                         onChange={(e) => {

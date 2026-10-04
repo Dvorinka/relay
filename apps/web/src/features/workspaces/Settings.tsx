@@ -658,7 +658,7 @@ export default function Settings() {
           <label class="cursor-pointer rounded-md border border-border bg-surface px-2.5 py-1 text-[12px] hover:bg-hover">
             <input
               type="file"
-              accept="image/png,image/jpeg,image/gif,image/webp"
+              accept="image/png,image/jpeg,image/gif,image/webp,image/avif,image/bmp,image/x-icon"
               class="sr-only"
               onChange={async (e) => {
                 const f = e.currentTarget.files?.[0];
@@ -760,7 +760,7 @@ export default function Settings() {
                   <label class="cursor-pointer rounded-md border border-border bg-surface px-2.5 py-1 text-[12px] hover:bg-hover">
                     <input
                       type="file"
-                      accept="image/png,image/jpeg,image/gif,image/webp"
+                      accept="image/png,image/jpeg,image/gif,image/webp,image/avif,image/bmp,image/x-icon"
                       class="sr-only"
                       onChange={async (e) => {
                         const f = e.currentTarget.files?.[0];

@@ -27,6 +27,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	"go.uber.org/zap"
 
+	"github.com/Dvorinka/relay/internal/avatars"
 	"github.com/Dvorinka/relay/internal/db"
 	"github.com/Dvorinka/relay/internal/events"
 	"github.com/Dvorinka/relay/internal/github"
@@ -893,7 +894,7 @@ func (s *Service) projectKey(ctx context.Context, pid pgtype.UUID) (string, erro
 func issueJSON(i db.Issue, assigneeName pgtype.Text, projectKey string) gin.H {
 	return gin.H{
 		"id": i.ID, "project_id": i.ProjectID, "number": i.Number,
-		"key": projectKey + "-" + strconv.Itoa(int(i.Number)),
+		"key":   projectKey + "-" + strconv.Itoa(int(i.Number)),
 		"title": i.Title, "description": i.Description,
 		"status": i.Status, "priority": i.Priority,
 		"assignee_id": i.AssigneeID, "assignee_name": assigneeName.String,
@@ -1375,11 +1376,6 @@ func (s *Service) reactToMessage(ctx context.Context, req mcp.CallToolRequest) (
 	return jsonResult(gin.H{"ok": true})
 }
 
-// avatarImageTypes mirrors internal/avatars: logos stay small and square.
-var avatarImageTypes = map[string]bool{
-	"image/png": true, "image/jpeg": true, "image/gif": true, "image/webp": true,
-}
-
 // setAvatar lets the agent upload its own profile picture - the same file
 // the workspace admin can set via PUT /api/agents/:id/avatar.
 func (s *Service) setAvatar(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1397,9 +1393,9 @@ func (s *Service) setAvatar(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 	if len(data) == 0 || len(data) > 2<<20 {
 		return mcp.NewToolResultError("image must be 1 byte to 2 MiB"), nil
 	}
-	ct, _, _ := strings.Cut(http.DetectContentType(data), ";")
-	if !avatarImageTypes[strings.TrimSpace(ct)] {
-		return mcp.NewToolResultError("unsupported image type; png, jpeg, gif or webp"), nil
+	ct, ok := avatars.AcceptedImageType(data)
+	if !ok {
+		return mcp.NewToolResultError("unsupported image type (detected " + ct + "); png, jpeg, gif, webp or avif"), nil
 	}
 	key := "avatars/a/" + agent(ctx).ID.String()
 	if err := s.store.Put(ctx, key, bytes.NewReader(data), int64(len(data)), ct); err != nil {
@@ -2065,7 +2061,7 @@ func (s *Service) readProjectFile(ctx context.Context, req mcp.CallToolRequest) 
 
 func briefJSONMCP(b db.Brief, authorName, issueKey string) gin.H {
 	return gin.H{
-		"id":              b.ID, "project_id": b.ProjectID,
+		"id": b.ID, "project_id": b.ProjectID,
 		"issue_id": b.IssueID, "issue_key": issueKey,
 		"conversation_id": b.ConversationID,
 		"title":           b.Title, "summary": b.Summary,
