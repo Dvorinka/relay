@@ -2135,14 +2135,16 @@ function ConversationThread(props: {
                 </span>
               </button>
             </Show>
-            <button
-              type="button"
-              onClick={() => setThreadsOpen(true)}
-              class="flex items-center gap-2 text-[12px] text-muted transition-colors hover:text-fg"
-            >
-              <ThreadIcon class="h-3.5 w-3.5" />
-              <span class="font-medium">Threads</span>
-            </button>
+            <Show when={props.onOpenThread}>
+              <button
+                type="button"
+                onClick={() => setThreadsOpen(true)}
+                class="flex items-center gap-2 text-[12px] text-muted transition-colors hover:text-fg"
+              >
+                <ThreadIcon class="h-3.5 w-3.5" />
+                <span class="font-medium">Threads</span>
+              </button>
+            </Show>
           </div>
           <Show when={(pins()?.length ?? 0) > 0}>
             <Show when={pinsOpen()}>
