@@ -56,11 +56,11 @@ export function SessionProvider(props: ParentProps) {
       // Persist the bearer so off-origin deployments keep working; the
       // cookie still rides along same-origin.
       const url = serverUrl ?? net.serverUrl();
-      const wasLocal = net.isLocal();
       net.connect(url, res.token ?? "");
-      // Leaving local mode inside the desktop shell: sync its config so
-      // the next launch proxies this server instead of the embedded bundle.
-      if (wasLocal && url) void desktopApplyConfig(url, false);
+      // Inside the desktop shell, sync its config whenever the target
+      // server changes — leaving local mode or switching servers — so the
+      // next launch proxies this server instead of the embedded bundle.
+      if (url) void desktopApplyConfig(url, false);
       mutate(res);
     },
     register: async (input, serverUrl) => {
@@ -68,9 +68,8 @@ export function SessionProvider(props: ParentProps) {
         input,
       );
       const url = serverUrl ?? net.serverUrl();
-      const wasLocal = net.isLocal();
       net.connect(url, res.token ?? "");
-      if (wasLocal && url) void desktopApplyConfig(url, false);
+      if (url) void desktopApplyConfig(url, false);
       mutate(res);
     },
     enterLocal: async () => {
