@@ -288,6 +288,13 @@ repos' open PRs; rail search filters this project inline.
 
 - Relay Cloud (hosted offering) - self-hosting stays first-class
 - iOS build of the mobile app
+- Multiple simultaneous server connections per client (today a client
+  signs in to one server; multi-server means per-server sessions, a
+  unified rail, and merged notifications)
+- In-app auto-update for the desktop app (check → download → apply with
+  progress; Windows/macOS updater plumbing + Linux path TBD)
+- Release-grade mobile build (signed APK/bundle in CI instead of the
+  debug build; store metadata, icons, and splash already scaffolded)
 - DragonflyDB cache layer if hot paths need it
 
 ## Phase 18 — project states, boards, push, local folders, mobile outbox

@@ -43,12 +43,13 @@ import {
 } from "../../components/ui";
 import { api } from "../../lib/api";
 import { subscribe } from "../../lib/events";
+import { loadNameColors, nameColorFor } from "../../lib/namecolors";
 import { mediaURL, net } from "../../lib/net";
 import { Markdown, renderMarkdown } from "../../lib/markdown";
 import { formatBytes, initials, messagePreview } from "../../lib/text";
 import { useProjects } from "../../stores/projects";
 import { useSession } from "../../stores/session";
-import { useChatStyle } from "../../stores/theme";
+import { useChatStyle, useClock } from "../../stores/theme";
 
 const PAGE_SIZE = 50;
 const MAX_FILE_MIB = 25;
@@ -62,6 +63,7 @@ const QUICK_REACTIONS = ["👀", "✅", "❤️", "🎉"];
 // forward), Discord-style. Listeners attach once, lazily.
 const [shiftHeld, setShiftHeld] = createSignal(false);
 let shiftTracked = false;
+const { clockFormat } = useClock();
 function trackShift() {
   if (shiftTracked) return;
   shiftTracked = true;
@@ -91,15 +93,19 @@ const AUTHOR_COLORS = [
 ] as const;
 
 function authorColor(name: string): string {
+  const custom = nameColorFor(name);
+  if (custom) return custom;
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
   return AUTHOR_COLORS[h % AUTHOR_COLORS.length] ?? "#0d9488";
 }
 
 function shortTime(iso: string): string {
+  const f = clockFormat();
   return new Date(iso).toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
+    hour12: f === "system" ? undefined : f === "12",
   });
 }
 
@@ -228,15 +234,74 @@ function AttachmentView(props: { projectId: string; attachment: Attachment }) {
         </a>
       }
     >
-      <a href={url()} target="_blank" rel="noreferrer" class="block w-fit">
-        <img
-          src={url()}
-          alt={props.attachment.filename}
-          loading="lazy"
-          class="max-h-96 max-w-full rounded-xl border border-border object-contain sm:max-w-[480px]"
-        />
-      </a>
+      <ImageLightbox url={url()} filename={props.attachment.filename} />
     </Show>
+  );
+}
+
+// Click-to-zoom for image attachments: inline thumb opens a lightbox modal
+// instead of navigating away. Esc/backdrop close; "Open original" is the
+// escape hatch for a full-tab view.
+function ImageLightbox(props: { url: string | undefined; filename: string }) {
+  const [open, setOpen] = createSignal(false);
+  createEffect(() => {
+    if (!open()) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    onCleanup(() => window.removeEventListener("keydown", onKey));
+  });
+  return (
+    <>
+      <button
+        type="button"
+        disabled={!props.url}
+        onClick={() => setOpen(true)}
+        aria-label={`View ${props.filename}`}
+        class="block w-fit cursor-zoom-in"
+      >
+        <img
+          src={props.url ?? ""}
+          alt={props.filename}
+          loading="lazy"
+          class="max-h-[30rem] max-w-full rounded-xl border border-border object-contain sm:max-w-[560px]"
+        />
+      </button>
+      <Show when={open() && props.url}>
+        <Portal>
+          <div
+            class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6"
+            role="dialog"
+            aria-label={props.filename}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setOpen(false);
+            }}
+          >
+            <div class="flex max-h-full max-w-full flex-col items-center gap-2">
+              <img
+                src={props.url}
+                alt={props.filename}
+                class="max-h-[85vh] max-w-full rounded-lg object-contain"
+              />
+              <div class="flex items-center gap-3 text-[12px]">
+                <span class="max-w-[60vw] truncate text-white/70">
+                  {props.filename}
+                </span>
+                <a
+                  href={props.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  class="rounded-md bg-white/10 px-2 py-1 text-white/90 hover:bg-white/20"
+                >
+                  Open original
+                </a>
+              </div>
+            </div>
+          </div>
+        </Portal>
+      </Show>
+    </>
   );
 }
 
@@ -699,6 +764,21 @@ function MessageRow(props: {
   // Touch devices have no hover: tapping the row toggles the toolbar.
   const [tapped, setTapped] = createSignal(false);
 
+  // Esc cancels edit even when focus has left the textarea (Discord parity).
+  createEffect(() => {
+    if (!editing()) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (
+        e.key === "Escape" &&
+        !document.querySelector('[role="dialog"]')
+      ) {
+        setEditing(false);
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    onCleanup(() => window.removeEventListener("keydown", onKey, true));
+  });
+
   const toolBtn =
     "flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-hover hover:text-fg";
 
@@ -709,9 +789,9 @@ function MessageRow(props: {
         (bubbles()
           ? `group relative flex px-4 ${
               mine() ? "justify-end" : "justify-start"
-            } ${props.grouped ? "py-[1px]" : "mt-2.5 py-[1px]"}`
+            } ${props.grouped ? "py-[1px]" : "mt-2 py-[1px]"}`
           : `group relative flex gap-3 px-4 hover:bg-hover/60 ${
-              props.grouped ? "py-[3px]" : "mt-4 py-1.5"
+              props.grouped ? "py-[2px]" : "mt-3 py-1"
             }`) +
         (props.highlighted ? " rounded-xl bg-accent-soft/60 transition-colors" : " transition-colors")
       }
@@ -1109,6 +1189,16 @@ function ConversationThread(props: {
   const [dragging, setDragging] = createSignal(false);
   const [replyTo, setReplyTo] = createSignal<Message | null>(null);
 
+  // Custom name colors come from the workspace member list, loaded once.
+  createResource(() => props.projectId, async (id) => {
+    try {
+      const p = await api.getProject(id);
+      await loadNameColors(p.workspace_id);
+    } catch {
+      /* palette defaults are fine */
+    }
+  });
+
   // Mentions: @ opens the unified menu (people, agents, issues, PRs, files),
   // # jumps straight to issues. @file:/@gh: keep their prefixes for paths.
   const [repos] = createResource(
@@ -1233,16 +1323,29 @@ function ConversationThread(props: {
     }
   });
 
-  // Scroll to the bottom only when the latest message changes: initial load
-  // and sends scroll, "Load earlier" prepends do not.
+  // Scroll to the bottom when the latest message changes AND the reader is
+  // already near the bottom (or this is the first page). "Load earlier"
+  // prepends keep the viewport anchored instead of jumping.
+  let stickToBottom = true;
   let lastSeenId: string | undefined;
   createEffect(() => {
     const lastId = messages().at(-1)?.id;
     if (lastId && lastId !== lastSeenId) {
       lastSeenId = lastId;
-      scrollEl?.scrollTo({ top: scrollEl.scrollHeight });
+      if (stickToBottom) {
+        scrollEl?.scrollTo({ top: scrollEl.scrollHeight });
+      }
     }
   });
+
+  // Late layout shifts (avatars, images arriving after first paint) grow the
+  // column — snap back down while the reader is pinned to the bottom.
+  const ro = new ResizeObserver(() => {
+    if (stickToBottom && scrollEl) {
+      scrollEl.scrollTop = scrollEl.scrollHeight;
+    }
+  });
+  onCleanup(() => ro.disconnect());
 
   onCleanup(() => {
     for (const p of pending()) {
@@ -1650,7 +1753,13 @@ function ConversationThread(props: {
         ref={(el) => {
           scrollEl = el;
         }}
-        class="min-h-0 flex-1 overflow-y-auto"
+        onScroll={() => {
+          if (!scrollEl) return;
+          const gap =
+            scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight;
+          stickToBottom = gap < 60;
+        }}
+        class="chat-scroll min-h-0 flex-1 overflow-y-auto"
       >
         <Show when={(pins()?.length ?? 0) > 0}>
           <div class="border-b border-border/60 px-4 py-1.5">
@@ -1728,7 +1837,7 @@ function ConversationThread(props: {
           </p>
         </Show>
 
-        <div class="flex flex-col px-1 py-2">
+        <div ref={(el) => ro.observe(el)} class="flex flex-col px-1 py-2">
           <For
             each={messages()}
             fallback={
@@ -1763,7 +1872,7 @@ function ConversationThread(props: {
               return (
                 <>
                   <Show when={newDay()}>
-                    <div class="mx-3 my-4 flex items-center gap-3">
+                    <div class="mx-3 my-3 flex items-center gap-3">
                       <span class="h-px flex-1 bg-border" />
                       <span class="text-[11px] font-semibold tracking-wide text-muted">
                         {dayLabel(m.created_at)}

@@ -17,12 +17,20 @@ import {
 import { DownloadIcon, MoonIcon, SunIcon } from "../../components/icons";
 import { api } from "../../lib/api";
 import { mediaURL, net } from "../../lib/net";
+import {
+  deliver,
+  notifyEnabled,
+  requestNotifyPermission,
+  setNotifyEnabled,
+} from "../../lib/notify";
 import { syncToServer } from "../../lib/sync";
 import { useSession } from "../../stores/session";
 import {
   setChatStyle,
+  setClockFormat,
   toggleTheme,
   useChatStyle,
+  useClock,
   useTheme,
 } from "../../stores/theme";
 import AgentsSection from "../agents/AgentsSection";
@@ -245,6 +253,7 @@ function NewWorkspaceForm(props: { onCreated: () => void }) {
 function AppearanceSection() {
   const { theme } = useTheme();
   const { chatStyle } = useChatStyle();
+  const { clockFormat } = useClock();
   const seg = (active: boolean) =>
     `rounded-md px-2.5 py-1 text-[12.5px] transition-colors ${
       active
@@ -291,6 +300,39 @@ function AppearanceSection() {
             aria-pressed={chatStyle() === "bubbles"}
           >
             Two-sided
+          </button>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="w-20 text-[12px] text-muted">Clock</span>
+        <div
+          class="flex gap-0.5 rounded-lg border border-border bg-surface p-0.5"
+          role="group"
+          aria-label="Clock format"
+        >
+          <button
+            type="button"
+            onClick={() => setClockFormat("system")}
+            class={seg(clockFormat() === "system")}
+            aria-pressed={clockFormat() === "system"}
+          >
+            System
+          </button>
+          <button
+            type="button"
+            onClick={() => setClockFormat("12")}
+            class={seg(clockFormat() === "12")}
+            aria-pressed={clockFormat() === "12"}
+          >
+            12-hour
+          </button>
+          <button
+            type="button"
+            onClick={() => setClockFormat("24")}
+            class={seg(clockFormat() === "24")}
+            aria-pressed={clockFormat() === "24"}
+          >
+            24-hour
           </button>
         </div>
       </div>
@@ -394,30 +436,127 @@ function NotificationsSection() {
     }
   }
 
+  // Foreground notifications fire while the app runs — the only delivery
+  // path the desktop shell has (no service worker push there).
+  const [fg, setFg] = createSignal(notifyEnabled());
+  const [fgBusy, setFgBusy] = createSignal(false);
+  const [fgError, setFgError] = createSignal<string | null>(null);
+
+  async function toggleFg() {
+    setFgBusy(true);
+    setFgError(null);
+    try {
+      if (!fg()) {
+        const ok = await requestNotifyPermission();
+        if (!ok) {
+          setFgError("Notification permission was not granted");
+          return;
+        }
+        setNotifyEnabled(true);
+        setFg(true);
+        await deliver("Relay", "Notifications are on");
+      } else {
+        setNotifyEnabled(false);
+        setFg(false);
+      }
+    } finally {
+      setFgBusy(false);
+    }
+  }
+
   return (
-    <div class="flex flex-col gap-3">
+    <div class="flex flex-col gap-4">
       <div class="flex items-center gap-3">
         <button
           type="button"
-          onClick={() => void toggle()}
-          disabled={busy() || !supported() || permission() === "unsupported"}
+          onClick={() => void toggleFg()}
+          disabled={fgBusy()}
           class="h-8 rounded-md border border-border bg-surface px-3 text-[12.5px] transition-colors hover:bg-hover disabled:opacity-50"
         >
-          {subscribed() ? "Disable notifications" : "Enable notifications"}
+          {fg() ? "Disable notifications" : "Enable notifications"}
         </button>
         <span class="text-[12px] text-muted">
-          {subscribed()
-            ? "On — mentions, replies, and reviews reach this browser"
-            : permission() === "denied"
-              ? "Blocked by the browser — allow notifications in site settings"
-              : "Mentions, replies, and review requests"}
+          {fg()
+            ? "On — @mentions and replies alert while the app is running"
+            : "@mentions and replies, while the app is running"}
         </span>
       </div>
-      <Show when={ephemeral() && subscribed()}>
-        <p class="text-[11px] text-amber-600 dark:text-amber-400">
-          Server uses ephemeral push keys — notifications stop after a server
-          restart until you toggle this off and on.
-        </p>
+      <FormError message={fgError()} />
+      <Show when={supported()}>
+        <div class="flex items-center gap-3 border-t border-border/60 pt-3">
+          <button
+            type="button"
+            onClick={() => void toggle()}
+            disabled={busy() || permission() === "unsupported"}
+            class="h-8 rounded-md border border-border bg-surface px-3 text-[12.5px] transition-colors hover:bg-hover disabled:opacity-50"
+          >
+            {subscribed() ? "Disable push" : "Enable push"}
+          </button>
+          <span class="text-[12px] text-muted">
+            {subscribed()
+              ? "Push on — reaches this browser even when closed"
+              : permission() === "denied"
+                ? "Blocked by the browser — allow notifications in site settings"
+                : "Background push — alerts when the app is closed"}
+          </span>
+        </div>
+        <Show when={ephemeral() && subscribed()}>
+          <p class="text-[11px] text-amber-600 dark:text-amber-400">
+            Server uses ephemeral push keys — notifications stop after a
+            server restart until you toggle this off and on.
+          </p>
+        </Show>
+      </Show>
+      <FormError message={error()} />
+    </div>
+  );
+}
+
+// Chat name color: #rrggbb stored on the user; empty clears back to the
+// deterministic palette color.
+function NameColorRow() {
+  const session = useSession();
+  const [value, setValue] = createSignal(session.user()?.name_color ?? "");
+  const [busy, setBusy] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+
+  async function save(v: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.updateMe({ name_color: v });
+      await session.refresh();
+      setValue(v);
+    } catch (err) {
+      setError(errorMessage(err, "Could not save color"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div class="mt-4 flex items-center gap-2">
+      <span class="w-20 text-[12px] text-muted">Name color</span>
+      <input
+        type="color"
+        value={value() || "#3b82f6"}
+        disabled={busy()}
+        aria-label="Chat name color"
+        onInput={(e) => void save(e.currentTarget.value)}
+        class="h-7 w-9 cursor-pointer rounded border border-border bg-surface p-0.5"
+      />
+      <span class="font-mono text-[11.5px] text-muted">
+        {value() || "palette default"}
+      </span>
+      <Show when={value()}>
+        <button
+          type="button"
+          disabled={busy()}
+          onClick={() => void save("")}
+          class="text-[12px] text-muted underline-offset-2 hover:text-fg hover:underline"
+        >
+          Clear
+        </button>
       </Show>
       <FormError message={error()} />
     </div>
@@ -701,6 +840,9 @@ export default function Settings() {
           </div>
         </Show>
         <FormError message={avatarError()} />
+        <Show when={!net.isLocal()}>
+          <NameColorRow />
+        </Show>
         <Show when={!net.isLocal()}>
           <ChangePasswordForm />
         </Show>

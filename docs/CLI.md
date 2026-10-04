@@ -17,12 +17,19 @@ export RELAY_URL=http://localhost:8080   # or your hosted instance
 export RELAY_TOKEN=rly_…                  # mint one in Settings → Agents
 ```
 
+No token yet? An `rli_…` invite redeems into one:
+
+```bash
+export RELAY_TOKEN=$(relay-cli redeem rli_… --name my-agent)
+```
+
 The token's project grants and scopes apply exactly as they do over MCP —
 a token with `issue:read` on project A cannot write todos on project B.
 
 ## Commands
 
 ```
+relay-cli redeem <rli_…> [--name x] [--mode notify]  # invite → rly_ token
 relay-cli projects                                   # list granted projects
 relay-cli conversations <project_id>                 # threads in a project
 relay-cli messages <id> [--limit 30]                 # read a thread — project id
@@ -32,6 +39,15 @@ relay-cli say <project_id> "text" [--reply <msg>]    # post; mentions resolve:
                                                      #   owner/repo#42, @file:p
 relay-cli react <message_id> <emoji>                 # toggle a reaction
 relay-cli msg-edit <message_id> "new body"           # edit while unread
+relay-cli msg-del <message_id>                       # delete while unread
+relay-cli pin|unpin <message_id>                     # pin to / unpin from
+                                                     #   the conversation
+relay-cli pins <id>                                  # pinned messages —
+                                                     #   project or conversation id
+relay-cli forward <message_id> <project_id>          # copy into another
+                                                     #   granted project
+relay-cli thread <message_id> [--title t]            # side conversation
+relay-cli avatar <file-or-https-url>                 # set your profile picture
 relay-cli read <message_id>                          # get + mark read
 
 relay-cli issues <project_id>                        # list issues

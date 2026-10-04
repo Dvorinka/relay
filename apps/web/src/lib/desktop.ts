@@ -32,6 +32,7 @@ type WailsApp = {
     bodyB64: string,
     token: string,
   ) => Promise<{ status: number; body: string }>;
+  Notify?: (title: string, body: string) => Promise<void>;
 };
 
 function wailsApp(): WailsApp | undefined {
@@ -41,6 +42,32 @@ function wailsApp(): WailsApp | undefined {
 
 export function hasUploadBridge(): boolean {
   return typeof wailsApp()?.ProxyRequest === "function";
+}
+
+// Synchronous "am I inside the Wails desktop shell" check: the shell serves
+// the SPA from wails.localhost and injects window.go for bound methods.
+export function isDesktop(): boolean {
+  return (
+    window.location.hostname === "wails.localhost" ||
+    (window as unknown as { go?: unknown }).go !== undefined
+  );
+}
+
+// The webview's Notification API either doesn't exist (WebKitGTK without an
+// embedder handler) or silently drops calls — App.Notify on the Go side
+// pipes to the OS notification daemon instead.
+export async function desktopNotify(
+  title: string,
+  body: string,
+): Promise<boolean> {
+  const app = wailsApp();
+  if (typeof app?.Notify !== "function") return false;
+  try {
+    await app.Notify(title, body);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function bytesToB64(buf: ArrayBuffer): string {

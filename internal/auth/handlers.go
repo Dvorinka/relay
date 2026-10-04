@@ -3,10 +3,13 @@ package auth
 import (
 	"errors"
 	"net/http"
+	"regexp"
+	"strings"
 
 	"github.com/Dvorinka/relay/internal/db"
 	"github.com/Dvorinka/relay/internal/httpx"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
@@ -20,6 +23,7 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
 	priv.POST("/logout", s.handleLogout)
 	priv.GET("/session", s.handleSession)
 	priv.POST("/password/change", s.handleChangePassword)
+	priv.PATCH("/me", s.handleUpdateMe)
 }
 
 // --- request/response shapes (mirrors api/openapi.yaml) ---
@@ -52,6 +56,7 @@ type userOut struct {
 	ID        string  `json:"id"`
 	Email     string  `json:"email"`
 	Name      string  `json:"name"`
+	NameColor *string `json:"name_color"`
 	AvatarURL *string `json:"avatar_url"`
 	CreatedAt string  `json:"created_at"`
 }
@@ -76,10 +81,47 @@ func UserOut(u db.GetUserByIDRow) userOut {
 		v := "/api/files/" + u.AvatarKey.String // avatar served once storage lands (phase 4)
 		avatar = &v
 	}
+	var color *string
+	if u.NameColor.Valid {
+		color = &u.NameColor.String
+	}
 	return userOut{
-		ID: u.ID.String(), Email: u.Email, Name: u.Name, AvatarURL: avatar,
+		ID: u.ID.String(), Email: u.Email, Name: u.Name, NameColor: color,
+		AvatarURL: avatar,
 		CreatedAt: u.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
 	}
+}
+
+var nameColorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+
+// handleUpdateMe patches profile fields. name_color accepts "#rrggbb" or
+// empty (clears back to the palette default).
+func (s *Service) handleUpdateMe(c *gin.Context) {
+	user := CurrentUser(c)
+	var req struct {
+		NameColor *string `json:"name_color"`
+	}
+	if !httpx.BindJSON(c, &req) {
+		return
+	}
+	if req.NameColor == nil {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "nothing to update")
+		return
+	}
+	v := strings.TrimSpace(*req.NameColor)
+	if v != "" && !nameColorPattern.MatchString(v) {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "name_color must be #rrggbb or empty")
+		return
+	}
+	row, err := s.q.UpdateUserNameColor(c.Request.Context(), db.UpdateUserNameColorParams{
+		ID:        user.ID,
+		NameColor: pgtype.Text{String: strings.ToLower(v), Valid: v != ""},
+	})
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"user": UserOut(db.GetUserByIDRow(row))})
 }
 
 // --- handlers ---

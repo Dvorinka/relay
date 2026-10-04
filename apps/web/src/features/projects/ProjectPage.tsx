@@ -24,7 +24,13 @@ import {
   SettingsIcon,
   XIcon,
 } from "../../components/icons";
-import { FormError, ImageURLField, Spinner } from "../../components/ui";
+import {
+  FormError,
+  ImageURLField,
+  inputClass,
+  Spinner,
+  SubmitButton,
+} from "../../components/ui";
 import { api } from "../../lib/api";
 import { mediaURL, net } from "../../lib/net";
 import { subscribe } from "../../lib/events";
@@ -216,6 +222,7 @@ function RailSearch(props: { projectId: string }) {
           type="text"
           value={q()}
           placeholder="Search"
+          title="Text search, or qualifiers: from:name · has:image · has:file · before:YYYY-MM-DD · after:YYYY-MM-DD"
           aria-label="Search this project"
           onInput={(e) => onInput(e.currentTarget.value)}
           onKeyDown={(e) => {
@@ -558,13 +565,216 @@ function ViewSheet(props: {
           <Show when={props.view === "settings"}>
             <div class="min-h-0 flex-1 overflow-y-auto">
               <div class="mx-auto w-full max-w-2xl px-6 py-6">
+                <ProjectDetailsSection project={props.project} />
                 <ProjectIconSection project={props.project} />
+                <ProjectRepoSection project={props.project} />
                 <WebhooksSection projectId={props.project.id} />
               </div>
             </div>
           </Show>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Rename/recolor an existing project. PATCH /api/projects/:id — the store
+// refresh repaints the rail and header.
+function ProjectDetailsSection(props: { project: Project }) {
+  const projects = useProjects();
+  const [error, setError] = createSignal<string | null>(null);
+  const [saved, setSaved] = createSignal(false);
+  const [pending, setPending] = createSignal(false);
+
+  async function onSubmit(e: SubmitEvent) {
+    e.preventDefault();
+    const data = new FormData(e.currentTarget as HTMLFormElement);
+    setPending(true);
+    setError(null);
+    setSaved(false);
+    try {
+      await api.updateProject(props.project.id, {
+        name: String(data.get("name") ?? "").trim() || undefined,
+        description: String(data.get("description") ?? ""),
+        color: String(data.get("color") ?? "") || "",
+      });
+      await projects.refresh();
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div class="mb-6">
+      <h3 class="mb-2 text-[13px] font-semibold">Project</h3>
+      <form onSubmit={onSubmit} class="flex flex-col gap-3">
+        <div class="flex items-center gap-3">
+          <label class="w-20 text-[12px] text-muted" for="pd-name">
+            Name
+          </label>
+          <input
+            id="pd-name"
+            name="name"
+            required
+            maxlength={80}
+            value={props.project.name}
+            class={`${inputClass} max-w-xs`}
+          />
+          <input
+            type="color"
+            name="color"
+            value={props.project.color || "#06b6d4"}
+            aria-label="Project color"
+            title="Rail color"
+            class="h-8 w-9 shrink-0 cursor-pointer rounded border border-border bg-surface p-0.5"
+          />
+        </div>
+        <div class="flex items-start gap-3">
+          <label class="w-20 pt-2 text-[12px] text-muted" for="pd-desc">
+            Description
+          </label>
+          <textarea
+            id="pd-desc"
+            name="description"
+            rows={2}
+            value={props.project.description}
+            class={`${inputClass} flex-1 resize-none`}
+          />
+        </div>
+        <div class="flex items-center gap-2 pl-[92px]">
+          <SubmitButton pending={pending()}>Save</SubmitButton>
+          <Show when={saved()}>
+            <span class="text-[12px] text-accent-ink">Saved</span>
+          </Show>
+        </div>
+      </form>
+      <FormError message={error()} />
+    </div>
+  );
+}
+
+// Link a different (or first) GitHub repo after creation — picks from the
+// workspace's installed App repositories; unlink lives beside each entry.
+function ProjectRepoSection(props: { project: Project }) {
+  const [repos, { refetch }] = createResource(
+    () => props.project.id,
+    async (id) => (await api.listProjectRepos(id)).repos,
+  );
+  const [available] = createResource(
+    () => props.project.workspace_id,
+    async (id) => {
+      try {
+        return (await api.listAvailableRepos(id)).repos;
+      } catch {
+        return [] as Awaited<
+          ReturnType<typeof api.listAvailableRepos>
+        >["repos"];
+      }
+    },
+  );
+  const [picked, setPicked] = createSignal("");
+  const [pending, setPending] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+
+  const linkable = () =>
+    (available() ?? []).filter(
+      (a) =>
+        !(repos() ?? []).some(
+          (r) => r.owner === a.owner && r.name === a.name,
+        ),
+    );
+
+  async function link(e: SubmitEvent) {
+    e.preventDefault();
+    const repo = linkable().find(
+      (r) => `${r.owner}/${r.name}` === picked(),
+    );
+    if (!repo) return;
+    setPending(true);
+    setError(null);
+    try {
+      await api.linkRepo(props.project.id, {
+        installation_id: repo.installation_id,
+        owner: repo.owner,
+        name: repo.name,
+        default_branch: repo.default_branch,
+      });
+      setPicked("");
+      await refetch();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Link failed");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function unlink(repoId: string) {
+    setError(null);
+    try {
+      await api.unlinkRepo(props.project.id, repoId);
+      await refetch();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unlink failed");
+    }
+  }
+
+  return (
+    <div class="mb-6">
+      <h3 class="mb-2 text-[13px] font-semibold">GitHub</h3>
+      <For each={repos() ?? []}>
+        {(r) => (
+          <div class="mb-1.5 flex items-center gap-2 text-[12.5px]">
+            <span class="min-w-0 flex-1 truncate font-mono text-muted">
+              {r.owner}/{r.name}
+            </span>
+            <button
+              type="button"
+              onClick={() => void unlink(r.id)}
+              class="shrink-0 rounded px-1.5 py-0.5 text-[11.5px] text-muted hover:bg-hover hover:text-fg"
+            >
+              unlink
+            </button>
+          </div>
+        )}
+      </For>
+      <Show
+        when={linkable().length > 0}
+        fallback={
+          <Show when={(repos() ?? []).length === 0}>
+            <p class="text-[12px] text-muted">
+              {(available()?.length ?? 0) === 0
+                ? "Install the GitHub App on a repository first (Settings → GitHub App)."
+                : "No unlinked repositories available."}
+            </p>
+          </Show>
+        }
+      >
+        <form onSubmit={link} class="flex items-center gap-2">
+          <select
+            value={picked()}
+            onChange={(e) => setPicked(e.currentTarget.value)}
+            class={`${inputClass} max-w-xs`}
+            aria-label="Repository to link"
+          >
+            <option value="">Pick a repository…</option>
+            <For each={linkable()}>
+              {(r) => (
+                <option value={`${r.owner}/${r.name}`}>
+                  {r.owner}/{r.name}
+                </option>
+              )}
+            </For>
+          </select>
+          <SubmitButton pending={pending()} disabled={!picked()}>
+            Link
+          </SubmitButton>
+        </form>
+      </Show>
+      <FormError message={error()} />
     </div>
   );
 }

@@ -77,7 +77,8 @@ func (q *Queries) SearchIssues(ctx context.Context, arg SearchIssuesParams) ([]S
 const searchMessages = `-- name: SearchMessages :many
 select m.id, m.body, m.created_at, c.project_id,
        coalesce(u.name, a.name, '') as author_name,
-       ts_rank(to_tsvector('english', m.body), websearch_to_tsquery('english', $2)) as rank
+       coalesce(ts_rank(to_tsvector('english', m.body),
+               websearch_to_tsquery('english', nullif($2, ''))), 0) as rank
 from messages m
 join conversations c on c.id = m.conversation_id
 join projects p on p.id = c.project_id
@@ -85,14 +86,30 @@ join workspace_members wm on wm.workspace_id = p.workspace_id and wm.user_id = $
 left join users u on u.id = m.author_user_id
 left join agents a on a.id = m.author_agent_id
 where m.deleted_at is null
-  and to_tsvector('english', m.body) @@ websearch_to_tsquery('english', $2)
+  and ($2 = '' or to_tsvector('english', m.body) @@ websearch_to_tsquery('english', $2))
+  and ($3 = '' or coalesce(u.name, a.name, '') ilike $3)
+  and ($4 = '' or upper(p.key) = upper($4))
+  and ($5::bool is not true or exists (
+        select 1 from message_attachments ma
+        join attachments att on att.id = ma.attachment_id
+        where ma.message_id = m.id and att.content_type like 'image/%'))
+  and ($6::bool is not true or exists (
+        select 1 from message_attachments ma where ma.message_id = m.id))
+  and ($7::timestamptz is null or m.created_at < $7::timestamptz)
+  and ($8::timestamptz is null or m.created_at >= $8::timestamptz)
 order by rank desc, m.created_at desc
 limit 20
 `
 
 type SearchMessagesParams struct {
-	UserID             pgtype.UUID `json:"user_id"`
-	WebsearchToTsquery string      `json:"websearch_to_tsquery"`
+	UserID     pgtype.UUID        `json:"user_id"`
+	Q          interface{}        `json:"q"`
+	Author     interface{}        `json:"author"`
+	ProjectKey interface{}        `json:"project_key"`
+	HasImage   pgtype.Bool        `json:"has_image"`
+	HasFile    pgtype.Bool        `json:"has_file"`
+	Before     pgtype.Timestamptz `json:"before"`
+	After      pgtype.Timestamptz `json:"after"`
 }
 
 type SearchMessagesRow struct {
@@ -101,12 +118,23 @@ type SearchMessagesRow struct {
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 	ProjectID  pgtype.UUID        `json:"project_id"`
 	AuthorName string             `json:"author_name"`
-	Rank       float32            `json:"rank"`
+	Rank       interface{}        `json:"rank"`
 }
 
-// global message FTS across the user's workspaces, ranked
+// global message FTS across the user's workspaces, ranked.
+// Optional qualifiers parsed by the handler: author ilike, project key,
+// has-image/has-file attachment filters, created_at bounds.
 func (q *Queries) SearchMessages(ctx context.Context, arg SearchMessagesParams) ([]SearchMessagesRow, error) {
-	rows, err := q.db.Query(ctx, searchMessages, arg.UserID, arg.WebsearchToTsquery)
+	rows, err := q.db.Query(ctx, searchMessages,
+		arg.UserID,
+		arg.Q,
+		arg.Author,
+		arg.ProjectKey,
+		arg.HasImage,
+		arg.HasFile,
+		arg.Before,
+		arg.After,
+	)
 	if err != nil {
 		return nil, err
 	}

@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -1216,5 +1217,115 @@ func TestForwardPin(t *testing.T) {
 	pinned, _ := pres["messages"].([]any)
 	if len(pinned) != 1 {
 		t.Fatalf("mcp list_pins: %v", pres)
+	}
+}
+
+// Search qualifiers: from:/in:/before:/after: narrow the FTS scan and a
+// qualifier-only query (empty FTS text) still returns rows. The has:image
+// and has:file arms need object storage, so they stay covered by unit tests.
+func TestSearchQualifiers(t *testing.T) {
+	dsn := os.Getenv("RELAY_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("RELAY_TEST_DATABASE_URL unset")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	goose.SetBaseFS(relaydb.MigrationsFS)
+	if err := goose.SetDialect("postgres"); err != nil {
+		t.Fatal(err)
+	}
+	if err := goose.UpContext(ctx, stdlib.OpenDBFromPool(pool), "migrations"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "delete from rate_limits"); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Config{
+		DatabaseURL:     dsn,
+		AuthSecret:      "test-secret-test-secret-test-secret",
+		InsecureDev:     true,
+		SessionTTLHours: 1,
+	}
+	srv := httptest.NewServer(New(cfg, zap.NewNop(), pool, "test"))
+	defer srv.Close()
+	c := &e2eClient{t: t, base: srv.URL}
+
+	code, reg := c.call("POST", "/api/auth/register",
+		fmt.Sprintf(`{"email":"srch-%d@relay.dev","password":"srchpass12345","name":"Searcher"}`,
+			time.Now().UnixNano()))
+	if code != 201 && code != 200 {
+		t.Fatalf("register: %d %v", code, reg)
+	}
+	code, ws := c.call("POST", "/api/workspaces", `{"name":"Search WS"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("workspace: %d %v", code, ws)
+	}
+	wsID := ws["id"].(string)
+
+	newProject := func(key string) string {
+		code, proj := c.call("POST", "/api/projects",
+			fmt.Sprintf(`{"workspace_id":%q,"key":%q,"name":%q}`, wsID, key, key+" project"))
+		if code != 201 && code != 200 {
+			t.Fatalf("project %s: %d %v", key, code, proj)
+		}
+		return proj["id"].(string)
+	}
+	projA, projB := newProject("SRA"), newProject("SRB")
+
+	post := func(proj, body string) {
+		code, conv := c.call("GET", "/api/projects/"+proj+"/conversation", "")
+		if code != 200 {
+			t.Fatalf("conversation: %d %v", code, conv)
+		}
+		code, m := c.call("POST", "/api/conversations/"+conv["id"].(string)+"/messages",
+			fmt.Sprintf(`{"body":%q}`, body))
+		if code != 201 && code != 200 {
+			t.Fatalf("post: %d %v", code, m)
+		}
+	}
+	post(projA, "needle alpha")
+	post(projB, "needle beta")
+
+	search := func(q string) map[string]any {
+		code, res := c.call("GET", "/api/search?q="+url.QueryEscape(q), "")
+		if code != 200 {
+			t.Fatalf("search %q: %d %v", q, code, res)
+		}
+		return res
+	}
+	msgProjects := func(res map[string]any) map[string]bool {
+		out := map[string]bool{}
+		for _, m := range res["messages"].([]any) {
+			out[m.(map[string]any)["project_id"].(string)] = true
+		}
+		return out
+	}
+
+	if got := msgProjects(search("needle")); !got[projA] || !got[projB] {
+		t.Fatalf("plain search should hit both projects: %v", got)
+	}
+	if got := msgProjects(search("needle in:SRA")); !got[projA] || got[projB] {
+		t.Fatalf("in: should narrow to one project: %v", got)
+	}
+	if got := msgProjects(search("needle from:Searcher")); len(got) != 2 {
+		t.Fatalf("from:author should match both: %v", got)
+	}
+	if got := msgProjects(search("needle from:Ghost")); len(got) != 0 {
+		t.Fatalf("from:unknown should match nothing: %v", got)
+	}
+	if got := msgProjects(search("from:me")); len(got) != 2 {
+		t.Fatalf("bare from:me should still search: %v", got)
+	}
+	if got := msgProjects(search("needle after:2999-01-01")); len(got) != 0 {
+		t.Fatalf("after:future should match nothing: %v", got)
+	}
+	if got := msgProjects(search("needle before:2999-01-01")); len(got) != 2 {
+		t.Fatalf("before:future should match everything: %v", got)
 	}
 }
