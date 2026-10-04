@@ -405,23 +405,25 @@ func (q *Queries) ListAgentGrants(ctx context.Context, agentID pgtype.UUID) ([]L
 }
 
 const listAgentInvites = `-- name: ListAgentInvites :many
-select i.id, i.workspace_id, i.token_hash, i.project_ids, i.scopes, i.expires_at, i.used_by, i.created_by, i.created_at, a.name as used_by_name from agent_invites i
+select i.id, i.workspace_id, i.token_hash, i.project_ids, i.scopes, i.expires_at, i.used_by, i.created_by, i.created_at, a.name as used_by_name, u.name as created_by_name from agent_invites i
 left join agents a on a.id = i.used_by
+left join users u on u.id = i.created_by
 where i.workspace_id = $1
 order by i.created_at desc
 `
 
 type ListAgentInvitesRow struct {
-	ID          pgtype.UUID        `json:"id"`
-	WorkspaceID pgtype.UUID        `json:"workspace_id"`
-	TokenHash   []byte             `json:"token_hash"`
-	ProjectIds  []pgtype.UUID      `json:"project_ids"`
-	Scopes      []string           `json:"scopes"`
-	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
-	UsedBy      pgtype.UUID        `json:"used_by"`
-	CreatedBy   pgtype.UUID        `json:"created_by"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UsedByName  pgtype.Text        `json:"used_by_name"`
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	TokenHash     []byte             `json:"token_hash"`
+	ProjectIds    []pgtype.UUID      `json:"project_ids"`
+	Scopes        []string           `json:"scopes"`
+	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
+	UsedBy        pgtype.UUID        `json:"used_by"`
+	CreatedBy     pgtype.UUID        `json:"created_by"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UsedByName    pgtype.Text        `json:"used_by_name"`
+	CreatedByName pgtype.Text        `json:"created_by_name"`
 }
 
 func (q *Queries) ListAgentInvites(ctx context.Context, workspaceID pgtype.UUID) ([]ListAgentInvitesRow, error) {
@@ -444,6 +446,7 @@ func (q *Queries) ListAgentInvites(ctx context.Context, workspaceID pgtype.UUID)
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UsedByName,
+			&i.CreatedByName,
 		); err != nil {
 			return nil, err
 		}

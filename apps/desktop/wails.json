@@ -2,9 +2,6 @@
   "$schema": "https://wails.io/schemas/config.v2.json",
   "name": "Relay",
   "outputfilename": "relay-desktop",
-  "app": {
-    "withGlobalFileExplorer": true
-  },
   "info": {
     "productName": "Relay",
     "companyName": "Relay",

@@ -46,8 +46,18 @@ import {
   type NotifyCategory,
 } from "../../lib/notify";
 import {
+  notifySound,
+  playSound,
+  setNotifySound,
+  SOUNDS,
+  type SoundId,
+} from "../../lib/sounds";
+import {
   desktopAutostart,
+  desktopBackground,
+  desktopQuit,
   desktopSetAutostart,
+  desktopSetBackground,
   isDesktop,
 } from "../../lib/desktop";
 import { syncToServer } from "../../lib/sync";
@@ -280,15 +290,16 @@ function NewWorkspaceForm(props: { onCreated: () => void }) {
 // shell manages (HKCU Run key / freedesktop entry / LaunchAgent).
 function DesktopSection() {
   const [state, { refetch }] = createResource(desktopAutostart);
+  const [bg, { refetch: refetchBg }] = createResource(desktopBackground);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
 
-  async function toggle(on: boolean) {
+  async function run(fn: () => Promise<void>, refetchFn: () => void) {
     setBusy(true);
     setError(null);
     try {
-      await desktopSetAutostart(on);
-      refetch();
+      await fn();
+      refetchFn();
     } catch (e) {
       setError(e instanceof Error ? e.message : "could not update");
     } finally {
@@ -296,25 +307,73 @@ function DesktopSection() {
     }
   }
 
+  const checkCls = "h-3.5 w-3.5 accent-accent";
+  const labelCls =
+    "flex w-fit cursor-pointer items-center gap-2 text-[12.5px] text-muted transition-colors hover:text-fg";
+
   return (
-    <div class="flex flex-col gap-2">
+    <div class="flex flex-col gap-3">
       <Show
-        when={state.state === "ready"}
+        when={state.state === "ready" && bg.state === "ready"}
         fallback={<Spinner class="h-3.5 w-3.5" />}
       >
-        <label class="flex w-fit cursor-pointer items-center gap-2 text-[12.5px] text-muted transition-colors hover:text-fg">
-          <input
-            type="checkbox"
-            checked={state()!.enabled}
-            disabled={busy()}
-            onChange={(e) => void toggle(e.currentTarget.checked)}
-            class="h-3.5 w-3.5 accent-accent"
-          />
-          Launch Relay when you sign in
-        </label>
-        <p class="text-[11.5px] text-faint">
-          Starts the desktop app automatically on system startup.
-        </p>
+        <div>
+          <label class={labelCls}>
+            <input
+              type="checkbox"
+              checked={state()!.enabled}
+              disabled={busy()}
+              onChange={(e) =>
+                void run(
+                  () => desktopSetAutostart(e.currentTarget.checked),
+                  refetch,
+                )
+              }
+              class={checkCls}
+            />
+            Launch Relay when you sign in
+          </label>
+          <p class="mt-0.5 text-[11.5px] text-faint">
+            Starts the desktop app automatically on system startup.
+          </p>
+        </div>
+        <div>
+          <label class={labelCls}>
+            <input
+              type="checkbox"
+              checked={bg()!.enabled}
+              disabled={busy()}
+              onChange={(e) =>
+                void run(
+                  () => desktopSetBackground(e.currentTarget.checked),
+                  refetchBg,
+                )
+              }
+              class={checkCls}
+            />
+            Keep running in the background
+          </label>
+          <p class="mt-0.5 text-[11.5px] text-faint">
+            Closing the window keeps Relay connected — @mention alerts still
+            arrive as system notifications. Reopening the app shows the window
+            again.
+          </p>
+        </div>
+        <Show when={bg()!.enabled}>
+          <div>
+            <button
+              type="button"
+              onClick={() => desktopQuit()}
+              class="h-8 rounded-md border border-border bg-surface px-3 text-[12.5px] text-muted transition-colors hover:bg-hover hover:text-fg"
+            >
+              Quit Relay
+            </button>
+            <p class="mt-0.5 text-[11.5px] text-faint">
+              Exits the app entirely — closing the window only hides it while
+              background mode is on.
+            </p>
+          </div>
+        </Show>
       </Show>
       <FormError message={error()} />
     </div>
@@ -513,6 +572,7 @@ function NotificationsSection() {
   const [fg, setFg] = createSignal(notifyEnabled());
   const [fgBusy, setFgBusy] = createSignal(false);
   const [fgError, setFgError] = createSignal<string | null>(null);
+  const [sound, setSound] = createSignal<SoundId>(notifySound());
 
   async function toggleFg() {
     setFgBusy(true);
@@ -584,9 +644,39 @@ function NotificationsSection() {
             )}
           </For>
         </div>
+        <div class="flex flex-wrap items-center gap-1.5">
+          <span class="mr-1 text-[11px] font-medium uppercase tracking-wide text-faint">
+            Sound
+          </span>
+          <For each={SOUNDS}>
+            {(s) => (
+              <Tip text={s.hint} side="top">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNotifySound(s.id);
+                    setSound(s.id);
+                    playSound(s.id);
+                  }}
+                  class={`rounded-full border px-2.5 py-1 text-[11.5px] transition-colors ${
+                    sound() === s.id
+                      ? "border-accent/60 bg-accent-soft text-accent-ink"
+                      : "border-border text-muted hover:bg-hover hover:text-fg"
+                  }`}
+                >
+                  {s.label}
+                </button>
+              </Tip>
+            )}
+          </For>
+        </div>
       </Show>
       <FormError message={fgError()} />
-      <Show when={supported()}>
+      {/* Web push needs a service worker + push service — absent in the
+          desktop webview. There, "Keep running in the background" (Settings →
+          Desktop) plays the same role: toasts arrive while the app runs
+          hidden. */}
+      <Show when={supported() && !isDesktop()}>
         <div class="flex items-center gap-3 border-t border-border/60 pt-3">
           <button
             type="button"
@@ -1081,7 +1171,7 @@ export default function Settings() {
             <p class="text-[13px] font-medium">{session.user()?.name}</p>
             <p class="text-[13px] text-muted">{session.user()?.email}</p>
           </div>
-          <label class="cursor-pointer rounded-md border border-border bg-surface px-2.5 py-1 text-[12px] hover:bg-hover">
+          <label class="relative cursor-pointer rounded-md border border-border bg-surface px-2.5 py-1 text-[12px] hover:bg-hover">
             <input
               type="file"
               accept="image/png,image/jpeg,image/gif,image/webp,image/avif,image/bmp,image/x-icon"
@@ -1199,7 +1289,7 @@ export default function Settings() {
                   )}
                 </Show>
                 <Show when={canInvite()}>
-                  <label class="cursor-pointer rounded-md border border-border bg-surface px-2.5 py-1 text-[12px] hover:bg-hover">
+                  <label class="relative cursor-pointer rounded-md border border-border bg-surface px-2.5 py-1 text-[12px] hover:bg-hover">
                     <input
                       type="file"
                       accept="image/png,image/jpeg,image/gif,image/webp,image/avif,image/bmp,image/x-icon"

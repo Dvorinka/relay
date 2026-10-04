@@ -30,6 +30,10 @@ type Config struct {
 	// Offline serves the embedded SPA ("This device" workspace) instead of
 	// proxying a server.
 	Offline bool `json:"offline"`
+	// RunInBackground keeps the process alive when the window closes so SSE
+	// stays connected and mention/reply toasts keep arriving. Relaunching
+	// the exe (single-instance) shows the window again.
+	RunInBackground bool `json:"run_in_background"`
 }
 
 func configPath() (string, error) {
@@ -71,15 +75,26 @@ func (c *Config) save() error {
 
 // App is the Wails-bound application object.
 type App struct {
-	cfg     *Config
-	ctx     context.Context
-	handler atomic.Value // stores http.Handler; swapped when a URL is saved
+	cfg      *Config
+	ctx      context.Context
+	handler  atomic.Value // stores http.Handler; swapped when a URL is saved
+	quitting atomic.Bool  // set by Quit — lets OnBeforeClose distinguish "close window" from "exit app"
 }
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	if a.cfg.ServerURL != "" {
 		wailsruntime.WindowSetTitle(ctx, "Relay")
+	}
+	installToastCallback(a)
+}
+
+// Quit is bound on window.go.main.App — the only way out while
+// run_in_background is on (every other close path just hides the window).
+func (a *App) Quit() {
+	a.quitting.Store(true)
+	if a.ctx != nil {
+		wailsruntime.Quit(a.ctx)
 	}
 }
 
@@ -94,6 +109,7 @@ func (a *App) buildHandler() http.Handler {
 	mux.HandleFunc("/~desktop-open", a.openExternal)
 	mux.HandleFunc("/~desktop-config", a.configFromSPA)
 	mux.HandleFunc("/~desktop-autostart", a.autostart)
+	mux.HandleFunc("/~desktop-background", a.background)
 	switch {
 	case a.cfg.Offline:
 		mux.Handle("/", spaHandler(webDist()))
@@ -171,6 +187,25 @@ func (a *App) autostart(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"enabled":   on,
 		"supported": true,
+	})
+}
+
+// background reports/toggles close-to-background mode: the desktop's answer
+// to "push when the app is closed". With it on, closing the window hides it
+// instead of quitting — the SSE stream stays connected and toasts keep
+// arriving. Relaunching the app hits the single-instance lock and re-shows
+// the window. GET returns {enabled}; POST ?enabled=1|0 persists the flag.
+func (a *App) background(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		a.cfg.RunInBackground = r.URL.Query().Get("enabled") == "1"
+		if err := a.cfg.save(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"enabled": a.cfg.RunInBackground,
 	})
 }
 

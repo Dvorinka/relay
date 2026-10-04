@@ -30,6 +30,21 @@ func TestSplitQueryDuringYearAndDay(t *testing.T) {
 	}
 }
 
+func TestSplitQueryQuotedValues(t *testing.T) {
+	// Multi-word names arrive quoted — the whole span is the value.
+	text, author, _, _, mention, _, _ := splitQuery(
+		`hello from:"Jane Smith" mentions:"Agent Bot"`)
+	if text != "hello" {
+		t.Fatalf("text = %q", text)
+	}
+	if author != "Jane Smith" {
+		t.Fatalf("author = %q", author)
+	}
+	if mention != "Agent Bot" {
+		t.Fatalf("mention = %q", mention)
+	}
+}
+
 func TestSplitQueryLeavesPlainText(t *testing.T) {
 	text, _, _, _, _, _, _ := splitQuery("just words mentions")
 	if text != "just words mentions" {

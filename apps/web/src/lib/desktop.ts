@@ -33,6 +33,7 @@ type WailsApp = {
     token: string,
   ) => Promise<{ status: number; body: string }>;
   Notify?: (title: string, body: string) => Promise<void>;
+  Quit?: () => Promise<void>;
   ServerConfig?: () => Promise<{ server_url?: string; offline?: boolean }>;
 };
 
@@ -179,4 +180,27 @@ export async function desktopSetAutostart(on: boolean): Promise<void> {
     method: "POST",
   });
   if (!r.ok) throw new Error("could not update autostart");
+}
+
+// Close-to-background mode ("alerts when the app is closed" on desktop):
+// the shell hides the window instead of quitting, SSE stays connected and
+// native toasts keep firing. Relaunching the exe re-shows the window via
+// the single-instance lock.
+export async function desktopBackground(): Promise<{ enabled: boolean }> {
+  const r = await fetch("/~desktop-background", { cache: "no-store" });
+  if (!r.ok) throw new Error("background status unavailable");
+  return r.json();
+}
+
+export async function desktopSetBackground(on: boolean): Promise<void> {
+  const r = await fetch(`/~desktop-background?enabled=${on ? 1 : 0}`, {
+    method: "POST",
+  });
+  if (!r.ok) throw new Error("could not update background mode");
+}
+
+// Real exit — with background mode on every other close path just hides the
+// window. Bound as window.go.main.App.Quit.
+export function desktopQuit(): void {
+  void wailsApp()?.Quit?.();
 }

@@ -193,6 +193,11 @@ Section "Uninstall"
   RMDir "$SMPROGRAMS\Relay"
   Delete "$DESKTOP\Relay.lnk"
   DeleteRegKey HKCU "${UNINST_REG}"
+  ; Launch-at-login entry written by Settings — without this an uninstalled
+  ; exe still gets launched (and silently fails) on every sign-in.
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Relay"
+  ; Toast activator registration (go-toast SetAppData).
+  DeleteRegKey HKCU "SOFTWARE\Classes\AppUserModelId\Relay"
 
   ; Drop $INSTDIR from the user PATH if present. The wrapped ";…;" form
   ; makes first/last/only entries all match the same ";dir;" pattern.

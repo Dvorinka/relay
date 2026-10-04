@@ -152,8 +152,9 @@ values (sqlc.arg(workspace_id), sqlc.arg(token_hash), sqlc.arg(project_ids)::uui
 returning *;
 
 -- name: ListAgentInvites :many
-select i.*, a.name as used_by_name from agent_invites i
+select i.*, a.name as used_by_name, u.name as created_by_name from agent_invites i
 left join agents a on a.id = i.used_by
+left join users u on u.id = i.created_by
 where i.workspace_id = sqlc.arg(workspace_id)
 order by i.created_at desc;
 
