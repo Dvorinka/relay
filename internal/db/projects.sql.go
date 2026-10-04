@@ -54,7 +54,7 @@ func (q *Queries) CreateBoard(ctx context.Context, arg CreateBoardParams) (Board
 const createProject = `-- name: CreateProject :one
 insert into projects (workspace_id, key, name, description, icon, color, created_by)
 values ($1, $2, $3, $4, $5, $6, $7)
-returning id, workspace_id, key, name, description, icon, color, statuses, local_path, brief_policy, created_at
+returning id, workspace_id, key, name, description, icon, avatar_key, color, statuses, local_path, brief_policy, created_at
 `
 
 type CreateProjectParams struct {
@@ -74,6 +74,7 @@ type CreateProjectRow struct {
 	Name        string             `json:"name"`
 	Description string             `json:"description"`
 	Icon        pgtype.Text        `json:"icon"`
+	AvatarKey   pgtype.Text        `json:"avatar_key"`
 	Color       pgtype.Text        `json:"color"`
 	Statuses    []byte             `json:"statuses"`
 	LocalPath   pgtype.Text        `json:"local_path"`
@@ -99,6 +100,7 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (C
 		&i.Name,
 		&i.Description,
 		&i.Icon,
+		&i.AvatarKey,
 		&i.Color,
 		&i.Statuses,
 		&i.LocalPath,
@@ -178,7 +180,7 @@ func (q *Queries) DeleteSavedFilter(ctx context.Context, arg DeleteSavedFilterPa
 }
 
 const getProjectByID = `-- name: GetProjectByID :one
-select id, workspace_id, key, name, description, icon, color, statuses, local_path, brief_policy, created_at
+select id, workspace_id, key, name, description, icon, avatar_key, color, statuses, local_path, brief_policy, created_at
 from projects
 where id = $1
 `
@@ -190,6 +192,7 @@ type GetProjectByIDRow struct {
 	Name        string             `json:"name"`
 	Description string             `json:"description"`
 	Icon        pgtype.Text        `json:"icon"`
+	AvatarKey   pgtype.Text        `json:"avatar_key"`
 	Color       pgtype.Text        `json:"color"`
 	Statuses    []byte             `json:"statuses"`
 	LocalPath   pgtype.Text        `json:"local_path"`
@@ -207,6 +210,7 @@ func (q *Queries) GetProjectByID(ctx context.Context, id pgtype.UUID) (GetProjec
 		&i.Name,
 		&i.Description,
 		&i.Icon,
+		&i.AvatarKey,
 		&i.Color,
 		&i.Statuses,
 		&i.LocalPath,
@@ -272,7 +276,7 @@ func (q *Queries) ListProjectMemberIDs(ctx context.Context, projectID pgtype.UUI
 }
 
 const listProjectsForUser = `-- name: ListProjectsForUser :many
-select p.id, p.workspace_id, p.key, p.name, p.description, p.icon, p.color, p.statuses, p.local_path, p.brief_policy, p.created_at
+select p.id, p.workspace_id, p.key, p.name, p.description, p.icon, p.avatar_key, p.color, p.statuses, p.local_path, p.brief_policy, p.created_at
 from projects p
 join workspace_members wm on wm.workspace_id = p.workspace_id
 where wm.user_id = $1
@@ -286,6 +290,7 @@ type ListProjectsForUserRow struct {
 	Name        string             `json:"name"`
 	Description string             `json:"description"`
 	Icon        pgtype.Text        `json:"icon"`
+	AvatarKey   pgtype.Text        `json:"avatar_key"`
 	Color       pgtype.Text        `json:"color"`
 	Statuses    []byte             `json:"statuses"`
 	LocalPath   pgtype.Text        `json:"local_path"`
@@ -309,6 +314,7 @@ func (q *Queries) ListProjectsForUser(ctx context.Context, userID pgtype.UUID) (
 			&i.Name,
 			&i.Description,
 			&i.Icon,
+			&i.AvatarKey,
 			&i.Color,
 			&i.Statuses,
 			&i.LocalPath,
@@ -489,6 +495,24 @@ func (q *Queries) ProjectWorkspaceRole(ctx context.Context, arg ProjectWorkspace
 	return role, err
 }
 
+const setProjectAvatarKey = `-- name: SetProjectAvatarKey :one
+update projects set avatar_key = $1, updated_at = now()
+where id = $2
+returning id
+`
+
+type SetProjectAvatarKeyParams struct {
+	AvatarKey pgtype.Text `json:"avatar_key"`
+	ID        pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) SetProjectAvatarKey(ctx context.Context, arg SetProjectAvatarKeyParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, setProjectAvatarKey, arg.AvatarKey, arg.ID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const setProjectLocalPath = `-- name: SetProjectLocalPath :exec
 update projects set local_path = $2, updated_at = now() where id = $1
 `
@@ -525,7 +549,7 @@ set name = coalesce($1, name),
     color = coalesce($4, color),
     updated_at = now()
 where id = $5
-returning id, workspace_id, key, name, description, icon, color, statuses, local_path, brief_policy, created_at
+returning id, workspace_id, key, name, description, icon, avatar_key, color, statuses, local_path, brief_policy, created_at
 `
 
 type UpdateProjectParams struct {
@@ -543,6 +567,7 @@ type UpdateProjectRow struct {
 	Name        string             `json:"name"`
 	Description string             `json:"description"`
 	Icon        pgtype.Text        `json:"icon"`
+	AvatarKey   pgtype.Text        `json:"avatar_key"`
 	Color       pgtype.Text        `json:"color"`
 	Statuses    []byte             `json:"statuses"`
 	LocalPath   pgtype.Text        `json:"local_path"`
@@ -566,6 +591,7 @@ func (q *Queries) UpdateProject(ctx context.Context, arg UpdateProjectParams) (U
 		&i.Name,
 		&i.Description,
 		&i.Icon,
+		&i.AvatarKey,
 		&i.Color,
 		&i.Statuses,
 		&i.LocalPath,

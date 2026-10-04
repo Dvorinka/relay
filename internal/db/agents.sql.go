@@ -496,7 +496,7 @@ func (q *Queries) ListAgentsForWorkspace(ctx context.Context, workspaceID pgtype
 }
 
 const listGrantedProjects = `-- name: ListGrantedProjects :many
-select p.id, p.workspace_id, p.key, p.name, p.description, p.icon, p.color, p.created_by, p.created_at, p.updated_at, p.statuses, p.local_path, p.brief_policy from agent_project_permissions g
+select p.id, p.workspace_id, p.key, p.name, p.description, p.icon, p.color, p.created_by, p.created_at, p.updated_at, p.statuses, p.local_path, p.brief_policy, p.avatar_key from agent_project_permissions g
 join projects p on p.id = g.project_id
 where g.agent_id = $1 and 'project:read' = any(g.scopes)
 order by p.name
@@ -525,6 +525,7 @@ func (q *Queries) ListGrantedProjects(ctx context.Context, agentID pgtype.UUID) 
 			&i.Statuses,
 			&i.LocalPath,
 			&i.BriefPolicy,
+			&i.AvatarKey,
 		); err != nil {
 			return nil, err
 		}

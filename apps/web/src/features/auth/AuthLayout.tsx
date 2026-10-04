@@ -15,7 +15,7 @@ export function AuthLayout(
         <div class="w-full max-w-[340px]">
           <div class="mb-6 flex items-center justify-center gap-2">
             <RelayMark class="h-6 w-6" />
-            <span class="text-lg font-semibold tracking-tight">relay</span>
+            <span class="text-lg font-semibold tracking-tight">Relay</span>
           </div>
           <div class="rounded-lg border border-border bg-surface p-6">
             <h1 class="mb-5 text-[15px] font-semibold">{props.title}</h1>

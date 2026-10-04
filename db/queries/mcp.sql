@@ -49,12 +49,22 @@ left join users u on u.id = i.assignee_id
 where i.id = sqlc.arg(id);
 
 -- name: CreateAgentMessage :one
-insert into messages (conversation_id, author_agent_id, body, parent_id, mentions)
-values (sqlc.arg(conversation_id), sqlc.arg(agent_id), sqlc.arg(body), sqlc.narg(parent_id), coalesce(sqlc.narg(mentions), '[]'::jsonb))
+insert into messages (conversation_id, author_agent_id, body, parent_id, mentions, forwarded_from)
+values (sqlc.arg(conversation_id), sqlc.arg(agent_id), sqlc.arg(body), sqlc.narg(parent_id), coalesce(sqlc.narg(mentions), '[]'::jsonb), sqlc.narg(forwarded_from))
 returning id;
 
+-- name: PinMessageAgent :one
+update messages set pinned_at = now()
+where id = sqlc.arg(id) and deleted_at is null
+returning id, conversation_id;
+
+-- name: UnpinMessageAgent :one
+update messages set pinned_at = null
+where id = sqlc.arg(id) and deleted_at is null
+returning id, conversation_id;
+
 -- name: GetMessageFull :one
-select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
        m.author_user_id, m.author_agent_id,
        coalesce(u.name, a.name, '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
@@ -63,7 +73,11 @@ select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m
        (pm.id is not null and pm.deleted_at is not null) as parent_deleted,
        t.id as thread_id, t.title as thread_title,
        (select count(*)::int from messages tm
-         where tm.conversation_id = t.id and tm.deleted_at is null) as thread_reply_count
+         where tm.conversation_id = t.id and tm.deleted_at is null) as thread_reply_count,
+       m.pinned_at, m.forwarded_from,
+       f.conversation_id as fwd_conversation_id,
+       fcp.project_id as fwd_project_id,
+       coalesce(fu.name, fa.name, '') as fwd_author_name
 from messages m
 left join users u on u.id = m.author_user_id
 left join agents a on a.id = m.author_agent_id
@@ -71,6 +85,10 @@ left join messages pm on pm.id = m.parent_id
 left join users pu on pu.id = pm.author_user_id
 left join agents pa on pa.id = pm.author_agent_id
 left join conversations t on t.parent_message_id = m.id and t.kind = 'thread'
+left join messages f on f.id = m.forwarded_from
+left join conversations fcp on fcp.id = f.conversation_id
+left join users fu on fu.id = f.author_user_id
+left join agents fa on fa.id = f.author_agent_id
 where m.id = sqlc.arg(id);
 
 -- name: AddReactionAgent :exec

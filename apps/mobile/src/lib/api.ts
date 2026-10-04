@@ -140,6 +140,17 @@ export const api = {
     req<{ thread: Thread }>("POST", `/api/messages/${messageId}/thread`, {
       ...(title ? { title } : {}),
     }),
+  pinMessage: (messageId: string, pinned: boolean) =>
+    req<Message>(pinned ? "PUT" : "DELETE", `/api/messages/${messageId}/pin`),
+  listPins: (conversationId: string) =>
+    req<{ messages: Message[] }>(
+      "GET",
+      `/api/conversations/${conversationId}/pins`,
+    ),
+  forwardMessage: (messageId: string, projectId: string) =>
+    req<{ message: Message }>("POST", `/api/messages/${messageId}/forward`, {
+      project_id: projectId,
+    }),
   reactMessage: (messageId: string, emoji: string) =>
     req<{ reactions: Reaction[] }>(
       "PUT",
@@ -278,6 +289,12 @@ export interface Thread extends ThreadChip {
   created_by?: string;
   created_at?: string;
 }
+export interface MessageForwarded {
+  message_id: string;
+  conversation_id: string;
+  project_id?: string;
+  author: string;
+}
 export interface Message {
   id: string;
   body: string;
@@ -287,6 +304,8 @@ export interface Message {
   author: { id: string; name: string; kind: string; avatar_url: string | null };
   parent: MessageParent | null;
   thread?: ThreadChip | null;
+  pinned_at?: string | null;
+  forwarded?: MessageForwarded | null;
   attachments?: Attachment[];
   reactions?: Reaction[];
 }

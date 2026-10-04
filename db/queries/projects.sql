@@ -1,21 +1,21 @@
 -- name: CreateProject :one
 insert into projects (workspace_id, key, name, description, icon, color, created_by)
 values ($1, $2, $3, $4, $5, $6, $7)
-returning id, workspace_id, key, name, description, icon, color, statuses, local_path, brief_policy, created_at;
+returning id, workspace_id, key, name, description, icon, avatar_key, color, statuses, local_path, brief_policy, created_at;
 
 -- name: AddProjectMember :exec
 insert into project_members (project_id, user_id)
 values ($1, $2);
 
 -- name: ListProjectsForUser :many
-select p.id, p.workspace_id, p.key, p.name, p.description, p.icon, p.color, p.statuses, p.local_path, p.brief_policy, p.created_at
+select p.id, p.workspace_id, p.key, p.name, p.description, p.icon, p.avatar_key, p.color, p.statuses, p.local_path, p.brief_policy, p.created_at
 from projects p
 join workspace_members wm on wm.workspace_id = p.workspace_id
 where wm.user_id = $1
 order by p.name;
 
 -- name: GetProjectByID :one
-select id, workspace_id, key, name, description, icon, color, statuses, local_path, brief_policy, created_at
+select id, workspace_id, key, name, description, icon, avatar_key, color, statuses, local_path, brief_policy, created_at
 from projects
 where id = $1;
 
@@ -36,7 +36,7 @@ set name = coalesce(sqlc.narg(name), name),
     color = coalesce(sqlc.narg(color), color),
     updated_at = now()
 where id = sqlc.arg(id)
-returning id, workspace_id, key, name, description, icon, color, statuses, local_path, brief_policy, created_at;
+returning id, workspace_id, key, name, description, icon, avatar_key, color, statuses, local_path, brief_policy, created_at;
 
 -- name: ProjectCounts :one
 select
@@ -105,3 +105,8 @@ join users u on u.id = wm.user_id
 join projects p on p.workspace_id = wm.workspace_id
 where p.id = $1
   and position('@' || lower(u.name) in lower($2)) > 0;
+
+-- name: SetProjectAvatarKey :one
+update projects set avatar_key = sqlc.arg(avatar_key), updated_at = now()
+where id = sqlc.arg(id)
+returning id;

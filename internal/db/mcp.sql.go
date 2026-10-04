@@ -29,8 +29,8 @@ func (q *Queries) AddReactionAgent(ctx context.Context, arg AddReactionAgentPara
 }
 
 const createAgentMessage = `-- name: CreateAgentMessage :one
-insert into messages (conversation_id, author_agent_id, body, parent_id, mentions)
-values ($1, $2, $3, $4, coalesce($5, '[]'::jsonb))
+insert into messages (conversation_id, author_agent_id, body, parent_id, mentions, forwarded_from)
+values ($1, $2, $3, $4, coalesce($5, '[]'::jsonb), $6)
 returning id
 `
 
@@ -40,6 +40,7 @@ type CreateAgentMessageParams struct {
 	Body           string      `json:"body"`
 	ParentID       pgtype.UUID `json:"parent_id"`
 	Mentions       interface{} `json:"mentions"`
+	ForwardedFrom  pgtype.UUID `json:"forwarded_from"`
 }
 
 func (q *Queries) CreateAgentMessage(ctx context.Context, arg CreateAgentMessageParams) (pgtype.UUID, error) {
@@ -49,6 +50,7 @@ func (q *Queries) CreateAgentMessage(ctx context.Context, arg CreateAgentMessage
 		arg.Body,
 		arg.ParentID,
 		arg.Mentions,
+		arg.ForwardedFrom,
 	)
 	var id pgtype.UUID
 	err := row.Scan(&id)
@@ -187,7 +189,7 @@ func (q *Queries) GetIssueForAgent(ctx context.Context, id pgtype.UUID) (GetIssu
 }
 
 const getMessageFull = `-- name: GetMessageFull :one
-select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
        m.author_user_id, m.author_agent_id,
        coalesce(u.name, a.name, '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
@@ -196,7 +198,11 @@ select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m
        (pm.id is not null and pm.deleted_at is not null) as parent_deleted,
        t.id as thread_id, t.title as thread_title,
        (select count(*)::int from messages tm
-         where tm.conversation_id = t.id and tm.deleted_at is null) as thread_reply_count
+         where tm.conversation_id = t.id and tm.deleted_at is null) as thread_reply_count,
+       m.pinned_at, m.forwarded_from,
+       f.conversation_id as fwd_conversation_id,
+       fcp.project_id as fwd_project_id,
+       coalesce(fu.name, fa.name, '') as fwd_author_name
 from messages m
 left join users u on u.id = m.author_user_id
 left join agents a on a.id = m.author_agent_id
@@ -204,27 +210,37 @@ left join messages pm on pm.id = m.parent_id
 left join users pu on pu.id = pm.author_user_id
 left join agents pa on pa.id = pm.author_agent_id
 left join conversations t on t.parent_message_id = m.id and t.kind = 'thread'
+left join messages f on f.id = m.forwarded_from
+left join conversations fcp on fcp.id = f.conversation_id
+left join users fu on fu.id = f.author_user_id
+left join agents fa on fa.id = f.author_agent_id
 where m.id = $1
 `
 
 type GetMessageFullRow struct {
-	ID               pgtype.UUID        `json:"id"`
-	ConversationID   pgtype.UUID        `json:"conversation_id"`
-	Body             string             `json:"body"`
-	Mentions         []byte             `json:"mentions"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	EditedAt         pgtype.Timestamptz `json:"edited_at"`
-	ParentID         pgtype.UUID        `json:"parent_id"`
-	AuthorUserID     pgtype.UUID        `json:"author_user_id"`
-	AuthorAgentID    pgtype.UUID        `json:"author_agent_id"`
-	AuthorName       string             `json:"author_name"`
-	AuthorAvatar     pgtype.Text        `json:"author_avatar"`
-	ParentAuthorName string             `json:"parent_author_name"`
-	ParentBody       pgtype.Text        `json:"parent_body"`
-	ParentDeleted    pgtype.Bool        `json:"parent_deleted"`
-	ThreadID         pgtype.UUID        `json:"thread_id"`
-	ThreadTitle      pgtype.Text        `json:"thread_title"`
-	ThreadReplyCount int32              `json:"thread_reply_count"`
+	ID                pgtype.UUID        `json:"id"`
+	ConversationID    pgtype.UUID        `json:"conversation_id"`
+	Body              string             `json:"body"`
+	Mentions          []byte             `json:"mentions"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	EditedAt          pgtype.Timestamptz `json:"edited_at"`
+	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
+	ParentID          pgtype.UUID        `json:"parent_id"`
+	AuthorUserID      pgtype.UUID        `json:"author_user_id"`
+	AuthorAgentID     pgtype.UUID        `json:"author_agent_id"`
+	AuthorName        string             `json:"author_name"`
+	AuthorAvatar      pgtype.Text        `json:"author_avatar"`
+	ParentAuthorName  string             `json:"parent_author_name"`
+	ParentBody        pgtype.Text        `json:"parent_body"`
+	ParentDeleted     pgtype.Bool        `json:"parent_deleted"`
+	ThreadID          pgtype.UUID        `json:"thread_id"`
+	ThreadTitle       pgtype.Text        `json:"thread_title"`
+	ThreadReplyCount  int32              `json:"thread_reply_count"`
+	PinnedAt          pgtype.Timestamptz `json:"pinned_at"`
+	ForwardedFrom     pgtype.UUID        `json:"forwarded_from"`
+	FwdConversationID pgtype.UUID        `json:"fwd_conversation_id"`
+	FwdProjectID      pgtype.UUID        `json:"fwd_project_id"`
+	FwdAuthorName     string             `json:"fwd_author_name"`
 }
 
 func (q *Queries) GetMessageFull(ctx context.Context, id pgtype.UUID) (GetMessageFullRow, error) {
@@ -237,6 +253,7 @@ func (q *Queries) GetMessageFull(ctx context.Context, id pgtype.UUID) (GetMessag
 		&i.Mentions,
 		&i.CreatedAt,
 		&i.EditedAt,
+		&i.DeletedAt,
 		&i.ParentID,
 		&i.AuthorUserID,
 		&i.AuthorAgentID,
@@ -248,6 +265,11 @@ func (q *Queries) GetMessageFull(ctx context.Context, id pgtype.UUID) (GetMessag
 		&i.ThreadID,
 		&i.ThreadTitle,
 		&i.ThreadReplyCount,
+		&i.PinnedAt,
+		&i.ForwardedFrom,
+		&i.FwdConversationID,
+		&i.FwdProjectID,
+		&i.FwdAuthorName,
 	)
 	return i, err
 }
@@ -420,6 +442,24 @@ func (q *Queries) MessageInConversation(ctx context.Context, arg MessageInConver
 	return id, err
 }
 
+const pinMessageAgent = `-- name: PinMessageAgent :one
+update messages set pinned_at = now()
+where id = $1 and deleted_at is null
+returning id, conversation_id
+`
+
+type PinMessageAgentRow struct {
+	ID             pgtype.UUID `json:"id"`
+	ConversationID pgtype.UUID `json:"conversation_id"`
+}
+
+func (q *Queries) PinMessageAgent(ctx context.Context, id pgtype.UUID) (PinMessageAgentRow, error) {
+	row := q.db.QueryRow(ctx, pinMessageAgent, id)
+	var i PinMessageAgentRow
+	err := row.Scan(&i.ID, &i.ConversationID)
+	return i, err
+}
+
 const recordIssueActivityAgent = `-- name: RecordIssueActivityAgent :exec
 insert into issue_activity (issue_id, actor_agent_id, kind, payload)
 values ($1, $2, $3, $4)
@@ -572,6 +612,24 @@ func (q *Queries) SearchMessagesInProject(ctx context.Context, arg SearchMessage
 		return nil, err
 	}
 	return items, nil
+}
+
+const unpinMessageAgent = `-- name: UnpinMessageAgent :one
+update messages set pinned_at = null
+where id = $1 and deleted_at is null
+returning id, conversation_id
+`
+
+type UnpinMessageAgentRow struct {
+	ID             pgtype.UUID `json:"id"`
+	ConversationID pgtype.UUID `json:"conversation_id"`
+}
+
+func (q *Queries) UnpinMessageAgent(ctx context.Context, id pgtype.UUID) (UnpinMessageAgentRow, error) {
+	row := q.db.QueryRow(ctx, unpinMessageAgent, id)
+	var i UnpinMessageAgentRow
+	err := row.Scan(&i.ID, &i.ConversationID)
+	return i, err
 }
 
 const updateMessageBodyAgent = `-- name: UpdateMessageBodyAgent :one

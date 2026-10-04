@@ -215,6 +215,8 @@ type Message struct {
 	DeletedAt      pgtype.Timestamptz `json:"deleted_at"`
 	ParentID       pgtype.UUID        `json:"parent_id"`
 	Mentions       []byte             `json:"mentions"`
+	PinnedAt       pgtype.Timestamptz `json:"pinned_at"`
+	ForwardedFrom  pgtype.UUID        `json:"forwarded_from"`
 }
 
 type MessageAttachment struct {
@@ -261,6 +263,7 @@ type Project struct {
 	Statuses    []byte             `json:"statuses"`
 	LocalPath   pgtype.Text        `json:"local_path"`
 	BriefPolicy string             `json:"brief_policy"`
+	AvatarKey   pgtype.Text        `json:"avatar_key"`
 }
 
 type ProjectCounter struct {
@@ -362,6 +365,7 @@ type Workspace struct {
 	Name      string             `json:"name"`
 	Slug      string             `json:"slug"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	AvatarKey pgtype.Text        `json:"avatar_key"`
 }
 
 type WorkspaceMember struct {

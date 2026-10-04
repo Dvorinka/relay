@@ -652,6 +652,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/messages/{messageId}/pin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Pin a message - any project member may pin */
+        put: operations["pinMessage"];
+        post?: never;
+        /** Unpin a message */
+        delete: operations["unpinMessage"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/conversations/{conversationId}/pins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Pinned messages in the conversation, most recently pinned first */
+        get: operations["listPins"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/messages/{messageId}/forward": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Forward a message into another project's conversation. The copy credits the original author via `forwarded`; attachments are shared, mentions are stripped. */
+        post: operations["forwardMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/messages/{messageId}/reactions": {
         parameters: {
             query?: never;
@@ -1328,6 +1380,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{projectId}/icon": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Upload a project's image icon (any member) */
+        put: operations["uploadProjectIcon"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/icon/github": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Adopt the linked repository's GitHub owner avatar as the project icon. Fetches github.com/<owner>.png server-side. */
+        post: operations["adoptGithubIcon"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspaceId}/icon": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Upload the workspace's image icon (owner/admin) */
+        put: operations["uploadWorkspaceIcon"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/files/{key}": {
         parameters: {
             query?: never;
@@ -1335,7 +1438,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Redirect to a presigned object URL. Serves the avatars/ key prefix only; message attachments use their project-scoped endpoint. */
+        /** Streams an avatar/icon object. Serves the avatars/ key prefix only; pass ?download=1 to force Content-Disposition attachment. */
         get: operations["readFile"];
         put?: never;
         post?: never;
@@ -1578,6 +1681,8 @@ export interface components {
             id: string;
             name: string;
             slug: string;
+            /** @description Workspace icon via /api/files/; append ?download=1 to fetch as attachment */
+            avatar_url?: string | null;
             /** Format: date-time */
             created_at: string;
         };
@@ -1599,6 +1704,8 @@ export interface components {
             name: string;
             description: string;
             icon?: string | null;
+            /** @description Image icon via /api/files/; append ?download=1 to fetch as attachment */
+            icon_url?: string | null;
             color?: string | null;
             /** @description Issue lanes for this project; built-in six when unset */
             statuses?: components["schemas"]["StatusDef"][];
@@ -1751,6 +1858,23 @@ export interface components {
             agent_read: boolean;
             /** @description Thread rooted at this message, when one exists */
             thread?: components["schemas"]["ThreadSummary"] | null;
+            /**
+             * Format: date-time
+             * @description Set while the message is pinned to the conversation
+             */
+            pinned_at?: string | null;
+            /** @description Present on forwarded copies; credits the original message */
+            forwarded?: components["schemas"]["MessageForwarded"] | null;
+        };
+        MessageForwarded: {
+            /** Format: uuid */
+            message_id: string;
+            /** Format: uuid */
+            conversation_id: string;
+            /** Format: uuid */
+            project_id?: string;
+            /** @description Original author's display name */
+            author: string;
         };
         /** @description Thread pointer embedded on a message */
         ThreadSummary: {
@@ -3475,6 +3599,116 @@ export interface operations {
             403: components["responses"]["Forbidden"];
         };
     };
+    pinMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                messageId: components["parameters"]["MessageId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Updated message with pinned_at set */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Message"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    unpinMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                messageId: components["parameters"]["MessageId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Updated message with pinned_at cleared */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Message"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listPins: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversationId: components["parameters"]["ConversationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pinned messages */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        messages: components["schemas"]["Message"][];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    forwardMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                messageId: components["parameters"]["MessageId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * Format: uuid
+                     * @description Target project; the caller must be a member
+                     */
+                    project_id: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Forwarded copy in the target conversation */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: components["schemas"]["Message"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     toggleReaction: {
         parameters: {
             query?: never;
@@ -4836,9 +5070,140 @@ export interface operations {
             };
         };
     };
-    readFile: {
+    uploadProjectIcon: {
         parameters: {
             query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated project with icon_url */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            /** @description Exceeds the icon size cap */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Object storage not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    adoptGithubIcon: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Updated project with icon_url */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No repository linked */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Could not fetch the GitHub avatar */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Object storage not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    uploadWorkspaceIcon: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated workspace with avatar_url */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            /** @description Exceeds the icon size cap */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Object storage not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readFile: {
+        parameters: {
+            query?: {
+                /** @description Any value forces a download response */
+                download?: string;
+            };
             header?: never;
             path: {
                 key: string;
@@ -4847,8 +5212,8 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Redirect to the presigned URL */
-            302: {
+            /** @description File bytes (inline, or attachment when download is set) */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

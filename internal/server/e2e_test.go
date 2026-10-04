@@ -916,3 +916,287 @@ func TestThreads(t *testing.T) {
 		}
 	}
 }
+
+// Pins and forwards: any member toggles pinned_at; the pins index sorts
+// newest first. Forwarding copies a message into another project's
+// conversation, credits the original author through `forwarded`, and chains
+// resolve to the root message. Both refuse non-members.
+func TestForwardPin(t *testing.T) {
+	dsn := os.Getenv("RELAY_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("RELAY_TEST_DATABASE_URL unset")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	goose.SetBaseFS(relaydb.MigrationsFS)
+	if err := goose.SetDialect("postgres"); err != nil {
+		t.Fatal(err)
+	}
+	if err := goose.UpContext(ctx, stdlib.OpenDBFromPool(pool), "migrations"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "delete from rate_limits"); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Config{
+		DatabaseURL:     dsn,
+		AuthSecret:      "test-secret-test-secret-test-secret",
+		InsecureDev:     true,
+		SessionTTLHours: 1,
+	}
+	srv := httptest.NewServer(New(cfg, zap.NewNop(), pool, "test"))
+	defer srv.Close()
+	c := &e2eClient{t: t, base: srv.URL}
+
+	code, reg := c.call("POST", "/api/auth/register",
+		fmt.Sprintf(`{"email":"fwd-%d@relay.dev","password":"fwdpass12345","name":"Forwarder"}`,
+			time.Now().UnixNano()))
+	if code != 201 && code != 200 {
+		t.Fatalf("register: %d %v", code, reg)
+	}
+	code, ws := c.call("POST", "/api/workspaces", `{"name":"Fwd WS"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("workspace: %d %v", code, ws)
+	}
+	wsID := ws["id"].(string)
+
+	newProject := func(key, name string) string {
+		code, proj := c.call("POST", "/api/projects",
+			fmt.Sprintf(`{"workspace_id":%q,"key":%q,"name":%q}`, wsID, key, name))
+		if code != 201 && code != 200 {
+			t.Fatalf("project %s: %d %v", key, code, proj)
+		}
+		return proj["id"].(string)
+	}
+	projA := newProject("FPA", "Source")
+	projB := newProject("FPB", "Target")
+	projC := newProject("FPC", "Third")
+
+	code, conv := c.call("GET", "/api/projects/"+projA+"/conversation", "")
+	if code != 200 {
+		t.Fatalf("conversation: %d %v", code, conv)
+	}
+	convA := conv["id"].(string)
+
+	code, m1 := c.call("POST", "/api/conversations/"+convA+"/messages",
+		`{"body":"pin and forward me"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("post: %d %v", code, m1)
+	}
+	msg1 := m1["id"].(string)
+
+	// --- pin ---
+
+	code, pin := c.call("PUT", "/api/messages/"+msg1+"/pin", "")
+	if code != 200 {
+		t.Fatalf("pin: %d %v", code, pin)
+	}
+	if pin["pinned_at"] == nil {
+		t.Fatalf("pinned_at missing: %v", pin)
+	}
+
+	code, m2 := c.call("POST", "/api/conversations/"+convA+"/messages",
+		`{"body":"second pin"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("post m2: %d %v", code, m2)
+	}
+	msg2 := m2["id"].(string)
+	if code, _ = c.call("PUT", "/api/messages/"+msg2+"/pin", ""); code != 200 {
+		t.Fatalf("pin m2: %d", code)
+	}
+
+	// pins list: newest pin first
+	code, pins := c.call("GET", "/api/conversations/"+convA+"/pins", "")
+	if code != 200 {
+		t.Fatalf("pins: %d %v", code, pins)
+	}
+	pinList := pins["messages"].([]any)
+	if len(pinList) != 2 {
+		t.Fatalf("expected 2 pins: %v", pinList)
+	}
+	if pinList[0].(map[string]any)["id"] != msg2 {
+		t.Fatalf("newest pin should sort first: %v", pinList)
+	}
+
+	// unpin removes it from the index
+	code, unpin := c.call("DELETE", "/api/messages/"+msg2+"/pin", "")
+	if code != 200 {
+		t.Fatalf("unpin: %d %v", code, unpin)
+	}
+	if unpin["pinned_at"] != nil {
+		t.Fatalf("pinned_at should clear: %v", unpin)
+	}
+	code, pins = c.call("GET", "/api/conversations/"+convA+"/pins", "")
+	if code != 200 || len(pins["messages"].([]any)) != 1 {
+		t.Fatalf("expected 1 pin after unpin: %d %v", code, pins)
+	}
+
+	// --- forward ---
+
+	code, fwd := c.call("POST", "/api/messages/"+msg1+"/forward",
+		fmt.Sprintf(`{"project_id":%q}`, projB))
+	if code != 201 {
+		t.Fatalf("forward: %d %v", code, fwd)
+	}
+	fmsg := fwd["message"].(map[string]any)
+	fwdID := fmsg["id"].(string)
+	fwdMeta, _ := fmsg["forwarded"].(map[string]any)
+	if fwdMeta == nil {
+		t.Fatalf("forwarded metadata missing: %v", fmsg)
+	}
+	if fwdMeta["message_id"] != msg1 || fwdMeta["author"] != "Forwarder" {
+		t.Fatalf("forwarded credits wrong: %v", fwdMeta)
+	}
+	if fmsg["body"] != "pin and forward me" {
+		t.Fatalf("forward body: %v", fmsg["body"])
+	}
+
+	// the copy lives in B's conversation, attributed to the forwarder
+	code, convB := c.call("GET", "/api/projects/"+projB+"/conversation", "")
+	if code != 200 {
+		t.Fatalf("conv B: %d", code)
+	}
+	code, lstB := c.call("GET", "/api/conversations/"+convB["id"].(string)+"/messages", "")
+	if code != 200 {
+		t.Fatalf("list B: %d", code)
+	}
+	var foundFwd bool
+	for _, mm := range lstB["messages"].([]any) {
+		m := mm.(map[string]any)
+		if m["id"] == fwdID {
+			foundFwd = true
+			if m["author"].(map[string]any)["name"] != "Forwarder" {
+				t.Fatalf("forward author: %v", m["author"])
+			}
+		}
+	}
+	if !foundFwd {
+		t.Fatal("forwarded copy missing from target conversation")
+	}
+
+	// forwarding the copy still credits the root message, not the hop
+	code, fwd2 := c.call("POST", "/api/messages/"+fwdID+"/forward",
+		fmt.Sprintf(`{"project_id":%q}`, projC))
+	if code != 201 {
+		t.Fatalf("forward chain: %d %v", code, fwd2)
+	}
+	fwd2Meta, _ := fwd2["message"].(map[string]any)["forwarded"].(map[string]any)
+	if fwd2Meta["message_id"] != msg1 {
+		t.Fatalf("chain should credit the root message: %v", fwd2Meta)
+	}
+
+	// a stranger's project refuses: second user cannot pull from our workspace
+	c2 := &e2eClient{t: t, base: srv.URL}
+	code, _ = c2.call("POST", "/api/auth/register",
+		fmt.Sprintf(`{"email":"str-%d@relay.dev","password":"strpass12345","name":"Stranger"}`,
+			time.Now().UnixNano()))
+	if code != 201 && code != 200 {
+		t.Fatalf("register stranger: %d", code)
+	}
+	code, smsg := c2.call("POST", "/api/messages/"+msg1+"/forward",
+		fmt.Sprintf(`{"project_id":%q}`, projB))
+	if code != 404 {
+		t.Fatalf("stranger forward should 404: %d %v", code, smsg)
+	}
+	code, spin := c2.call("PUT", "/api/messages/"+msg1+"/pin", "")
+	if code != 404 {
+		t.Fatalf("stranger pin should 404: %d %v", code, spin)
+	}
+
+	// forwarding to a project outside the caller's workspace also refuses
+	code, ws2 := c2.call("POST", "/api/workspaces", `{"name":"Stranger WS"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("stranger ws: %d", code)
+	}
+	code, sproj := c2.call("POST", "/api/projects",
+		fmt.Sprintf(`{"workspace_id":%q,"key":"STR","name":"Stranger Proj"}`, ws2["id"]))
+	if code != 201 && code != 200 {
+		t.Fatalf("stranger project: %d", code)
+	}
+	code, off := c.call("POST", "/api/messages/"+msg1+"/forward",
+		fmt.Sprintf(`{"project_id":%q}`, sproj["id"]))
+	if code != 404 {
+		t.Fatalf("forward to foreign project should 404: %d %v", code, off)
+	}
+
+	// deleted sources cannot be forwarded
+	code, doomed := c.call("POST", "/api/conversations/"+convA+"/messages",
+		`{"body":"about to be deleted"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("post doomed: %d", code)
+	}
+	doomedID := doomed["id"].(string)
+	if code, _ = c.call("DELETE", "/api/messages/"+doomedID, ""); code != 204 {
+		t.Fatalf("delete doomed: %d", code)
+	}
+	code, dfwd := c.call("POST", "/api/messages/"+doomedID+"/forward",
+		fmt.Sprintf(`{"project_id":%q}`, projB))
+	if code != 404 {
+		t.Fatalf("forward deleted should 404: %d %v", code, dfwd)
+	}
+	code, dpin := c.call("PUT", "/api/messages/"+doomedID+"/pin", "")
+	if code != 404 {
+		t.Fatalf("pin deleted should 404: %d %v", code, dpin)
+	}
+
+	// --- MCP parity: pin_message / forward_message need message:write on both ends ---
+
+	code, agent := c.call("POST", "/api/workspaces/"+wsID+"/agents",
+		`{"name":"Fwd Bot","review_mode":"gate"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("agent: %d %v", code, agent)
+	}
+	agentID := agent["id"].(string)
+	for _, pid := range []string{projA, projB} {
+		code, _ = c.call("PUT", fmt.Sprintf("/api/agents/%s/projects/%s", agentID, pid),
+			`{"scopes":["project:read","message:read","message:write"]}`)
+		if code != 200 {
+			t.Fatalf("grant %s: %d", pid, code)
+		}
+	}
+	// project C intentionally gets no grant — the scope check must bite there
+	code, tok := c.call("POST", fmt.Sprintf("/api/agents/%s/tokens", agentID), `{"name":"e2e"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("mint: %d %v", code, tok)
+	}
+	token := tok["token"].(string)
+
+	sid, _ := c.mcp(token, "", "1", "initialize",
+		`{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"e2e","version":"0"}}`)
+	if sid == "" {
+		t.Fatal("no mcp session id")
+	}
+	req, _ := http.NewRequest("POST", srv.URL+"/mcp",
+		strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/initialized"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Mcp-Session-Id", sid)
+	req.Header.Set("Content-Type", "application/json")
+	_, _ = http.DefaultClient.Do(req)
+
+	_, env := c.mcp(token, sid, "2", "tools/call",
+		fmt.Sprintf(`{"name":"pin_message","arguments":{"message_id":%q,"pinned":true}}`, msg1))
+	if env["error"] != nil {
+		t.Fatalf("mcp pin: %v", env["error"])
+	}
+	_, env = c.mcp(token, sid, "3", "tools/call",
+		fmt.Sprintf(`{"name":"forward_message","arguments":{"message_id":%q,"project_id":%q}}`, msg1, projB))
+	fres := mcpToolResult(t, env)
+	fwd3, _ := fres["message"].(map[string]any)
+	if fwd3 == nil || fwd3["forwarded"] == nil {
+		t.Fatalf("mcp forward: %v", fres)
+	}
+
+	// unscoped target refuses the tool call
+	_, env = c.mcp(token, sid, "4", "tools/call",
+		fmt.Sprintf(`{"name":"forward_message","arguments":{"message_id":%q,"project_id":%q}}`, msg1, projC))
+	res, _ := env["result"].(map[string]any)
+	if res["isError"] != true {
+		t.Fatalf("mcp forward to unscoped project should error: %v", env)
+	}
+}

@@ -1,8 +1,9 @@
-import type {
-  AgentReview,
-  Issue,
-  Project,
-  SearchResults,
+import {
+  ApiClientError,
+  type AgentReview,
+  type Issue,
+  type Project,
+  type SearchResults,
 } from "@relay/api-client";
 import { A, useNavigate, useParams, useSearchParams } from "@solidjs/router";
 import {
@@ -17,12 +18,13 @@ import {
 import { Avatar } from "@ark-ui/solid";
 import {
   BriefsIcon,
+  DownloadIcon,
   GitPullRequestIcon,
   IssueIcon,
   SettingsIcon,
   XIcon,
 } from "../../components/icons";
-import { Spinner } from "../../components/ui";
+import { FormError, Spinner } from "../../components/ui";
 import { api } from "../../lib/api";
 import { subscribe } from "../../lib/events";
 import { initials } from "../../lib/text";
@@ -523,12 +525,118 @@ function ViewSheet(props: {
           <Show when={props.view === "settings"}>
             <div class="min-h-0 flex-1 overflow-y-auto">
               <div class="mx-auto w-full max-w-2xl px-6 py-6">
+                <ProjectIconSection project={props.project} />
                 <WebhooksSection projectId={props.project.id} />
               </div>
             </div>
           </Show>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Project icon: upload an image, adopt the linked repo's GitHub owner avatar,
+// or download the current one. Changes propagate to the rail via the store.
+function ProjectIconSection(props: { project: Project }) {
+  const projects = useProjects();
+  const [error, setError] = createSignal<string | null>(null);
+  const [pending, setPending] = createSignal(false);
+
+  async function onFile(e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    const f = input.files?.[0];
+    input.value = "";
+    if (!f) return;
+    setPending(true);
+    setError(null);
+    try {
+      await api.uploadProjectIcon(props.project.id, f);
+      await projects.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function adoptGithub() {
+    setPending(true);
+    setError(null);
+    try {
+      await api.adoptGithubIcon(props.project.id);
+      await projects.refresh();
+    } catch (err) {
+      setError(
+        err instanceof ApiClientError && err.status === 400
+          ? "Link a GitHub repository first"
+          : err instanceof Error
+            ? err.message
+            : "Could not fetch the GitHub avatar",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div class="mb-6">
+      <h3 class="mb-2 text-[13px] font-semibold">Project icon</h3>
+      <div class="flex items-center gap-3">
+        <Show
+          when={props.project.icon_url}
+          fallback={
+            <span class="flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-surface font-mono text-[13px] text-muted">
+              {props.project.key.slice(0, 2)}
+            </span>
+          }
+        >
+          {(url) => (
+            <img
+              src={url()}
+              alt=""
+              class="h-10 w-10 rounded-lg border border-border object-cover"
+            />
+          )}
+        </Show>
+        <p class="min-w-0 flex-1 text-[12px] text-muted">
+          Shown in the rail and header instead of the project key.
+        </p>
+        <Show when={props.project.icon_url}>
+          {(url) => (
+            <a
+              href={url().startsWith("blob:") ? url() : `${url()}?download=1`}
+              download="project-icon"
+              title="Download icon"
+              aria-label="Download project icon"
+              class="rounded-md border border-border bg-surface p-1.5 text-muted hover:bg-hover hover:text-fg"
+            >
+              <DownloadIcon class="h-3.5 w-3.5" />
+            </a>
+          )}
+        </Show>
+        <label
+          class={`cursor-pointer rounded-md border border-border bg-surface px-2.5 py-1 text-[12px] hover:bg-hover ${pending() ? "pointer-events-none opacity-60" : ""}`}
+        >
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/gif,image/webp"
+            class="sr-only"
+            onChange={onFile}
+          />
+          Upload
+        </label>
+        <button
+          type="button"
+          disabled={pending()}
+          onClick={() => void adoptGithub()}
+          class="rounded-md border border-border bg-surface px-2.5 py-1 text-[12px] hover:bg-hover disabled:opacity-60"
+          title="Use the linked repository's GitHub owner avatar"
+        >
+          Use GitHub icon
+        </button>
+      </div>
+      <FormError message={error()} />
     </div>
   );
 }
@@ -595,6 +703,15 @@ export default function ProjectPage() {
                   class="h-2.5 w-2.5 shrink-0 rounded-full"
                   style={{ "background-color": p().color ?? "var(--accent)" }}
                 />
+                <Show when={p().icon_url}>
+                  {(url) => (
+                    <img
+                      src={url()}
+                      alt=""
+                      class="h-5.5 w-5.5 shrink-0 rounded-md object-cover"
+                    />
+                  )}
+                </Show>
                 <h1 class="truncate text-[14.5px] font-semibold tracking-tight">
                   {p().name}
                 </h1>

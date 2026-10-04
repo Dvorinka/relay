@@ -13,7 +13,7 @@ import {
   inputClass,
   primaryButtonClass,
 } from "../../components/ui";
-import { MoonIcon, SunIcon } from "../../components/icons";
+import { DownloadIcon, MoonIcon, SunIcon } from "../../components/icons";
 import { api } from "../../lib/api";
 import { net } from "../../lib/net";
 import { syncToServer } from "../../lib/sync";
@@ -674,6 +674,19 @@ export default function Settings() {
             />
             Set avatar
           </label>
+          <Show when={session.user()?.avatar_url}>
+            {(url) => (
+              <a
+                href={url().startsWith("blob:") ? url() : `${url()}?download=1`}
+                download="avatar"
+                title="Download avatar"
+                aria-label="Download avatar"
+                class="rounded-md border border-border bg-surface p-1.5 text-muted hover:bg-hover hover:text-fg"
+              >
+                <DownloadIcon class="h-3.5 w-3.5" />
+              </a>
+            )}
+          </Show>
         </div>
         <FormError message={avatarError()} />
         <Show when={!net.isLocal()}>
@@ -709,6 +722,61 @@ export default function Settings() {
                 >
                   New workspace
                 </button>
+              </div>
+              <div class="flex items-center gap-3">
+                <Show
+                  when={ws().avatar_url}
+                  fallback={
+                    <span class="flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-surface font-mono text-[13px] text-muted">
+                      {ws().name.slice(0, 1).toUpperCase()}
+                    </span>
+                  }
+                >
+                  {(url) => (
+                    <img
+                      src={url()}
+                      alt=""
+                      class="h-10 w-10 rounded-lg border border-border object-cover"
+                    />
+                  )}
+                </Show>
+                <div class="min-w-0 flex-1 text-[12px] text-muted">
+                  Workspace icon — shown in the rail header.
+                </div>
+                <Show when={ws().avatar_url}>
+                  {(url) => (
+                    <a
+                      href={url().startsWith("blob:") ? url() : `${url()}?download=1`}
+                      download="workspace-icon"
+                      title="Download icon"
+                      aria-label="Download workspace icon"
+                      class="rounded-md border border-border bg-surface p-1.5 text-muted hover:bg-hover hover:text-fg"
+                    >
+                      <DownloadIcon class="h-3.5 w-3.5" />
+                    </a>
+                  )}
+                </Show>
+                <Show when={canInvite()}>
+                  <label class="cursor-pointer rounded-md border border-border bg-surface px-2.5 py-1 text-[12px] hover:bg-hover">
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/gif,image/webp"
+                      class="sr-only"
+                      onChange={async (e) => {
+                        const f = e.currentTarget.files?.[0];
+                        if (!f) return;
+                        try {
+                          await api.uploadWorkspaceIcon(ws().id, f);
+                          await session.refresh();
+                        } catch (err) {
+                          setAvatarError(errorMessage(err, "Upload failed"));
+                        }
+                        e.currentTarget.value = "";
+                      }}
+                    />
+                    Set icon
+                  </label>
+                </Show>
               </div>
               <Show when={showNew()}>
                 <NewWorkspaceForm
