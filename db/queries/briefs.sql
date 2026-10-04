@@ -16,7 +16,7 @@ update briefs set conversation_id = sqlc.arg(conversation_id) where id = sqlc.ar
 
 -- name: ListBriefs :many
 select b.*,
-       coalesce(u.name, a.name, '') as author_name,
+       coalesce(u.name, a.name, nullif(b.creator_name_snapshot, ''), '') as author_name,
        coalesce(p.key, ''::text) as issue_project_key,
        i.number as issue_number
 from briefs b
@@ -30,7 +30,7 @@ order by b.created_at desc;
 
 -- name: GetBrief :one
 select b.*,
-       coalesce(u.name, a.name, '') as author_name,
+       coalesce(u.name, a.name, nullif(b.creator_name_snapshot, ''), '') as author_name,
        coalesce(u.id is not null, false) as author_is_user,
        coalesce(p.key, ''::text) as issue_project_key,
        i.number as issue_number

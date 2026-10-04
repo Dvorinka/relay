@@ -31,7 +31,7 @@ insert into briefs (project_id, issue_id, title, summary, scene,
 values ($1, $2, $3,
         $4, $5,
         $6, $7)
-returning id, project_id, issue_id, conversation_id, title, summary, scene, status, created_by_user, created_by_agent, created_at, updated_at
+returning id, project_id, issue_id, conversation_id, title, summary, scene, status, created_by_user, created_by_agent, created_at, updated_at, creator_name_snapshot
 `
 
 type CreateBriefParams struct {
@@ -68,6 +68,7 @@ func (q *Queries) CreateBrief(ctx context.Context, arg CreateBriefParams) (Brief
 		&i.CreatedByAgent,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CreatorNameSnapshot,
 	)
 	return i, err
 }
@@ -75,7 +76,7 @@ func (q *Queries) CreateBrief(ctx context.Context, arg CreateBriefParams) (Brief
 const createBriefConversation = `-- name: CreateBriefConversation :one
 insert into conversations (project_id, kind, brief_id)
 values ($1, 'brief', $2)
-returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent
+returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot
 `
 
 type CreateBriefConversationParams struct {
@@ -97,13 +98,14 @@ func (q *Queries) CreateBriefConversation(ctx context.Context, arg CreateBriefCo
 		&i.Title,
 		&i.CreatedByUser,
 		&i.CreatedByAgent,
+		&i.CreatorNameSnapshot,
 	)
 	return i, err
 }
 
 const getBrief = `-- name: GetBrief :one
-select b.id, b.project_id, b.issue_id, b.conversation_id, b.title, b.summary, b.scene, b.status, b.created_by_user, b.created_by_agent, b.created_at, b.updated_at,
-       coalesce(u.name, a.name, '') as author_name,
+select b.id, b.project_id, b.issue_id, b.conversation_id, b.title, b.summary, b.scene, b.status, b.created_by_user, b.created_by_agent, b.created_at, b.updated_at, b.creator_name_snapshot,
+       coalesce(u.name, a.name, nullif(b.creator_name_snapshot, ''), '') as author_name,
        coalesce(u.id is not null, false) as author_is_user,
        coalesce(p.key, ''::text) as issue_project_key,
        i.number as issue_number
@@ -116,22 +118,23 @@ where b.id = $1
 `
 
 type GetBriefRow struct {
-	ID              pgtype.UUID        `json:"id"`
-	ProjectID       pgtype.UUID        `json:"project_id"`
-	IssueID         pgtype.UUID        `json:"issue_id"`
-	ConversationID  pgtype.UUID        `json:"conversation_id"`
-	Title           string             `json:"title"`
-	Summary         string             `json:"summary"`
-	Scene           []byte             `json:"scene"`
-	Status          string             `json:"status"`
-	CreatedByUser   pgtype.UUID        `json:"created_by_user"`
-	CreatedByAgent  pgtype.UUID        `json:"created_by_agent"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
-	AuthorName      string             `json:"author_name"`
-	AuthorIsUser    interface{}        `json:"author_is_user"`
-	IssueProjectKey string             `json:"issue_project_key"`
-	IssueNumber     pgtype.Int4        `json:"issue_number"`
+	ID                  pgtype.UUID        `json:"id"`
+	ProjectID           pgtype.UUID        `json:"project_id"`
+	IssueID             pgtype.UUID        `json:"issue_id"`
+	ConversationID      pgtype.UUID        `json:"conversation_id"`
+	Title               string             `json:"title"`
+	Summary             string             `json:"summary"`
+	Scene               []byte             `json:"scene"`
+	Status              string             `json:"status"`
+	CreatedByUser       pgtype.UUID        `json:"created_by_user"`
+	CreatedByAgent      pgtype.UUID        `json:"created_by_agent"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	CreatorNameSnapshot string             `json:"creator_name_snapshot"`
+	AuthorName          string             `json:"author_name"`
+	AuthorIsUser        interface{}        `json:"author_is_user"`
+	IssueProjectKey     string             `json:"issue_project_key"`
+	IssueNumber         pgtype.Int4        `json:"issue_number"`
 }
 
 func (q *Queries) GetBrief(ctx context.Context, id pgtype.UUID) (GetBriefRow, error) {
@@ -150,6 +153,7 @@ func (q *Queries) GetBrief(ctx context.Context, id pgtype.UUID) (GetBriefRow, er
 		&i.CreatedByAgent,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CreatorNameSnapshot,
 		&i.AuthorName,
 		&i.AuthorIsUser,
 		&i.IssueProjectKey,
@@ -159,8 +163,8 @@ func (q *Queries) GetBrief(ctx context.Context, id pgtype.UUID) (GetBriefRow, er
 }
 
 const listBriefs = `-- name: ListBriefs :many
-select b.id, b.project_id, b.issue_id, b.conversation_id, b.title, b.summary, b.scene, b.status, b.created_by_user, b.created_by_agent, b.created_at, b.updated_at,
-       coalesce(u.name, a.name, '') as author_name,
+select b.id, b.project_id, b.issue_id, b.conversation_id, b.title, b.summary, b.scene, b.status, b.created_by_user, b.created_by_agent, b.created_at, b.updated_at, b.creator_name_snapshot,
+       coalesce(u.name, a.name, nullif(b.creator_name_snapshot, ''), '') as author_name,
        coalesce(p.key, ''::text) as issue_project_key,
        i.number as issue_number
 from briefs b
@@ -179,21 +183,22 @@ type ListBriefsParams struct {
 }
 
 type ListBriefsRow struct {
-	ID              pgtype.UUID        `json:"id"`
-	ProjectID       pgtype.UUID        `json:"project_id"`
-	IssueID         pgtype.UUID        `json:"issue_id"`
-	ConversationID  pgtype.UUID        `json:"conversation_id"`
-	Title           string             `json:"title"`
-	Summary         string             `json:"summary"`
-	Scene           []byte             `json:"scene"`
-	Status          string             `json:"status"`
-	CreatedByUser   pgtype.UUID        `json:"created_by_user"`
-	CreatedByAgent  pgtype.UUID        `json:"created_by_agent"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
-	AuthorName      string             `json:"author_name"`
-	IssueProjectKey string             `json:"issue_project_key"`
-	IssueNumber     pgtype.Int4        `json:"issue_number"`
+	ID                  pgtype.UUID        `json:"id"`
+	ProjectID           pgtype.UUID        `json:"project_id"`
+	IssueID             pgtype.UUID        `json:"issue_id"`
+	ConversationID      pgtype.UUID        `json:"conversation_id"`
+	Title               string             `json:"title"`
+	Summary             string             `json:"summary"`
+	Scene               []byte             `json:"scene"`
+	Status              string             `json:"status"`
+	CreatedByUser       pgtype.UUID        `json:"created_by_user"`
+	CreatedByAgent      pgtype.UUID        `json:"created_by_agent"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	CreatorNameSnapshot string             `json:"creator_name_snapshot"`
+	AuthorName          string             `json:"author_name"`
+	IssueProjectKey     string             `json:"issue_project_key"`
+	IssueNumber         pgtype.Int4        `json:"issue_number"`
 }
 
 func (q *Queries) ListBriefs(ctx context.Context, arg ListBriefsParams) ([]ListBriefsRow, error) {
@@ -218,6 +223,7 @@ func (q *Queries) ListBriefs(ctx context.Context, arg ListBriefsParams) ([]ListB
 			&i.CreatedByAgent,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.CreatorNameSnapshot,
 			&i.AuthorName,
 			&i.IssueProjectKey,
 			&i.IssueNumber,
@@ -258,7 +264,7 @@ update briefs set
   status  = coalesce($4, status),
   updated_at = now()
 where id = $5
-returning id, project_id, issue_id, conversation_id, title, summary, scene, status, created_by_user, created_by_agent, created_at, updated_at
+returning id, project_id, issue_id, conversation_id, title, summary, scene, status, created_by_user, created_by_agent, created_at, updated_at, creator_name_snapshot
 `
 
 type UpdateBriefParams struct {
@@ -291,6 +297,7 @@ func (q *Queries) UpdateBrief(ctx context.Context, arg UpdateBriefParams) (Brief
 		&i.CreatedByAgent,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CreatorNameSnapshot,
 	)
 	return i, err
 }

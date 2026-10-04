@@ -51,8 +51,8 @@ where parent_message_id = $1 and kind = 'thread';
 -- name: GetThread :one
 select c.id, c.project_id, c.parent_message_id, c.title, c.created_at,
        pm.conversation_id as parent_conversation_id,
-       coalesce(u.name, a.name, '') as creator_name,
-       case when pm.deleted_at is null then coalesce(pu.name, pa.name, '')
+       coalesce(u.name, a.name, nullif(c.creator_name_snapshot, ''), '') as creator_name,
+       case when pm.deleted_at is null then coalesce(pu.name, pa.name, nullif(pm.author_name_snapshot, ''), '')
             else 'Deleted' end as parent_author_name,
        case when pm.deleted_at is null then left(pm.body, 160)
             else 'Original message was deleted' end as parent_preview,
@@ -70,8 +70,8 @@ where c.id = $1;
 -- thread index for a project, most recently active first
 select c.id, c.parent_message_id, c.title, c.created_at,
        pm.conversation_id as parent_conversation_id,
-       coalesce(u.name, a.name, '') as creator_name,
-       case when pm.deleted_at is null then coalesce(pu.name, pa.name, '')
+       coalesce(u.name, a.name, nullif(c.creator_name_snapshot, ''), '') as creator_name,
+       case when pm.deleted_at is null then coalesce(pu.name, pa.name, nullif(pm.author_name_snapshot, ''), '')
             else 'Deleted' end as parent_author_name,
        case when pm.deleted_at is null then left(pm.body, 160)
             else 'Original message was deleted' end as parent_preview,
@@ -101,10 +101,10 @@ where p.id = $1 and wm.user_id = $2;
 -- newest-first page; $2 is an optional "older than message id" cursor,
 -- narg(tag) filters to messages carrying that tag
 select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
-       m.author_user_id, m.author_agent_id,
-       coalesce(u.name, a.name, '') as author_name,
+       m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
+       coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
-       coalesce(pu.name, pa.name, '') as parent_author_name,
+       coalesce(pu.name, pa.name, nullif(pm.author_name_snapshot, ''), '') as parent_author_name,
        pm.body as parent_body,
        (pm.id is not null and pm.deleted_at is not null) as parent_deleted,
        t.id as thread_id, t.title as thread_title,
@@ -113,7 +113,7 @@ select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.created_at, m.edit
        m.pinned_at, m.forwarded_from,
        f.conversation_id as fwd_conversation_id,
        fcp.project_id as fwd_project_id,
-       coalesce(fu.name, fa.name, '') as fwd_author_name
+       coalesce(fu.name, fa.name, nullif(f.author_name_snapshot, ''), '') as fwd_author_name
 from messages m
 left join users u on u.id = m.author_user_id
 left join agents a on a.id = m.author_agent_id
@@ -136,10 +136,10 @@ limit sqlc.arg(lim)::int;
 -- name: ListPinnedMessages :many
 -- pinned messages in one conversation, most recently pinned first
 select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
-       m.author_user_id, m.author_agent_id,
-       coalesce(u.name, a.name, '') as author_name,
+       m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
+       coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
-       coalesce(pu.name, pa.name, '') as parent_author_name,
+       coalesce(pu.name, pa.name, nullif(pm.author_name_snapshot, ''), '') as parent_author_name,
        pm.body as parent_body,
        (pm.id is not null and pm.deleted_at is not null) as parent_deleted,
        t.id as thread_id, t.title as thread_title,
@@ -148,7 +148,7 @@ select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.created_at, m.edit
        m.pinned_at, m.forwarded_from,
        f.conversation_id as fwd_conversation_id,
        fcp.project_id as fwd_project_id,
-       coalesce(fu.name, fa.name, '') as fwd_author_name
+       coalesce(fu.name, fa.name, nullif(f.author_name_snapshot, ''), '') as fwd_author_name
 from messages m
 left join users u on u.id = m.author_user_id
 left join agents a on a.id = m.author_agent_id
@@ -198,10 +198,10 @@ where m.id = sqlc.arg(id)
 
 -- name: GetMessageByID :one
 select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
-       m.author_user_id, m.author_agent_id,
-       coalesce(u.name, a.name, '') as author_name,
+       m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
+       coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
-       coalesce(pu.name, pa.name, '') as parent_author_name,
+       coalesce(pu.name, pa.name, nullif(pm.author_name_snapshot, ''), '') as parent_author_name,
        pm.body as parent_body,
        (pm.id is not null and pm.deleted_at is not null) as parent_deleted,
        t.id as thread_id, t.title as thread_title,
@@ -210,7 +210,7 @@ select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.created_at, m.edit
        m.pinned_at, m.forwarded_from,
        f.conversation_id as fwd_conversation_id,
        fcp.project_id as fwd_project_id,
-       coalesce(fu.name, fa.name, '') as fwd_author_name
+       coalesce(fu.name, fa.name, nullif(f.author_name_snapshot, ''), '') as fwd_author_name
 from messages m
 left join users u on u.id = m.author_user_id
 left join agents a on a.id = m.author_agent_id
@@ -315,10 +315,10 @@ order by mr.created_at;
 
 -- name: RecentProjectMessages :many
 select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
-       m.author_user_id, m.author_agent_id,
-       coalesce(u.name, a.name, '') as author_name,
+       m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
+       coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
-       coalesce(pu.name, pa.name, '') as parent_author_name,
+       coalesce(pu.name, pa.name, nullif(pm.author_name_snapshot, ''), '') as parent_author_name,
        pm.body as parent_body,
        (pm.id is not null and pm.deleted_at is not null) as parent_deleted
 from messages m
@@ -349,8 +349,8 @@ group by p.id;
 -- name: MentionsForUser :many
 -- messages mentioning the user (@<name>), newest first
 select m.id, m.conversation_id, m.body, m.created_at, m.edited_at,
-       m.author_user_id, m.author_agent_id,
-       coalesce(u.name, a.name, '') as author_name,
+       m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
+       coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
        c.project_id,
        (r.message_id is not null) as is_read

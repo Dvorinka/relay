@@ -94,31 +94,33 @@ type Board struct {
 }
 
 type Brief struct {
-	ID             pgtype.UUID        `json:"id"`
-	ProjectID      pgtype.UUID        `json:"project_id"`
-	IssueID        pgtype.UUID        `json:"issue_id"`
-	ConversationID pgtype.UUID        `json:"conversation_id"`
-	Title          string             `json:"title"`
-	Summary        string             `json:"summary"`
-	Scene          []byte             `json:"scene"`
-	Status         string             `json:"status"`
-	CreatedByUser  pgtype.UUID        `json:"created_by_user"`
-	CreatedByAgent pgtype.UUID        `json:"created_by_agent"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	ID                  pgtype.UUID        `json:"id"`
+	ProjectID           pgtype.UUID        `json:"project_id"`
+	IssueID             pgtype.UUID        `json:"issue_id"`
+	ConversationID      pgtype.UUID        `json:"conversation_id"`
+	Title               string             `json:"title"`
+	Summary             string             `json:"summary"`
+	Scene               []byte             `json:"scene"`
+	Status              string             `json:"status"`
+	CreatedByUser       pgtype.UUID        `json:"created_by_user"`
+	CreatedByAgent      pgtype.UUID        `json:"created_by_agent"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	CreatorNameSnapshot string             `json:"creator_name_snapshot"`
 }
 
 type Conversation struct {
-	ID              pgtype.UUID        `json:"id"`
-	ProjectID       pgtype.UUID        `json:"project_id"`
-	Kind            string             `json:"kind"`
-	IssueID         pgtype.UUID        `json:"issue_id"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	BriefID         pgtype.UUID        `json:"brief_id"`
-	ParentMessageID pgtype.UUID        `json:"parent_message_id"`
-	Title           pgtype.Text        `json:"title"`
-	CreatedByUser   pgtype.UUID        `json:"created_by_user"`
-	CreatedByAgent  pgtype.UUID        `json:"created_by_agent"`
+	ID                  pgtype.UUID        `json:"id"`
+	ProjectID           pgtype.UUID        `json:"project_id"`
+	Kind                string             `json:"kind"`
+	IssueID             pgtype.UUID        `json:"issue_id"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	BriefID             pgtype.UUID        `json:"brief_id"`
+	ParentMessageID     pgtype.UUID        `json:"parent_message_id"`
+	Title               pgtype.Text        `json:"title"`
+	CreatedByUser       pgtype.UUID        `json:"created_by_user"`
+	CreatedByAgent      pgtype.UUID        `json:"created_by_agent"`
+	CreatorNameSnapshot string             `json:"creator_name_snapshot"`
 }
 
 type GithubApp struct {
@@ -205,19 +207,21 @@ type McpToken struct {
 }
 
 type Message struct {
-	ID             pgtype.UUID        `json:"id"`
-	ConversationID pgtype.UUID        `json:"conversation_id"`
-	AuthorUserID   pgtype.UUID        `json:"author_user_id"`
-	AuthorAgentID  pgtype.UUID        `json:"author_agent_id"`
-	Body           string             `json:"body"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	EditedAt       pgtype.Timestamptz `json:"edited_at"`
-	DeletedAt      pgtype.Timestamptz `json:"deleted_at"`
-	ParentID       pgtype.UUID        `json:"parent_id"`
-	Mentions       []byte             `json:"mentions"`
-	PinnedAt       pgtype.Timestamptz `json:"pinned_at"`
-	ForwardedFrom  pgtype.UUID        `json:"forwarded_from"`
-	Tags           []string           `json:"tags"`
+	ID                 pgtype.UUID        `json:"id"`
+	ConversationID     pgtype.UUID        `json:"conversation_id"`
+	AuthorUserID       pgtype.UUID        `json:"author_user_id"`
+	AuthorAgentID      pgtype.UUID        `json:"author_agent_id"`
+	Body               string             `json:"body"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	EditedAt           pgtype.Timestamptz `json:"edited_at"`
+	DeletedAt          pgtype.Timestamptz `json:"deleted_at"`
+	ParentID           pgtype.UUID        `json:"parent_id"`
+	Mentions           []byte             `json:"mentions"`
+	PinnedAt           pgtype.Timestamptz `json:"pinned_at"`
+	ForwardedFrom      pgtype.UUID        `json:"forwarded_from"`
+	Tags               []string           `json:"tags"`
+	AuthorNameSnapshot string             `json:"author_name_snapshot"`
+	AuthorKindSnapshot string             `json:"author_kind_snapshot"`
 }
 
 type MessageAttachment struct {

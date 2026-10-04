@@ -192,10 +192,10 @@ func (q *Queries) GetIssueForAgent(ctx context.Context, id pgtype.UUID) (GetIssu
 
 const getMessageFull = `-- name: GetMessageFull :one
 select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
-       m.author_user_id, m.author_agent_id,
-       coalesce(u.name, a.name, '') as author_name,
+       m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
+       coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
-       coalesce(pu.name, pa.name, '') as parent_author_name,
+       coalesce(pu.name, pa.name, nullif(pm.author_name_snapshot, ''), '') as parent_author_name,
        pm.body as parent_body,
        (pm.id is not null and pm.deleted_at is not null) as parent_deleted,
        t.id as thread_id, t.title as thread_title,
@@ -204,7 +204,7 @@ select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.created_at, m.edit
        m.pinned_at, m.forwarded_from,
        f.conversation_id as fwd_conversation_id,
        fcp.project_id as fwd_project_id,
-       coalesce(fu.name, fa.name, '') as fwd_author_name
+       coalesce(fu.name, fa.name, nullif(f.author_name_snapshot, ''), '') as fwd_author_name
 from messages m
 left join users u on u.id = m.author_user_id
 left join agents a on a.id = m.author_agent_id
@@ -220,30 +220,31 @@ where m.id = $1
 `
 
 type GetMessageFullRow struct {
-	ID                pgtype.UUID        `json:"id"`
-	ConversationID    pgtype.UUID        `json:"conversation_id"`
-	Body              string             `json:"body"`
-	Mentions          []byte             `json:"mentions"`
-	Tags              []string           `json:"tags"`
-	CreatedAt         pgtype.Timestamptz `json:"created_at"`
-	EditedAt          pgtype.Timestamptz `json:"edited_at"`
-	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
-	ParentID          pgtype.UUID        `json:"parent_id"`
-	AuthorUserID      pgtype.UUID        `json:"author_user_id"`
-	AuthorAgentID     pgtype.UUID        `json:"author_agent_id"`
-	AuthorName        string             `json:"author_name"`
-	AuthorAvatar      pgtype.Text        `json:"author_avatar"`
-	ParentAuthorName  string             `json:"parent_author_name"`
-	ParentBody        pgtype.Text        `json:"parent_body"`
-	ParentDeleted     pgtype.Bool        `json:"parent_deleted"`
-	ThreadID          pgtype.UUID        `json:"thread_id"`
-	ThreadTitle       pgtype.Text        `json:"thread_title"`
-	ThreadReplyCount  int32              `json:"thread_reply_count"`
-	PinnedAt          pgtype.Timestamptz `json:"pinned_at"`
-	ForwardedFrom     pgtype.UUID        `json:"forwarded_from"`
-	FwdConversationID pgtype.UUID        `json:"fwd_conversation_id"`
-	FwdProjectID      pgtype.UUID        `json:"fwd_project_id"`
-	FwdAuthorName     string             `json:"fwd_author_name"`
+	ID                 pgtype.UUID        `json:"id"`
+	ConversationID     pgtype.UUID        `json:"conversation_id"`
+	Body               string             `json:"body"`
+	Mentions           []byte             `json:"mentions"`
+	Tags               []string           `json:"tags"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	EditedAt           pgtype.Timestamptz `json:"edited_at"`
+	DeletedAt          pgtype.Timestamptz `json:"deleted_at"`
+	ParentID           pgtype.UUID        `json:"parent_id"`
+	AuthorUserID       pgtype.UUID        `json:"author_user_id"`
+	AuthorAgentID      pgtype.UUID        `json:"author_agent_id"`
+	AuthorKindSnapshot string             `json:"author_kind_snapshot"`
+	AuthorName         string             `json:"author_name"`
+	AuthorAvatar       pgtype.Text        `json:"author_avatar"`
+	ParentAuthorName   string             `json:"parent_author_name"`
+	ParentBody         pgtype.Text        `json:"parent_body"`
+	ParentDeleted      pgtype.Bool        `json:"parent_deleted"`
+	ThreadID           pgtype.UUID        `json:"thread_id"`
+	ThreadTitle        pgtype.Text        `json:"thread_title"`
+	ThreadReplyCount   int32              `json:"thread_reply_count"`
+	PinnedAt           pgtype.Timestamptz `json:"pinned_at"`
+	ForwardedFrom      pgtype.UUID        `json:"forwarded_from"`
+	FwdConversationID  pgtype.UUID        `json:"fwd_conversation_id"`
+	FwdProjectID       pgtype.UUID        `json:"fwd_project_id"`
+	FwdAuthorName      string             `json:"fwd_author_name"`
 }
 
 func (q *Queries) GetMessageFull(ctx context.Context, id pgtype.UUID) (GetMessageFullRow, error) {
@@ -261,6 +262,7 @@ func (q *Queries) GetMessageFull(ctx context.Context, id pgtype.UUID) (GetMessag
 		&i.ParentID,
 		&i.AuthorUserID,
 		&i.AuthorAgentID,
+		&i.AuthorKindSnapshot,
 		&i.AuthorName,
 		&i.AuthorAvatar,
 		&i.ParentAuthorName,
@@ -279,7 +281,7 @@ func (q *Queries) GetMessageFull(ctx context.Context, id pgtype.UUID) (GetMessag
 }
 
 const listProjectConversations = `-- name: ListProjectConversations :many
-select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent from conversations where project_id = $1
+select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot from conversations where project_id = $1
 order by created_at
 `
 
@@ -303,6 +305,7 @@ func (q *Queries) ListProjectConversations(ctx context.Context, projectID pgtype
 			&i.Title,
 			&i.CreatedByUser,
 			&i.CreatedByAgent,
+			&i.CreatorNameSnapshot,
 		); err != nil {
 			return nil, err
 		}
@@ -556,8 +559,8 @@ func (q *Queries) ResolveMessageProject(ctx context.Context, id pgtype.UUID) (pg
 
 const searchMessagesInProject = `-- name: SearchMessagesInProject :many
 select m.id, m.conversation_id, m.body, m.tags, m.created_at, m.edited_at,
-       m.author_user_id, m.author_agent_id,
-       coalesce(u.name, a.name, '') as author_name,
+       m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
+       coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar
 from messages m
 join conversations c on c.id = m.conversation_id
@@ -577,16 +580,17 @@ type SearchMessagesInProjectParams struct {
 }
 
 type SearchMessagesInProjectRow struct {
-	ID             pgtype.UUID        `json:"id"`
-	ConversationID pgtype.UUID        `json:"conversation_id"`
-	Body           string             `json:"body"`
-	Tags           []string           `json:"tags"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	EditedAt       pgtype.Timestamptz `json:"edited_at"`
-	AuthorUserID   pgtype.UUID        `json:"author_user_id"`
-	AuthorAgentID  pgtype.UUID        `json:"author_agent_id"`
-	AuthorName     string             `json:"author_name"`
-	AuthorAvatar   pgtype.Text        `json:"author_avatar"`
+	ID                 pgtype.UUID        `json:"id"`
+	ConversationID     pgtype.UUID        `json:"conversation_id"`
+	Body               string             `json:"body"`
+	Tags               []string           `json:"tags"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	EditedAt           pgtype.Timestamptz `json:"edited_at"`
+	AuthorUserID       pgtype.UUID        `json:"author_user_id"`
+	AuthorAgentID      pgtype.UUID        `json:"author_agent_id"`
+	AuthorKindSnapshot string             `json:"author_kind_snapshot"`
+	AuthorName         string             `json:"author_name"`
+	AuthorAvatar       pgtype.Text        `json:"author_avatar"`
 }
 
 func (q *Queries) SearchMessagesInProject(ctx context.Context, arg SearchMessagesInProjectParams) ([]SearchMessagesInProjectRow, error) {
@@ -607,6 +611,7 @@ func (q *Queries) SearchMessagesInProject(ctx context.Context, arg SearchMessage
 			&i.EditedAt,
 			&i.AuthorUserID,
 			&i.AuthorAgentID,
+			&i.AuthorKindSnapshot,
 			&i.AuthorName,
 			&i.AuthorAvatar,
 		); err != nil {

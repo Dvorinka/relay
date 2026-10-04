@@ -175,7 +175,8 @@ func (s *Service) handleListMessages(c *gin.Context) {
 			ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
 			Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 			AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
-			AuthorName: m.AuthorName, AuthorAvatar: m.AuthorAvatar,
+			AuthorKindSnapshot: m.AuthorKindSnapshot,
+			AuthorName:         m.AuthorName, AuthorAvatar: m.AuthorAvatar,
 			ParentAuthorName: m.ParentAuthorName, ParentBody: m.ParentBody,
 			ParentDeleted: m.ParentDeleted,
 			ThreadID:      m.ThreadID, ThreadTitle: m.ThreadTitle,
@@ -270,7 +271,8 @@ func (s *Service) handlePostMessage(c *gin.Context) {
 		ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
 		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 		AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
-		AuthorName: m.AuthorName, AuthorAvatar: m.AuthorAvatar,
+		AuthorKindSnapshot: m.AuthorKindSnapshot,
+		AuthorName:         m.AuthorName, AuthorAvatar: m.AuthorAvatar,
 		ParentAuthorName: m.ParentAuthorName, ParentBody: m.ParentBody,
 		ParentDeleted: m.ParentDeleted,
 		ThreadID:      m.ThreadID, ThreadTitle: m.ThreadTitle,
@@ -353,7 +355,8 @@ func (s *Service) handleEditMessage(c *gin.Context) {
 		ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
 		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 		AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
-		AuthorName: m.AuthorName, AuthorAvatar: m.AuthorAvatar,
+		AuthorKindSnapshot: m.AuthorKindSnapshot,
+		AuthorName:         m.AuthorName, AuthorAvatar: m.AuthorAvatar,
 		ParentAuthorName: m.ParentAuthorName, ParentBody: m.ParentBody,
 		ParentDeleted: m.ParentDeleted,
 		ThreadID:      m.ThreadID, ThreadTitle: m.ThreadTitle,
@@ -429,7 +432,8 @@ func (s *Service) messagePayload(c *gin.Context, id pgtype.UUID) (gin.H, bool) {
 		ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
 		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 		AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
-		AuthorName: m.AuthorName, AuthorAvatar: m.AuthorAvatar,
+		AuthorKindSnapshot: m.AuthorKindSnapshot,
+		AuthorName:         m.AuthorName, AuthorAvatar: m.AuthorAvatar,
 		ParentAuthorName: m.ParentAuthorName, ParentBody: m.ParentBody,
 		ParentDeleted: m.ParentDeleted,
 		ThreadID:      m.ThreadID, ThreadTitle: m.ThreadTitle,
@@ -514,7 +518,8 @@ func (s *Service) handleListPins(c *gin.Context) {
 			ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
 			Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 			AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
-			AuthorName: m.AuthorName, AuthorAvatar: m.AuthorAvatar,
+			AuthorKindSnapshot: m.AuthorKindSnapshot,
+			AuthorName:         m.AuthorName, AuthorAvatar: m.AuthorAvatar,
 			ParentAuthorName: m.ParentAuthorName, ParentBody: m.ParentBody,
 			ParentDeleted: m.ParentDeleted,
 			ThreadID:      m.ThreadID, ThreadTitle: m.ThreadTitle,
@@ -1035,6 +1040,7 @@ type MessageView struct {
 	Tags                         []string
 	CreatedAt, EditedAt          pgtype.Timestamptz
 	AuthorUserID, AuthorAgentID  pgtype.UUID
+	AuthorKindSnapshot           string
 	AuthorName                   string
 	AuthorAvatar                 pgtype.Text
 	ParentAuthorName             string
@@ -1061,6 +1067,8 @@ func MessageJSON(v MessageView) gin.H {
 	if v.AuthorAgentID.Valid {
 		kind = "agent"
 		authorID = v.AuthorAgentID
+	} else if v.AuthorKindSnapshot == "agent" {
+		kind = "agent"
 	}
 	var avatar *string
 	if v.AuthorAvatar.Valid {
@@ -1122,10 +1130,14 @@ func MessageJSON(v MessageView) gin.H {
 		}
 		forwarded = &f
 	}
+	var authorIDOut any
+	if authorID.Valid {
+		authorIDOut = authorID.String()
+	}
 	return gin.H{
 		"id": v.ID.String(), "conversation_id": v.ConversationID.String(),
 		"author": gin.H{
-			"kind": kind, "id": authorID.String(),
+			"kind": kind, "id": authorIDOut,
 			"name": v.AuthorName, "avatar_url": avatar,
 		},
 		"body":        v.Body,

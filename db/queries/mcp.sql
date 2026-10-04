@@ -21,8 +21,8 @@ order by created_at;
 
 -- name: SearchMessagesInProject :many
 select m.id, m.conversation_id, m.body, m.tags, m.created_at, m.edited_at,
-       m.author_user_id, m.author_agent_id,
-       coalesce(u.name, a.name, '') as author_name,
+       m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
+       coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar
 from messages m
 join conversations c on c.id = m.conversation_id
@@ -65,10 +65,10 @@ returning id, conversation_id;
 
 -- name: GetMessageFull :one
 select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
-       m.author_user_id, m.author_agent_id,
-       coalesce(u.name, a.name, '') as author_name,
+       m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
+       coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
-       coalesce(pu.name, pa.name, '') as parent_author_name,
+       coalesce(pu.name, pa.name, nullif(pm.author_name_snapshot, ''), '') as parent_author_name,
        pm.body as parent_body,
        (pm.id is not null and pm.deleted_at is not null) as parent_deleted,
        t.id as thread_id, t.title as thread_title,
@@ -77,7 +77,7 @@ select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.created_at, m.edit
        m.pinned_at, m.forwarded_from,
        f.conversation_id as fwd_conversation_id,
        fcp.project_id as fwd_project_id,
-       coalesce(fu.name, fa.name, '') as fwd_author_name
+       coalesce(fu.name, fa.name, nullif(f.author_name_snapshot, ''), '') as fwd_author_name
 from messages m
 left join users u on u.id = m.author_user_id
 left join agents a on a.id = m.author_agent_id
