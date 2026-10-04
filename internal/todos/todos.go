@@ -89,8 +89,11 @@ func (s *Service) todoGate(c *gin.Context) {
 
 func todoJSON(t db.ListTodosRow) gin.H {
 	var agent, issue gin.H
-	if t.AgentID.Valid {
-		agent = gin.H{"id": t.AgentID.String(), "name": t.AgentName.String}
+	if t.AgentID.Valid || t.AgentName != "" {
+		agent = gin.H{"name": t.AgentName}
+		if t.AgentID.Valid {
+			agent["id"] = t.AgentID.String()
+		}
 	}
 	if t.IssueID.Valid && t.IssueKey.Valid {
 		issue = gin.H{

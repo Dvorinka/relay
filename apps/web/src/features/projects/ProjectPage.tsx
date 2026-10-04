@@ -471,7 +471,7 @@ function ContextRail(props: {
   onCleanup(unsub);
 
   const openIssues = createMemo(() =>
-    (issues() ?? []).filter((i) => !isClosed(i.status, statusDefs(props.project))).slice(0, 5),
+    (issues.latest ?? []).filter((i) => !isClosed(i.status, statusDefs(props.project))).slice(0, 5),
   );
 
   return (
@@ -497,10 +497,10 @@ function ContextRail(props: {
         </button>
       </RailSection>
 
-      <RailSection label="Pending reviews" count={reviews()?.length ?? 0}>
+      <RailSection label="Pending reviews" count={reviews.latest?.length ?? 0}>
         <div class="flex flex-col gap-1.5">
           <For
-            each={(reviews() ?? []).slice(0, 3)}
+            each={(reviews.latest ?? []).slice(0, 3)}
             fallback={<p class="text-[12px] text-muted">Queue is clear.</p>}
           >
             {(r) => (
@@ -522,7 +522,7 @@ function ContextRail(props: {
 
       <RailSection label="Development">
         <Show
-          when={(repos()?.length ?? 0) > 0}
+          when={(repos.latest?.length ?? 0) > 0}
           fallback={
             <button
               type="button"
@@ -533,7 +533,7 @@ function ContextRail(props: {
             </button>
           }
         >
-          <For each={repos()}>
+          <For each={repos.latest}>
             {(r) => (
               <a
                 href={r.url}
@@ -563,9 +563,9 @@ function ContextRail(props: {
         </Show>
       </RailSection>
 
-      <RailSection label="Members" count={members()?.length}>
+      <RailSection label="Members" count={members.latest?.length}>
         <div class="flex flex-col gap-1">
-          <For each={members()}>
+          <For each={members.latest}>
             {(m) => (
               <div class="flex items-center gap-2.5 py-0.5">
                 <Avatar.Root class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface">
@@ -593,10 +593,10 @@ function ContextRail(props: {
         </div>
       </RailSection>
 
-      <Show when={(agents() ?? []).length > 0}>
-        <RailSection label="Agents" count={agents()?.length}>
+      <Show when={(agents.latest ?? []).length > 0}>
+        <RailSection label="Agents" count={agents.latest?.length}>
           <div class="flex flex-col gap-1">
-            <For each={agents()}>
+            <For each={agents.latest}>
               {(a) => (
                 <div class="flex items-center gap-2.5 py-0.5">
                   <Avatar.Root class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface">
@@ -622,11 +622,11 @@ function ContextRail(props: {
 
       <RailSection
         label="Todos"
-        count={(todos() ?? []).filter((t) => !t.done).length}
+        count={(todos.latest ?? []).filter((t) => !t.done).length}
       >
         <TodoList
           projectId={props.project.id}
-          todos={todos() ?? []}
+          todos={todos.latest ?? []}
           onChanged={refetchTodos}
         />
       </RailSection>
@@ -828,7 +828,7 @@ function ProjectRepoSection(props: { project: Project }) {
   const [error, setError] = createSignal<string | null>(null);
 
   const linkable = () =>
-    (available() ?? []).filter(
+    (available.latest ?? []).filter(
       (a) =>
         !(repos() ?? []).some(
           (r) => r.owner === a.owner && r.name === a.name,
@@ -893,7 +893,7 @@ function ProjectRepoSection(props: { project: Project }) {
         fallback={
           <Show when={(repos() ?? []).length === 0}>
             <p class="text-[12px] text-muted">
-              {(available()?.length ?? 0) === 0
+              {(available.latest?.length ?? 0) === 0
                 ? "Install the GitHub App on a repository first (Settings → GitHub App)."
                 : "No unlinked repositories available."}
             </p>

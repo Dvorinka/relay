@@ -321,13 +321,13 @@ export function DevelopmentPanel(props: {
     }
   }
 
-  const hasRepos = createMemo(() => (linked()?.repos.length ?? 0) > 0);
+  const hasRepos = createMemo(() => (linked.latest?.repos.length ?? 0) > 0);
 
   return (
     <div class="min-h-0 flex-1 overflow-y-auto">
       <div class="mx-auto w-full max-w-3xl px-6 py-6">
         <Show when={hasRepos()}>
-          <For each={linked()?.repos}>
+          <For each={linked.latest?.repos}>
             {(repo: LinkedRepo) => (
               <>
                 <div class="mb-2 flex items-center justify-between rounded-md border border-border bg-surface px-3 py-2">
@@ -408,7 +408,7 @@ export function DevelopmentPanel(props: {
               Could not load development data.
             </p>
           </Match>
-          <Match when={dev()}>
+          <Match when={dev.latest}>
             {(d: () => DevPanel) => (
               <>
                 <p class="mt-1 text-[11px] text-muted">

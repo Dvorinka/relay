@@ -3,7 +3,7 @@
 -- Optional qualifiers parsed by the handler: author ilike, project key,
 -- has-image/has-file attachment filters, created_at bounds.
 select m.id, m.body, m.created_at, c.project_id,
-       coalesce(u.name, a.name, '') as author_name,
+       coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(ts_rank(to_tsvector('english', m.body),
                websearch_to_tsquery('english', nullif(sqlc.arg(q), ''))), 0) as rank
 from messages m
@@ -14,7 +14,7 @@ left join users u on u.id = m.author_user_id
 left join agents a on a.id = m.author_agent_id
 where m.deleted_at is null
   and (sqlc.arg(q) = '' or to_tsvector('english', m.body) @@ websearch_to_tsquery('english', sqlc.arg(q)))
-  and (sqlc.arg(author) = '' or coalesce(u.name, a.name, '') ilike sqlc.arg(author))
+  and (sqlc.arg(author) = '' or coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') ilike sqlc.arg(author))
   and (sqlc.arg(project_key) = '' or upper(p.key) = upper(sqlc.arg(project_key)))
   and (sqlc.narg(has_image)::bool is not true or exists (
         select 1 from message_attachments ma

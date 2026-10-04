@@ -76,7 +76,9 @@ export function renameConnection(id: string, label: string) {
 
 /** Saved servers other than the one this session currently talks to. */
 export function foreignConnections(): SavedConnection[] {
-  const cur = net.serverUrl();
+  // Same-origin sessions leave serverUrl "" — the current server is the
+  // page origin then, so a saved connection to it must not look foreign.
+  const cur = net.serverUrl() || location.origin;
   return connections().filter((c) => c.url !== cur);
 }
 

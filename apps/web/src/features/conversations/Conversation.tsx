@@ -1846,9 +1846,12 @@ function ConversationThread(props: {
       setConfirmClear(cmd === "/new");
       return;
     }
-    if (cmd.startsWith("/todo ")) {
-      const content = body.slice(6).trim();
-      if (!content) return;
+    if (cmd === "/todo" || cmd.startsWith("/todo ")) {
+      const content = body.slice(5).trim();
+      if (!content) {
+        setSendError("Usage: /todo <task>");
+        return;
+      }
       setSending(true);
       setSendError(null);
       try {

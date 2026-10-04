@@ -1,5 +1,5 @@
 -- name: ListTodos :many
-select t.*, a.name as agent_name, i.number as issue_number, p.key as issue_key
+select t.*, coalesce(a.name, nullif(t.agent_name_snapshot, '')) as agent_name, i.number as issue_number, p.key as issue_key
 from agent_todos t
 left join agents a on a.id = t.agent_id
 left join issues i on i.id = t.issue_id
@@ -18,7 +18,7 @@ returning *;
 select * from agent_todos where id = sqlc.arg(id);
 
 -- name: GetTodoJoined :one
-select t.*, a.name as agent_name, i.number as issue_number, p.key as issue_key
+select t.*, coalesce(a.name, nullif(t.agent_name_snapshot, '')) as agent_name, i.number as issue_number, p.key as issue_key
 from agent_todos t
 left join agents a on a.id = t.agent_id
 left join issues i on i.id = t.issue_id
