@@ -2505,7 +2505,7 @@ function ConversationThread(props: {
   }
 
   return (
-    <div class="relative flex min-h-0 flex-1 flex-col">
+    <div class="relative flex min-h-0 min-w-0 flex-1 flex-col">
       <Show when={newBelow() > 0}>
         <button
           type="button"
@@ -3264,7 +3264,7 @@ export function Conversation(props: {
       }
     >
       {(c) => (
-        <div class="flex min-h-0 flex-1">
+        <div class="flex min-h-0 min-w-0 flex-1">
           <ConversationThread
             conversationId={c.id}
             projectId={props.projectId}

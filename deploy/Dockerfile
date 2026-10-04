@@ -2,6 +2,9 @@
 
 # --- web build ---
 FROM node:26-alpine AS web
+# Baked into the SPA as __APP_VERSION__ — without it the footer reports "dev".
+ARG RELAY_VERSION=dev
+ENV VITE_APP_VERSION=${RELAY_VERSION}
 WORKDIR /src
 COPY apps/web/package.json apps/web/
 COPY packages/api-client/package.json packages/api-client/
