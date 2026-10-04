@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Relay desktop MSI — WiX v4+, per-user install (no admin required).
+     Mirrors installer/relay.nsi semantics: %LOCALAPPDATA%\Programs\Relay,
+     Start Menu + Desktop shortcuts, ARP registration, in-place upgrades
+     via MajorUpgrade on the stable UpgradeCode below.
+
+     Built on the Windows runner in release.yml (WiX does not support
+     building on Linux — wixtoolset/issues#7154):
+
+       wix build -arch x64 -o Relay-Setup-1.2.3.msi \
+         -d VERSION=1.2.3 \
+         -d EXE=dist/relay-desktop-windows-amd64.exe \
+         -d ICON=apps/desktop/build/windows/icon.ico \
+         apps/desktop/installer/relay.wxs
+
+     Note: unlike the NSIS installer this MSI does not bootstrap the
+     WebView2 Runtime — WebView2 ships with Windows 11 and patched
+     Windows 10; on bare images install the evergreen runtime first:
+     https://developer.microsoft.com/microsoft-edge/webview2/ -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Relay"
+           Language="1033"
+           Version="$(var.VERSION)"
+           Manufacturer="Relay"
+           UpgradeCode="6765da14-6bf2-4e53-8362-ee9b3f8fe0ac"
+           Scope="perUser"
+           InstallerVersion="200">
+
+    <!-- Newer version already installed → refuse; older → upgrade in place. -->
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Relay is already installed." />
+    <Media Id="1" Cabinet="relay.cab" CompressionLevel="high" EmbedCab="yes" />
+
+    <Icon Id="RelayIcon" SourceFile="$(var.ICON)" />
+    <Property Id="ARPPRODUCTICON" Value="RelayIcon" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/Dvorinka/relay" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+
+    <!-- Per-user install root: %LOCALAPPDATA%\Programs\Relay -->
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsDir" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="Relay" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="StartMenuDir" Name="Relay" />
+    </StandardDirectory>
+    <StandardDirectory Id="DesktopFolder" />
+
+    <Feature Id="Main" Title="Relay" Level="1">
+      <ComponentGroupRef Id="App" />
+      <ComponentGroupRef Id="Shortcuts" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <ComponentGroup Id="App" Directory="INSTALLFOLDER">
+      <Component>
+        <!-- MSI's RestartManager closes/reopens the running app on upgrade. -->
+        <File Id="RelayExe" Source="$(var.EXE)" Name="relay-desktop.exe" KeyPath="yes" />
+        <RemoveFolder Id="RemoveInstallDir" On="uninstall" />
+        <RemoveFolder Id="RemoveProgramsDir" Directory="ProgramsDir" On="uninstall" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="Shortcuts">
+      <Component Directory="StartMenuDir">
+        <Shortcut Id="StartMenuShortcut" Name="Relay"
+                  Target="[INSTALLFOLDER]relay-desktop.exe"
+                  Icon="RelayIcon" WorkingDirectory="INSTALLFOLDER" />
+        <RemoveFolder Id="RemoveStartMenuDir" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\Relay" Name="StartMenuShortcut"
+                       Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Directory="DesktopFolder">
+        <Shortcut Id="DesktopShortcut" Name="Relay"
+                  Target="[INSTALLFOLDER]relay-desktop.exe"
+                  Icon="RelayIcon" WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKCU" Key="Software\Relay" Name="DesktopShortcut"
+                       Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>
