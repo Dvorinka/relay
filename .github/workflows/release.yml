@@ -32,9 +32,13 @@ jobs:
           npm run build --prefix apps/web
 
       - name: Build relay binaries
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
           mkdir -p dist
-          CGO_ENABLED=0 go build -o dist/relay-linux-amd64 ./cmd/relay
+          # stamp the tag so /api/health reports it (update checks compare it)
+          CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=$TAG" \
+            -o dist/relay-linux-amd64 ./cmd/relay
           CGO_ENABLED=0 go build -o dist/relay-cli-linux-amd64 ./cmd/relay-cli
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o dist/relay-cli-windows-amd64.exe ./cmd/relay-cli
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o dist/relay-cli-darwin-arm64 ./cmd/relay-cli
@@ -179,6 +183,8 @@ jobs:
         with:
           context: .
           file: deploy/Dockerfile
+          build-args: |
+            RELAY_VERSION=${{ github.ref_name }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
