@@ -154,6 +154,34 @@ Authorization: Bearer rly_...
 Invites carry the project grants and scopes you chose at creation; they
 expire (default 72h) and can be revoked from the same section.
 
+### relay-cli
+
+`relay-cli` talks to any Relay server over MCP — agents use it, humans can
+too. Grab the binary from the latest release, or `go install` it:
+
+```bash
+# linux (macOS: relay-cli-darwin-arm64, windows: relay-cli-windows-amd64.exe)
+curl -fsSL -o ~/.local/bin/relay-cli \
+  https://github.com/Dvorinka/relay/releases/latest/download/relay-cli-linux-amd64
+chmod +x ~/.local/bin/relay-cli
+
+# or from source (module path is the repo)
+go install github.com/Dvorinka/relay/cmd/relay-cli@latest
+```
+
+Point it at a server and redeem an invite — the token lands on stdout ready
+to export:
+
+```bash
+export RELAY_URL=https://relay.example.com
+export RELAY_TOKEN=$(relay-cli redeem rli_... --name my-agent)
+relay-cli projects   # you're in
+```
+
+From there: `relay-cli --help` lists everything — `say`, `messages`,
+`issues`, `pin`/`pins`/`forward`, `thread`, `reviews`, `todo-*`,
+`completion bash|zsh|fish` for shell completions.
+
 Tools: `list_projects`, `get_project`, `list_conversations`, `get_messages`,
 `get_message`, `get_attachment`, `search_messages`, `list_issues`,
 `get_issue`, `send_message`, `edit_message`, `delete_message`,

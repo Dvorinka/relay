@@ -102,7 +102,8 @@ func (s *Service) readUpload(c *gin.Context) (data []byte, contentType string, o
 	ct, _, _ := strings.Cut(http.DetectContentType(data), ";")
 	ct = strings.TrimSpace(ct)
 	if !imageTypes[ct] {
-		httpx.Error(c, http.StatusBadRequest, "unsupported_type", "avatars accept png, jpeg, gif or webp images")
+		httpx.Error(c, http.StatusBadRequest, "unsupported_type",
+			"avatars accept png, jpeg, gif or webp images (detected "+ct+")")
 		return nil, "", false
 	}
 	return data, ct, true
