@@ -15,6 +15,7 @@ import { mediaURL, net } from "../lib/net";
 import {
   checkForUpdates,
   loadServerVersion,
+  parseTag,
   RELEASES_PAGE,
   updateAvailable,
   useUpdates,
@@ -485,7 +486,23 @@ function VersionFooter() {
           >
             <Show
               when={updateAvailable()}
-              fallback={<span class="text-faint/80">Up to date</span>}
+              fallback={
+                // dev builds can't be compared — still offer the releases page
+                // so downloads are reachable; release builds show "Up to date".
+                <Show
+                  when={parseTag(appVersion) === null}
+                  fallback={<span class="text-faint/80">Up to date</span>}
+                >
+                  <a
+                    href={RELEASES_PAGE}
+                    class="text-accent hover:underline"
+                    target="_blank"
+                    rel="noopener"
+                  >
+                    {latest()} — download
+                  </a>
+                </Show>
+              }
             >
               <a
                 href={RELEASES_PAGE}
