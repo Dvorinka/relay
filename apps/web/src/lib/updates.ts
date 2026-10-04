@@ -44,7 +44,7 @@ export async function loadServerVersion() {
   }
 }
 
-function parseTag(v: string): number[] | null {
+export function parseTag(v: string): number[] | null {
   const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(v.trim());
   return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
 }
