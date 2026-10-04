@@ -1033,8 +1033,8 @@ func TestForwardPin(t *testing.T) {
 		t.Fatalf("pinned_at should clear: %v", unpin)
 	}
 	code, pins = c.call("GET", "/api/conversations/"+convA+"/pins", "")
-	if len(pins["messages"].([]any)) != 1 {
-		t.Fatalf("expected 1 pin after unpin: %v", pins)
+	if code != 200 || len(pins["messages"].([]any)) != 1 {
+		t.Fatalf("expected 1 pin after unpin: %d %v", code, pins)
 	}
 
 	// --- forward ---
