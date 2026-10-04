@@ -36,6 +36,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -58,6 +59,9 @@ var (
 	flagTimeout = flag.Int("timeout", 60, "review wait timeout in seconds")
 	flagReply   = flag.String("reply", "", "message id this send replies to")
 	flagConv    = flag.String("conv", "", "conversation id (for messages/read in a specific thread)")
+	flagName    = flag.String("name", "", "agent name (redeem)")
+	flagTitle   = flag.String("title", "", "thread title (thread)")
+	flagMode    = flag.String("mode", "notify", "review mode for redeem: notify|gate")
 )
 
 var rpcID atomic.Int64
@@ -297,6 +301,12 @@ func render(kind string, raw json.RawMessage) {
 			if atts > 0 {
 				suffix = fmt.Sprintf("  [%d attachment(s)]", atts)
 			}
+			if m["pinned_at"] != nil {
+				suffix += "  [pinned]"
+			}
+			if f := asMap(m["forwarded"]); f != nil {
+				suffix += "  [fwd from " + str(f, "author") + "]"
+			}
 			fmt.Printf("%s %s  %s\n%s%s\n\n", str(m, "id"), name,
 				fmtTime(m["created_at"]), str(m, "body"), suffix)
 		}
@@ -375,6 +385,12 @@ Chat
   say <project_id> <body> [--reply id]  post a message (mentions: @user, KEY-1, repo#42)
   react <message_id> <emoji>            toggle a reaction
   msg-edit <message_id> <body>          edit an unread agent message
+  msg-del <message_id>                  delete an own unread message
+  pin|unpin <message_id>                pin or unpin a message
+  pins <project_id|conversation_id>     list pinned messages
+  forward <message_id> <project_id>     forward a message into another project
+  thread <message_id> [title]           open (or get) the thread on a message
+  avatar <file>                         set this agent's profile picture
 
 Work
   issues <project_id>                   list issues
@@ -408,6 +424,7 @@ Briefs (visual explanations)
   brief-policy <project_id>             show the project's brief policy
 
   search <project_id> <query>           substring search over messages
+  redeem <rli_...> [--name n] [--mode]  exchange an invite for an rly_ token
   completion bash|zsh|fish              print a shell completion script
 
 Environment: RELAY_URL, RELAY_TOKEN.
@@ -447,6 +464,10 @@ Environment: RELAY_URL, RELAY_TOKEN.
 	if args[0] == "completion" {
 		shell := need(args, 1, "bash|zsh|fish")
 		fmt.Print(completionScript(shell))
+		return
+	}
+	if args[0] == "redeem" {
+		redeemInvite(args)
 		return
 	}
 	s := connect()
@@ -501,6 +522,46 @@ Environment: RELAY_URL, RELAY_TOKEN.
 		run("", "edit_message", map[string]any{
 			"message_id": need(args, 1, "message_id"),
 			"body":       need(args, 2, "new body"),
+		})
+
+	case "msg-del":
+		run("", "delete_message", map[string]any{
+			"message_id": need(args, 1, "message_id"),
+		})
+
+	case "pin", "unpin":
+		run("", "pin_message", map[string]any{
+			"message_id": need(args, 1, "message_id"),
+			"pinned":     args[0] == "pin",
+		})
+
+	case "pins":
+		run("messages", "list_pins",
+			map[string]any{"project_id": need(args, 1, "project_id or conversation_id")})
+
+	case "forward":
+		run("", "forward_message", map[string]any{
+			"message_id": need(args, 1, "message_id"),
+			"project_id": need(args, 2, "target project_id"),
+		})
+
+	case "thread":
+		a := map[string]any{"message_id": need(args, 1, "message_id")}
+		if *flagTitle != "" {
+			a["title"] = *flagTitle
+		} else if len(args) > 2 {
+			a["title"] = args[2]
+		}
+		run("", "create_thread", a)
+
+	case "avatar":
+		// avatar <file> — image goes up base64-encoded via set_avatar
+		raw, err := os.ReadFile(need(args, 1, "image file"))
+		if err != nil {
+			fail(err)
+		}
+		run("", "set_avatar", map[string]any{
+			"image_base64": base64.StdEncoding.EncodeToString(raw),
 		})
 
 	case "issues":
@@ -757,6 +818,55 @@ Environment: RELAY_URL, RELAY_TOKEN.
 	}
 }
 
+// redeemInvite exchanges an rli_ invite token for a live rly_ agent token.
+// Plain REST — no MCP session exists yet. Prints the token plainly so a
+// script can capture it: RELAY_TOKEN=$(relay-cli redeem rli_... --name bot)
+func redeemInvite(args []string) {
+	tok := need(args, 1, "invite token (rli_...)")
+	name := *flagName
+	if name == "" && len(args) > 2 {
+		name = args[2]
+	}
+	if name == "" {
+		name = "cli-agent"
+	}
+	body, _ := json.Marshal(map[string]any{
+		"token": tok, "name": name, "review_mode": *flagMode,
+	})
+	res, err := http.Post(
+		strings.TrimRight(*flagURL, "/")+"/api/agent-invites/redeem",
+		"application/json", bytes.NewReader(body))
+	if err != nil {
+		fail("redeem:", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	raw, _ := io.ReadAll(res.Body)
+	var out anyMap
+	if err := json.Unmarshal(raw, &out); err != nil {
+		fail("bad reply:", truncate(string(raw), 300))
+	}
+	if res.StatusCode >= 300 {
+		msg := str(asMap(out["error"]), "message")
+		if msg == "" {
+			msg = truncate(string(raw), 200)
+		}
+		fail("redeem failed:", res.Status, "-", msg)
+	}
+	if *flagJSON {
+		emit(raw)
+		return
+	}
+	token := str(out, "token")
+	agent := asMap(out["agent"])
+	if token == "" {
+		emit(raw)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "registered %s (%s) — export this token:\n",
+		str(agent, "name"), str(agent, "id"))
+	fmt.Println(token)
+}
+
 func need(args []string, i int, what string) string {
 	if i >= len(args) || args[i] == "" {
 		fail("missing argument:", what)
@@ -773,10 +883,11 @@ func atoi(s string) int {
 }
 
 func completionScript(shell string) string {
-	cmds := "projects conversations messages read say react msg-edit issues " +
+	cmds := "projects conversations messages read say react msg-edit msg-del " +
+		"pin unpin pins forward thread avatar issues " +
 		"issue issue-new issue-set todos todo-add todo-done todo-undo todo-del " +
 		"search files file-read gh reviews review review-submit review-await " +
-		"briefs brief brief-new brief-set brief-policy attachment completion"
+		"briefs brief brief-new brief-set brief-policy attachment redeem completion"
 	switch shell {
 	case "bash":
 		return "# relay-cli bash completion\n_relay_cli() {\n" +

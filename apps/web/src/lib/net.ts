@@ -48,3 +48,23 @@ export const net = {
     return createClient(net.serverUrl(), net.token() || undefined);
   },
 };
+
+/** Resolve an API media path ("/api/files/…", attachment downloads) for
+ *  <img>/<a href>. Bare requests can't send an Authorization header, so
+ *  token sessions (desktop, cross-origin SPA) carry ?access_token= like the
+ *  SSE fallback. Cookie-authed same-origin sessions are unaffected either
+ *  way; blob: data from local mode passes through untouched. */
+export function mediaURL(u: string | null | undefined): string | undefined {
+  if (!u) return undefined;
+  let abs = u;
+  if (u.startsWith("/api/")) {
+    // root-relative API paths must point at the configured server, not the
+    // page origin (the desktop shell serves the SPA from wails.localhost)
+    const base = net.serverUrl();
+    abs = base ? base + u : u;
+  }
+  const token = net.token();
+  if (!token || !abs.includes("/api/")) return abs;
+  const sep = abs.includes("?") ? "&" : "?";
+  return `${abs}${sep}access_token=${encodeURIComponent(token)}`;
+}

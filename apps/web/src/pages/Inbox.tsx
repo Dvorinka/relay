@@ -3,6 +3,7 @@ import { createResource, For, onCleanup, Show } from "solid-js";
 import { Avatar } from "@ark-ui/solid";
 import { Spinner } from "../components/ui";
 import { api } from "../lib/api";
+import { mediaURL } from "../lib/net";
 import { subscribe } from "../lib/events";
 import { initials, messagePreview } from "../lib/text";
 import { timeAgo } from "../lib/time";
@@ -40,7 +41,7 @@ function PendingReviews() {
                       {initials(r.agent.name)}
                     </Avatar.Fallback>
                     <Avatar.Image
-                      src={r.agent.avatar_url ?? undefined}
+                      src={mediaURL(r.agent.avatar_url)}
                       alt=""
                       class="h-full w-full rounded-full object-cover"
                     />

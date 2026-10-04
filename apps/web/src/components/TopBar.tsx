@@ -1,6 +1,7 @@
 import { Avatar, Menu } from "@ark-ui/solid";
 import { A, useNavigate } from "@solidjs/router";
 import { Portal } from "solid-js/web";
+import { mediaURL } from "../lib/net";
 import { initials } from "../lib/text";
 import { useSession } from "../stores/session";
 import { useNav } from "../stores/nav";
@@ -28,7 +29,7 @@ function AccountMenu() {
             {initials(session.user()?.name ?? "")}
           </Avatar.Fallback>
           <Avatar.Image
-            src={session.user()?.avatar_url ?? undefined}
+            src={mediaURL(session.user()?.avatar_url)}
             alt=""
             class="h-full w-full rounded-full object-cover"
           />

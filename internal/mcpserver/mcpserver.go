@@ -281,6 +281,12 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithBoolean("pinned", mcp.Required(), mcp.Description("true to pin, false to unpin")),
 	), s.pinMessage)
 
+	srv.AddTool(mcp.NewTool("list_pins",
+		mcp.WithDescription("List a conversation's pinned messages, newest pin first."),
+		mcp.WithString("conversation_id"),
+		mcp.WithString("project_id", mcp.Description("shorthand for the project's conversation")),
+	), s.listPins)
+
 	srv.AddTool(mcp.NewTool("forward_message",
 		mcp.WithDescription("Forward a message into another granted project's conversation. The copy credits the original author."),
 		mcp.WithString("message_id", mcp.Required()),
@@ -671,18 +677,20 @@ func (s *Service) listConversations(ctx context.Context, req mcp.CallToolRequest
 	return jsonResult(out)
 }
 
-func (s *Service) getMessages(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var cid pgtype.UUID
+// resolveConversationArg accepts a conversation_id, a project_id (whose
+// conversation is created lazily), or a bare id that might be either.
+func (s *Service) resolveConversationArg(ctx context.Context, req mcp.CallToolRequest) (pgtype.UUID, *mcp.CallToolResult) {
 	if v := req.GetString("conversation_id", ""); v != "" {
-		var err error
-		cid, err = uuidArg(req, "conversation_id")
+		cid, err := uuidArg(req, "conversation_id")
 		if err != nil {
-			return mcp.NewToolResultError("invalid conversation_id"), nil
+			return pgtype.UUID{}, mcp.NewToolResultError("invalid conversation_id")
 		}
-	} else if v := req.GetString("project_id", ""); v != "" {
+		return cid, nil
+	}
+	if v := req.GetString("project_id", ""); v != "" {
 		pid, err := uuidArg(req, "project_id")
 		if err != nil {
-			return mcp.NewToolResultError("invalid project_id"), nil
+			return pgtype.UUID{}, mcp.NewToolResultError("invalid project_id")
 		}
 		conv, err := s.q.GetProjectConversation(ctx, pid)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -692,15 +700,19 @@ func (s *Service) getMessages(ctx context.Context, req mcp.CallToolRequest) (*mc
 			// Not a project — treat the id as a conversation (brief threads,
 			// issue threads) so `messages <uuid>` works on either.
 			if _, cerr := s.q.ResolveConversationProject(ctx, pid); cerr == nil {
-				cid = pid
-			} else {
-				return errResult(err)
+				return pid, nil
 			}
-		} else {
-			cid = conv.ID
+			return pgtype.UUID{}, mcp.NewToolResultError(err.Error())
 		}
-	} else {
-		return mcp.NewToolResultError("conversation_id or project_id required"), nil
+		return conv.ID, nil
+	}
+	return pgtype.UUID{}, mcp.NewToolResultError("conversation_id or project_id required")
+}
+
+func (s *Service) getMessages(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	cid, toolErr := s.resolveConversationArg(ctx, req)
+	if toolErr != nil {
+		return toolErr, nil
 	}
 	pid, err := s.q.ResolveConversationProject(ctx, cid)
 	if err != nil {
@@ -1233,6 +1245,30 @@ func (s *Service) pinMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp
 			"conversation_id": convID.String(), "message": messageJSON(m)})
 	}
 	return jsonResult(map[string]any{"message_id": mid.String(), "pinned": pinned})
+}
+
+// listPins mirrors GET /conversations/:id/pins.
+func (s *Service) listPins(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	cid, toolErr := s.resolveConversationArg(ctx, req)
+	if toolErr != nil {
+		return toolErr, nil
+	}
+	pid, err := s.q.ResolveConversationProject(ctx, cid)
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "message:read"); err != nil {
+		return errResult(err)
+	}
+	rows, err := s.q.ListPinnedMessages(ctx, cid)
+	if err != nil {
+		return errResult(err)
+	}
+	msgs := make([]gin.H, 0, len(rows))
+	for _, m := range rows {
+		msgs = append(msgs, messageJSON(db.GetMessageFullRow(m)))
+	}
+	return jsonResult(map[string]any{"messages": msgs})
 }
 
 // forwardMessage mirrors POST /messages/:id/forward — the agent needs

@@ -26,6 +26,7 @@ import {
 } from "../../components/icons";
 import { FormError, Spinner } from "../../components/ui";
 import { api } from "../../lib/api";
+import { mediaURL } from "../../lib/net";
 import { subscribe } from "../../lib/events";
 import { initials } from "../../lib/text";
 import { timeAgo } from "../../lib/time";
@@ -427,7 +428,7 @@ function ContextRail(props: {
                     {initials(m.user.name)}
                   </Avatar.Fallback>
                   <Avatar.Image
-                    src={m.user.avatar_url ?? undefined}
+                    src={mediaURL(m.user.avatar_url)}
                     alt=""
                     class="h-full w-full rounded-full object-cover"
                   />
@@ -593,7 +594,7 @@ function ProjectIconSection(props: { project: Project }) {
         >
           {(url) => (
             <img
-              src={url()}
+              src={mediaURL(url())}
               alt=""
               class="h-10 w-10 rounded-lg border border-border object-cover"
             />
@@ -605,7 +606,7 @@ function ProjectIconSection(props: { project: Project }) {
         <Show when={props.project.icon_url}>
           {(url) => (
             <a
-              href={url().startsWith("blob:") ? url() : `${url()}?download=1`}
+              href={url().startsWith("blob:") ? url() : mediaURL(`${url()}?download=1`)}
               download="project-icon"
               title="Download icon"
               aria-label="Download project icon"
@@ -706,7 +707,7 @@ export default function ProjectPage() {
                 <Show when={p().icon_url}>
                   {(url) => (
                     <img
-                      src={url()}
+                      src={mediaURL(url())}
                       alt=""
                       class="h-5.5 w-5.5 shrink-0 rounded-md object-cover"
                     />
