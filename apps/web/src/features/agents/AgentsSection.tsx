@@ -346,6 +346,10 @@ function AgentRow(props: {
                             {t.last_used_at
                               ? `used ${timeAgo(t.last_used_at)}`
                               : "unused"}
+                            {" · "}
+                            {t.expires_at
+                              ? `expires ${new Date(t.expires_at).toLocaleDateString()}`
+                              : "never expires"}
                           </span>
                           <span class="flex-1" />
                           <Show when={props.canManage}>
