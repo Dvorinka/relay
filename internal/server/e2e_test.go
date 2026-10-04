@@ -1199,4 +1199,13 @@ func TestForwardPin(t *testing.T) {
 	if res["isError"] != true {
 		t.Fatalf("mcp forward to unscoped project should error: %v", env)
 	}
+
+	// list_pins resolves a project_id to its conversation and returns pins
+	_, env = c.mcp(token, sid, "5", "tools/call",
+		fmt.Sprintf(`{"name":"list_pins","arguments":{"project_id":%q}}`, projA))
+	pres := mcpToolResult(t, env)
+	pinned, _ := pres["messages"].([]any)
+	if len(pinned) != 1 {
+		t.Fatalf("mcp list_pins: %v", pres)
+	}
 }

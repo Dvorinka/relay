@@ -14,6 +14,7 @@ import { XIcon, PlusIcon, SearchIcon } from "../../components/icons";
 import { Spinner } from "../../components/ui";
 import { api } from "../../lib/api";
 import { subscribe } from "../../lib/events";
+import { mediaURL } from "../../lib/net";
 import { initials } from "../../lib/text";
 import { useSession } from "../../stores/session";
 import {
@@ -92,7 +93,7 @@ function IssueRow(props: {
                     {initials(a().name)}
                   </Avatar.Fallback>
                   <Avatar.Image
-                    src={a().avatar_url ?? undefined}
+                    src={mediaURL(a().avatar_url)}
                     alt=""
                     class="h-full w-full rounded-full object-cover"
                   />

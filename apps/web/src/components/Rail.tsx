@@ -11,7 +11,7 @@ import {
   type ParentProps,
 } from "solid-js";
 import { api } from "../lib/api";
-import { net } from "../lib/net";
+import { mediaURL, net } from "../lib/net";
 import { subscribe } from "../lib/events";
 import { deriveKey } from "../lib/text";
 import { useNav } from "../stores/nav";
@@ -65,7 +65,7 @@ function ProjectRow(props: { project: Project }) {
       >
         {(url) => (
           <img
-            src={url()}
+            src={mediaURL(url())}
             alt=""
             class="h-4.5 w-4.5 shrink-0 rounded-md object-cover"
           />
@@ -279,7 +279,7 @@ export function Rail() {
               <Show when={ws().avatar_url}>
                 {(url) => (
                   <img
-                    src={url()}
+                    src={mediaURL(url())}
                     alt=""
                     class="h-4.5 w-4.5 shrink-0 rounded-md object-cover"
                   />

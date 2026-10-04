@@ -17,6 +17,7 @@ import { inputClass, Spinner } from "../../components/ui";
 import { api } from "../../lib/api";
 import { subscribe } from "../../lib/events";
 import { Markdown } from "../../lib/markdown";
+import { mediaURL } from "../../lib/net";
 import { initials } from "../../lib/text";
 import { timeAgo } from "../../lib/time";
 
@@ -97,7 +98,7 @@ function Avatar(props: { name: string; url?: string | null; size?: string }) {
       }
     >
       <img
-        src={props.url ?? undefined}
+        src={mediaURL(props.url)}
         alt={props.name}
         class={`rounded-full object-cover ${props.size ?? "h-6 w-6"}`}
       />

@@ -9,6 +9,7 @@ import {
 import { createResource, createSignal, For, Show } from "solid-js";
 import { FormError, SubmitButton, inputClass } from "../../components/ui";
 import { api } from "../../lib/api";
+import { mediaURL, net } from "../../lib/net";
 import { timeAgo, timeUntil } from "../../lib/time";
 
 const ALL_SCOPES: AgentScope[] = [
@@ -108,7 +109,7 @@ function AgentRow(props: {
         >
           {(url) => (
             <img
-              src={url()}
+              src={mediaURL(url())}
               alt=""
               class="h-7 w-7 shrink-0 rounded-md border border-border object-cover"
             />
@@ -154,7 +155,7 @@ function AgentRow(props: {
                       >
                         {(url) => (
                           <img
-                            src={url()}
+                            src={mediaURL(url())}
                             alt=""
                             class="h-9 w-9 rounded-md border border-border object-cover"
                           />
@@ -416,6 +417,11 @@ function InviteCard(props: {
   }
 }`;
 
+  const cliSetup = () =>
+    `export RELAY_URL=${props.apiBase}
+export RELAY_TOKEN=$(relay-cli redeem ${props.invite.token} --name my-agent)
+relay-cli projects   # you're in`
+
   return (
     <div class="rounded-md border border-accent bg-surface p-3">
       <div class="mb-2 flex items-center justify-between">
@@ -457,6 +463,23 @@ function InviteCard(props: {
               type="button"
               class="absolute right-1.5 top-1.5 text-[11px] text-accent"
               onClick={(e) => copyText(mcpConfig(), e.currentTarget)}
+            >
+              copy
+            </button>
+          </div>
+        </li>
+        <li>
+          <p class="mb-1 text-muted">
+            Or connect straight from a terminal with the CLI:
+          </p>
+          <div class="relative">
+            <pre class="overflow-x-auto rounded-md border border-border bg-bg p-2 font-mono text-[11px] leading-relaxed">
+              {cliSetup()}
+            </pre>
+            <button
+              type="button"
+              class="absolute right-1.5 top-1.5 text-[11px] text-accent"
+              onClick={(e) => copyText(cliSetup(), e.currentTarget)}
             >
               copy
             </button>
@@ -515,7 +538,9 @@ export default function AgentsSection(props: {
     (AgentInvite & { token: string }) | null
   >(null);
 
-  const apiBase = () => window.location.origin;
+  // Prefer the configured server URL over the page origin: the desktop app
+  // serves the SPA from wails.localhost while talking to a real server.
+  const apiBase = () => net.serverUrl() || window.location.origin;
 
   async function onInvite() {
     setError(null);

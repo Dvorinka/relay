@@ -43,6 +43,7 @@ import {
 } from "../../components/ui";
 import { api } from "../../lib/api";
 import { subscribe } from "../../lib/events";
+import { mediaURL, net } from "../../lib/net";
 import { Markdown, renderMarkdown } from "../../lib/markdown";
 import { formatBytes, initials, messagePreview } from "../../lib/text";
 import { useProjects } from "../../stores/projects";
@@ -139,7 +140,7 @@ function MessageAvatar(props: { message: Message; small?: boolean }) {
         {initials(m().author.name)}
       </Avatar.Fallback>
       <Avatar.Image
-        src={m().author.avatar_url ?? undefined}
+        src={mediaURL(m().author.avatar_url)}
         alt=""
         class="h-full w-full rounded-full object-cover"
       />
@@ -208,7 +209,8 @@ function ReactionRow(props: {
 }
 
 function AttachmentView(props: { projectId: string; attachment: Attachment }) {
-  const url = () => api.attachmentURL(props.projectId, props.attachment.id);
+  const url = () =>
+    mediaURL(api.attachmentURL(props.projectId, props.attachment.id));
   return (
     <Show
       when={props.attachment.content_type.startsWith("image/")}
@@ -559,7 +561,7 @@ function ForwardDialog(props: {
                     >
                       {(url) => (
                         <img
-                          src={url()}
+                          src={mediaURL(url())}
                           alt=""
                           class="h-6 w-6 shrink-0 rounded-md object-cover"
                         />
@@ -639,7 +641,8 @@ function MessageRow(props: {
   }
 
   async function copyLink() {
-    const url = `${location.origin}${location.pathname}?msg=${m().id}`;
+    const base = net.serverUrl() || location.origin;
+    const url = `${base}${location.pathname}?msg=${m().id}`;
     try {
       await navigator.clipboard.writeText(url);
     } catch {

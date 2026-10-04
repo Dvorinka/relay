@@ -15,7 +15,7 @@ import {
 } from "../../components/ui";
 import { DownloadIcon, MoonIcon, SunIcon } from "../../components/icons";
 import { api } from "../../lib/api";
-import { net } from "../../lib/net";
+import { mediaURL, net } from "../../lib/net";
 import { syncToServer } from "../../lib/sync";
 import { useSession } from "../../stores/session";
 import {
@@ -645,7 +645,7 @@ export default function Settings() {
           >
             {(url) => (
               <img
-                src={url()}
+                src={mediaURL(url())}
                 alt=""
                 class="h-10 w-10 rounded-full border border-border object-cover"
               />
@@ -677,7 +677,7 @@ export default function Settings() {
           <Show when={session.user()?.avatar_url}>
             {(url) => (
               <a
-                href={url().startsWith("blob:") ? url() : `${url()}?download=1`}
+                href={url().startsWith("blob:") ? url() : mediaURL(`${url()}?download=1`)}
                 download="avatar"
                 title="Download avatar"
                 aria-label="Download avatar"
@@ -734,7 +734,7 @@ export default function Settings() {
                 >
                   {(url) => (
                     <img
-                      src={url()}
+                      src={mediaURL(url())}
                       alt=""
                       class="h-10 w-10 rounded-lg border border-border object-cover"
                     />
@@ -746,7 +746,7 @@ export default function Settings() {
                 <Show when={ws().avatar_url}>
                   {(url) => (
                     <a
-                      href={url().startsWith("blob:") ? url() : `${url()}?download=1`}
+                      href={url().startsWith("blob:") ? url() : mediaURL(`${url()}?download=1`)}
                       download="workspace-icon"
                       title="Download icon"
                       aria-label="Download workspace icon"
