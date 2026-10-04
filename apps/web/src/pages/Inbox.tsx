@@ -111,10 +111,24 @@ export default function Inbox() {
               {(m) => (
                 <li>
                   <A
-                    href={`/app/p/${m.project_id}`}
+                    href={
+                      m.issue_id
+                        ? `/app/p/${m.project_id}/i/${m.issue_id}`
+                        : `/app/p/${m.project_id}?msg=${
+                            m.conversation_kind === "thread" &&
+                            m.parent_message_id
+                              ? m.parent_message_id
+                              : m.id
+                          }`
+                    }
                     class={`flex items-start gap-3 px-4 py-3 transition-colors hover:bg-hover ${
                       m.is_read ? "opacity-60" : ""
                     }`}
+                    onClick={() => {
+                      if (!m.is_read) {
+                        void api.markMessageRead(m.id).then(refetch);
+                      }
+                    }}
                   >
                     <Avatar.Root class="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-surface">
                       <Avatar.Fallback class="text-[10px] font-medium text-muted">
@@ -134,6 +148,11 @@ export default function Inbox() {
                         <Show when={m.author.kind === "agent"}>
                           <span class="rounded border border-violet-500/40 px-1 py-0.5 text-[9px] text-violet-500 dark:text-violet-300">
                             agent
+                          </span>
+                        </Show>
+                        <Show when={m.conversation_kind === "thread"}>
+                          <span class="rounded border border-border px-1 py-0.5 text-[9px] text-muted">
+                            thread
                           </span>
                         </Show>
                         <span class="text-[11px] text-muted">

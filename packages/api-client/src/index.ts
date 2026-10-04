@@ -192,8 +192,49 @@ export interface Mention {
   body: string;
   created_at: string;
   project_id: string;
+  conversation_id: string;
+  conversation_kind: string;
+  parent_message_id?: string;
+  parent_conversation_id?: string;
+  issue_id?: string;
   is_read: boolean;
   author: { name: string; avatar: string | null; kind: string };
+}
+
+export interface UserProfile {
+  user: {
+    id: string;
+    name: string;
+    name_color: string;
+    avatar_key: string;
+    created_at: string;
+  };
+  workspaces: { id: string; name: string; slug: string; role: string }[];
+  stats: { messages: number; issues: number };
+  issues: {
+    id: string;
+    project_id: string;
+    key: string;
+    title: string;
+    status: string;
+    priority: string;
+    project: string;
+    updated_at: string;
+  }[];
+  recent_messages: {
+    id: string;
+    body: string;
+    project_id: string;
+    project: string;
+    created_at: string;
+  }[];
+  mentions: {
+    id: string;
+    body: string;
+    project_id: string;
+    created_at: string;
+    author: { name: string; kind: string };
+  }[];
 }
 
 export interface Todo {
@@ -730,6 +771,8 @@ export function createClient(baseUrl: string, token?: string) {
       ),
     mentions: () =>
       request<{ mentions: Mention[] }>(`/api/me/mentions`),
+    userProfile: (userId: string) =>
+      request<UserProfile>(`/api/users/${userId}/profile`),
 
     // Statuses / local folder / saved views / boards
     setProjectStatuses: (projectId: string, statuses: StatusDef[] | null) =>

@@ -399,6 +399,22 @@ const impl = {
         issue_id: null,
         created_at: t.created_at,
       } as Conversation);
+      db.messages.push({
+        id: uuid(),
+        conversation_id: m.conversation_id,
+        author: me(),
+        body: `started a thread${t.title ? ": " + t.title : ""}`,
+        parent: null,
+        mentions: [
+          { kind: "thread", ref: t.id, id: t.id, label: t.title ?? "" },
+        ],
+        attachments: [],
+        reactions: [],
+        created_at: now(),
+        edited_at: null,
+        agent_read: false,
+        forwarded: null,
+      });
       save();
       emitLocal({
         type: "thread.created",
@@ -507,11 +523,22 @@ const impl = {
     notifyThread(convId);
   },
   clearConversation: async (conversationId: string) => {
+    const before = db.messages.length;
     db.messages = db.messages.filter(
       (m) => m.conversation_id !== conversationId,
     );
+    const cleared = before - db.messages.length;
     save();
-    return { cleared: 0 };
+    if (cleared > 0) {
+      emitLocal({
+        type: "conversation.cleared",
+        project_id:
+          db.conversations.find((c) => c.id === conversationId)?.project_id ??
+          "",
+        data: { conversation_id: conversationId, cleared },
+      });
+    }
+    return { cleared };
   },
   pinMessage: async (messageId: string, pinned: boolean): Promise<Message> => {
     const m = findMessage(messageId);

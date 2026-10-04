@@ -15,6 +15,7 @@ import ProjectPage from "./features/projects/ProjectPage";
 import "./index.css";
 import Home from "./pages/Home";
 import Inbox from "./pages/Inbox";
+import UserProfile from "./pages/UserProfile";
 import { SessionProvider, useSession } from "./stores/session";
 
 // Foreground mention/reply alerts — the path that works in the desktop
@@ -69,6 +70,7 @@ render(
           <Route path="/p/:projectId/board" component={BoardPage} />
           <Route path="/p/:projectId/i/:issueId" component={IssuePage} />
           <Route path="/p/:projectId/k/:key" component={IssueKeyRedirect} />
+          <Route path="/u/:userId" component={UserProfile} />
           <Route path="/settings" component={Settings} />
         </Route>
       </Router>

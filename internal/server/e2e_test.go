@@ -863,6 +863,29 @@ func TestThreads(t *testing.T) {
 		t.Fatalf("thread chip: %v", chip)
 	}
 
+	// thread creation drops a "started a thread" notice into the channel,
+	// carrying a kind=thread mention ref so clients can render it as a link
+	var notice map[string]any
+	for _, mm := range plst["messages"].([]any) {
+		m := mm.(map[string]any)
+		refs, _ := m["mentions"].([]any)
+		for _, rr := range refs {
+			r, _ := rr.(map[string]any)
+			if r["kind"] == "thread" && r["id"] == threadID {
+				notice = m
+			}
+		}
+	}
+	if notice == nil {
+		t.Fatal("no thread notice message in the parent channel")
+	}
+	if notice["author"].(map[string]any)["name"] != "Threader" {
+		t.Fatalf("notice author: %v", notice["author"])
+	}
+	if body, _ := notice["body"].(string); !strings.Contains(body, "Side discussion") {
+		t.Fatalf("notice body should carry the title: %v", notice["body"])
+	}
+
 	// project thread index lists it most-recent-activity first
 	code, idx := c.call("GET", "/api/projects/"+projID+"/threads", "")
 	if code != 200 {

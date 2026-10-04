@@ -687,8 +687,11 @@ func (s *Service) handleCreateThread(c *gin.Context) {
 			return
 		}
 		conv = existing
-	} else if s.Bus != nil {
-		s.publishThreadEvent(c, conv.ID, "thread.created")
+	} else {
+		s.postThreadNotice(c, parentConv, conv.ID, title, user.ID, pgtype.UUID{})
+		if s.Bus != nil {
+			s.publishThreadEvent(c, conv.ID, "thread.created")
+		}
 	}
 	tr, err := s.q.GetThread(c.Request.Context(), conv.ID)
 	if err != nil {
@@ -724,6 +727,52 @@ func (s *Service) handleListThreads(c *gin.Context) {
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"threads": out})
+}
+
+// postThreadNotice drops a "started a thread" row into the parent channel so
+// the new thread is discoverable from the message stream. The thread id rides
+// in mentions (kind=thread) so clients render the title as a link that opens
+// the thread, and the row stays readable in plain-text clients.
+func (s *Service) postThreadNotice(c *gin.Context, parent db.Conversation, threadID pgtype.UUID, title string, userID, agentID pgtype.UUID) {
+	refs, _ := json.Marshal([]gin.H{
+		{"kind": "thread", "ref": threadID.String(), "id": threadID.String(), "label": title},
+	})
+	body := "started a thread"
+	if title != "" {
+		body += ": " + title
+	}
+	var id pgtype.UUID
+	var err error
+	if agentID.Valid {
+		id, err = s.q.CreateAgentMessage(c.Request.Context(), db.CreateAgentMessageParams{
+			ConversationID: parent.ID, AgentID: agentID, Body: body, Mentions: refs,
+		})
+	} else {
+		id, err = s.q.CreateMessage(c.Request.Context(), db.CreateMessageParams{
+			ConversationID: parent.ID, AuthorUserID: userID, Body: body, Mentions: refs,
+		})
+	}
+	if err != nil {
+		s.log.Warn("thread notice failed", zap.Error(err))
+		return
+	}
+	m, err := s.q.GetMessageByID(c.Request.Context(), id)
+	if err != nil || s.Bus == nil {
+		return
+	}
+	out := MessageJSON(MessageView{
+		ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
+		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+		AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
+		AuthorKindSnapshot: m.AuthorKindSnapshot,
+		AuthorName:         m.AuthorName, AuthorAvatar: m.AuthorAvatar,
+		PinnedAt:      m.PinnedAt,
+		ForwardedFrom: m.ForwardedFrom, FwdConversationID: m.FwdConversationID,
+		FwdProjectID: m.FwdProjectID, FwdAuthorName: m.FwdAuthorName,
+	})
+	pid, _ := uuid.FromBytes(parent.ProjectID.Bytes[:])
+	s.Bus.Publish(events.Event{Type: "message.created", ProjectID: pid,
+		Data: map[string]any{"conversation_id": m.ConversationID.String(), "message": out}})
 }
 
 // publishThreadEvent emits a thread.* frame keyed to the parent channel so

@@ -1707,6 +1707,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users/{userId}/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** User details visible to the caller — profile plus activity inside workspaces both parties share */
+        get: operations["userProfile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{projectId}/issues/key/{key}": {
         parameters: {
             query?: never;
@@ -2049,11 +2066,11 @@ export interface components {
         };
         MentionRef: {
             /**
-             * @description user|agent|issue|gh|file — @user:, @agent:, KEY-N, owner/repo#N, @file:/@gh:
+             * @description user|agent|issue|gh|file|thread — @user:, @agent:, KEY-N, owner/repo#N, @file:/@gh:, or a thread link on a 'started a thread' notice
              * @enum {string}
              */
-            kind: "user" | "agent" | "issue" | "gh" | "file";
-            /** @description slug | KEY-1 | owner/repo#1 | path */
+            kind: "user" | "agent" | "issue" | "gh" | "file" | "thread";
+            /** @description slug | KEY-1 | owner/repo#1 | path | thread conversation id */
             ref: string;
             label: string;
             /** @description resolved entity uuid when found */
@@ -5904,6 +5921,33 @@ export interface operations {
         responses: {
             /** @description Mention feed */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    userProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Profile, shared workspaces, stats, assigned issues, recent messages, mentions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No shared workspace — or no such user */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

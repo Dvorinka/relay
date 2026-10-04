@@ -940,7 +940,9 @@ select m.id, m.conversation_id, m.body, m.created_at, m.edited_at,
        m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
        coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
-       c.project_id,
+       c.project_id, c.kind as conversation_kind, c.issue_id,
+       c.parent_message_id,
+       pm.conversation_id as parent_conversation_id,
        (r.message_id is not null) as is_read
 from messages m
 join conversations c on c.id = m.conversation_id
@@ -950,6 +952,7 @@ join workspace_members wm on wm.workspace_id = p.workspace_id
 join users me on me.id = $1
 left join users u on u.id = m.author_user_id
 left join agents a on a.id = m.author_agent_id
+left join messages pm on pm.id = c.parent_message_id
 left join message_reads r on r.message_id = m.id and r.user_id = $1
 where m.deleted_at is null
   and (m.author_user_id is null or m.author_user_id <> $1)
@@ -959,18 +962,22 @@ limit 50
 `
 
 type MentionsForUserRow struct {
-	ID                 pgtype.UUID        `json:"id"`
-	ConversationID     pgtype.UUID        `json:"conversation_id"`
-	Body               string             `json:"body"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	EditedAt           pgtype.Timestamptz `json:"edited_at"`
-	AuthorUserID       pgtype.UUID        `json:"author_user_id"`
-	AuthorAgentID      pgtype.UUID        `json:"author_agent_id"`
-	AuthorKindSnapshot string             `json:"author_kind_snapshot"`
-	AuthorName         string             `json:"author_name"`
-	AuthorAvatar       pgtype.Text        `json:"author_avatar"`
-	ProjectID          pgtype.UUID        `json:"project_id"`
-	IsRead             interface{}        `json:"is_read"`
+	ID                   pgtype.UUID        `json:"id"`
+	ConversationID       pgtype.UUID        `json:"conversation_id"`
+	Body                 string             `json:"body"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	EditedAt             pgtype.Timestamptz `json:"edited_at"`
+	AuthorUserID         pgtype.UUID        `json:"author_user_id"`
+	AuthorAgentID        pgtype.UUID        `json:"author_agent_id"`
+	AuthorKindSnapshot   string             `json:"author_kind_snapshot"`
+	AuthorName           string             `json:"author_name"`
+	AuthorAvatar         pgtype.Text        `json:"author_avatar"`
+	ProjectID            pgtype.UUID        `json:"project_id"`
+	ConversationKind     string             `json:"conversation_kind"`
+	IssueID              pgtype.UUID        `json:"issue_id"`
+	ParentMessageID      pgtype.UUID        `json:"parent_message_id"`
+	ParentConversationID pgtype.UUID        `json:"parent_conversation_id"`
+	IsRead               interface{}        `json:"is_read"`
 }
 
 // messages mentioning the user (@<name>), newest first
@@ -995,6 +1002,10 @@ func (q *Queries) MentionsForUser(ctx context.Context, userID pgtype.UUID) ([]Me
 			&i.AuthorName,
 			&i.AuthorAvatar,
 			&i.ProjectID,
+			&i.ConversationKind,
+			&i.IssueID,
+			&i.ParentMessageID,
+			&i.ParentConversationID,
 			&i.IsRead,
 		); err != nil {
 			return nil, err
