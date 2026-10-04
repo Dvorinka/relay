@@ -24,7 +24,8 @@ import (
 // Scopes is the canonical grant vocabulary, enforced by a DB check.
 var Scopes = map[string]bool{
 	"project:read": true, "message:read": true, "message:write": true,
-	"attachment:read": true, "issue:read": true, "issue:write": true,
+	"attachment:read": true, "attachment:write": true,
+	"issue:read": true, "issue:write": true,
 	"review:read": true, "review:write": true, "file:read": true,
 	"brief:read": true, "brief:write": true,
 }
@@ -37,7 +38,8 @@ var ReviewModes = map[string]bool{"notify": true, "gate": true}
 // DefaultInviteScopes is the scope set a fresh agent gets when an invite
 // doesn't name a narrower one.
 var DefaultInviteScopes = []string{
-	"project:read", "message:read", "message:write", "attachment:read",
+	"project:read", "message:read", "message:write",
+	"attachment:read", "attachment:write",
 	"issue:read", "issue:write", "review:read", "review:write",
 	"file:read", "brief:read", "brief:write",
 }

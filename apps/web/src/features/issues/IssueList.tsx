@@ -10,8 +10,9 @@ import {
   Show,
 } from "solid-js";
 import { Avatar } from "@ark-ui/solid";
-import { XIcon, PlusIcon, SearchIcon } from "../../components/icons";
-import { Spinner } from "../../components/ui";
+import { XIcon, PlusIcon, SearchIcon, IssueIcon } from "../../components/icons";
+import { Spinner, Tip } from "../../components/ui";
+import { markGitHub } from "../github/GitHub";
 import { api } from "../../lib/api";
 import { subscribe } from "../../lib/events";
 import { mediaURL } from "../../lib/net";
@@ -68,15 +69,18 @@ function IssueRow(props: {
             </For>
           </span>
         </Show>
-        <span
-          class="flex w-14 shrink-0 items-center gap-1.5 text-[11px] text-muted"
-          title={`Priority: ${PRIORITY_LABEL[i().priority]}`}
+        <Tip
+          text={`Priority: ${PRIORITY_LABEL[i().priority]}`}
+          hint="How urgent this issue is — set on the issue page."
+          side="bottom"
         >
-          <PriorityGlyph priority={i().priority} />
-          <Show when={i().priority !== "none"}>
-            {PRIORITY_LABEL[i().priority]}
-          </Show>
-        </span>
+          <span class="flex w-14 shrink-0 cursor-default items-center gap-1.5 text-[11px] text-muted">
+            <PriorityGlyph priority={i().priority} />
+            <Show when={i().priority !== "none"}>
+              {PRIORITY_LABEL[i().priority]}
+            </Show>
+          </span>
+        </Tip>
         <span class="flex w-20 shrink-0 items-center gap-1.5 text-[11px] text-muted">
           <StatusDot status={i().status} defs={props.defs} />
           <span class="truncate">{statusLabel(i().status, props.defs)}</span>
@@ -108,6 +112,62 @@ function IssueRow(props: {
   );
 }
 
+// IssueSection renders one labelled group (Local or GitHub) inside the list.
+// The small glyph carries a custom Tip explaining what the section is.
+function IssueSection(props: {
+  label: string;
+  hint: string;
+  gh?: boolean;
+  issues: Issue[];
+  filtered: Issue[];
+  projectId: string;
+  defs: StatusDef[];
+  selectedId: string | undefined;
+  onHover: (idx: number) => void;
+}) {
+  return (
+    <Show when={props.issues.length > 0}>
+      <h3 class="mt-4 mb-1.5 flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-muted/80 first:mt-0">
+        <Tip
+          text={props.gh ? "GitHub issues" : "Local issues"}
+          hint={props.hint}
+          side="bottom"
+        >
+          <span
+            tabindex={0}
+            class="inline-flex cursor-default items-center text-muted"
+          >
+            {props.gh ? (
+              markGitHub("h-3.5 w-3.5")
+            ) : (
+              <IssueIcon class="h-3.5 w-3.5" />
+            )}
+          </span>
+        </Tip>
+        {props.label}
+        <span class="ml-auto rounded-md bg-surface px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-muted">
+          {props.issues.length}
+        </span>
+      </h3>
+      <ul class="divide-y divide-border overflow-hidden rounded-md border border-border">
+        <For each={props.issues}>
+          {(i) => (
+            <IssueRow
+              projectId={props.projectId}
+              issue={i}
+              selected={i.id === props.selectedId}
+              onHover={() =>
+                props.onHover(props.filtered.findIndex((x) => x.id === i.id))
+              }
+              defs={props.defs}
+            />
+          )}
+        </For>
+      </ul>
+    </Show>
+  );
+}
+
 export function IssueList(props: { project: Project }) {
   const session = useSession();
   const navigate = useNavigate();
@@ -115,7 +175,7 @@ export function IssueList(props: { project: Project }) {
   const [q, setQ] = createSignal("");
   const [selIdx, setSelIdx] = createSignal(0);
   const [dialogOpen, setDialogOpen] = createSignal(false);
-  let listEl: HTMLUListElement | undefined;
+  let listEl: HTMLDivElement | undefined;
 
   const defs = () => statusDefs(props.project);
 
@@ -167,6 +227,11 @@ export function IssueList(props: { project: Project }) {
     const me = session.user()?.id;
     const needle = q().trim().toLowerCase();
     return (issues() ?? []).filter((i) => {
+      // GitHub PRs are mirrored as issues (github.kind="pr") but are pull
+      // requests, not issues — they live under the Pull requests view.
+      if (i.github?.kind === "pr") {
+        return false;
+      }
       switch (chip()) {
         case "open":
           if (isClosed(i.status, defs())) {
@@ -189,6 +254,16 @@ export function IssueList(props: { project: Project }) {
       return needle === "" || i.title.toLowerCase().includes(needle);
     });
   });
+
+  // Two sections: issues authored in Relay vs issues mirrored from the
+  // linked GitHub repository. Selection stays one flat list for j/k nav.
+  const localIssues = createMemo(() =>
+    filtered().filter((i) => i.github === undefined),
+  );
+  const ghIssues = createMemo(() =>
+    filtered().filter((i) => i.github?.kind === "issue"),
+  );
+  const selectedId = () => filtered()[selIdx()]?.id;
 
   function scrollSelectedIntoView() {
     listEl
@@ -302,17 +377,18 @@ export function IssueList(props: { project: Project }) {
         <Show
           when={savingView()}
           fallback={
-            <button
-              type="button"
-              onClick={() => {
-                setSavingView(true);
-                queueMicrotask(() => filterNameEl?.focus());
-              }}
-              title="Save current filters as a view"
-              class="h-8 rounded-md border border-border px-2.5 text-[13px] text-muted transition-colors hover:bg-hover hover:text-fg"
-            >
-              Save view
-            </button>
+            <Tip text="Save view" hint="Keeps the current chip and search as a named, one-click filter." side="bottom">
+              <button
+                type="button"
+                onClick={() => {
+                  setSavingView(true);
+                  queueMicrotask(() => filterNameEl?.focus());
+                }}
+                class="h-8 rounded-md border border-border px-2.5 text-[13px] text-muted transition-colors hover:bg-hover hover:text-fg"
+              >
+                Save view
+              </button>
+            </Tip>
           }
         >
           <span class="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-surface pl-2">
@@ -343,15 +419,16 @@ export function IssueList(props: { project: Project }) {
             </button>
           </span>
         </Show>
-        <button
-          type="button"
-          onClick={() => setDialogOpen(true)}
-          title="New issue (c)"
-          class="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-[13px] text-muted transition-colors hover:bg-hover hover:text-fg"
-        >
-          <PlusIcon class="h-3.5 w-3.5" />
-          New issue
-        </button>
+        <Tip text="New issue" hint="Creates a local Relay issue — press c anywhere in this list." side="bottom">
+          <button
+            type="button"
+            onClick={() => setDialogOpen(true)}
+            class="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-[13px] text-muted transition-colors hover:bg-hover hover:text-fg"
+          >
+            <PlusIcon class="h-3.5 w-3.5" />
+            New issue
+          </button>
+        </Tip>
       </div>
 
       <div class="min-h-0 flex-1 overflow-y-auto px-6 pb-6">
@@ -365,31 +442,38 @@ export function IssueList(props: { project: Project }) {
             </div>
           }
         >
-          <ul
+          <div
             ref={(el) => {
               listEl = el;
             }}
-            class="divide-y divide-border overflow-hidden rounded-md border border-border"
           >
-            <For
-              each={filtered()}
-              fallback={
-                <li class="px-3 py-6 text-center text-[13px] text-muted">
-                  No issues match
-                </li>
-              }
-            >
-              {(i, idx) => (
-                <IssueRow
-                  projectId={props.project.id}
-                  issue={i}
-                  selected={idx() === selIdx()}
-                  onHover={() => setSelIdx(idx())}
-                  defs={defs()}
-                />
-              )}
-            </For>
-          </ul>
+            <IssueSection
+              label="Local"
+              hint="Created in Relay — these exist only here, not on GitHub."
+              issues={localIssues()}
+              filtered={filtered()}
+              projectId={props.project.id}
+              defs={defs()}
+              selectedId={selectedId()}
+              onHover={(i) => setSelIdx(i)}
+            />
+            <IssueSection
+              label="GitHub"
+              hint="Mirrored from the linked repository — pull requests are under the Pull requests icon."
+              gh
+              issues={ghIssues()}
+              filtered={filtered()}
+              projectId={props.project.id}
+              defs={defs()}
+              selectedId={selectedId()}
+              onHover={(i) => setSelIdx(i)}
+            />
+            <Show when={filtered().length === 0}>
+              <p class="rounded-md border border-border px-3 py-6 text-center text-[13px] text-muted">
+                No issues match
+              </p>
+            </Show>
+          </div>
           <p class="mt-2 text-[11px] text-muted/60">
             j/k or arrows to move · Enter to open · c for a new issue
           </p>

@@ -2,6 +2,7 @@ import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { subscribe } from "../../lib/events";
 import { A } from "@solidjs/router";
 import { api } from "../../lib/api";
+import { Tip } from "../../components/ui";
 import type { Issue, IssueStatus, Project, Todo } from "@relay/api-client";
 import { GitHubBadge, LabelChip, PriorityGlyph, statusDefs, StatusDot } from "./meta";
 
@@ -49,7 +50,14 @@ export function Board(props: {
     <div class="flex min-h-0 flex-1 flex-col gap-4 px-6 py-4">
       <div class="flex min-h-0 flex-1 gap-3 overflow-x-auto pb-1">
         <For each={statusDefs(props.project)}>
-          {(def) => (
+          {(def) => {
+            // PR mirrors (github.kind="pr") aren't issues — they're listed
+            // under Pull requests, not on the issue board.
+            const cards = () =>
+              (issues() ?? []).filter(
+                (i) => i.status === def.id && i.github?.kind !== "pr",
+              );
+            return (
             <div
               class={`flex w-60 shrink-0 flex-col rounded-lg border border-border ${def.closed ? "bg-surface/30 opacity-75" : "bg-surface/50"}`}
               onDragOver={(e) => {
@@ -69,11 +77,11 @@ export function Board(props: {
                   {def.label}
                 </div>
                 <div class="text-[11px] text-muted/70">
-                  {issues()?.filter((i) => i.status === def.id).length ?? 0}
+                  {cards().length}
                 </div>
               </div>
               <div class="flex min-h-16 flex-1 flex-col gap-1.5 overflow-y-auto p-2">
-                <For each={issues()?.filter((i) => i.status === def.id)}>
+                <For each={cards()}>
                   {(issue) => (
                     <A
                       href={`/app/p/${props.project.id}/i/${issue.id}`}
@@ -105,7 +113,8 @@ export function Board(props: {
                 </For>
               </div>
             </div>
-          )}
+            );
+          }}
         </For>
       </div>
 
@@ -192,15 +201,16 @@ function TodoStrip(props: {
                   </span>
                 )}
               </Show>
-              <button
-                type="button"
-                class="invisible px-1 text-muted transition-colors group-hover:visible hover:text-red-500"
-                onClick={() => void api.deleteTodo(t.id).then(props.onChange)}
-                title="Remove"
-                aria-label="Remove todo"
-              >
-                ×
-              </button>
+              <Tip text="Remove todo" hint="Deletes this work item — agent-managed items may come back on the agent's next sync." side="top">
+                <button
+                  type="button"
+                  class="invisible px-1 text-muted transition-colors group-hover:visible hover:text-red-500"
+                  onClick={() => void api.deleteTodo(t.id).then(props.onChange)}
+                  aria-label="Remove todo"
+                >
+                  ×
+                </button>
+              </Tip>
             </div>
           )}
         </For>

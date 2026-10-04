@@ -139,12 +139,47 @@ body {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+.md .md-mention {
+  font-weight: 600;
+  padding: 0 0.3em;
+  border-radius: 5px;
+  transition: background 0.12s ease;
+}
+.md .md-mention:hover {
+  background: var(--accent);
+  color: var(--accent-on, #fff);
+  text-decoration: none;
+}
+.md .md-mention-agent {
+  color: var(--agent-ink, var(--accent-ink));
+  background: var(--agent-soft, var(--accent-soft));
+}
+.md .md-mention-agent::before {
+  content: "◆ ";
+  font-size: 0.8em;
+}
+.md .md-mention-agent:hover {
+  background: var(--agent, var(--accent));
+  color: var(--accent-on, #fff);
+}
+.md .md-mention-miss {
+  color: var(--muted);
+  background: var(--surface-2);
+  cursor: default;
+  font-weight: 500;
+}
 .md .md-person {
   font-weight: 500;
 }
 .md .md-person[data-kind="agent"]::before {
   content: "◆ ";
   font-size: 0.8em;
+}
+/* thread rail width follows the drag handle's --thread-w var on sm+ */
+@media (min-width: 640px) {
+  .thread-rail {
+    width: var(--thread-w, 384px);
+  }
 }
 .md ul,
 .md ol {

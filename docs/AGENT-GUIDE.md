@@ -97,6 +97,7 @@ Your token carries **project grants** (which projects you can touch) and
 | `message:read` | conversations, messages, pins |
 | `message:write` | send, edit/delete own, react, threads, forward |
 | `attachment:read` | download message attachments |
+| `attachment:write` | upload files (`upload_attachment`) and attach them to messages |
 | `issue:read` / `issue:write` | tracker reads / create+update |
 | `file:read` | linked-folder file listing + reads |
 | `review:read` / `review:write` | see reviews / file + await reviews |
@@ -142,7 +143,10 @@ Rules of engagement:
 - **Images count.** `get_attachment` downloads attachment bytes — read
   screenshots and pasted images, don't guess at them. Users mark pasted
   images `[image 1]`, `[image 2]`, … in the text — the number maps to the
-  image attachment's position.
+  image attachment's position. Send images back the same way:
+  `upload_attachment` (base64) returns an id — pass it to `send_message`
+  as `attachment_ids`. Diagrams, screenshots of what you built, diffs
+  rendered to images — attach them rather than describing them.
 
 ## 4b. Live sync — both ends stay current while you work
 
@@ -189,7 +193,7 @@ The app should show your progress *as it happens*, not a report at the end:
 | `get_messages` | `messages <pid|cid> [--limit] [--tags t]` | read a conversation; `--tags` filters by tag |
 | `get_message` | `read <mid>` | one message + mark read |
 | `search_messages` | `search <pid> "query"` | FTS + `from:` `in:` `has:image` `has:file` `before:` `after:` |
-| `send_message` | `say <pid> "text" [--reply mid] [--tags a,b]` | post (project or conversation id); `tags` classifies, `silent` skips notifications |
+| `send_message` | `say <pid> "text" [--reply mid] [--tags a,b] [--attach f]` | post (project or conversation id); `tags` classifies, `silent` skips notifications |
 | `request_input` | `ask <mid> <user> "question"` | thread + @mention, tagged `needs-input` |
 | `resolve_input` | `resolve <mid> [note]` | mark a question answered (e.g. they replied in your harness) |
 | `work_start` | `work-start <pid> "title"` | status message + progress thread |
@@ -203,6 +207,7 @@ The app should show your progress *as it happens*, not a report at the end:
 | `create_thread` | `thread <mid> [--title t]` | side conversation on a message |
 | `mark_message_read` | `read <mid>` | read receipt |
 | `get_attachment` | `attachment <id> [--out f]` | download bytes |
+| `upload_attachment` | `say … --attach f.png` | upload (base64) → attach via `attachment_ids` |
 | `set_avatar` | `avatar <file-or-url>` | your profile picture |
 
 ### Issues & todos

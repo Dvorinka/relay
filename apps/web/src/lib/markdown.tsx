@@ -1,3 +1,4 @@
+import type { MentionRef } from "@relay/api-client";
 import DOMPurify from "dompurify";
 import { Marked } from "marked";
 import { createMemo } from "solid-js";
@@ -27,6 +28,29 @@ interface RelayToken {
   filePath?: string;
   personKind?: string;
   personName?: string;
+}
+
+// Mentions resolved against the message currently being rendered. Marked
+// renderers can't take per-call context, and parsing is synchronous, so a
+// module slot filled by renderMarkdown is the simplest correct channel.
+let activeMentions: MentionRef[] = [];
+
+// A mention token matches when the message carries a resolved person ref
+// with the same handle — display name, slug, or the space-dash form the
+// composer inserts.
+function personMatch(
+  name: string,
+  kind: string,
+): MentionRef | undefined {
+  const n = name.toLowerCase();
+  return activeMentions.find(
+    (r) =>
+      (r.kind === "user" || r.kind === "agent") &&
+      (kind === "bare" || r.kind === kind) &&
+      (r.ref.toLowerCase() === n ||
+        r.label.toLowerCase() === n ||
+        r.label.toLowerCase().replace(/\s+/g, "-") === n),
+  );
 }
 
 function linkifyExtension(projectId?: string) {
@@ -64,7 +88,7 @@ function linkifyExtension(projectId?: string) {
               filePath: localFile[1] ?? "",
             };
           }
-          // @agent:slug / @user:name — person mentions
+          // @agent:slug / @user:name — explicit person mentions
           const person = src.match(/^@(agent|user):([A-Za-z0-9][\w.-]{0,59})/);
           if (person) {
             return {
@@ -73,6 +97,19 @@ function linkifyExtension(projectId?: string) {
               text: person[0],
               personKind: person[1] ?? "",
               personName: person[2] ?? "",
+            };
+          }
+          // @name — bare mention; the renderer only chips it when the
+          // message's resolved mentions confirm a real person, otherwise
+          // the raw text falls through untouched (emails, handles, etc).
+          const bare = src.match(/^@([A-Za-z0-9][\w.-]{0,59})(?![\w@.:-])/);
+          if (bare && personMatch(bare[1] ?? "", "bare")) {
+            return {
+              type: "relayLink",
+              raw: bare[0],
+              text: bare[0],
+              personKind: "bare",
+              personName: bare[1] ?? "",
             };
           }
           const gh = src.match(
@@ -112,8 +149,28 @@ function linkifyExtension(projectId?: string) {
             );
           }
           if (token.personKind) {
+            const hit = personMatch(
+              token.personName ?? "",
+              token.personKind,
+            );
+            if (hit?.found && hit.id) {
+              const href =
+                hit.kind === "agent"
+                  ? `/app/ag/${hit.id}`
+                  : `/app/u/${hit.id}`;
+              return (
+                `<a href="${href}" class="md-ref md-mention md-mention-${hit.kind}" ` +
+                `data-pkind="${hit.kind}">@${escapeHtml(hit.label)}</a>`
+              );
+            }
+            // bare @names that didn't resolve render as plain text —
+            // anything else keeps a quiet chip so explicit syntax stays
+            // visually distinct even for missing entities
+            if (token.personKind === "bare") {
+              return escapeHtml(token.raw);
+            }
             return (
-              `<span class="md-ref md-person" data-kind="${token.personKind}">` +
+              `<span class="md-ref md-mention md-mention-miss" data-kind="${token.personKind}">` +
               `@${escapeHtml(token.personName ?? "")}</span>`
             );
           }
@@ -165,18 +222,30 @@ function parserFor(projectId?: string): Marked {
   return p;
 }
 
-export function renderMarkdown(body: string, projectId?: string): string {
-  return DOMPurify.sanitize(
-    parserFor(projectId).parse(body, { async: false }),
-  );
+export function renderMarkdown(
+  body: string,
+  projectId?: string,
+  mentions?: MentionRef[],
+): string {
+  activeMentions = mentions ?? [];
+  try {
+    return DOMPurify.sanitize(
+      parserFor(projectId).parse(body, { async: false }),
+    );
+  } finally {
+    activeMentions = [];
+  }
 }
 
 export function Markdown(props: {
   body: string;
   class?: string;
   projectId?: string;
+  mentions?: MentionRef[];
 }) {
-  const html = createMemo(() => renderMarkdown(props.body, props.projectId));
+  const html = createMemo(() =>
+    renderMarkdown(props.body, props.projectId, props.mentions),
+  );
   return (
     <div
       class={`md ${props.class ?? ""}`}

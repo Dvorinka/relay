@@ -12,6 +12,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -27,6 +28,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	"go.uber.org/zap"
 
+	"github.com/Dvorinka/relay/internal/attachments"
 	"github.com/Dvorinka/relay/internal/avatars"
 	"github.com/Dvorinka/relay/internal/conversations"
 	"github.com/Dvorinka/relay/internal/db"
@@ -55,10 +57,11 @@ type Agent struct {
 
 // Service wires tools to the database and object storage.
 type Service struct {
-	q     *db.Queries
-	store *storage.Store
-	gh    *github.Service
-	log   *zap.Logger
+	q         *db.Queries
+	store     *storage.Store
+	maxUpload int64
+	gh        *github.Service
+	log       *zap.Logger
 	// Bus publishes domain events for SSE subscribers. Optional.
 	Bus *events.Hub
 	// Push fans out web-push notifications. Optional.
@@ -72,9 +75,9 @@ type Service struct {
 // New builds the gin handler for POST /mcp. It performs bearer auth,
 // rate limiting, and last_used_at bookkeeping, then hands the request
 // to the mcp-go streamable HTTP transport.
-func New(q *db.Queries, store *storage.Store, log *zap.Logger, gh *github.Service, hub *events.Hub, pushSvc *push.Service) gin.HandlerFunc {
+func New(q *db.Queries, store *storage.Store, maxUpload int64, log *zap.Logger, gh *github.Service, hub *events.Hub, pushSvc *push.Service) gin.HandlerFunc {
 	s := &Service{
-		q: q, store: store, gh: gh, log: log, Bus: hub, Push: pushSvc,
+		q: q, store: store, maxUpload: maxUpload, gh: gh, log: log, Bus: hub, Push: pushSvc,
 		windows: make(map[[16]byte]time.Time),
 		counts:  make(map[[16]byte]int),
 	}
@@ -235,6 +238,14 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithString("attachment_id", mcp.Required()),
 	), s.getAttachment)
 
+	srv.AddTool(mcp.NewTool("upload_attachment",
+		mcp.WithDescription("Upload a file (base64) to a granted project and get an attachment id to pass as send_message's attachment_ids. Images render inline in the app."),
+		mcp.WithString("project_id", mcp.Required()),
+		mcp.WithString("name", mcp.Required(), mcp.Description("Filename, e.g. diagram.png")),
+		mcp.WithString("data_base64", mcp.Required(), mcp.Description("Base64-encoded file content")),
+		mcp.WithString("content_type", mcp.Description("Optional declared MIME type; sniffed type wins")),
+	), s.uploadAttachment)
+
 	srv.AddTool(mcp.NewTool("search_messages",
 		mcp.WithDescription("Full-text-ish search (case-insensitive substring) over a project's messages."),
 		mcp.WithString("project_id", mcp.Required()),
@@ -261,6 +272,7 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithString("reply_to", mcp.Description("Message UUID this message replies to")),
 		mcp.WithString("tags", mcp.Description("Comma-separated tags classifying the message, e.g. frontend,backend,visual,mcp")),
 		mcp.WithBoolean("silent", mcp.Description("true posts without any notification/push — use for routine progress updates inside a work thread. @mentions in a silent message still notify.")),
+		mcp.WithString("attachment_ids", mcp.Description("Comma-separated attachment UUIDs from upload_attachment, max 20")),
 	), s.sendMessage)
 
 	srv.AddTool(mcp.NewTool("edit_message",
@@ -809,7 +821,7 @@ func (s *Service) getMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	_ = s.q.MarkMessageReadAgent(ctx, db.MarkMessageReadAgentParams{
 		MessageID: mid, AgentID: agent(ctx).ID,
 	})
-	return jsonResult(messageJSON(m))
+	return jsonResult(s.messageJSONFull(ctx, m))
 }
 
 func (s *Service) getAttachment(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -839,6 +851,87 @@ func (s *Service) getAttachment(ctx context.Context, req mcp.CallToolRequest) (*
 		"id": a.ID, "filename": a.Filename, "content_type": a.ContentType,
 		"size_bytes": a.SizeBytes, "download_url": url,
 	})
+}
+
+// messageJSONFull is messageJSON plus the attachments list — used wherever a
+// message is emitted so live updates never strip attachment rows.
+func (s *Service) messageJSONFull(ctx context.Context, m db.GetMessageFullRow) gin.H {
+	out := messageJSON(m)
+	out["attachments"] = s.attachmentsJSON(ctx, m.ID)
+	return out
+}
+
+// attachmentsJSON returns the API-shaped attachment list for one message —
+// kept out of messageJSON, which has no query context.
+func (s *Service) attachmentsJSON(ctx context.Context, messageID pgtype.UUID) []gin.H {
+	rows, err := s.q.ListAttachmentsForMessages(ctx, []pgtype.UUID{messageID})
+	if err != nil {
+		return []gin.H{}
+	}
+	out := make([]gin.H, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, attachments.JSON(db.Attachment{
+			ID: r.ID, ProjectID: r.ProjectID, Filename: r.Filename,
+			ContentType: r.ContentType, SizeBytes: r.SizeBytes, CreatedAt: r.CreatedAt,
+		}))
+	}
+	return out
+}
+
+func (s *Service) uploadAttachment(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if s.store == nil {
+		return mcp.NewToolResultError("storage not configured"), nil
+	}
+	pid, err := uuidArg(req, "project_id")
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "attachment:write"); err != nil {
+		return errResult(err)
+	}
+	name, err := req.RequireString("name")
+	if err != nil {
+		return mcp.NewToolResultError("name required"), nil
+	}
+	raw, err := req.RequireString("data_base64")
+	if err != nil {
+		return mcp.NewToolResultError("data_base64 required"), nil
+	}
+	data, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil || len(data) == 0 {
+		return mcp.NewToolResultError("data_base64 is not valid base64"), nil
+	}
+	if int64(len(data)) > s.maxUpload {
+		return mcp.NewToolResultError("file exceeds the upload size cap"), nil
+	}
+	contentType, ok := attachments.SniffType(data, req.GetString("content_type", ""))
+	if !ok {
+		return mcp.NewToolResultError("file type not allowed; images, pdf, text and zip are accepted"), nil
+	}
+	name = path.Base(name)
+	if name == "." || name == "/" || name == "" {
+		name = "file"
+	}
+	id := uuid.New()
+	key := pid.String() + "/" + id.String()
+	if err := s.store.Put(ctx, key, bytes.NewReader(data), int64(len(data)), contentType); err != nil {
+		return errResult(err)
+	}
+	row, err := s.q.CreateAgentAttachment(ctx, db.CreateAgentAttachmentParams{
+		ID:        pgtype.UUID{Bytes: id, Valid: true},
+		ProjectID: pid, UploaderAgentID: agent(ctx).ID,
+		StorageKey: key, Filename: name,
+		ContentType: contentType, SizeBytes: int64(len(data)),
+	})
+	if err != nil {
+		_ = s.store.Remove(ctx, key)
+		return errResult(err)
+	}
+	row, err = s.q.MarkAttachmentReady(ctx, row.ID)
+	if err != nil {
+		return errResult(err)
+	}
+	return jsonResult(attachments.JSON(row))
 }
 
 func (s *Service) searchMessages(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1009,6 +1102,29 @@ func (s *Service) sendMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 		return mcp.NewToolResultError(terr.Error()), nil
 	}
 	silent := req.GetBool("silent", false)
+	var attIDs []pgtype.UUID
+	if v := req.GetString("attachment_ids", ""); v != "" {
+		for _, s := range strings.Split(v, ",") {
+			var aid pgtype.UUID
+			if err := aid.Scan(strings.TrimSpace(s)); err != nil || !aid.Valid {
+				return mcp.NewToolResultError("invalid attachment id"), nil
+			}
+			attIDs = append(attIDs, aid)
+		}
+	}
+	if len(attIDs) > 20 {
+		return mcp.NewToolResultError("too many attachments (max 20)"), nil
+	}
+	if len(attIDs) > 0 {
+		n, err := s.q.CountUsableAttachmentsInProject(ctx,
+			db.CountUsableAttachmentsInProjectParams{ProjectID: pid, Ids: attIDs})
+		if err != nil {
+			return errResult(err)
+		}
+		if int(n) != len(attIDs) {
+			return mcp.NewToolResultError("attachments must be ready uploads in this project"), nil
+		}
+	}
 	refs := s.resolveMentions(ctx, pid, mentions.Extract(body))
 	mj, _ := json.Marshal(refs)
 	id, err := s.q.CreateAgentMessage(ctx, db.CreateAgentMessageParams{
@@ -1018,17 +1134,35 @@ func (s *Service) sendMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 	if err != nil {
 		return errResult(err)
 	}
+	for i, aid := range attIDs {
+		if err := s.q.LinkMessageAttachment(ctx, db.LinkMessageAttachmentParams{
+			MessageID: id, AttachmentID: aid, Position: int32(i),
+		}); err != nil {
+			return errResult(err)
+		}
+	}
 	m, err := s.q.GetMessageFull(ctx, id)
 	if err != nil {
 		return errResult(err)
 	}
-	s.publish(ctx, cid, "message.created", map[string]any{"conversation_id": cid.String(), "message": messageJSON(m)})
+	out := s.messageJSONFull(ctx, m)
+	s.publish(ctx, cid, "message.created", map[string]any{"conversation_id": cid.String(), "message": out})
+	// A reply inside a thread bumps the parent message's chip live.
+	if conv, err := s.q.GetConversationByID(ctx, cid); err == nil && conv.Kind == "thread" {
+		if tr, err := s.q.GetThread(ctx, cid); err == nil {
+			s.publish(ctx, tr.ParentConversationID, "thread.updated", map[string]any{
+				"conversation_id":   tr.ParentConversationID.String(),
+				"parent_message_id": tr.ParentMessageID.String(),
+				"thread":            threadOut(tr),
+			})
+		}
+	}
 	// silent = no push; an @mention still earns one — that is the contract
 	if s.Push != nil && (!silent || len(refs) > 0) {
 		s.Push.NotifyMessage(pid, pgtype.UUID{}, body, m.ID,
 			"/app/p/"+pid.String(), agent(ctx).Name)
 	}
-	return jsonResult(messageJSON(m))
+	return jsonResult(out)
 }
 
 func (s *Service) createIssue(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1145,8 +1279,8 @@ func (s *Service) editMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 		return errResult(err)
 	}
 	s.publish(ctx, m.ConversationID, "message.updated",
-		map[string]any{"conversation_id": m.ConversationID.String(), "message": messageJSON(m)})
-	return jsonResult(messageJSON(m))
+		map[string]any{"conversation_id": m.ConversationID.String(), "message": s.messageJSONFull(ctx, m)})
+	return jsonResult(s.messageJSONFull(ctx, m))
 }
 
 // deleteMessage mirrors the REST rule: the author may delete only while no
@@ -1278,7 +1412,7 @@ func (s *Service) postThreadNotice(ctx context.Context, parentConvID, threadID p
 	}
 	if m, err := s.q.GetMessageFull(ctx, mid); err == nil {
 		s.publish(ctx, parentConvID, "message.created",
-			map[string]any{"conversation_id": parentConvID.String(), "message": messageJSON(m)})
+			map[string]any{"conversation_id": parentConvID.String(), "message": s.messageJSONFull(ctx, m)})
 	}
 }
 
@@ -1370,7 +1504,7 @@ func (s *Service) requestInput(ctx context.Context, req mcp.CallToolRequest) (*m
 		return errResult(err)
 	}
 	s.publish(ctx, tr.ID, "message.created",
-		map[string]any{"conversation_id": tr.ID.String(), "message": messageJSON(m)})
+		map[string]any{"conversation_id": tr.ID.String(), "message": s.messageJSONFull(ctx, m)})
 	// the reply bumps the chip's count on the parent message
 	if tr2, err := s.q.GetThread(ctx, tr.ID); err == nil {
 		s.publish(ctx, tr2.ParentConversationID, "thread.updated", map[string]any{
@@ -1385,7 +1519,7 @@ func (s *Service) requestInput(ctx context.Context, req mcp.CallToolRequest) (*m
 	}
 	return jsonResult(gin.H{
 		"thread":  threadOut(tr),
-		"message": messageJSON(m),
+		"message": s.messageJSONFull(ctx, m),
 	})
 }
 
@@ -1494,7 +1628,7 @@ func (s *Service) workStart(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 		return errResult(err)
 	}
 	s.publish(ctx, cid, "message.created",
-		map[string]any{"conversation_id": cid.String(), "message": messageJSON(m)})
+		map[string]any{"conversation_id": cid.String(), "message": s.messageJSONFull(ctx, m)})
 	return jsonResult(gin.H{
 		"message_id":       mid.String(),
 		"conversation_id":  cid.String(),
@@ -1588,7 +1722,7 @@ func (s *Service) pinMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	}
 	if m, err := s.q.GetMessageFull(ctx, mid); err == nil {
 		s.publish(ctx, convID, "message.updated", map[string]any{
-			"conversation_id": convID.String(), "message": messageJSON(m)})
+			"conversation_id": convID.String(), "message": s.messageJSONFull(ctx, m)})
 	}
 	return jsonResult(map[string]any{"message_id": mid.String(), "pinned": pinned})
 }
@@ -1673,8 +1807,8 @@ func (s *Service) forwardMessage(ctx context.Context, req mcp.CallToolRequest) (
 		return errResult(err)
 	}
 	s.publish(ctx, target.ID, "message.created", map[string]any{
-		"conversation_id": target.ID.String(), "message": messageJSON(m)})
-	return jsonResult(map[string]any{"message": messageJSON(m)})
+		"conversation_id": target.ID.String(), "message": s.messageJSONFull(ctx, m)})
+	return jsonResult(map[string]any{"message": s.messageJSONFull(ctx, m)})
 }
 
 // reactToMessage toggles this agent's emoji on a message and publishes the

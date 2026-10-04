@@ -1,10 +1,9 @@
 import { A, useParams } from "@solidjs/router";
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api } from "../../lib/api";
-import { Spinner } from "../../components/ui";
+import { Spinner, Tip } from "../../components/ui";
 import { IssueIcon, PlusIcon, SettingsIcon, XIcon } from "../../components/icons";
 import { Board } from "./Board";
-import { ProjectSettings } from "./ProjectSettings";
 import type { IssueFilters } from "@relay/api-client";
 
 // Standalone kanban page — the chat header's Board button lands here so the
@@ -12,7 +11,7 @@ import type { IssueFilters } from "@relay/api-client";
 // show up as tabs.
 export default function BoardPage() {
   const params = useParams<{ projectId: string }>();
-  const [project, { refetch: refetchProject }] = createResource(
+  const [project] = createResource(
     () => params.projectId,
     (id) => api.getProject(id),
   );
@@ -22,7 +21,6 @@ export default function BoardPage() {
   );
   const [activeBoard, setActiveBoard] = createSignal<string | null>(null);
   const [saving, setSaving] = createSignal(false);
-  const [settingsOpen, setSettingsOpen] = createSignal(false);
   let nameEl: HTMLInputElement | undefined;
 
   const active = () => boards()?.find((b) => b.id === activeBoard());
@@ -143,14 +141,19 @@ export default function BoardPage() {
           </Show>
         </div>
         <div class="flex-1" />
-        <button
-          type="button"
-          onClick={() => setSettingsOpen(true)}
-          title="Project settings — lanes and folder"
-          class="flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-hover hover:text-fg"
+        <Tip
+          text="Project settings"
+          hint="Issue lanes, linked folder, brief policy, repos and webhooks."
+          side="bottom"
         >
-          <SettingsIcon class="h-4 w-4" />
-        </button>
+          <A
+            href={`/app/p/${params.projectId}?view=settings`}
+            aria-label="Project settings"
+            class="flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-hover hover:text-fg"
+          >
+            <SettingsIcon class="h-4 w-4" />
+          </A>
+        </Tip>
       </header>
       <div class="flex min-h-0 flex-1 flex-col">
         <Show
@@ -162,19 +165,10 @@ export default function BoardPage() {
           }
         >
           {(p) => (
-            <>
-              <Board
-                project={p()}
-                filters={active()?.filters as IssueFilters | undefined}
-              />
-              <Show when={settingsOpen()}>
-                <ProjectSettings
-                  project={p()}
-                  onClose={() => setSettingsOpen(false)}
-                  onSaved={() => refetchProject()}
-                />
-              </Show>
-            </>
+            <Board
+              project={p()}
+              filters={active()?.filters as IssueFilters | undefined}
+            />
           )}
         </Show>
       </div>

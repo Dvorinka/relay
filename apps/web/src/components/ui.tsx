@@ -204,6 +204,68 @@ export function ConfirmDialog(props: {
   );
 }
 
+// Tip is the app's custom tooltip — themed card on hover/focus, never the
+// browser's native title popup. Rendered in a portal so `overflow-hidden`
+// rows can't clip it. Wrap a focusable element; it still needs aria-label.
+export function Tip(props: {
+  text: string;
+  hint?: string;
+  side?: "top" | "bottom";
+  class?: string;
+  children: JSX.Element;
+}) {
+  const [pos, setPos] = createSignal<{ x: number; y: number } | null>(null);
+  let trigger: HTMLSpanElement | undefined;
+  const above = () => props.side !== "bottom";
+  const open = () => {
+    if (!trigger) return;
+    const r = trigger.getBoundingClientRect();
+    setPos({
+      x: r.left + r.width / 2,
+      y: above() ? r.top : r.bottom,
+    });
+  };
+  const close = () => setPos(null);
+  return (
+    <span
+      ref={(el) => (trigger = el)}
+      class={`inline-flex ${props.class ?? ""}`}
+      onMouseEnter={open}
+      onMouseLeave={close}
+      onFocusIn={open}
+      onFocusOut={close}
+    >
+      {props.children}
+      <Show when={pos()}>
+        {(p) => (
+          <Portal>
+            <span
+              role="tooltip"
+              style={{
+                left: `${p().x}px`,
+                top: `${p().y}px`,
+                transform: above()
+                  ? "translate(-50%, calc(-100% - 6px))"
+                  : "translate(-50%, 6px)",
+              }}
+              class="pointer-events-none fixed z-[70] w-max max-w-60 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-left shadow-lg"
+            >
+              <span class="block whitespace-nowrap text-[11.5px] font-medium text-fg">
+                {props.text}
+              </span>
+              <Show when={props.hint}>
+                <span class="mt-0.5 block whitespace-normal text-[11px] leading-snug text-muted">
+                  {props.hint}
+                </span>
+              </Show>
+            </span>
+          </Portal>
+        )}
+      </Show>
+    </span>
+  );
+}
+
 export function Spinner(props: { class?: string }) {
   return (
     <div

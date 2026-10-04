@@ -3233,6 +3233,7 @@ components:
         - message:read
         - message:write
         - attachment:read
+        - attachment:write
         - issue:read
         - issue:write
         - review:read

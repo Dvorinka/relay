@@ -138,7 +138,7 @@ func (s *Service) handleUpload(c *gin.Context) {
 		}
 		filename, declaredType = fh.Filename, fh.Header.Get("Content-Type")
 	}
-	contentType, ok := sniffType(data, declaredType)
+	contentType, ok := SniffType(data, declaredType)
 	if !ok {
 		httpx.Error(c, http.StatusBadRequest, "unsupported_type",
 			"file type not allowed; images, pdf, text and zip are accepted")
@@ -245,10 +245,10 @@ func (s *Service) handleDownload(c *gin.Context) {
 
 // --- helpers ---
 
-// sniffType returns the detected content type. When sniffing yields
-// octet-stream the client's declared type is consulted instead; either way
-// the result must be allowlisted.
-func sniffType(data []byte, declared string) (string, bool) {
+// SniffType resolves the effective content type for an upload: the
+// detected type wins, falling back to the declared one, and is checked
+// against the allowlist. Exported for the MCP upload path.
+func SniffType(data []byte, declared string) (string, bool) {
 	sniffed := avatars.SniffImageType(data)
 	ct, _, _ := strings.Cut(sniffed, ";")
 	ct = strings.TrimSpace(ct)
