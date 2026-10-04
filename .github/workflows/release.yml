@@ -95,13 +95,18 @@ jobs:
           files: dist/*
           generate_release_notes: true
 
-  # Android APK via Expo prebuild + Gradle. Produces a debug-signed,
-  # installable APK — no EAS account or keystore secrets required. For a
-  # store-signed release, run `eas build -p android` or add a signing
-  # config in android/app/build.gradle after prebuild.
+  # Android APK via Expo prebuild + Gradle release build. The JS bundle is
+  # embedded, so the APK runs standalone (no Metro). With the
+  # ANDROID_KEYSTORE_B64 + ANDROID_KEYSTORE_PASSWORD secrets set, it is
+  # signed with the stable release key — updates install over the previous
+  # version. Without secrets it falls back to the generated debug key
+  # (installable, but the signature differs per build — for a real release
+  # always set the secrets).
   apk:
     needs: build
     runs-on: ubuntu-latest
+    env:
+      ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -119,12 +124,21 @@ jobs:
         env:
           CI: "1"
         run: npx --yes expo prebuild --platform android --no-install
-      - name: Build APK
+      - name: Decode release keystore
+        if: env.ANDROID_KEYSTORE_B64 != ''
+        run: |
+          echo "$ANDROID_KEYSTORE_B64" | base64 -d \
+            > apps/mobile/android/app/release.keystore
+      - name: Build release APK
         working-directory: apps/mobile/android
-        run: ./gradlew assembleDebug --no-daemon
+        env:
+          RELAY_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          RELAY_KEY_ALIAS: relay
+          RELAY_VERSION_CODE: ${{ github.run_number }}
+        run: ./gradlew assembleRelease --no-daemon
       - name: Attach APK to release
         run: |
-          cp apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk relay-android.apk
+          cp apps/mobile/android/app/build/outputs/apk/release/app-release.apk relay-android.apk
           gh release upload "$GITHUB_REF_NAME" relay-android.apk --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
