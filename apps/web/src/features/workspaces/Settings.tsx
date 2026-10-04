@@ -23,6 +23,7 @@ import {
   requestNotifyPermission,
   setNotifyEnabled,
 } from "../../lib/notify";
+import { isDesktop } from "../../lib/desktop";
 import { syncToServer } from "../../lib/sync";
 import { useSession } from "../../stores/session";
 import {
@@ -570,9 +571,15 @@ function ConnectionSection() {
   const session = useSession();
   const [syncPending, setSyncPending] = createSignal(false);
   const [connectPending, setConnectPending] = createSignal(false);
+  const [switching, setSwitching] = createSignal(false);
   const [step, setStep] = createSignal("");
   const [result, setResult] = createSignal<string | null>(null);
   const [error, setError] = createSignal<string | null>(null);
+
+  // Local mode and server switching only make sense off the server's own
+  // hosted UI — the desktop app or a cross-origin client. Same rule as
+  // the login page.
+  const altPaths = () => isDesktop() || !!net.serverUrl();
 
   const mode = () =>
     net.isLocal()
@@ -638,10 +645,14 @@ function ConnectionSection() {
               : "Connected — syncs across devices signed in here."}
           </p>
         </div>
-        <Show
-          when={!net.isLocal()}
-          fallback={null}
-        >
+        <Show when={!net.isLocal() && altPaths()}>
+          <button
+            type="button"
+            class="rounded-md border border-border px-2.5 py-1 text-[12px] text-muted transition-colors hover:bg-hover hover:text-fg"
+            onClick={() => setSwitching((v) => !v)}
+          >
+            Different server
+          </button>
           <button
             type="button"
             class="rounded-md border border-border px-2.5 py-1 text-[12px] text-muted transition-colors hover:bg-hover hover:text-fg"
@@ -653,6 +664,45 @@ function ConnectionSection() {
           </button>
         </Show>
       </div>
+
+      <Show when={!net.isLocal() && switching()}>
+        <form onSubmit={onConnect} class="flex max-w-sm flex-col gap-3 border-t border-border pt-4">
+          <p class="text-[12.5px] text-muted">
+            Sign in on a different Relay server — you'll leave this one.
+          </p>
+          <input
+            type="url"
+            name="server_url"
+            required
+            placeholder="https://relay.example.com"
+            aria-label="Server URL"
+            class={inputClass}
+          />
+          <input
+            type="email"
+            name="email"
+            required
+            autocomplete="email"
+            placeholder="you@example.com"
+            aria-label="Account email"
+            class={inputClass}
+          />
+          <input
+            type="password"
+            name="password"
+            required
+            autocomplete="current-password"
+            placeholder="Password"
+            aria-label="Account password"
+            class={inputClass}
+          />
+          <div>
+            <SubmitButton pending={connectPending()}>
+              {connectPending() ? "Connecting..." : "Connect & sign in"}
+            </SubmitButton>
+          </div>
+        </form>
+      </Show>
 
       <Show when={net.isLocal()}>
         <form onSubmit={onSync} class="flex max-w-sm flex-col gap-3">
