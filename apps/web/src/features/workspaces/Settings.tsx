@@ -9,6 +9,7 @@ import {
 import {
   Field,
   FormError,
+  ImageURLField,
   SubmitButton,
   inputClass,
   primaryButtonClass,
@@ -688,6 +689,17 @@ export default function Settings() {
             )}
           </Show>
         </div>
+        <Show when={!net.isLocal()}>
+          <div class="mt-3 max-w-sm">
+            <ImageURLField
+              placeholder="https://example.com/avatar.png"
+              onSubmit={async (u) => {
+                await api.uploadImageURL("/api/me/avatar", u);
+                await session.refresh();
+              }}
+            />
+          </div>
+        </Show>
         <FormError message={avatarError()} />
         <Show when={!net.isLocal()}>
           <ChangePasswordForm />
@@ -778,6 +790,20 @@ export default function Settings() {
                   </label>
                 </Show>
               </div>
+              <Show when={canInvite() && !net.isLocal()}>
+                <div class="max-w-sm">
+                  <ImageURLField
+                    placeholder="https://example.com/icon.png"
+                    onSubmit={async (u) => {
+                      await api.uploadImageURL(
+                        `/api/workspaces/${ws().id}/icon`,
+                        u,
+                      );
+                      await session.refresh();
+                    }}
+                  />
+                </div>
+              </Show>
               <Show when={showNew()}>
                 <NewWorkspaceForm
                   onCreated={() => {

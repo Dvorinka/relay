@@ -1,4 +1,4 @@
-import { Show, type JSX, type ParentProps } from "solid-js";
+import { createSignal, Show, type JSX, type ParentProps } from "solid-js";
 
 export const inputClass =
   "w-full rounded-md border border-border bg-bg px-2.5 py-1.5 text-[13px] text-fg outline-none transition-colors placeholder:text-muted/60 focus:border-accent";
@@ -52,5 +52,57 @@ export function SubmitButton(
       disabled={props.disabled || pending}
       class={`${primaryButtonClass} ${className ?? ""}`}
     />
+  );
+}
+
+// ImageURLField is the "paste a link, we fetch it" alternative to a file
+// picker on every avatar/icon surface — the server downloads, validates and
+// stores the image, so the user never touches a file manager.
+export function ImageURLField(props: {
+  onSubmit: (url: string) => Promise<unknown> | unknown;
+  placeholder?: string;
+}) {
+  const [url, setUrl] = createSignal("");
+  const [busy, setBusy] = createSignal(false);
+  const [err, setErr] = createSignal("");
+  const submit = async () => {
+    const u = url().trim();
+    if (!u || busy()) return;
+    setBusy(true);
+    setErr("");
+    try {
+      await props.onSubmit(u);
+      setUrl("");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "could not set image");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div>
+      <div class="flex gap-1.5">
+        <input
+          type="url"
+          value={url()}
+          onInput={(e) => setUrl(e.currentTarget.value)}
+          onKeyDown={(e) => e.key === "Enter" && void submit()}
+          placeholder={props.placeholder ?? "https://example.com/icon.png"}
+          aria-label="Image URL"
+          class={`${inputClass} flex-1`}
+        />
+        <button
+          type="button"
+          onClick={() => void submit()}
+          disabled={busy() || !url().trim()}
+          class={primaryButtonClass}
+        >
+          Set
+        </button>
+      </div>
+      <Show when={err()}>
+        {(msg) => <p class="mt-1 text-[11.5px] text-red-600 dark:text-red-400">{msg()}</p>}
+      </Show>
+    </div>
   );
 }

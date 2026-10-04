@@ -737,6 +737,7 @@ const impl = {
   unread: async () => ({ unread: {}, reviews: {} }),
   mentions: async () => ({ mentions: [] }),
   listAgents: async () => ({ agents: [] }),
+  listProjectAgents: async () => ({ agents: [] }),
   listProjectRepos: async () => ({ repos: [] }),
   projectDevelopment: async () => ({ repos: [], fetched_at: now() }),
   listWebhooks: async () => ({ webhooks: [], catalog: [] }),

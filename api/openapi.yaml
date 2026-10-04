@@ -1180,6 +1180,8 @@ paths:
               required: [file]
               properties:
                 file: { type: string, format: binary }
+          application/json:
+            schema: { $ref: "#/components/schemas/ImageUploadJSON" }
       responses:
         "201":
           description: Uploaded
@@ -1415,6 +1417,26 @@ paths:
                     items: { $ref: "#/components/schemas/AgentReview" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/projects/{projectId}/agents:
+    get:
+      operationId: listProjectAgents
+      summary: List agents holding a grant on a project
+      tags: [agents]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      responses:
+        "200":
+          description: Agent list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [agents]
+                properties:
+                  agents:
+                    type: array
+                    items: { $ref: "#/components/schemas/Agent" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /api/workspaces/{workspaceId}/agents:
     get:
@@ -2039,6 +2061,8 @@ paths:
               required: [file]
               properties:
                 file: { type: string, format: binary }
+          application/json:
+            schema: { $ref: "#/components/schemas/ImageUploadJSON" }
       responses:
         "200": { description: "Updated user with avatar_url" }
         "400": { $ref: "#/components/responses/BadRequest" }
@@ -2060,6 +2084,8 @@ paths:
               required: [file]
               properties:
                 file: { type: string, format: binary }
+          application/json:
+            schema: { $ref: "#/components/schemas/ImageUploadJSON" }
       responses:
         "200": { description: "Updated agent with avatar_url" }
         "400": { $ref: "#/components/responses/BadRequest" }
@@ -2082,6 +2108,8 @@ paths:
               required: [file]
               properties:
                 file: { type: string, format: binary }
+          application/json:
+            schema: { $ref: "#/components/schemas/ImageUploadJSON" }
       responses:
         "200": { description: "Updated project with icon_url" }
         "400": { $ref: "#/components/responses/BadRequest" }
@@ -2120,6 +2148,8 @@ paths:
               required: [file]
               properties:
                 file: { type: string, format: binary }
+          application/json:
+            schema: { $ref: "#/components/schemas/ImageUploadJSON" }
       responses:
         "200": { description: "Updated workspace with avatar_url" }
         "400": { $ref: "#/components/responses/BadRequest" }
@@ -2709,6 +2739,24 @@ components:
         content_type: { type: string }
         size_bytes: { type: integer, format: int64 }
         created_at: { type: string, format: date-time }
+
+    ImageUploadJSON:
+      type: object
+      description: >-
+        JSON alternative to multipart on image-upload endpoints.
+        `url` makes the server fetch and store the image (public http(s)
+        hosts only); `name` + `data` is the desktop app's base64 upload
+        bridge.
+      properties:
+        url:
+          type: string
+          format: uri
+          description: http(s) image URL the server downloads and stores
+        name: { type: string, description: Filename for base64 uploads }
+        data:
+          type: string
+          format: byte
+          description: Base64-encoded file bytes
 
     MessageParent:
       type: object

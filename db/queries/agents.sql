@@ -150,3 +150,11 @@ delete from agent_invites where id = sqlc.arg(id);
 
 -- name: ListWorkspaceProjectIDs :many
 select id from projects where workspace_id = sqlc.arg(workspace_id);
+
+-- name: ListProjectAgents :many
+-- agents holding a grant on a project; surfaced in the project's member list
+select a.*, g.scopes as grant_scopes
+from agents a
+join agent_project_permissions g on g.agent_id = a.id
+where g.project_id = sqlc.arg(project_id)
+order by a.name;

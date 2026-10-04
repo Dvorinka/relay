@@ -62,6 +62,25 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
 	g.POST("/workspaces/:id/agent-invites", s.adminOnly, s.handleCreateInvite)
 	g.GET("/workspaces/:id/agent-invites", s.adminOnly, s.handleListInvites)
 	g.DELETE("/workspaces/:id/agent-invites/:inviteId", s.adminOnly, s.handleDeleteInvite)
+	g.GET("/projects/:id/agents", s.projectMemberOnly, s.handleListProjectAgents)
+}
+
+// projectMemberOnly gates on the project's workspace membership — same
+// rule as the rest of the project-scoped surface.
+func (s *Service) projectMemberOnly(c *gin.Context) {
+	id, ok := httpx.PathUUID(c, "id")
+	if !ok {
+		return
+	}
+	p, err := s.q.GetProjectForUser(c.Request.Context(), db.GetProjectForUserParams{
+		ID: id, UserID: auth.CurrentUser(c).ID,
+	})
+	if err != nil {
+		httpx.Error(c, http.StatusForbidden, "forbidden", "not a member of this workspace")
+		return
+	}
+	c.Set(ctxProject, p.ID)
+	c.Next()
 }
 
 // RegisterPublicRoutes exposes invite redemption - the agent calls it without
@@ -75,6 +94,7 @@ func (s *Service) RegisterPublicRoutes(g *gin.RouterGroup) {
 const (
 	ctxAgent     = "relay.agent"
 	ctxWorkspace = "relay.agent_workspace"
+	ctxProject   = "relay.agent_project"
 )
 
 func (s *Service) memberOnly(c *gin.Context) { s.wsGate(c, false) }
@@ -148,6 +168,26 @@ func (s *Service) handleList(c *gin.Context) {
 	out := make([]gin.H, 0, len(rows))
 	for _, a := range rows {
 		out = append(out, agentJSON(agentFromListRow(a), nil, a.LastSeenAt))
+	}
+	c.JSON(http.StatusOK, gin.H{"agents": out})
+}
+
+// handleListProjectAgents lists the agents granted on a project so they
+// appear alongside the human members in the project rail.
+func (s *Service) handleListProjectAgents(c *gin.Context) {
+	projectID := c.MustGet(ctxProject).(pgtype.UUID)
+	rows, err := s.q.ListProjectAgents(c.Request.Context(), projectID)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	out := make([]gin.H, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, agentJSON(db.Agent{
+			ID: r.ID, WorkspaceID: r.WorkspaceID, Name: r.Name, Slug: r.Slug,
+			Description: r.Description, AvatarKey: r.AvatarKey, ReviewMode: r.ReviewMode,
+			CreatedAt: r.CreatedAt,
+		}, nil, lastSeenFor(c, s.q, r.ID)))
 	}
 	c.JSON(http.StatusOK, gin.H{"agents": out})
 }

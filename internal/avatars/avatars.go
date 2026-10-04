@@ -6,8 +6,13 @@ package avatars
 
 import (
 	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -39,12 +44,12 @@ var imageTypes = map[string]bool{
 	"image/x-icon": true,
 }
 
-// imageType sniffs an upload's magic bytes. http.DetectContentType has no
-// ISO-BMFF table, so an AVIF (a common "saved as .png" trap — browsers save
-// the actual bytes with a suggested name) arrives as octet-stream; check the
-// ftyp major brand by hand. HEIC intentionally stays unclaimed: browsers
-// can't render it.
-func imageType(data []byte) string {
+// SniffImageType sniffs an upload's magic bytes. http.DetectContentType has
+// no ISO-BMFF table, so an AVIF (a common "saved as .png" trap — browsers
+// save the actual bytes with a suggested name) arrives as octet-stream;
+// check the ftyp major brand by hand. HEIC intentionally stays unclaimed:
+// browsers can't render it.
+func SniffImageType(data []byte) string {
 	ct, _, _ := strings.Cut(http.DetectContentType(data), ";")
 	ct = strings.TrimSpace(ct)
 	if ct == "application/octet-stream" && len(data) >= 12 &&
@@ -60,8 +65,66 @@ func imageType(data []byte) string {
 // AcceptedImageType reports the sniffed content type and whether it's an
 // acceptable avatar/icon image.
 func AcceptedImageType(data []byte) (string, bool) {
-	ct := imageType(data)
+	ct := SniffImageType(data)
 	return ct, imageTypes[ct]
+}
+
+// publicIP reports whether an address is safe to fetch from: globally
+// routable and not private/loopback/link-local/multicast/unspecified.
+// Relay is self-hosted on LANs, so a user-supplied image URL must never
+// reach into the local network.
+func publicIP(ip net.IP) bool {
+	return ip.IsGlobalUnicast() && !ip.IsPrivate() && !ip.IsLoopback() &&
+		!ip.IsLinkLocalUnicast() && !ip.IsLinkLocalMulticast() &&
+		!ip.IsMulticast() && !ip.IsUnspecified()
+}
+
+// FetchImage downloads an image URL server-side — the "paste a URL" path.
+// http(s) only, and only public IPs are dialed. Redirects are safe — every
+// dialed connection runs the same check.
+func FetchImage(ctx context.Context, rawURL string) ([]byte, string, error) {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, "", fmt.Errorf("only http(s) image URLs are supported")
+	}
+	dialer := &net.Dialer{Timeout: 8 * time.Second}
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+			ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+			if err != nil || len(ips) == 0 {
+				return nil, fmt.Errorf("could not resolve %s", host)
+			}
+			for _, ipa := range ips {
+				if publicIP(ipa.IP) {
+					return dialer.DialContext(ctx, network, net.JoinHostPort(ipa.IP.String(), port))
+				}
+			}
+			return nil, fmt.Errorf("%s does not resolve to a public address", host)
+		},
+	}
+	client := &http.Client{Timeout: 12 * time.Second, Transport: transport}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("invalid URL")
+	}
+	req.Header.Set("User-Agent", "relay-avatar-fetch/1.0")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("remote returned %s", resp.Status)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil || int64(len(data)) > maxBytes {
+		return nil, "", fmt.Errorf("image exceeds the 2 MiB cap")
+	}
+	return data, SniffImageType(data), nil
 }
 
 // extensionFor maps stored content types back to filenames for downloads.
@@ -104,34 +167,70 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
 	g.GET("/files/*key", s.handleFile)
 }
 
-// readUpload pulls and validates the multipart "file" field. Replies on
-// failure; the caller returns early when ok is false.
+// readUpload pulls and validates the upload. Three transports reach the
+// same endpoint: multipart "file" (browsers), JSON {"url"} (server-side
+// fetch — the paste-a-link path), and JSON {"name","data"} base64 (the
+// desktop app's upload bridge, whose WebKitGTK webview drops multipart
+// bodies). Replies on failure; the caller returns early when ok is false.
 func (s *Service) readUpload(c *gin.Context) (data []byte, contentType string, ok bool) {
 	if s.store == nil {
 		httpx.Error(c, http.StatusServiceUnavailable, "storage_disabled", "object storage is not configured")
 		return nil, "", false
 	}
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
-	fh, err := c.FormFile("file")
-	if err != nil {
-		var mbe *http.MaxBytesError
-		if errors.As(err, &mbe) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes*2)
+	if strings.HasPrefix(c.GetHeader("Content-Type"), "application/json") {
+		var req struct {
+			URL  string `json:"url"`
+			Data string `json:"data"`
+		}
+		if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "invalid JSON body")
+			return nil, "", false
+		}
+		if req.URL != "" {
+			d, _, err := FetchImage(c.Request.Context(), req.URL)
+			if err != nil {
+				httpx.Error(c, http.StatusBadRequest, "fetch_failed", err.Error())
+				return nil, "", false
+			}
+			data = d
+		} else if req.Data != "" {
+			d, err := base64.StdEncoding.DecodeString(req.Data)
+			if err != nil {
+				httpx.Error(c, http.StatusBadRequest, "bad_request", "invalid base64 data")
+				return nil, "", false
+			}
+			if int64(len(d)) > maxBytes {
+				httpx.Error(c, http.StatusRequestEntityTooLarge, "too_large", "avatar exceeds the 2 MiB cap")
+				return nil, "", false
+			}
+			data = d
+		} else {
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "expected \"url\" or \"data\"")
+			return nil, "", false
+		}
+	} else {
+		fh, err := c.FormFile("file")
+		if err != nil {
+			var mbe *http.MaxBytesError
+			if errors.As(err, &mbe) {
+				httpx.Error(c, http.StatusRequestEntityTooLarge, "too_large", "avatar exceeds the 2 MiB cap")
+				return nil, "", false
+			}
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "multipart field \"file\" required")
+			return nil, "", false
+		}
+		f, err := fh.Open()
+		if err != nil {
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "unreadable file")
+			return nil, "", false
+		}
+		defer func() { _ = f.Close() }()
+		data, err = io.ReadAll(io.LimitReader(f, maxBytes+1))
+		if err != nil || int64(len(data)) > maxBytes {
 			httpx.Error(c, http.StatusRequestEntityTooLarge, "too_large", "avatar exceeds the 2 MiB cap")
 			return nil, "", false
 		}
-		httpx.Error(c, http.StatusBadRequest, "bad_request", "multipart field \"file\" required")
-		return nil, "", false
-	}
-	f, err := fh.Open()
-	if err != nil {
-		httpx.Error(c, http.StatusBadRequest, "bad_request", "unreadable file")
-		return nil, "", false
-	}
-	defer func() { _ = f.Close() }()
-	data, err = io.ReadAll(io.LimitReader(f, maxBytes+1))
-	if err != nil || int64(len(data)) > maxBytes {
-		httpx.Error(c, http.StatusRequestEntityTooLarge, "too_large", "avatar exceeds the 2 MiB cap")
-		return nil, "", false
 	}
 	ct, ok2 := AcceptedImageType(data)
 	if !ok2 {

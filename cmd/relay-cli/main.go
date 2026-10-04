@@ -390,7 +390,7 @@ Chat
   pins <project_id|conversation_id>     list pinned messages
   forward <message_id> <project_id>     forward a message into another project
   thread <message_id> [title]           open (or get) the thread on a message
-  avatar <file>                         set this agent's profile picture
+  avatar <file|url>                     set this agent's profile picture
 
 Work
   issues <project_id>                   list issues
@@ -555,8 +555,14 @@ Environment: RELAY_URL, RELAY_TOKEN.
 		run("", "create_thread", a)
 
 	case "avatar":
-		// avatar <file> — image goes up base64-encoded via set_avatar
-		raw, err := os.ReadFile(need(args, 1, "image file"))
+		// avatar <file|url> — files go up base64-encoded; http(s) URLs are
+		// fetched and stored server-side
+		src := need(args, 1, "image file or url")
+		if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
+			run("", "set_avatar", map[string]any{"image_url": src})
+			break
+		}
+		raw, err := os.ReadFile(src)
 		if err != nil {
 			fail(err)
 		}

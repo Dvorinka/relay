@@ -5,6 +5,8 @@ package attachments
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -12,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/Dvorinka/relay/internal/auth"
+	"github.com/Dvorinka/relay/internal/avatars"
 	"github.com/Dvorinka/relay/internal/config"
 	"github.com/Dvorinka/relay/internal/db"
 	"github.com/Dvorinka/relay/internal/httpx"
@@ -30,6 +33,9 @@ var allowlist = map[string]bool{
 	"image/jpeg":      true,
 	"image/gif":       true,
 	"image/webp":      true,
+	"image/avif":      true,
+	"image/bmp":       true,
+	"image/x-icon":    true,
 	"application/pdf": true,
 	"text/plain":      true,
 	"application/zip": true,
@@ -82,40 +88,63 @@ func (s *Service) handleUpload(c *gin.Context) {
 	}
 	p := c.MustGet(ctxProject).(db.GetProjectForUserRow)
 
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, s.max)
-	fh, err := c.FormFile("file")
-	if err != nil {
-		var mbe *http.MaxBytesError
-		if errors.As(err, &mbe) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, s.max+s.max/2)
+	var data []byte
+	var filename, declaredType string
+	if strings.HasPrefix(c.GetHeader("Content-Type"), "application/json") {
+		// Base64 JSON transport — the desktop app's WebKitGTK webview can
+		// drop multipart bodies, so its upload bridge sends the file this
+		// way instead.
+		var req struct {
+			Name string `json:"name"`
+			Data string `json:"data"`
+		}
+		if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "invalid JSON body")
+			return
+		}
+		d, err := base64.StdEncoding.DecodeString(req.Data)
+		if err != nil || int64(len(d)) > s.max {
 			httpx.Error(c, http.StatusRequestEntityTooLarge, "too_large", "file exceeds the upload size cap")
 			return
 		}
-		httpx.Error(c, http.StatusBadRequest, "bad_request", "multipart field \"file\" required")
-		return
-	}
-	if fh.Size > s.max {
-		httpx.Error(c, http.StatusRequestEntityTooLarge, "too_large", "file exceeds the upload size cap")
-		return
-	}
-	f, err := fh.Open()
-	if err != nil {
-		httpx.Error(c, http.StatusBadRequest, "bad_request", "unreadable file")
-		return
-	}
-	defer func() { _ = f.Close() }()
+		data, filename = d, req.Name
+	} else {
+		fh, err := c.FormFile("file")
+		if err != nil {
+			var mbe *http.MaxBytesError
+			if errors.As(err, &mbe) {
+				httpx.Error(c, http.StatusRequestEntityTooLarge, "too_large", "file exceeds the upload size cap")
+				return
+			}
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "multipart field \"file\" required")
+			return
+		}
+		if fh.Size > s.max {
+			httpx.Error(c, http.StatusRequestEntityTooLarge, "too_large", "file exceeds the upload size cap")
+			return
+		}
+		f, err := fh.Open()
+		if err != nil {
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "unreadable file")
+			return
+		}
+		defer func() { _ = f.Close() }()
 
-	data, err := io.ReadAll(io.LimitReader(f, s.max+1))
-	if err != nil || int64(len(data)) > s.max {
-		httpx.Error(c, http.StatusRequestEntityTooLarge, "too_large", "file exceeds the upload size cap")
-		return
+		data, err = io.ReadAll(io.LimitReader(f, s.max+1))
+		if err != nil || int64(len(data)) > s.max {
+			httpx.Error(c, http.StatusRequestEntityTooLarge, "too_large", "file exceeds the upload size cap")
+			return
+		}
+		filename, declaredType = fh.Filename, fh.Header.Get("Content-Type")
 	}
-	contentType, ok := sniffType(data, fh.Header.Get("Content-Type"))
+	contentType, ok := sniffType(data, declaredType)
 	if !ok {
 		httpx.Error(c, http.StatusBadRequest, "unsupported_type",
 			"file type not allowed; images, pdf, text and zip are accepted")
 		return
 	}
-	filename := path.Base(fh.Filename)
+	filename = path.Base(filename)
 	if filename == "." || filename == "/" || filename == "" {
 		filename = "file"
 	}
@@ -220,7 +249,7 @@ func (s *Service) handleDownload(c *gin.Context) {
 // octet-stream the client's declared type is consulted instead; either way
 // the result must be allowlisted.
 func sniffType(data []byte, declared string) (string, bool) {
-	sniffed := http.DetectContentType(data)
+	sniffed := avatars.SniffImageType(data)
 	ct, _, _ := strings.Cut(sniffed, ";")
 	ct = strings.TrimSpace(ct)
 	if ct == "application/octet-stream" && declared != "" {

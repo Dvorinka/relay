@@ -879,6 +879,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{projectId}/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List agents holding a grant on a project */
+        get: operations["listProjectAgents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspaceId}/agents": {
         parameters: {
             query?: never;
@@ -1820,6 +1837,21 @@ export interface components {
             size_bytes: number;
             /** Format: date-time */
             created_at: string;
+        };
+        /** @description JSON alternative to multipart on image-upload endpoints. `url` makes the server fetch and store the image (public http(s) hosts only); `name` + `data` is the desktop app's base64 upload bridge. */
+        ImageUploadJSON: {
+            /**
+             * Format: uri
+             * @description http(s) image URL the server downloads and stores
+             */
+            url?: string;
+            /** @description Filename for base64 uploads */
+            name?: string;
+            /**
+             * Format: byte
+             * @description Base64-encoded file bytes
+             */
+            data?: string;
         };
         MessageParent: {
             /** Format: uuid */
@@ -3756,6 +3788,7 @@ export interface operations {
                     /** Format: binary */
                     file: string;
                 };
+                "application/json": components["schemas"]["ImageUploadJSON"];
             };
         };
         responses: {
@@ -4085,6 +4118,31 @@ export interface operations {
             };
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    listProjectAgents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Agent list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        agents: components["schemas"]["Agent"][];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
         };
     };
     listAgents: {
@@ -5000,6 +5058,7 @@ export interface operations {
                     /** Format: binary */
                     file: string;
                 };
+                "application/json": components["schemas"]["ImageUploadJSON"];
             };
         };
         responses: {
@@ -5042,6 +5101,7 @@ export interface operations {
                     /** Format: binary */
                     file: string;
                 };
+                "application/json": components["schemas"]["ImageUploadJSON"];
             };
         };
         responses: {
@@ -5085,6 +5145,7 @@ export interface operations {
                     /** Format: binary */
                     file: string;
                 };
+                "application/json": components["schemas"]["ImageUploadJSON"];
             };
         };
         responses: {
@@ -5170,6 +5231,7 @@ export interface operations {
                     /** Format: binary */
                     file: string;
                 };
+                "application/json": components["schemas"]["ImageUploadJSON"];
             };
         };
         responses: {

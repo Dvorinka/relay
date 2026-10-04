@@ -1,6 +1,7 @@
 import { Navigate, Route, Router } from "@solidjs/router";
 import { render } from "solid-js/web";
 import App from "./App";
+import { desktopOpen } from "./lib/desktop";
 import ForgotPassword from "./features/auth/ForgotPassword";
 import Login from "./features/auth/Login";
 import Register from "./features/auth/Register";
@@ -20,6 +21,27 @@ import { SessionProvider } from "./stores/session";
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js").catch(() => {});
 }
+
+// External links can't work inside the desktop webview — no github.com
+// session, no file downloads — so off-origin clicks go through the Wails
+// /~desktop-open bridge to the user's real browser. In a normal browser the
+// bridge answers false and we fall back to an ordinary new tab, matching
+// what target="_blank" would have done.
+document.addEventListener(
+  "click",
+  (e) => {
+    const a = (e.target as HTMLElement).closest?.("a[href]");
+    if (!a) return;
+    const url = new URL((a as HTMLAnchorElement).href, location.href);
+    if (url.origin === location.origin) return;
+    if (url.protocol !== "http:" && url.protocol !== "https:") return;
+    e.preventDefault();
+    void desktopOpen(url.href).then((ok) => {
+      if (!ok) window.open(url.href, "_blank", "noopener");
+    });
+  },
+  true,
+);
 
 render(
   () => (

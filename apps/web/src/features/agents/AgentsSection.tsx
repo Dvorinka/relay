@@ -7,7 +7,12 @@ import {
   type Project,
 } from "@relay/api-client";
 import { createResource, createSignal, For, Show } from "solid-js";
-import { FormError, SubmitButton, inputClass } from "../../components/ui";
+import {
+  FormError,
+  ImageURLField,
+  SubmitButton,
+  inputClass,
+} from "../../components/ui";
 import { api } from "../../lib/api";
 import { mediaURL, net } from "../../lib/net";
 import { timeAgo, timeUntil } from "../../lib/time";
@@ -187,6 +192,18 @@ function AgentRow(props: {
                             e.currentTarget.value = "";
                           }
                         }}
+                      />
+                    </div>
+                    <div class="mt-2 max-w-sm">
+                      <ImageURLField
+                        onSubmit={(u) =>
+                          run(() =>
+                            api.uploadImageURL(
+                              `/api/agents/${props.agent.id}/avatar`,
+                              u,
+                            ),
+                          )
+                        }
                       />
                     </div>
                   </div>

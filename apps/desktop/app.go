@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/http/httputil"
@@ -130,6 +134,55 @@ func (a *App) openExternal(w http.ResponseWriter, r *http.Request) {
 		go wailsruntime.BrowserOpenURL(a.ctx, u)
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type proxyResult struct {
+	Status int    `json:"status"`
+	Body   string `json:"body"`
+}
+
+// ProxyRequest issues an authenticated request to the configured server from
+// Go's HTTP stack, bound as window.go.main.App.ProxyRequest. WebKitGTK's
+// scheme handler can silently drop request bodies, so the SPA routes uploads
+// and other body-bearing calls across this bridge instead of fetch(). Only
+// /api/ paths reach the server, and the SPA's token goes out as a Bearer
+// header (the bound method runs outside the webview's cookie jar).
+func (a *App) ProxyRequest(method, reqPath, contentType, bodyB64, token string) (proxyResult, error) {
+	if a.cfg.ServerURL == "" {
+		return proxyResult{}, errors.New("no server configured")
+	}
+	if !strings.HasPrefix(reqPath, "/api/") {
+		return proxyResult{}, errors.New("only /api paths may be proxied")
+	}
+	var body io.Reader
+	if bodyB64 != "" {
+		raw, err := base64.StdEncoding.DecodeString(bodyB64)
+		if err != nil || len(raw) > 64<<20 {
+			return proxyResult{}, errors.New("invalid request body")
+		}
+		body = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequestWithContext(a.ctx, method,
+		strings.TrimRight(a.cfg.ServerURL, "/")+reqPath, body)
+	if err != nil {
+		return proxyResult{}, err
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return proxyResult{}, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	if err != nil {
+		return proxyResult{}, err
+	}
+	return proxyResult{Status: resp.StatusCode, Body: string(raw)}, nil
 }
 
 func webDist() fs.FS {

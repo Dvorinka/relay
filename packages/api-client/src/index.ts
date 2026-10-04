@@ -382,6 +382,8 @@ export function createClient(baseUrl: string, token?: string) {
     // Agents
     listAgents: (workspaceId: string) =>
       request<{ agents: Agent[] }>(`/api/workspaces/${workspaceId}/agents`),
+    listProjectAgents: (projectId: string) =>
+      request<{ agents: Agent[] }>(`/api/projects/${projectId}/agents`),
     createAgent: (
       workspaceId: string,
       input: {
@@ -615,6 +617,12 @@ export function createClient(baseUrl: string, token?: string) {
       post<{ id: string; icon_url: string }>(
         `/api/projects/${projectId}/icon/github`,
       ),
+    // Paste-a-link avatar/icon set: every PUT image endpoint also accepts
+    // {"url"} and fetches the image server-side.
+    uploadImageURL: (path: string, url: string) =>
+      put<{ avatar_url?: string; icon_url?: string; id?: string }>(path, {
+        url,
+      }),
     uploadWorkspaceIcon: (workspaceId: string, file: File) => {
       const form = new FormData();
       form.set("file", file);
