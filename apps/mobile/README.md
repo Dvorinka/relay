@@ -66,20 +66,45 @@ Phase 10 notes.
 
 Every `v*` tag builds `relay-android.apk` in CI (`release.yml` → `apk`
 job): `expo prebuild` generates `android/`, then Gradle assembles a
-debug-signed APK attached to the release. Debug-signed APKs install on
-any device but can't be updated over an existing install with a
-different signature — for store distribution use EAS:
+**release** APK with the JS bundle embedded — it installs and runs
+standalone, no Metro.
 
-```bash
-npx eas-cli build --platform android --profile production
-```
+### Signing
 
-requires an Expo account (`EXPO_TOKEN` or `eas login`).
+`plugins/withReleaseSigning.js` adds a `release` signing config at
+prebuild time. When `android/app/release.keystore` exists, the release
+build is signed with it; otherwise it falls back to the generated debug
+key (still installable, but the signature differs per machine — updates
+fail over installs signed with another key).
 
-Local build:
+CI decodes the keystore from secrets:
+
+| Secret | Contents |
+|---|---|
+| `ANDROID_KEYSTORE_B64` | `base64 -w0 release.keystore` output |
+| `ANDROID_KEYSTORE_PASSWORD` | keystore password (alias `relay`) |
+
+`RELAY_VERSION_CODE` overrides `versionCode` — CI sets it to
+`GITHUB_RUN_NUMBER` so every release upgrades over the previous APK.
+
+To build a signed release locally, drop your keystore at
+`android/app/release.keystore` after prebuild and set
+`RELAY_KEYSTORE_PASSWORD` (and `RELAY_KEY_ALIAS` if not `relay`):
 
 ```bash
 npx expo prebuild --platform android --no-install
-cd android && ./gradlew assembleDebug
-# → android/app/build/outputs/apk/debug/app-debug.apk
+cp /path/to/release.keystore android/app/release.keystore
+cd android && RELAY_KEYSTORE_PASSWORD=… ./gradlew assembleRelease
+# → android/app/build/outputs/apk/release/app-release.apk
 ```
+
+Generate a keystore once and keep it safe — losing it means existing
+installs can never be updated:
+
+```bash
+keytool -genkeypair -v -keystore release.keystore -alias relay \
+  -keyalg RSA -keysize 4096 -validity 10950
+```
+
+For Play Store distribution later, use EAS (`npx eas-cli build
+--platform android --profile production`, needs `EXPO_TOKEN`).

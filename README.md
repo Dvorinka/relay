@@ -123,7 +123,8 @@ Prebuilt artifacts: `ghcr.io/dvorinka/relay` publishes on every main push
 release with the server + CLI binaries (linux/windows/darwin), the Wails
 desktop app (`relay-desktop-*`, plus a per-user `Relay-Setup-<ver>.exe`
 Windows installer — Start Menu/Desktop shortcuts, WebView2 bootstrap, no
-admin needed), and a debug-signed `relay-android.apk`.
+admin needed), and a signed release `relay-android.apk` (see
+[apps/mobile](apps/mobile) for signing setup).
 
 For local development (Go 1.24+, Node 20+, `just`):
 
