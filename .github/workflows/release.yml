@@ -35,7 +35,6 @@ jobs:
         run: |
           mkdir -p dist
           CGO_ENABLED=0 go build -o dist/relay-linux-amd64 ./cmd/relay
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o dist/relay-windows-amd64.exe ./cmd/relay
           CGO_ENABLED=0 go build -o dist/relay-cli-linux-amd64 ./cmd/relay-cli
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o dist/relay-cli-windows-amd64.exe ./cmd/relay-cli
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o dist/relay-cli-darwin-arm64 ./cmd/relay-cli
@@ -94,6 +93,15 @@ jobs:
             -DCLI_EXE="$GITHUB_WORKSPACE/dist/relay-cli-windows-amd64.exe" \
             -DOUTFILE="$GITHUB_WORKSPACE/dist/Relay-Setup-$VERSION.exe" \
             apps/desktop/installer/relay.nsi
+
+      # Windows ships exactly one artifact: the setup. The loose desktop and
+      # CLI exes were build inputs — the installer packs both — and the
+      # standalone Windows server binary isn't needed on the client OS.
+      - name: Drop standalone Windows binaries
+        run: |
+          rm -f dist/relay-windows-amd64.exe \
+                dist/relay-desktop-windows-amd64.exe \
+                dist/relay-cli-windows-amd64.exe
 
       - name: Release
         uses: softprops/action-gh-release@v3
