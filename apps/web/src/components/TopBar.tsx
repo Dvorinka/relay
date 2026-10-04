@@ -82,7 +82,7 @@ export function TopBar() {
       </button>
       <A href="/app" class="flex items-center gap-2">
         <RelayMark class="h-5 w-5" />
-        <span class="text-[15px] font-semibold tracking-tight">relay</span>
+        <span class="text-[15px] font-semibold tracking-tight">Relay</span>
       </A>
 
       <div class="flex-1" />

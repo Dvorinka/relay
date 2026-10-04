@@ -81,7 +81,7 @@ func (s *Service) handleList(c *gin.Context) {
 	}
 	out := make([]gin.H, 0, len(rows))
 	for _, w := range rows {
-		out = append(out, workspaceJSON(w.ID, w.Name, w.Slug, w.CreatedAt, w.Role))
+		out = append(out, workspaceJSON(w.ID, w.Name, w.Slug, w.AvatarKey, w.CreatedAt, w.Role))
 	}
 	c.JSON(http.StatusOK, gin.H{"workspaces": out})
 }
@@ -138,7 +138,7 @@ func (s *Service) handleGet(c *gin.Context) {
 	role, _ := s.q.GetWorkspaceRole(c.Request.Context(), db.GetWorkspaceRoleParams{
 		WorkspaceID: id, UserID: auth.CurrentUser(c).ID,
 	})
-	c.JSON(http.StatusOK, workspaceJSON(ws.ID, ws.Name, ws.Slug, ws.CreatedAt, role))
+	c.JSON(http.StatusOK, workspaceJSON(ws.ID, ws.Name, ws.Slug, ws.AvatarKey, ws.CreatedAt, role))
 }
 
 func (s *Service) handleMembers(c *gin.Context) {
@@ -205,9 +205,15 @@ func (s *Service) handleInvite(c *gin.Context) {
 
 // --- helpers ---
 
-func workspaceJSON(id pgtype.UUID, name, slug string, createdAt pgtype.Timestamptz, role string) gin.H {
+func workspaceJSON(id pgtype.UUID, name, slug string, avatarKey pgtype.Text, createdAt pgtype.Timestamptz, role string) gin.H {
+	var avatar *string
+	if avatarKey.Valid {
+		a := "/api/files/" + avatarKey.String
+		avatar = &a
+	}
 	return gin.H{
 		"id": id.String(), "name": name, "slug": slug, "role": role,
+		"avatar_url": avatar,
 		"created_at": createdAt.Time.Format("2006-01-02T15:04:05Z07:00"),
 	}
 }

@@ -22,6 +22,7 @@ import {
   getCookie,
   getServer,
   type Message,
+  type Project,
   type ThreadChip,
 } from "../../lib/api";
 import {
@@ -175,6 +176,8 @@ export function ConversationScreen(props: {
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [editing, setEditing] = useState<Message | null>(null);
   const [sheetFor, setSheetFor] = useState<Message | null>(null);
+  const [forwardFor, setForwardFor] = useState<Message | null>(null);
+  const [fwdProjects, setFwdProjects] = useState<Project[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -328,6 +331,49 @@ export function ConversationScreen(props: {
     }
   };
 
+  const togglePin = async (msg: Message) => {
+    setSheetFor(null);
+    try {
+      const updated = await api.pinMessage(msg.id, !msg.pinned_at);
+      setMessages((ms) =>
+        ms.map((x) =>
+          x.id === msg.id ? { ...x, pinned_at: updated.pinned_at } : x,
+        ),
+      );
+    } catch (e) {
+      Alert.alert(
+        "Could not pin",
+        e instanceof Error ? e.message : "try again",
+      );
+    }
+  };
+
+  const startForward = async (msg: Message) => {
+    setSheetFor(null);
+    setForwardFor(msg);
+    try {
+      const r = await api.projects();
+      setFwdProjects(r.projects.filter((p) => p.id !== props.projectId));
+    } catch {
+      setFwdProjects([]);
+    }
+  };
+
+  const doForward = async (projectId: string) => {
+    const msg = forwardFor;
+    setForwardFor(null);
+    if (!msg) return;
+    try {
+      await api.forwardMessage(msg.id, projectId);
+      Alert.alert("Forwarded", "Message shared to the other project.");
+    } catch (e) {
+      Alert.alert(
+        "Forward failed",
+        e instanceof Error ? e.message : "try again",
+      );
+    }
+  };
+
   const rows = useMemo(() => buildRows(messages).reverse(), [messages]);
   const canEdit = (m: Message) =>
     m.author.kind === "user" && m.author.id === meId && !m.agent_read;
@@ -437,6 +483,14 @@ export function ConversationScreen(props: {
                       <Text style={s.time}>{timeLabel(m.created_at)}</Text>
                     </View>
                   )}
+                  {m.pinned_at ? (
+                    <Text style={s.pinMark}>📌 Pinned</Text>
+                  ) : null}
+                  {m.forwarded ? (
+                    <Text style={s.replyText} numberOfLines={1}>
+                      ➦ Forwarded from {m.forwarded.author}
+                    </Text>
+                  ) : null}
                   {m.parent && (
                     <View style={s.replyStrip}>
                       <Text style={s.replyText} numberOfLines={1}>
@@ -622,6 +676,20 @@ export function ConversationScreen(props: {
                 <Text style={s.sheetBtnText}>Open thread</Text>
               </Pressable>
             )}
+            <Pressable
+              style={s.sheetBtn}
+              onPress={() => sheetFor && togglePin(sheetFor)}
+            >
+              <Text style={s.sheetBtnText}>
+                {sheetFor?.pinned_at ? "Unpin" : "Pin"}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={s.sheetBtn}
+              onPress={() => sheetFor && startForward(sheetFor)}
+            >
+              <Text style={s.sheetBtnText}>Forward</Text>
+            </Pressable>
             {sheetFor && canEdit(sheetFor) && (
               <Pressable style={s.sheetBtn} onPress={() => startEdit(sheetFor)}>
                 <Text style={s.sheetBtnText}>Edit</Text>
@@ -645,6 +713,31 @@ export function ConversationScreen(props: {
                   Seen by an agent — editing and deletion locked
                 </Text>
               )}
+          </View>
+        </Pressable>
+      </Modal>
+
+      <Modal
+        visible={forwardFor !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setForwardFor(null)}
+      >
+        <Pressable style={s.sheetBg} onPress={() => setForwardFor(null)}>
+          <View style={s.sheet}>
+            <Text style={s.sheetHint}>Forward to project</Text>
+            {fwdProjects.length === 0 && (
+              <Text style={s.sheetHint}>No other projects</Text>
+            )}
+            {fwdProjects.map((p) => (
+              <Pressable
+                key={p.id}
+                style={s.sheetBtn}
+                onPress={() => void doForward(p.id)}
+              >
+                <Text style={s.sheetBtnText}>{p.name}</Text>
+              </Pressable>
+            ))}
           </View>
         </Pressable>
       </Modal>
@@ -702,6 +795,13 @@ const themedStyles = (C: Palette) =>
       marginTop: 4,
     },
     replyText: { color: C.muted, fontSize: 12 },
+    pinMark: {
+      color: C.faint,
+      fontSize: 10.5,
+      fontWeight: "600",
+      letterSpacing: 0.4,
+      marginBottom: 2,
+    },
     body: { color: C.text, marginTop: 2, fontSize: 15, lineHeight: 22 },
     inlineCode: {
       fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",

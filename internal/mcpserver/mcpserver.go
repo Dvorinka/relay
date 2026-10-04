@@ -275,6 +275,18 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithString("title", mcp.Description("Optional thread title; defaults to the parent excerpt")),
 	), s.createThread)
 
+	srv.AddTool(mcp.NewTool("pin_message",
+		mcp.WithDescription("Pin (or unpin) a message in its conversation. Pinned messages surface in the channel's pins list."),
+		mcp.WithString("message_id", mcp.Required()),
+		mcp.WithBoolean("pinned", mcp.Required(), mcp.Description("true to pin, false to unpin")),
+	), s.pinMessage)
+
+	srv.AddTool(mcp.NewTool("forward_message",
+		mcp.WithDescription("Forward a message into another granted project's conversation. The copy credits the original author."),
+		mcp.WithString("message_id", mcp.Required()),
+		mcp.WithString("project_id", mcp.Required(), mcp.Description("target project the agent is granted on")),
+	), s.forwardMessage)
+
 	srv.AddTool(mcp.NewTool("react_to_message",
 		mcp.WithDescription("Toggle an emoji reaction on a message."),
 		mcp.WithString("message_id", mcp.Required()),
@@ -495,12 +507,36 @@ func messageJSON(m db.GetMessageFullRow) gin.H {
 	if mrefs == nil {
 		mrefs = []any{}
 	}
+	var thread any
+	if m.ThreadID.Valid {
+		thread = gin.H{
+			"id":          m.ThreadID.String(),
+			"title":       m.ThreadTitle.String,
+			"reply_count": m.ThreadReplyCount,
+		}
+	}
+	var pinnedAt any
+	if m.PinnedAt.Valid {
+		pinnedAt = m.PinnedAt.Time
+	}
+	var forwarded any
+	if m.ForwardedFrom.Valid {
+		forwarded = gin.H{
+			"message_id":      m.ForwardedFrom.String(),
+			"conversation_id": m.FwdConversationID.String(),
+			"project_id":      m.FwdProjectID.String(),
+			"author":          m.FwdAuthorName,
+		}
+	}
 	return gin.H{
 		"id":              m.ID,
 		"conversation_id": m.ConversationID,
 		"body":            m.Body,
 		"mentions":        mrefs,
 		"parent":          parent,
+		"thread":          thread,
+		"pinned_at":       pinnedAt,
+		"forwarded":       forwarded,
 		"created_at":      m.CreatedAt.Time,
 		"edited_at":       editedAt,
 		"author": gin.H{
@@ -1158,6 +1194,105 @@ func (s *Service) createThread(ctx context.Context, req mcp.CallToolRequest) (*m
 		})
 	}
 	return jsonResult(gin.H{"thread": out})
+}
+
+// pinMessage mirrors PUT/DELETE /messages/:id/pin — project members (and
+// agents with message:write) may pin; no Manage Messages tier exists.
+func (s *Service) pinMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	mid, err := uuidArg(req, "message_id")
+	if err != nil {
+		return errResult(err)
+	}
+	pid, err := s.q.ResolveMessageProject(ctx, mid)
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "message:write"); err != nil {
+		return errResult(err)
+	}
+	pinned, ok := req.GetArguments()["pinned"].(bool)
+	if !ok {
+		return mcp.NewToolResultError("pinned (bool) required"), nil
+	}
+	var convID pgtype.UUID
+	if pinned {
+		r, e := s.q.PinMessageAgent(ctx, mid)
+		if e != nil {
+			return mcp.NewToolResultError("message not found"), nil
+		}
+		convID = r.ConversationID
+	} else {
+		r, e := s.q.UnpinMessageAgent(ctx, mid)
+		if e != nil {
+			return mcp.NewToolResultError("message not found"), nil
+		}
+		convID = r.ConversationID
+	}
+	if m, err := s.q.GetMessageFull(ctx, mid); err == nil {
+		s.publish(ctx, convID, "message.updated", map[string]any{
+			"conversation_id": convID.String(), "message": messageJSON(m)})
+	}
+	return jsonResult(map[string]any{"message_id": mid.String(), "pinned": pinned})
+}
+
+// forwardMessage mirrors POST /messages/:id/forward — the agent needs
+// message:write on both the source and the target project.
+func (s *Service) forwardMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	mid, err := uuidArg(req, "message_id")
+	if err != nil {
+		return errResult(err)
+	}
+	tid, err := uuidArg(req, "project_id")
+	if err != nil {
+		return errResult(err)
+	}
+	src, err := s.q.GetMessageFull(ctx, mid)
+	if err != nil || src.DeletedAt.Valid {
+		return mcp.NewToolResultError("message not found"), nil
+	}
+	pid, err := s.q.ResolveMessageProject(ctx, mid)
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "message:write"); err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, tid, "message:write"); err != nil {
+		return errResult(err)
+	}
+	// Target channel may not exist yet — conversations create lazily.
+	target, err := s.q.GetProjectConversation(ctx, tid)
+	if err != nil {
+		target, err = s.q.CreateProjectConversation(ctx, tid)
+		if err != nil {
+			target, err = s.q.GetProjectConversation(ctx, tid)
+		}
+	}
+	if err != nil {
+		return errResult(err)
+	}
+	root := src.ForwardedFrom
+	if !root.Valid {
+		root = mid
+	}
+	newID, err := s.q.CreateAgentMessage(ctx, db.CreateAgentMessageParams{
+		ConversationID: target.ID, AgentID: agent(ctx).ID, Body: src.Body,
+		ForwardedFrom: root,
+	})
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.q.CopyMessageAttachments(ctx,
+		db.CopyMessageAttachmentsParams{MessageID: newID, SourceID: mid}); err != nil {
+		s.log.Error("forward attachments failed", zap.Error(err))
+	}
+	m, err := s.q.GetMessageFull(ctx, newID)
+	if err != nil {
+		return errResult(err)
+	}
+	s.publish(ctx, target.ID, "message.created", map[string]any{
+		"conversation_id": target.ID.String(), "message": messageJSON(m)})
+	return jsonResult(map[string]any{"message": messageJSON(m)})
 }
 
 // reactToMessage toggles this agent's emoji on a message and publishes the

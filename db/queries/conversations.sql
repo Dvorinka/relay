@@ -99,7 +99,7 @@ where p.id = $1 and wm.user_id = $2;
 
 -- name: ListMessages :many
 -- newest-first page; $2 is an optional "older than message id" cursor
-select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
        m.author_user_id, m.author_agent_id,
        coalesce(u.name, a.name, '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
@@ -108,7 +108,11 @@ select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m
        (pm.id is not null and pm.deleted_at is not null) as parent_deleted,
        t.id as thread_id, t.title as thread_title,
        (select count(*)::int from messages tm
-         where tm.conversation_id = t.id and tm.deleted_at is null) as thread_reply_count
+         where tm.conversation_id = t.id and tm.deleted_at is null) as thread_reply_count,
+       m.pinned_at, m.forwarded_from,
+       f.conversation_id as fwd_conversation_id,
+       fcp.project_id as fwd_project_id,
+       coalesce(fu.name, fa.name, '') as fwd_author_name
 from messages m
 left join users u on u.id = m.author_user_id
 left join agents a on a.id = m.author_agent_id
@@ -116,6 +120,10 @@ left join messages pm on pm.id = m.parent_id
 left join users pu on pu.id = pm.author_user_id
 left join agents pa on pa.id = pm.author_agent_id
 left join conversations t on t.parent_message_id = m.id and t.kind = 'thread'
+left join messages f on f.id = m.forwarded_from
+left join conversations fcp on fcp.id = f.conversation_id
+left join users fu on fu.id = f.author_user_id
+left join agents fa on fa.id = f.author_agent_id
 where m.conversation_id = $1
   and m.deleted_at is null
   and (sqlc.narg(before)::uuid is null or
@@ -123,10 +131,60 @@ where m.conversation_id = $1
 order by m.created_at desc, m.id desc
 limit sqlc.arg(lim)::int;
 
+-- name: ListPinnedMessages :many
+-- pinned messages in one conversation, most recently pinned first
+select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
+       m.author_user_id, m.author_agent_id,
+       coalesce(u.name, a.name, '') as author_name,
+       coalesce(u.avatar_key, a.avatar_key) as author_avatar,
+       coalesce(pu.name, pa.name, '') as parent_author_name,
+       pm.body as parent_body,
+       (pm.id is not null and pm.deleted_at is not null) as parent_deleted,
+       t.id as thread_id, t.title as thread_title,
+       (select count(*)::int from messages tm
+         where tm.conversation_id = t.id and tm.deleted_at is null) as thread_reply_count,
+       m.pinned_at, m.forwarded_from,
+       f.conversation_id as fwd_conversation_id,
+       fcp.project_id as fwd_project_id,
+       coalesce(fu.name, fa.name, '') as fwd_author_name
+from messages m
+left join users u on u.id = m.author_user_id
+left join agents a on a.id = m.author_agent_id
+left join messages pm on pm.id = m.parent_id
+left join users pu on pu.id = pm.author_user_id
+left join agents pa on pa.id = pm.author_agent_id
+left join conversations t on t.parent_message_id = m.id and t.kind = 'thread'
+left join messages f on f.id = m.forwarded_from
+left join conversations fcp on fcp.id = f.conversation_id
+left join users fu on fu.id = f.author_user_id
+left join agents fa on fa.id = f.author_agent_id
+where m.conversation_id = $1
+  and m.deleted_at is null
+  and m.pinned_at is not null
+order by m.pinned_at desc;
+
+-- name: PinMessage :one
+-- any project member may pin; conversation id comes back for the SSE frame
+update messages set pinned_at = now()
+where id = sqlc.arg(id) and deleted_at is null
+returning id, conversation_id;
+
+-- name: UnpinMessage :one
+update messages set pinned_at = null
+where id = sqlc.arg(id) and deleted_at is null
+returning id, conversation_id;
+
 -- name: CreateMessage :one
-insert into messages (conversation_id, author_user_id, body, parent_id, mentions)
-values ($1, $2, $3, sqlc.narg(parent_id), coalesce(sqlc.narg(mentions), '[]'::jsonb))
+insert into messages (conversation_id, author_user_id, body, parent_id, mentions, forwarded_from)
+values ($1, $2, $3, sqlc.narg(parent_id), coalesce(sqlc.narg(mentions), '[]'::jsonb), sqlc.narg(forwarded_from))
 returning id;
+
+-- name: CopyMessageAttachments :exec
+-- a forward reuses the same attachment objects behind the new message
+insert into message_attachments (message_id, attachment_id, position)
+select sqlc.arg(message_id)::uuid, attachment_id, position
+from message_attachments
+where message_id = sqlc.arg(source_id)::uuid;
 
 -- name: MessageParentInConversation :one
 -- reply target must live in the same conversation and be undeleted
@@ -137,7 +195,7 @@ where m.id = sqlc.arg(id)
   and m.deleted_at is null;
 
 -- name: GetMessageByID :one
-select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
        m.author_user_id, m.author_agent_id,
        coalesce(u.name, a.name, '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
@@ -146,7 +204,11 @@ select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m
        (pm.id is not null and pm.deleted_at is not null) as parent_deleted,
        t.id as thread_id, t.title as thread_title,
        (select count(*)::int from messages tm
-         where tm.conversation_id = t.id and tm.deleted_at is null) as thread_reply_count
+         where tm.conversation_id = t.id and tm.deleted_at is null) as thread_reply_count,
+       m.pinned_at, m.forwarded_from,
+       f.conversation_id as fwd_conversation_id,
+       fcp.project_id as fwd_project_id,
+       coalesce(fu.name, fa.name, '') as fwd_author_name
 from messages m
 left join users u on u.id = m.author_user_id
 left join agents a on a.id = m.author_agent_id
@@ -154,6 +216,10 @@ left join messages pm on pm.id = m.parent_id
 left join users pu on pu.id = pm.author_user_id
 left join agents pa on pa.id = pm.author_agent_id
 left join conversations t on t.parent_message_id = m.id and t.kind = 'thread'
+left join messages f on f.id = m.forwarded_from
+left join conversations fcp on fcp.id = f.conversation_id
+left join users fu on fu.id = f.author_user_id
+left join agents fa on fa.id = f.author_agent_id
 where m.id = $1;
 
 -- name: GetMessageForUser :one
@@ -163,7 +229,7 @@ from messages m
 join conversations c on c.id = m.conversation_id
 join projects p on p.id = c.project_id
 join workspace_members wm on wm.workspace_id = p.workspace_id
-where m.id = $1 and wm.user_id = $2;
+where m.id = $1 and wm.user_id = $2 and m.deleted_at is null;
 
 -- name: UpdateMessageBody :one
 -- author-only edit; conversation id is resolved off the row afterwards
@@ -232,7 +298,7 @@ where mr.message_id = any(sqlc.arg(ids)::uuid[])
 order by mr.created_at;
 
 -- name: RecentProjectMessages :many
-select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
        m.author_user_id, m.author_agent_id,
        coalesce(u.name, a.name, '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,

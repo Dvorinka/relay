@@ -8,7 +8,7 @@ import {
   type Thread,
   type ThreadSummary,
 } from "@relay/api-client";
-import { useNavigate } from "@solidjs/router";
+import { useNavigate, useSearchParams } from "@solidjs/router";
 import {
   createEffect,
   createResource,
@@ -20,11 +20,15 @@ import {
 } from "solid-js";
 import { Portal } from "solid-js/web";
 import {
+  CheckIcon,
   FileIcon,
+  ForwardIcon,
   IssueIcon,
+  LinkIcon,
   LockIcon,
   PaperclipIcon,
   PencilIcon,
+  PinIcon,
   ReplyIcon,
   ThreadIcon,
   TrashIcon,
@@ -41,6 +45,7 @@ import { api } from "../../lib/api";
 import { subscribe } from "../../lib/events";
 import { Markdown, renderMarkdown } from "../../lib/markdown";
 import { formatBytes, initials, messagePreview } from "../../lib/text";
+import { useProjects } from "../../stores/projects";
 import { useSession } from "../../stores/session";
 import { useChatStyle } from "../../stores/theme";
 
@@ -51,6 +56,22 @@ const MAX_FILE_BYTES = MAX_FILE_MIB * 1024 * 1024;
 const MAX_ATTACHMENTS = 20;
 // Quick-react set on the hover toolbar.
 const QUICK_REACTIONS = ["👀", "✅", "❤️", "🎉"];
+
+// Shift+hover expands the toolbar with the heavy actions (pin / copy link /
+// forward), Discord-style. Listeners attach once, lazily.
+const [shiftHeld, setShiftHeld] = createSignal(false);
+let shiftTracked = false;
+function trackShift() {
+  if (shiftTracked) return;
+  shiftTracked = true;
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Shift") setShiftHeld(true);
+  });
+  window.addEventListener("keyup", (e) => {
+    if (e.key === "Shift") setShiftHeld(false);
+  });
+  window.addEventListener("blur", () => setShiftHeld(false));
+}
 
 type PendingAttachment = {
   localId: string;
@@ -458,11 +479,124 @@ function CreateThreadDialog(props: {
   );
 }
 
+// Forward a message into another project's conversation. The copy credits
+// the original author server-side; the dialog lists every other project the
+// caller belongs to.
+function ForwardDialog(props: {
+  message: Message;
+  projectId: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const projects = useProjects();
+  const [busyId, setBusyId] = createSignal<string | null>(null);
+  const [sentTo, setSentTo] = createSignal<string | null>(null);
+  const [error, setError] = createSignal<string | null>(null);
+
+  createEffect(() => {
+    if (props.open) {
+      setSentTo(null);
+      setError(null);
+    }
+  });
+
+  const targets = () =>
+    (projects.projects() ?? []).filter((p) => p.id !== props.projectId);
+
+  async function forward(projectId: string) {
+    if (busyId()) return;
+    setBusyId(projectId);
+    setError(null);
+    try {
+      await api.forwardMessage(props.message.id, projectId);
+      setSentTo(projectId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not forward");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <Dialog.Root
+      open={props.open}
+      onOpenChange={(d) => props.onOpenChange(d.open)}
+    >
+      <Portal>
+        <Dialog.Backdrop class="fixed inset-0 z-40 bg-black/40" />
+        <Dialog.Positioner class="fixed inset-0 z-40 flex items-start justify-center p-4 pt-[15vh]">
+          <Dialog.Content class="w-full max-w-md rounded-xl border border-border bg-surface p-4 shadow-lg outline-none">
+            <Dialog.Title class="text-[14px] font-semibold">
+              Forward message
+            </Dialog.Title>
+            <Dialog.Description class="mt-1 text-[13px] text-muted">
+              Share a copy into another project's chat, credited to the
+              original author.
+            </Dialog.Description>
+            <div class="mt-3 max-h-64 overflow-y-auto rounded-lg border border-border">
+              <For
+                each={targets()}
+                fallback={
+                  <p class="px-3 py-4 text-center text-[13px] text-muted">
+                    No other projects to forward to
+                  </p>
+                }
+              >
+                {(p) => (
+                  <button
+                    type="button"
+                    disabled={busyId() !== null}
+                    onClick={() => void forward(p.id)}
+                    class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13.5px] transition-colors hover:bg-hover disabled:opacity-60"
+                  >
+                    <Show
+                      when={p.icon_url}
+                      fallback={
+                        <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md font-mono text-[10px] text-muted">
+                          {p.key.slice(0, 2)}
+                        </span>
+                      }
+                    >
+                      {(url) => (
+                        <img
+                          src={url()}
+                          alt=""
+                          class="h-6 w-6 shrink-0 rounded-md object-cover"
+                        />
+                      )}
+                    </Show>
+                    <span class="min-w-0 flex-1 truncate">{p.name}</span>
+                    <Show when={sentTo() === p.id}>
+                      <span class="flex shrink-0 items-center gap-1 text-[12px] text-accent-ink">
+                        <CheckIcon class="h-3.5 w-3.5" /> Sent
+                      </span>
+                    </Show>
+                  </button>
+                )}
+              </For>
+            </div>
+            <FormError message={error()} />
+            <div class="mt-3 flex justify-end">
+              <Dialog.CloseTrigger
+                type="button"
+                class="inline-flex h-8 items-center justify-center rounded-md px-3 text-[13px] text-muted transition-colors hover:bg-hover hover:text-fg"
+              >
+                Done
+              </Dialog.CloseTrigger>
+            </div>
+          </Dialog.Content>
+        </Dialog.Positioner>
+      </Portal>
+    </Dialog.Root>
+  );
+}
+
 function MessageRow(props: {
   projectId: string;
   message: Message;
   grouped: boolean;
   meId: string | undefined;
+  highlighted: boolean;
   onReply: (m: Message) => void;
   onChanged: (m: Message) => void;
   onDeleted: (id: string) => void;
@@ -474,11 +608,14 @@ function MessageRow(props: {
   const [convertOpen, setConvertOpen] = createSignal(false);
   const [deleteOpen, setDeleteOpen] = createSignal(false);
   const [threadOpen, setThreadOpen] = createSignal(false);
+  const [forwardOpen, setForwardOpen] = createSignal(false);
   const [editing, setEditing] = createSignal(false);
   const [editDraft, setEditDraft] = createSignal("");
   const [editError, setEditError] = createSignal<string | null>(null);
   const [savingEdit, setSavingEdit] = createSignal(false);
+  const [copied, setCopied] = createSignal(false);
   let editEl: HTMLTextAreaElement | undefined;
+  trackShift();
 
   const mine = () =>
     props.meId !== undefined &&
@@ -490,6 +627,28 @@ function MessageRow(props: {
   async function doDelete() {
     await api.deleteMessage(m().id);
     props.onDeleted(m().id);
+  }
+
+  async function togglePin() {
+    try {
+      const updated = await api.pinMessage(m().id, !m().pinned_at);
+      props.onChanged(updated);
+    } catch {
+      // SSE message.updated reconciles
+    }
+  }
+
+  async function copyLink() {
+    const url = `${location.origin}${location.pathname}?msg=${m().id}`;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      // clipboard API unavailable (insecure context) - prompt is the fallback
+      window.prompt("Copy link", url);
+      return;
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
   }
 
   async function react(emoji: string) {
@@ -542,14 +701,16 @@ function MessageRow(props: {
 
   return (
     <div
+      id={`msg-${m().id}`}
       class={
-        bubbles()
+        (bubbles()
           ? `group relative flex px-4 ${
               mine() ? "justify-end" : "justify-start"
             } ${props.grouped ? "py-[1px]" : "mt-2.5 py-[1px]"}`
           : `group relative flex gap-3 px-4 hover:bg-hover/60 ${
               props.grouped ? "py-[3px]" : "mt-4 py-1.5"
-            }`
+            }`) +
+        (props.highlighted ? " rounded-xl bg-accent-soft/60 transition-colors" : " transition-colors")
       }
       onClick={(e) => {
         if (window.matchMedia("(hover: none)").matches &&
@@ -616,6 +777,22 @@ function MessageRow(props: {
               </span>
             </Show>
           </div>
+        </Show>
+        <Show when={m().pinned_at}>
+          <div class="mb-0.5 flex items-center gap-1 text-[10.5px] font-semibold uppercase tracking-wide text-faint">
+            <PinIcon class="h-3 w-3" />
+            Pinned
+          </div>
+        </Show>
+        <Show when={m().forwarded} keyed>
+          {(f) => (
+            <div class="mb-0.5 flex items-center gap-1.5 text-[12px] italic text-muted">
+              <ForwardIcon class="h-3 w-3 shrink-0 text-faint" />
+              <span class="truncate">
+                Forwarded from <span class="font-medium not-italic">{f.author}</span>
+              </span>
+            </div>
+          )}
         </Show>
         <Show when={m().parent}>{(p) => <ReplyStrip parent={p()} />}</Show>
         <Show
@@ -732,6 +909,37 @@ function MessageRow(props: {
         >
           <ReplyIcon class="h-4 w-4" />
         </button>
+        <Show when={shiftHeld() || tapped()}>
+          <button
+            type="button"
+            title={m().pinned_at ? "Unpin message" : "Pin message"}
+            aria-label={m().pinned_at ? "Unpin message" : "Pin message"}
+            onClick={() => void togglePin()}
+            class={toolBtn}
+          >
+            <PinIcon class="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            title={copied() ? "Copied" : "Copy link"}
+            aria-label="Copy link to message"
+            onClick={() => void copyLink()}
+            class={toolBtn}
+          >
+            <Show when={!copied()} fallback={<CheckIcon class="h-4 w-4 text-accent-ink" />}>
+              <LinkIcon class="h-4 w-4" />
+            </Show>
+          </button>
+          <button
+            type="button"
+            title="Forward"
+            aria-label="Forward message"
+            onClick={() => setForwardOpen(true)}
+            class={toolBtn}
+          >
+            <ForwardIcon class="h-4 w-4" />
+          </button>
+        </Show>
         <Show when={props.onOpenThread && !m().thread}>
           <button
             type="button"
@@ -804,6 +1012,12 @@ function MessageRow(props: {
         open={threadOpen()}
         onOpenChange={setThreadOpen}
         onCreated={(t) => props.onOpenThread?.(t)}
+      />
+      <ForwardDialog
+        message={m()}
+        projectId={props.projectId}
+        open={forwardOpen()}
+        onOpenChange={setForwardOpen}
       />
     </div>
   );
@@ -879,7 +1093,10 @@ function ConversationThread(props: {
   onOpenThread?: (t: ThreadSummary) => void;
 }) {
   const session = useSession();
+  const [searchParams] = useSearchParams();
   const [messages, setMessages] = createSignal<Message[]>([]);
+  const [highlightId, setHighlightId] = createSignal<string | null>(null);
+  const [pinsOpen, setPinsOpen] = createSignal(false);
   const [hasMore, setHasMore] = createSignal(false);
   const [loadingMore, setLoadingMore] = createSignal(false);
   const [draft, setDraft] = createSignal("");
@@ -927,6 +1144,17 @@ function ConversationThread(props: {
     (id) => api.listMessages(id, { limit: PAGE_SIZE }),
   );
 
+  const [pins, { refetch: refetchPins }] = createResource(
+    () => props.conversationId,
+    async (id) => {
+      try {
+        return (await api.listPins(id)).messages;
+      } catch {
+        return [] as Message[];
+      }
+    },
+  );
+
   function markLatestRead() {
     const last = messages().at(-1);
     if (last) {
@@ -961,8 +1189,11 @@ function ConversationThread(props: {
       markLatestRead();
     } else if (e.type === "message.updated") {
       replaceMessage(data.message as Message);
+      const upd = data.message as Message;
+      if (upd.pinned_at !== undefined) void refetchPins();
     } else if (e.type === "message.deleted") {
       removeMessage(data.message_id as string);
+      void refetchPins();
     } else if (e.type === "reaction.updated") {
       const mid = data.message_id as string;
       const reactions = (data.reactions ?? []) as Reaction[];
@@ -1040,6 +1271,41 @@ function ConversationThread(props: {
       setLoadingMore(false);
     }
   }
+
+  // Center a message in the scroll port, paging history back until it mounts
+  // (permalinks and pin jumps can target messages older than the first page).
+  async function jumpTo(messageId: string) {
+    for (let i = 0; i <= 8; i++) {
+      const el = document.getElementById(`msg-${messageId}`);
+      if (el) {
+        el.scrollIntoView({ block: "center" });
+        setHighlightId(messageId);
+        setTimeout(
+          () => setHighlightId((cur) => (cur === messageId ? null : cur)),
+          1800,
+        );
+        return;
+      }
+      if (!hasMore() || loadingMore() || i === 8) break;
+      await loadEarlier();
+    }
+  }
+
+  // ?msg=<id> permalinks land here after the first page seeds; tracking the
+  // last target (not a boolean) lets a second permalink jump work without a
+  // remount.
+  let permalinkLast: string | null = null;
+  createEffect(() => {
+    const raw = searchParams.msg;
+    const target = (Array.isArray(raw) ? raw[0] : raw) ?? null;
+    if (!target) {
+      permalinkLast = null;
+      return;
+    }
+    if (target === permalinkLast || firstPage.state !== "ready") return;
+    permalinkLast = target;
+    void jumpTo(target);
+  });
 
   function autogrow() {
     if (inputEl) {
@@ -1383,6 +1649,58 @@ function ConversationThread(props: {
         }}
         class="min-h-0 flex-1 overflow-y-auto"
       >
+        <Show when={(pins()?.length ?? 0) > 0}>
+          <div class="border-b border-border/60 px-4 py-1.5">
+            <button
+              type="button"
+              onClick={() => setPinsOpen((v) => !v)}
+              class="flex w-full items-center gap-2 text-[12px] text-muted transition-colors hover:text-fg"
+            >
+              <PinIcon class="h-3.5 w-3.5" />
+              <span class="font-medium">
+                {pins()!.length} pinned
+              </span>
+            </button>
+            <Show when={pinsOpen()}>
+              <div class="mt-1 flex flex-col gap-0.5 pb-1">
+                <For each={pins()}>
+                  {(p) => (
+                    <div class="group/pin flex items-center gap-2 rounded-md px-2 py-1 text-[12.5px] hover:bg-hover">
+                      <button
+                        type="button"
+                        onClick={() => void jumpTo(p.id)}
+                        class="flex min-w-0 flex-1 items-baseline gap-2 text-left"
+                      >
+                        <span
+                          class="shrink-0 font-semibold"
+                          style={{ color: authorColor(p.author.name) }}
+                        >
+                          {p.author.name}
+                        </span>
+                        <span class="truncate text-muted">
+                          {messagePreview(p.body).slice(0, 80) || "(attachment)"}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        title="Unpin"
+                        aria-label="Unpin message"
+                        onClick={() =>
+                          void api
+                            .pinMessage(p.id, false)
+                            .then(() => refetchPins())
+                        }
+                        class="hidden shrink-0 rounded p-0.5 text-muted hover:text-fg group-hover/pin:block"
+                      >
+                        <XIcon class="h-3 w-3" />
+                      </button>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </Show>
+          </div>
+        </Show>
         <Show when={hasMore()}>
           <div class="flex justify-center py-2">
             <button
@@ -1455,6 +1773,7 @@ function ConversationThread(props: {
                     message={m}
                     grouped={grouped()}
                     meId={session.user()?.id}
+                    highlighted={highlightId() === m.id}
                     onReply={startReply}
                     onChanged={replaceMessage}
                     onDeleted={removeMessage}

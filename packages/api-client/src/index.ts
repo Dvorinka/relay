@@ -324,6 +324,18 @@ export function createClient(baseUrl: string, token?: string) {
       }),
     listThreads: (projectId: string) =>
       request<{ threads: Thread[] }>(`/api/projects/${projectId}/threads`),
+    pinMessage: (messageId: string, pinned: boolean) =>
+      request<Message>(`/api/messages/${messageId}/pin`, {
+        method: pinned ? "PUT" : "DELETE",
+      }),
+    listPins: (conversationId: string) =>
+      request<{ messages: Message[] }>(
+        `/api/conversations/${conversationId}/pins`,
+      ),
+    forwardMessage: (messageId: string, projectId: string) =>
+      post<{ message: Message }>(`/api/messages/${messageId}/forward`, {
+        project_id: projectId,
+      }),
 
     // Issues
     listIssues: (projectId: string, filters?: IssueFilters) => {
@@ -588,6 +600,26 @@ export function createClient(baseUrl: string, token?: string) {
       form.set("file", file);
       return request<{ id: string; avatar_url: string }>(
         `/api/agents/${agentId}/avatar`,
+        { method: "PUT", body: form },
+      );
+    },
+    uploadProjectIcon: (projectId: string, file: File) => {
+      const form = new FormData();
+      form.set("file", file);
+      return request<{ id: string; icon_url: string }>(
+        `/api/projects/${projectId}/icon`,
+        { method: "PUT", body: form },
+      );
+    },
+    adoptGithubIcon: (projectId: string) =>
+      post<{ id: string; icon_url: string }>(
+        `/api/projects/${projectId}/icon/github`,
+      ),
+    uploadWorkspaceIcon: (workspaceId: string, file: File) => {
+      const form = new FormData();
+      form.set("file", file);
+      return request<{ id: string; avatar_url: string }>(
+        `/api/workspaces/${workspaceId}/icon`,
         { method: "PUT", body: form },
       );
     },

@@ -156,6 +156,18 @@ async function rehydrateUrls() {
     const blob = await localStore.getBlob("avatar");
     if (blob) db.user.avatar_url = URL.createObjectURL(blob);
   }
+  for (const p of db.projects) {
+    if (p.icon_url === `blob:icon:${p.id}`) {
+      const blob = await localStore.getBlob(`icon:${p.id}`);
+      if (blob) p.icon_url = URL.createObjectURL(blob);
+      else p.icon_url = null;
+    }
+  }
+  if (db.workspace.avatar_url === "blob:icon:workspace") {
+    const blob = await localStore.getBlob("icon:workspace");
+    if (blob) db.workspace.avatar_url = URL.createObjectURL(blob);
+    else db.workspace.avatar_url = null;
+  }
 }
 
 function save() {
@@ -174,6 +186,18 @@ function save() {
         ? "blob:avatar"
         : (db.user.avatar_url ?? null),
     },
+    workspace: {
+      ...db.workspace,
+      avatar_url: db.workspace.avatar_url?.startsWith("blob:")
+        ? "blob:icon:workspace"
+        : (db.workspace.avatar_url ?? null),
+    },
+    projects: db.projects.map((p) => ({
+      ...p,
+      icon_url: p.icon_url?.startsWith("blob:")
+        ? `blob:icon:${p.id}`
+        : (p.icon_url ?? null),
+    })),
   };
   void localStore.put("doc", doc).catch(() => {
     console.warn("local store write failed — change kept in memory only");
@@ -478,6 +502,59 @@ const impl = {
     }
     save();
     notifyThread(convId);
+  },
+  pinMessage: async (messageId: string, pinned: boolean): Promise<Message> => {
+    const m = findMessage(messageId);
+    if (!m) notFound();
+    m.pinned_at = pinned ? now() : null;
+    save();
+    emitLocal({
+      type: "message.updated",
+      project_id:
+        db.conversations.find((c) => c.id === m.conversation_id)?.project_id ??
+        "",
+      data: { message: m },
+    });
+    return m;
+  },
+  listPins: async (conversationId: string) => ({
+    messages: db.messages
+      .filter((m) => m.conversation_id === conversationId && m.pinned_at)
+      .sort((a, b) => (b.pinned_at ?? "").localeCompare(a.pinned_at ?? ""))
+      .map((m) => ({ ...m, thread: withReplyCount(threadOf(m.id)) })),
+  }),
+  forwardMessage: async (messageId: string, projectId: string) => {
+    const src = findMessage(messageId);
+    if (!src) notFound();
+    const conv = projectConv(projectId);
+    const root = src.forwarded ?? {
+      message_id: src.id,
+      conversation_id: src.conversation_id,
+      project_id: db.conversations.find((c) => c.id === src.conversation_id)
+        ?.project_id,
+      author: src.author.name,
+    };
+    const m: Message = {
+      id: uuid(),
+      conversation_id: conv.id,
+      author: me(),
+      body: src.body,
+      parent: null,
+      attachments: [...src.attachments],
+      reactions: [],
+      created_at: now(),
+      edited_at: null,
+      agent_read: false,
+      forwarded: { ...root },
+    };
+    db.messages.push(m);
+    save();
+    emitLocal({
+      type: "message.created",
+      project_id: projectId,
+      data: { message: m },
+    });
+    return { message: m };
   },
   toggleReaction: async (
     messageId: string,
@@ -918,6 +995,20 @@ const impl = {
     db.user.avatar_url = URL.createObjectURL(file);
     save();
     return { avatar_url: db.user.avatar_url };
+  },
+  uploadProjectIcon: async (projectId: string, file: File) => {
+    const p = db.projects.find((x) => x.id === projectId);
+    if (!p) notFound();
+    await localStore.putBlob(`icon:${projectId}`, file);
+    p.icon_url = URL.createObjectURL(file);
+    save();
+    return { id: p.id, icon_url: p.icon_url };
+  },
+  uploadWorkspaceIcon: async (_workspaceId: string, file: File) => {
+    await localStore.putBlob("icon:workspace", file);
+    db.workspace.avatar_url = URL.createObjectURL(file);
+    save();
+    return { id: db.workspace.id, avatar_url: db.workspace.avatar_url };
   },
   createWorkspace: async () => {
     throw new ApiClientError(

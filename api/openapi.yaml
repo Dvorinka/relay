@@ -1052,6 +1052,89 @@ paths:
                     items: { $ref: "#/components/schemas/Thread" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /api/messages/{messageId}/pin:
+    put:
+      operationId: pinMessage
+      summary: Pin a message - any project member may pin
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/MessageId" } ]
+      responses:
+        "200":
+          description: Updated message with pinned_at set
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: unpinMessage
+      summary: Unpin a message
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/MessageId" } ]
+      responses:
+        "200":
+          description: Updated message with pinned_at cleared
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/conversations/{conversationId}/pins:
+    get:
+      operationId: listPins
+      summary: Pinned messages in the conversation, most recently pinned first
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/ConversationId" } ]
+      responses:
+        "200":
+          description: Pinned messages
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [messages]
+                properties:
+                  messages:
+                    type: array
+                    items: { $ref: "#/components/schemas/Message" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/messages/{messageId}/forward:
+    post:
+      operationId: forwardMessage
+      summary: >-
+        Forward a message into another project's conversation. The copy
+        credits the original author via `forwarded`; attachments are shared,
+        mentions are stripped.
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/MessageId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project_id]
+              properties:
+                project_id:
+                  type: string
+                  format: uuid
+                  description: Target project; the caller must be a member
+      responses:
+        "201":
+          description: Forwarded copy in the target conversation
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message]
+                properties:
+                  message: { $ref: "#/components/schemas/Message" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /api/messages/{messageId}/reactions:
     put:
       operationId: toggleReaction
@@ -1984,17 +2067,78 @@ paths:
         "413": { description: "Exceeds the avatar size cap" }
         "503": { description: "Object storage not configured" }
 
+  /api/projects/{projectId}/icon:
+    put:
+      operationId: uploadProjectIcon
+      summary: Upload a project's image icon (any member)
+      tags: [projects]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "200": { description: "Updated project with icon_url" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "413": { description: "Exceeds the icon size cap" }
+        "503": { description: "Object storage not configured" }
+
+  /api/projects/{projectId}/icon/github:
+    post:
+      operationId: adoptGithubIcon
+      summary: >-
+        Adopt the linked repository's GitHub owner avatar as the project
+        icon. Fetches github.com/<owner>.png server-side.
+      tags: [projects]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      responses:
+        "200": { description: "Updated project with icon_url" }
+        "400": { description: "No repository linked" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "502": { description: "Could not fetch the GitHub avatar" }
+        "503": { description: "Object storage not configured" }
+
+  /api/workspaces/{workspaceId}/icon:
+    put:
+      operationId: uploadWorkspaceIcon
+      summary: Upload the workspace's image icon (owner/admin)
+      tags: [workspaces]
+      parameters:
+        - { name: workspaceId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "200": { description: "Updated workspace with avatar_url" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "413": { description: "Exceeds the icon size cap" }
+        "503": { description: "Object storage not configured" }
+
   /api/files/{key}:
     get:
       operationId: readFile
       summary: >-
-        Redirect to a presigned object URL. Serves the avatars/ key prefix
-        only; message attachments use their project-scoped endpoint.
+        Streams an avatar/icon object. Serves the avatars/ key prefix only;
+        pass ?download=1 to force Content-Disposition attachment.
       tags: [attachments]
       parameters:
         - { name: key, in: path, required: true, schema: { type: string } }
+        - { name: download, in: query, schema: { type: string }, description: "Any value forces a download response" }
       responses:
-        "302": { description: "Redirect to the presigned URL" }
+        "200": { description: "File bytes (inline, or attachment when download is set)" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /api/me/reviews:
@@ -2417,6 +2561,9 @@ components:
         id: { type: string, format: uuid }
         name: { type: string }
         slug: { type: string }
+        avatar_url:
+          type: ["string", "null"]
+          description: "Workspace icon via /api/files/; append ?download=1 to fetch as attachment"
         created_at: { type: string, format: date-time }
 
     WorkspaceWithRole:
@@ -2448,6 +2595,9 @@ components:
         name: { type: string }
         description: { type: string }
         icon: { type: ["string", "null"] }
+        icon_url:
+          type: ["string", "null"]
+          description: "Image icon via /api/files/; append ?download=1 to fetch as attachment"
         color: { type: ["string", "null"], pattern: "^#[0-9a-fA-F]{6}$" }
         statuses:
           type: array
@@ -2613,6 +2763,24 @@ components:
             - $ref: "#/components/schemas/ThreadSummary"
             - type: "null"
           description: "Thread rooted at this message, when one exists"
+        pinned_at:
+          type: ["string", "null"]
+          format: date-time
+          description: "Set while the message is pinned to the conversation"
+        forwarded:
+          anyOf:
+            - $ref: "#/components/schemas/MessageForwarded"
+            - type: "null"
+          description: "Present on forwarded copies; credits the original message"
+
+    MessageForwarded:
+      type: object
+      required: [message_id, conversation_id, author]
+      properties:
+        message_id: { type: string, format: uuid }
+        conversation_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        author: { type: string, description: "Original author's display name" }
 
     ThreadSummary:
       type: object

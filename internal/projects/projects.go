@@ -92,12 +92,23 @@ func (s *Service) projectForUser(c *gin.Context) (db.GetProjectByIDRow, bool) {
 	return p, true
 }
 
+// iconURL turns a stored avatar_key into the files-reader path the web
+// client puts in <img src>; nil when no image icon is set.
+func iconURL(k pgtype.Text) *string {
+	if !k.Valid {
+		return nil
+	}
+	u := "/api/files/" + k.String
+	return &u
+}
+
 // ProjectJSON is the wire shape; conversations package reuses it.
 func projectJSON(p db.GetProjectByIDRow) gin.H {
 	return gin.H{
 		"id": p.ID.String(), "workspace_id": p.WorkspaceID.String(),
 		"key": p.Key, "name": p.Name, "description": p.Description,
 		"icon":         textOrNil(p.Icon),
+		"icon_url":     iconURL(p.AvatarKey),
 		"color":        textOrNil(p.Color),
 		"statuses":     statuses.Parse(p.Statuses),
 		"local_path":   textOrNil(p.LocalPath),
@@ -126,7 +137,8 @@ func (s *Service) handleList(c *gin.Context) {
 		out = append(out, gin.H{
 			"id": r.ID.String(), "workspace_id": r.WorkspaceID.String(),
 			"key": r.Key, "name": r.Name, "description": r.Description,
-			"icon": textOrNil(r.Icon), "color": textOrNil(r.Color),
+			"icon": textOrNil(r.Icon), "icon_url": iconURL(r.AvatarKey),
+			"color":        textOrNil(r.Color),
 			"statuses":     statuses.Parse(r.Statuses),
 			"local_path":   textOrNil(r.LocalPath),
 			"brief_policy": r.BriefPolicy,

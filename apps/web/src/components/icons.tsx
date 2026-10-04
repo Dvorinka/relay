@@ -364,6 +364,76 @@ export function ThreadIcon(props: IconProps): JSX.Element {
   );
 }
 
+export function PinIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <path d="M9.5 2.5 13.5 6.5l-1.8.6-2.4 2.4-.3 2.9-1.5-1.5-3.2 3.2-.7-.7 3.2-3.2-1.5-1.5 2.9-.3 2.4-2.4Z" />
+    </svg>
+  );
+}
+
+export function LinkIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <path d="M6.5 9.5a3 3 0 0 0 4.2.3l2-2a3 3 0 0 0-4.2-4.2l-1.1 1.1" />
+      <path d="M9.5 6.5a3 3 0 0 0-4.2-.3l-2 2a3 3 0 0 0 4.2 4.2l1.1-1.1" />
+    </svg>
+  );
+}
+
+export function ForwardIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <path d="M13.5 5.5 10 2.5v2c-4 0-6.5 2-6.5 6 1-3 3-3.5 6.5-3.5v2Z" />
+    </svg>
+  );
+}
+
+export function DownloadIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <path d="M8 2.5v7m0 0 3-3m-3 3L5 6.5" />
+      <path d="M3 11v1.5a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V11" />
+    </svg>
+  );
+}
+
 export function LockIcon(props: IconProps): JSX.Element {
   return (
     <svg

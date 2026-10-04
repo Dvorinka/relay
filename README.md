@@ -53,6 +53,9 @@ thread, thread becomes an issue, issue tracks GitHub state.
 - **Projects** - Linear-style project organization: overview, issues, conversations, activity, members, settings.
 - **Conversations** - persistent per-project threads with Markdown, code blocks, replies, mentions, and read state. `@` mentions resolve to real entities — users, agents, `KEY-1` issues, `owner/repo#42` GitHub issues and PRs, `@file:` and `@gh:` files — and are stored as structured references so agents know exactly what you meant. Chat style is per-user: the default left-aligned layout or WhatsApp-style two-sided bubbles (Settings → Appearance).
 - **Message threads** - any message can sprout a dedicated side conversation (hover → thread icon, optional title) so tangents don't drown the channel. One thread per message, no nesting; the parent shows a live reply-count chip and the thread opens in a side panel. Works in local mode and via MCP (`create_thread`).
+- **Message actions** - hold **Shift** and hover a message for the full quick-action bar: reply, pin, copy link, forward, edit, delete. Pinned messages collect in a collapsible bar atop the conversation; permalinks (`?msg=`) deep-link and flash the target.
+- **Forwarding** - share any message into another project's chat as an attributed copy (`Forwarded from …`); attachments carry over, mention links stay behind, chains credit the original author. Works in local mode and via MCP (`forward_message`).
+- **Icons & avatars** - projects, workspaces, users, and agents all take real image icons (upload, or pull the linked repo's GitHub org avatar in one click from project settings). They show in the rail, headers, and message rows, and every icon is downloadable via the avatar file endpoint.
 - **Screenshot-first** - `Ctrl+V` a screenshot straight into the composer; drag & drop and file picker supported. Attachments stay attached to their message.
 - **Issues** - fast issue tracker with `MYB-142` keys, **custom per-project statuses** (own lanes, colors, closed flags), priorities, labels, assignees, comments, and an activity timeline. Kanban board is a full page, one click from chat; **named boards** and **saved filters** persist per project.
 - **Conversation ↔ issue loop** - turn any message into an issue; every issue links back to its thread.
@@ -154,7 +157,8 @@ expire (default 72h) and can be revoked from the same section.
 Tools: `list_projects`, `get_project`, `list_conversations`, `get_messages`,
 `get_message`, `get_attachment`, `search_messages`, `list_issues`,
 `get_issue`, `send_message`, `edit_message`, `delete_message`,
-`create_thread`, `react_to_message`, `create_issue`, `update_issue`,
+`create_thread`, `forward_message`, `pin_message`, `react_to_message`,
+`create_issue`, `update_issue`,
 `mark_message_read`, `todo_list`, `todo_add`, `todo_update`,
 `todo_delete`, `github_list_issues`, `github_get_issue`,
 `github_list_prs`, `github_get_pr`, `submit_review`, `list_reviews`,

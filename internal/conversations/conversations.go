@@ -48,6 +48,10 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
 	g.DELETE("/messages/:id", s.handleDeleteMessage)
 	g.POST("/messages/:id/thread", s.handleCreateThread)
 	g.GET("/projects/:id/threads", s.projectMemberOnly, s.handleListThreads)
+	g.POST("/messages/:id/forward", s.handleForwardMessage)
+	g.PUT("/messages/:id/pin", s.handlePinMessage)
+	g.DELETE("/messages/:id/pin", s.handlePinMessage)
+	g.GET("/conversations/:id/pins", s.memberOnly, s.handleListPins)
 	g.PUT("/messages/:id/reactions", s.handleToggleReaction)
 	g.POST("/messages/:id/read", s.handleMarkRead)
 }
@@ -168,9 +172,12 @@ func (s *Service) handleListMessages(c *gin.Context) {
 			ParentDeleted: m.ParentDeleted,
 			ThreadID:      m.ThreadID, ThreadTitle: m.ThreadTitle,
 			ThreadReplyCount: m.ThreadReplyCount,
-			Attachments:      atts[m.ID.String()],
-			Reactions:        rxns[m.ID.String()],
-			AgentRead:        read[m.ID.String()],
+			PinnedAt:         m.PinnedAt,
+			ForwardedFrom:    m.ForwardedFrom, FwdConversationID: m.FwdConversationID,
+			FwdProjectID: m.FwdProjectID, FwdAuthorName: m.FwdAuthorName,
+			Attachments: atts[m.ID.String()],
+			Reactions:   rxns[m.ID.String()],
+			AgentRead:   read[m.ID.String()],
 		}))
 	}
 	c.JSON(http.StatusOK, gin.H{"messages": msgs, "has_more": hasMore})
@@ -254,7 +261,10 @@ func (s *Service) handlePostMessage(c *gin.Context) {
 		ParentDeleted: m.ParentDeleted,
 		ThreadID:      m.ThreadID, ThreadTitle: m.ThreadTitle,
 		ThreadReplyCount: m.ThreadReplyCount,
-		Attachments:      atts[m.ID.String()],
+		PinnedAt:         m.PinnedAt,
+		ForwardedFrom:    m.ForwardedFrom, FwdConversationID: m.FwdConversationID,
+		FwdProjectID: m.FwdProjectID, FwdAuthorName: m.FwdAuthorName,
+		Attachments: atts[m.ID.String()],
 	})
 	if s.Bus != nil {
 		pid, _ := uuid.FromBytes(conv.ProjectID.Bytes[:])
@@ -334,16 +344,13 @@ func (s *Service) handleEditMessage(c *gin.Context) {
 		ParentDeleted: m.ParentDeleted,
 		ThreadID:      m.ThreadID, ThreadTitle: m.ThreadTitle,
 		ThreadReplyCount: m.ThreadReplyCount,
-		Attachments:      s.attachmentsFor(c, []pgtype.UUID{m.ID})[m.ID.String()],
-		Reactions:        s.reactionsFor(c, []pgtype.UUID{m.ID})[m.ID.String()],
+		PinnedAt:         m.PinnedAt,
+		ForwardedFrom:    m.ForwardedFrom, FwdConversationID: m.FwdConversationID,
+		FwdProjectID: m.FwdProjectID, FwdAuthorName: m.FwdAuthorName,
+		Attachments: s.attachmentsFor(c, []pgtype.UUID{m.ID})[m.ID.String()],
+		Reactions:   s.reactionsFor(c, []pgtype.UUID{m.ID})[m.ID.String()],
 	})
-	if s.Bus != nil {
-		if pid, err := s.q.ResolveConversationProject(c.Request.Context(), m.ConversationID); err == nil {
-			p, _ := uuid.FromBytes(pid.Bytes[:])
-			s.Bus.Publish(events.Event{Type: "message.updated", ProjectID: p,
-				Data: map[string]any{"conversation_id": m.ConversationID.String(), "message": out}})
-		}
-	}
+	s.publishMessageUpdated(c, m.ConversationID, out)
 	c.JSON(http.StatusOK, out)
 }
 
@@ -393,6 +400,198 @@ func (s *Service) handleDeleteMessage(c *gin.Context) {
 		}
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// messagePayload re-renders one message for responses and SSE frames.
+func (s *Service) messagePayload(c *gin.Context, id pgtype.UUID) (gin.H, bool) {
+	m, err := s.q.GetMessageByID(c.Request.Context(), id)
+	if err != nil {
+		return nil, false
+	}
+	atts := s.attachmentsFor(c, []pgtype.UUID{m.ID})
+	rxns := s.reactionsFor(c, []pgtype.UUID{m.ID})
+	read := s.agentReadSet(c, []pgtype.UUID{m.ID})
+	return MessageJSON(MessageView{
+		ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
+		Body: m.Body, Mentions: m.Mentions, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+		AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
+		AuthorName: m.AuthorName, AuthorAvatar: m.AuthorAvatar,
+		ParentAuthorName: m.ParentAuthorName, ParentBody: m.ParentBody,
+		ParentDeleted: m.ParentDeleted,
+		ThreadID:      m.ThreadID, ThreadTitle: m.ThreadTitle,
+		ThreadReplyCount: m.ThreadReplyCount,
+		PinnedAt:         m.PinnedAt,
+		ForwardedFrom:    m.ForwardedFrom, FwdConversationID: m.FwdConversationID,
+		FwdProjectID: m.FwdProjectID, FwdAuthorName: m.FwdAuthorName,
+		Attachments: atts[m.ID.String()],
+		Reactions:   rxns[m.ID.String()],
+		AgentRead:   read[m.ID.String()],
+	}), true
+}
+
+// publishMessageUpdated pushes the fresh payload so open clients patch the row.
+func (s *Service) publishMessageUpdated(c *gin.Context, convID pgtype.UUID, out gin.H) {
+	if s.Bus == nil {
+		return
+	}
+	if pid, err := s.q.ResolveConversationProject(c.Request.Context(), convID); err == nil {
+		p, _ := uuid.FromBytes(pid.Bytes[:])
+		s.Bus.Publish(events.Event{Type: "message.updated", ProjectID: p,
+			Data: map[string]any{"conversation_id": convID.String(), "message": out}})
+	}
+}
+
+// handlePinMessage toggles pinned_at: PUT pins, DELETE unpins. Any project
+// member may pin — Relay has no Manage Messages tier to gate it behind.
+func (s *Service) handlePinMessage(c *gin.Context) {
+	id, ok := httpx.PathUUID(c, "id")
+	if !ok {
+		return
+	}
+	user := auth.CurrentUser(c)
+	if _, err := s.q.GetMessageForUser(c.Request.Context(),
+		db.GetMessageForUserParams{ID: id, UserID: user.ID}); err != nil {
+		httpx.Error(c, http.StatusNotFound, "not_found", "message not found")
+		return
+	}
+	var convID pgtype.UUID
+	if c.Request.Method == http.MethodPut {
+		r, err := s.q.PinMessage(c.Request.Context(), id)
+		if err != nil {
+			httpx.Error(c, http.StatusNotFound, "not_found", "message not found")
+			return
+		}
+		convID = r.ConversationID
+	} else {
+		r, err := s.q.UnpinMessage(c.Request.Context(), id)
+		if err != nil {
+			httpx.Error(c, http.StatusNotFound, "not_found", "message not found")
+			return
+		}
+		convID = r.ConversationID
+	}
+	out, ok := s.messagePayload(c, id)
+	if !ok {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	s.publishMessageUpdated(c, convID, out)
+	c.JSON(http.StatusOK, out)
+}
+
+// handleListPins returns the conversation's pinned messages, newest pin first.
+func (s *Service) handleListPins(c *gin.Context) {
+	conv := c.MustGet(ctxConversation).(db.Conversation)
+	rows, err := s.q.ListPinnedMessages(c.Request.Context(), conv.ID)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	ids := make([]pgtype.UUID, 0, len(rows))
+	for _, m := range rows {
+		ids = append(ids, m.ID)
+	}
+	atts := s.attachmentsFor(c, ids)
+	rxns := s.reactionsFor(c, ids)
+	read := s.agentReadSet(c, ids)
+	msgs := make([]gin.H, 0, len(rows))
+	for _, m := range rows {
+		msgs = append(msgs, MessageJSON(MessageView{
+			ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
+			Body: m.Body, Mentions: m.Mentions, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+			AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
+			AuthorName: m.AuthorName, AuthorAvatar: m.AuthorAvatar,
+			ParentAuthorName: m.ParentAuthorName, ParentBody: m.ParentBody,
+			ParentDeleted: m.ParentDeleted,
+			ThreadID:      m.ThreadID, ThreadTitle: m.ThreadTitle,
+			ThreadReplyCount: m.ThreadReplyCount,
+			PinnedAt:         m.PinnedAt,
+			ForwardedFrom:    m.ForwardedFrom, FwdConversationID: m.FwdConversationID,
+			FwdProjectID: m.FwdProjectID, FwdAuthorName: m.FwdAuthorName,
+			Attachments: atts[m.ID.String()],
+			Reactions:   rxns[m.ID.String()],
+			AgentRead:   read[m.ID.String()],
+		}))
+	}
+	c.JSON(http.StatusOK, gin.H{"messages": msgs})
+}
+
+// handleForwardMessage copies a message into another project's conversation.
+// The copy carries forwarded_from so clients can credit the original author;
+// attachment links are shared, mentions are stripped (target members differ).
+func (s *Service) handleForwardMessage(c *gin.Context) {
+	id, ok := httpx.PathUUID(c, "id")
+	if !ok {
+		return
+	}
+	var req struct {
+		ProjectID string `json:"project_id"`
+	}
+	if !httpx.BindJSON(c, &req) {
+		return
+	}
+	var pid pgtype.UUID
+	if err := pid.Scan(req.ProjectID); err != nil || !pid.Valid {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "invalid project_id")
+		return
+	}
+	user := auth.CurrentUser(c)
+	if _, err := s.q.GetMessageForUser(c.Request.Context(),
+		db.GetMessageForUserParams{ID: id, UserID: user.ID}); err != nil {
+		httpx.Error(c, http.StatusNotFound, "not_found", "message not found")
+		return
+	}
+	role, err := s.q.ProjectWorkspaceRole(c.Request.Context(),
+		db.ProjectWorkspaceRoleParams{ID: pid, UserID: user.ID})
+	if err != nil || role == "" {
+		httpx.Error(c, http.StatusNotFound, "not_found", "project not found")
+		return
+	}
+	// The target's channel may not exist yet — conversations create lazily.
+	target, err := s.q.GetProjectConversation(c.Request.Context(), pid)
+	if err != nil {
+		target, err = s.q.CreateProjectConversation(c.Request.Context(), pid)
+		if err != nil {
+			target, err = s.q.GetProjectConversation(c.Request.Context(), pid)
+		}
+	}
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	src, err := s.q.GetMessageByID(c.Request.Context(), id)
+	if err != nil {
+		httpx.Error(c, http.StatusNotFound, "not_found", "message not found")
+		return
+	}
+	root := src.ForwardedFrom
+	if !root.Valid {
+		root = src.ID // chains credit the origin, not the previous hop
+	}
+	newID, err := s.q.CreateMessage(c.Request.Context(), db.CreateMessageParams{
+		ConversationID: target.ID, AuthorUserID: user.ID, Body: src.Body,
+		ForwardedFrom: root,
+	})
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	if err := s.q.CopyMessageAttachments(c.Request.Context(),
+		db.CopyMessageAttachmentsParams{MessageID: newID, SourceID: src.ID}); err != nil {
+		s.log.Error("forward attachments failed", zap.Error(err))
+	}
+	_ = s.q.MarkMessageRead(c.Request.Context(), db.MarkMessageReadParams{MessageID: newID, UserID: user.ID})
+	out, ok := s.messagePayload(c, newID)
+	if !ok {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	if s.Bus != nil {
+		p, _ := uuid.FromBytes(pid.Bytes[:])
+		s.Bus.Publish(events.Event{Type: "message.created", ProjectID: p,
+			Data: map[string]any{"conversation_id": target.ID.String(), "message": out}})
+	}
+	c.JSON(http.StatusCreated, gin.H{"message": out})
 }
 
 // handleCreateThread opens (or returns) the thread rooted at a message.
@@ -780,6 +979,11 @@ type MessageView struct {
 	ThreadID                     pgtype.UUID
 	ThreadTitle                  pgtype.Text
 	ThreadReplyCount             int32
+	PinnedAt                     pgtype.Timestamptz
+	ForwardedFrom                pgtype.UUID
+	FwdConversationID            pgtype.UUID
+	FwdProjectID                 pgtype.UUID
+	FwdAuthorName                string
 	Attachments                  []gin.H
 	Reactions                    []gin.H
 	AgentRead                    bool
@@ -837,6 +1041,23 @@ func MessageJSON(v MessageView) gin.H {
 			"reply_count": v.ThreadReplyCount,
 		}
 	}
+	var pinned *string
+	if v.PinnedAt.Valid {
+		p := v.PinnedAt.Time.Format("2006-01-02T15:04:05Z07:00")
+		pinned = &p
+	}
+	var forwarded *gin.H
+	if v.ForwardedFrom.Valid {
+		f := gin.H{
+			"message_id":      v.ForwardedFrom.String(),
+			"conversation_id": v.FwdConversationID.String(),
+			"author":          v.FwdAuthorName,
+		}
+		if v.FwdProjectID.Valid {
+			f["project_id"] = v.FwdProjectID.String()
+		}
+		forwarded = &f
+	}
 	return gin.H{
 		"id": v.ID.String(), "conversation_id": v.ConversationID.String(),
 		"author": gin.H{
@@ -847,6 +1068,8 @@ func MessageJSON(v MessageView) gin.H {
 		"mentions":    mrefs,
 		"parent":      parent,
 		"thread":      thread,
+		"pinned_at":   pinned,
+		"forwarded":   forwarded,
 		"attachments": nonEmpty(v.Attachments),
 		"reactions":   nonEmpty(v.Reactions),
 		"created_at":  v.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),

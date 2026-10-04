@@ -55,9 +55,22 @@ function ProjectRow(props: { project: Project }) {
           "background-color": props.project.color ?? "var(--accent)",
         }}
       />
-      <span class="shrink-0 font-mono text-[11px] text-muted">
-        {props.project.key}
-      </span>
+      <Show
+        when={props.project.icon_url}
+        fallback={
+          <span class="shrink-0 font-mono text-[11px] text-muted">
+            {props.project.key}
+          </span>
+        }
+      >
+        {(url) => (
+          <img
+            src={url()}
+            alt=""
+            class="h-4.5 w-4.5 shrink-0 rounded-md object-cover"
+          />
+        )}
+      </Show>
       <span class="truncate">{props.project.name}</span>
       <Show when={pending() > 0}>
         <span
@@ -240,7 +253,6 @@ export function Rail() {
     window.addEventListener("keydown", onKey);
     onCleanup(() => window.removeEventListener("keydown", onKey));
   });
-  const workspaceName = () => session.workspaces()[0]?.name;
   const list = () => projects.projects() ?? [];
 
   return (
@@ -260,11 +272,20 @@ export function Rail() {
             : "hidden md:flex"
         }`}
       >
-      <Show when={workspaceName()}>
-        {(name) => (
+      <Show when={session.workspaces()[0]}>
+        {(ws) => (
           <div class="border-b border-border px-4 py-2.5">
             <p class="flex items-center gap-2 truncate text-[13px] font-medium">
-              <span class="truncate">{name()}</span>
+              <Show when={ws().avatar_url}>
+                {(url) => (
+                  <img
+                    src={url()}
+                    alt=""
+                    class="h-4.5 w-4.5 shrink-0 rounded-md object-cover"
+                  />
+                )}
+              </Show>
+              <span class="truncate">{ws().name}</span>
               <Show when={net.isLocal()}>
                 <span class="shrink-0 rounded border border-border px-1 py-px font-mono text-[9.5px] uppercase tracking-wide text-muted">
                   local
