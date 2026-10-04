@@ -36,9 +36,12 @@ import { api } from "../../lib/api";
 import { mediaURL, net } from "../../lib/net";
 import {
   deliver,
+  notifyCategory,
   notifyEnabled,
   requestNotifyPermission,
+  setNotifyCategory,
   setNotifyEnabled,
+  type NotifyCategory,
 } from "../../lib/notify";
 import { isDesktop } from "../../lib/desktop";
 import { syncToServer } from "../../lib/sync";
@@ -499,6 +502,38 @@ function NotificationsSection() {
             : "@mentions and replies, while the app is running"}
         </span>
       </div>
+      <Show when={fg()}>
+        <div class="grid gap-1.5 rounded-md border border-border/60 p-3">
+          <p class="text-[11px] font-medium uppercase tracking-wide text-faint">
+            Notify me about
+          </p>
+          <For
+            each={
+              [
+                ["mentions", "@mentions — someone needs you specifically"],
+                ["replies", "Replies to your messages"],
+                ["agents", "Agent status updates (progress goes to threads silently)"],
+                ["todos", "Todo list changes"],
+                ["reviews", "Review requests from agents"],
+              ] as [NotifyCategory, string][]
+            }
+          >
+            {([cat, label]) => (
+              <label class="flex cursor-pointer items-center gap-2 text-[12.5px] text-muted transition-colors hover:text-fg">
+                <input
+                  type="checkbox"
+                  checked={notifyCategory(cat)}
+                  onChange={(e) =>
+                    setNotifyCategory(cat, e.currentTarget.checked)
+                  }
+                  class="h-3.5 w-3.5 accent-accent"
+                />
+                {label}
+              </label>
+            )}
+          </For>
+        </div>
+      </Show>
       <FormError message={fgError()} />
       <Show when={supported()}>
         <div class="flex items-center gap-3 border-t border-border/60 pt-3">

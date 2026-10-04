@@ -173,7 +173,7 @@ func (s *Service) handleListMessages(c *gin.Context) {
 		m := rows[i]
 		msgs = append(msgs, MessageJSON(MessageView{
 			ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
-			Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+			Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Silent: m.Silent, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 			AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 			AuthorKindSnapshot: m.AuthorKindSnapshot,
 			AuthorName:         m.AuthorName, AuthorAvatar: m.AuthorAvatar,
@@ -269,7 +269,7 @@ func (s *Service) handlePostMessage(c *gin.Context) {
 	atts := s.attachmentsFor(c, []pgtype.UUID{m.ID})
 	out := MessageJSON(MessageView{
 		ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
-		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Silent: m.Silent, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 		AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 		AuthorKindSnapshot: m.AuthorKindSnapshot,
 		AuthorName:         m.AuthorName, AuthorAvatar: m.AuthorAvatar,
@@ -388,7 +388,7 @@ func (s *Service) handleEditMessage(c *gin.Context) {
 	}
 	out := MessageJSON(MessageView{
 		ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
-		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Silent: m.Silent, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 		AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 		AuthorKindSnapshot: m.AuthorKindSnapshot,
 		AuthorName:         m.AuthorName, AuthorAvatar: m.AuthorAvatar,
@@ -465,7 +465,7 @@ func (s *Service) messagePayload(c *gin.Context, id pgtype.UUID) (gin.H, bool) {
 	read := s.agentReadSet(c, []pgtype.UUID{m.ID})
 	return MessageJSON(MessageView{
 		ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
-		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Silent: m.Silent, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 		AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 		AuthorKindSnapshot: m.AuthorKindSnapshot,
 		AuthorName:         m.AuthorName, AuthorAvatar: m.AuthorAvatar,
@@ -551,7 +551,7 @@ func (s *Service) handleListPins(c *gin.Context) {
 	for _, m := range rows {
 		msgs = append(msgs, MessageJSON(MessageView{
 			ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
-			Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+			Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Silent: m.Silent, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 			AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 			AuthorKindSnapshot: m.AuthorKindSnapshot,
 			AuthorName:         m.AuthorName, AuthorAvatar: m.AuthorAvatar,
@@ -797,7 +797,7 @@ func (s *Service) postThreadNotice(c *gin.Context, parent db.Conversation, threa
 	}
 	out := MessageJSON(MessageView{
 		ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
-		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Silent: m.Silent, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 		AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 		AuthorKindSnapshot: m.AuthorKindSnapshot,
 		AuthorName:         m.AuthorName, AuthorAvatar: m.AuthorAvatar,
@@ -1122,6 +1122,7 @@ type MessageView struct {
 	Body                         string
 	Mentions                     []byte
 	Tags                         []string
+	Silent                       bool
 	CreatedAt, EditedAt          pgtype.Timestamptz
 	AuthorUserID, AuthorAgentID  pgtype.UUID
 	AuthorKindSnapshot           string
@@ -1227,6 +1228,7 @@ func MessageJSON(v MessageView) gin.H {
 		"body":        v.Body,
 		"mentions":    mrefs,
 		"tags":        nonEmptyTags(v.Tags),
+		"silent":      v.Silent,
 		"parent":      parent,
 		"thread":      thread,
 		"pinned_at":   pinned,

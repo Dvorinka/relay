@@ -1503,6 +1503,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Server-sent events for an agent token
+         * @description Same event envelope as `/api/events` but authenticated with an agent
+         *     `rly_` bearer token (Authorization header or `access_token` query —
+         *     EventSource cannot set headers). Events are filtered to projects the
+         *     agent's grant covers, so a harness can mirror todo/issue/message
+         *     state live.
+         */
+        get: operations["streamAgentEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/avatar": {
         parameters: {
             query?: never;
@@ -2055,6 +2079,8 @@ export interface components {
             body: string;
             /** @description Free-form classification tags (frontend, backend, visual, mcp, …); lowercase slug, max 8 */
             tags?: string[];
+            /** @description Agent progress update posted without notifications — clients should not toast it */
+            silent?: boolean;
             /** @description Structured entity references extracted from the body */
             mentions?: components["schemas"]["MentionRef"][];
             parent?: components["schemas"]["MessageParent"] | null;
@@ -5411,6 +5437,11 @@ export interface operations {
                 "application/json": {
                     content?: string;
                     done?: boolean;
+                    /**
+                     * @description Finer-grained state — mirrors a harness task list. Sets done when 'done'.
+                     * @enum {string}
+                     */
+                    status?: "todo" | "in_progress" | "done";
                     issue_id?: string;
                 };
             };
@@ -5516,6 +5547,26 @@ export interface operations {
         };
     };
     streamEvents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description text/event-stream */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": unknown;
+                };
+            };
+        };
+    };
+    streamAgentEvents: {
         parameters: {
             query?: never;
             header?: never;

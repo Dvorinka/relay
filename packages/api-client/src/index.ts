@@ -241,6 +241,7 @@ export interface Todo {
   id: string;
   content: string;
   done: boolean;
+  status?: "todo" | "in_progress" | "done";
   agent?: { id: string; name: string };
   issue?: { id: string; key: string };
   created_at?: string;
@@ -670,7 +671,12 @@ export function createClient(baseUrl: string, token?: string) {
       }),
     updateTodo: (
       todoId: string,
-      body: { content?: string; done?: boolean; issue_id?: string },
+      body: {
+        content?: string;
+        done?: boolean;
+        status?: "todo" | "in_progress" | "done";
+        issue_id?: string;
+      },
     ) =>
       patch<Todo>(`/api/todos/${todoId}`, body),
     deleteTodo: (todoId: string) =>

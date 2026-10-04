@@ -2189,6 +2189,10 @@ paths:
               properties:
                 content: { type: string }
                 done: { type: boolean }
+                status:
+                  type: string
+                  enum: [todo, in_progress, done]
+                  description: "Finer-grained state — mirrors a harness task list. Sets done when 'done'."
                 issue_id: { type: string }
       responses:
         "200": { description: "Updated" }
@@ -2273,6 +2277,23 @@ paths:
         Streams `message.created`, `issue.created`, `issue.updated` and
         `todo.changed` events as `data:` JSON frames. Events are filtered to
         projects the caller can access. Heartbeat comments every 25s.
+      tags: [realtime]
+      responses:
+        "200":
+          description: "text/event-stream"
+          content:
+            text/event-stream: {}
+
+  /api/agent/events:
+    get:
+      operationId: streamAgentEvents
+      summary: Server-sent events for an agent token
+      description: |
+        Same event envelope as `/api/events` but authenticated with an agent
+        `rly_` bearer token (Authorization header or `access_token` query —
+        EventSource cannot set headers). Events are filtered to projects the
+        agent's grant covers, so a harness can mirror todo/issue/message
+        state live.
       tags: [realtime]
       responses:
         "200":
@@ -3054,6 +3075,9 @@ components:
           type: array
           description: "Free-form classification tags (frontend, backend, visual, mcp, …); lowercase slug, max 8"
           items: { type: string, pattern: "^[a-z0-9][a-z0-9-]{0,23}$" }
+        silent:
+          type: boolean
+          description: "Agent progress update posted without notifications — clients should not toast it"
         mentions:
           type: array
           description: "Structured entity references extracted from the body"

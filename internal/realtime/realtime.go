@@ -3,9 +3,11 @@
 package realtime
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Dvorinka/relay/internal/auth"
@@ -31,6 +33,12 @@ func (s *Service) RegisterRoutes(priv gin.IRoutes) {
 	priv.GET("/me/unread", s.handleUnread)
 	priv.GET("/me/mentions", s.handleMentions)
 	priv.GET("/users/:id/profile", s.handleUserProfile)
+}
+
+// RegisterAgentRoutes mounts the agent-facing SSE stream outside session
+// auth — it resolves Bearer rly_ tokens itself.
+func (s *Service) RegisterAgentRoutes(g *gin.RouterGroup) {
+	g.GET("/agent/events", s.handleAgentStream)
 }
 
 // handleStream is the single SSE endpoint. Events carry a project_id; each
@@ -104,6 +112,74 @@ func (s *Service) handleUnread(c *gin.Context) {
 		rev[r.ProjectID.String()] = int(r.Pending)
 	}
 	c.JSON(http.StatusOK, gin.H{"unread": out, "reviews": rev})
+}
+
+// handleAgentStream is the agent-facing SSE stream: Bearer rly_ token in the
+// Authorization header or access_token query param (EventSource cannot set
+// headers). Each event carries a project_id and is gated by the agent's
+// effective scope for that project — grant_all or an explicit grant.
+func (s *Service) handleAgentStream(c *gin.Context) {
+	raw := c.GetHeader("Authorization")
+	if strings.HasPrefix(raw, "Bearer ") {
+		raw = strings.TrimPrefix(raw, "Bearer ")
+	} else if q := c.Query("access_token"); q != "" {
+		raw = q
+	}
+	if !strings.HasPrefix(raw, "rly_") {
+		httpx.Error(c, http.StatusUnauthorized, "unauthorized", "agent bearer token required")
+		return
+	}
+	sum := sha256.Sum256([]byte(raw))
+	agent, err := s.q.GetTokenAgent(c.Request.Context(), sum[:])
+	if err != nil {
+		httpx.Error(c, http.StatusUnauthorized, "unauthorized", "invalid or revoked token")
+		return
+	}
+	w := c.Writer
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	w.Flush()
+
+	id, ch := s.hub.Subscribe()
+	defer s.hub.Unsubscribe(id)
+
+	ctx := c.Request.Context()
+	keepalive := time.NewTicker(25 * time.Second)
+	defer keepalive.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-keepalive.C:
+			if _, err := w.WriteString(": ka\n\n"); err != nil {
+				return
+			}
+			w.Flush()
+		case e, ok := <-ch:
+			if !ok {
+				return
+			}
+			// scope gate — drop events for projects the agent has no grant on.
+			// The query left-joins, so ungranted projects return empty scopes
+			// rather than an error; the grant check is the non-empty set.
+			pid := pgtype.UUID{Bytes: e.ProjectID, Valid: true}
+			scopes, err := s.q.AgentScopeForProject(ctx, db.AgentScopeForProjectParams{
+				ProjectID: pid, AgentID: agent.ID,
+			})
+			if err != nil || len(scopes) == 0 {
+				continue
+			}
+			data, _ := json.Marshal(e)
+			if _, err := w.WriteString("data: " + string(data) + "\n\n"); err != nil {
+				return
+			}
+			w.Flush()
+		}
+	}
 }
 
 func (s *Service) handleMentions(c *gin.Context) {

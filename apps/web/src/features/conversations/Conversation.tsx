@@ -361,12 +361,26 @@ function ConvertToIssueDialog(props: {
   const [title, setTitle] = createSignal("");
   const [pending, setPending] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  const [repos] = createResource(
+    () => (props.open ? props.projectId : null),
+    async (id) => {
+      try {
+        return (await api.listProjectRepos(id)).repos;
+      } catch {
+        return [];
+      }
+    },
+  );
+  const [toGitHub, setToGitHub] = createSignal(false);
+  const [repoId, setRepoId] = createSignal("");
 
   createEffect(() => {
     if (props.open) {
       // Prefill from the message body, stripped of markdown.
       setTitle(messagePreview(props.message.body).slice(0, 60));
       setError(null);
+      setToGitHub(false);
+      setRepoId("");
     }
   });
 
@@ -383,6 +397,19 @@ function ConvertToIssueDialog(props: {
         props.message.id,
         t === "" ? undefined : t,
       );
+      if (toGitHub() && (repos() ?? []).length > 0) {
+        try {
+          await api.pushIssueToGitHub(
+            issue.id,
+            repoId() || (repos() ?? [])[0]?.id,
+          );
+        } catch {
+          setError("Issue created — pushing it to GitHub failed");
+          setPending(false);
+          navigate(`/app/p/${props.projectId}/i/${issue.id}`);
+          return;
+        }
+      }
       props.onOpenChange(false);
       navigate(`/app/p/${props.projectId}/i/${issue.id}`);
     } catch (err) {
@@ -419,6 +446,32 @@ function ConvertToIssueDialog(props: {
                 maxlength={200}
                 class={inputClass}
               />
+              <Show when={(repos() ?? []).length > 0}>
+                <label class="flex cursor-pointer items-center gap-2 text-[12.5px] text-muted transition-colors hover:text-fg">
+                  <input
+                    type="checkbox"
+                    checked={toGitHub()}
+                    onChange={(e) => setToGitHub(e.currentTarget.checked)}
+                    class="h-3.5 w-3.5 accent-accent"
+                  />
+                  Also open on GitHub
+                  <Show when={(repos() ?? []).length > 1}>
+                    <select
+                      value={repoId()}
+                      onChange={(e) => setRepoId(e.currentTarget.value)}
+                      class={`${inputClass} !h-7 !w-auto !py-0 text-[12px]`}
+                    >
+                      <For each={repos() ?? []}>
+                        {(r) => (
+                          <option value={r.id}>
+                            {r.owner}/{r.name}
+                          </option>
+                        )}
+                      </For>
+                    </select>
+                  </Show>
+                </label>
+              </Show>
               <FormError message={error()} />
               <div class="flex justify-end gap-2">
                 <Dialog.CloseTrigger
@@ -1205,6 +1258,14 @@ function MessageRow(props: {
               <Show when={m().edited_at && !bubbles()}>
                 <span class="ml-0 align-middle text-[10.5px] text-faint">
                   (edited)
+                </span>
+              </Show>
+              <Show when={m().silent}>
+                <span
+                  class="ml-1 align-middle text-[10.5px] text-faint italic"
+                  title="Silent update — no notification was sent"
+                >
+                  (silent)
                 </span>
               </Show>
             </>
@@ -2203,6 +2264,23 @@ function ConversationThread(props: {
     crypto.randomUUID?.() ??
     `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
+  // insertAtCursor splices text into the draft where the caret sits,
+  // padding with a space when the marker would butt up against a word.
+  function insertAtCursor(el: HTMLTextAreaElement, text: string) {
+    const cur = draft();
+    const start = el.selectionStart ?? cur.length;
+    const end = el.selectionEnd ?? cur.length;
+    const pre = start > 0 && !/\s/.test(cur[start - 1]!) ? " " : "";
+    const post = end < cur.length && !/\s/.test(cur[end]!) ? " " : " ";
+    const next = cur.slice(0, start) + pre + text + post + cur.slice(end);
+    setDraft(next);
+    requestAnimationFrame(() => {
+      const pos = start + pre.length + text.length + post.length;
+      el.selectionStart = el.selectionEnd = pos;
+      autogrow();
+    });
+  }
+
   function addFiles(files: readonly File[]) {
     for (const file of files) {
       const localId = newLocalId();
@@ -2780,10 +2858,21 @@ function ConversationThread(props: {
                 }
               }}
               onPaste={(e) => {
-                const files = e.clipboardData?.files;
-                if (files && files.length > 0) {
-                  e.preventDefault();
-                  addFiles(Array.from(files));
+                const files = Array.from(e.clipboardData?.files ?? []);
+                if (files.length === 0) return;
+                e.preventDefault();
+                // [image N] markers anchor each pasted image in the text so
+                // agents can tell which screenshot maps to which words.
+                let n = pending().filter(
+                  (p) =>
+                    p.file.type.startsWith("image/") && p.status !== "error",
+                ).length;
+                for (const file of files) {
+                  addFiles([file]);
+                  if (file.type.startsWith("image/")) {
+                    n += 1;
+                    insertAtCursor(e.currentTarget, `[image ${n}]`);
+                  }
                 }
               }}
               class="max-h-40 flex-1 resize-none bg-transparent px-1.5 py-2.5 text-[14.5px] leading-6 outline-none placeholder:text-faint disabled:opacity-50"

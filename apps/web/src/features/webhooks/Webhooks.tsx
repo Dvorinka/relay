@@ -4,6 +4,7 @@ import type { WebhookDelivery, WebhookSubscription } from "@relay/api-client";
 import { createResource, createSignal, For, Show } from "solid-js";
 import { ConfirmDialog, FormError, inputClass, Spinner } from "../../components/ui";
 import { api } from "../../lib/api";
+import { net } from "../../lib/net";
 import { timeAgo } from "../../lib/time";
 
 function Deliveries(props: { webhookId: string }) {
@@ -153,7 +154,10 @@ export function WebhooksSection(props: { projectId: string }) {
     () => props.projectId,
     (id) => api.listWebhooks(id),
   );
-  const [url, setUrl] = createSignal("");
+  // Prefill with this server's base URL — most hooks land back on it.
+  const [url, setUrl] = createSignal(
+    (net.serverUrl() || window.location.origin) + "/",
+  );
   // Sensible defaults pre-picked — everything except wildcard; users toggle.
   const [picked, setPicked] = createSignal<string[]>([
     "message.created",
