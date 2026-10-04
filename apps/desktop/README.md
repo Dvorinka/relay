@@ -46,6 +46,21 @@ makensis -DVERSION=1.0.0 -DVI_VERSION=1.0.0.0 \
 The release workflow produces `Relay-Setup-<version>.exe` alongside the raw
 `relay-desktop-windows-amd64.exe` on every `v*` tag.
 
+## Linux install
+
+`installer/install-linux.sh` does a per-user install — binary to
+`~/.local/bin`, icon, and a `relay.desktop` entry whose `Exec=` is an
+absolute path so the app grid launch does not depend on a shell `PATH`:
+
+```bash
+wails build && ./installer/install-linux.sh
+```
+
+The binary sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` at startup unless the
+variable is already defined — WebKitGTK's dmabuf renderer paints a black
+window on some Wayland/GPU stacks. Export the variable with any value
+(e.g. `0`) before launching to opt out.
+
 ## Code signing
 
 Unsigned installers get hard-blocked by **Smart App Control** on fresh

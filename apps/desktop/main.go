@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"log"
+	"os"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -18,6 +19,11 @@ import (
 var webFS embed.FS
 
 func main() {
+	// WebKitGTK's dmabuf renderer paints a black window on some
+	// Wayland/GPU combinations; fall back unless the user opted out.
+	if _, ok := os.LookupEnv("WEBKIT_DISABLE_DMABUF_RENDERER"); !ok {
+		_ = os.Setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
+	}
 	cfg, err := loadConfig()
 	if err != nil {
 		log.Fatal(err)
