@@ -50,8 +50,9 @@ func main() {
 		// Close-to-background: with run_in_background on, closing the window
 		// hides it — notifications keep working. Single-instance relaunch is
 		// how the user brings the window back (double-clicking the exe).
+		// App.Quit() sets the flag first so it can still exit for real.
 		OnBeforeClose: func(ctx context.Context) bool {
-			if app.cfg.RunInBackground {
+			if app.cfg.RunInBackground && !app.quitting.Load() {
 				wailsruntime.WindowHide(ctx)
 				return true
 			}

@@ -33,6 +33,7 @@ type WailsApp = {
     token: string,
   ) => Promise<{ status: number; body: string }>;
   Notify?: (title: string, body: string) => Promise<void>;
+  Quit?: () => Promise<void>;
   ServerConfig?: () => Promise<{ server_url?: string; offline?: boolean }>;
 };
 
@@ -196,4 +197,10 @@ export async function desktopSetBackground(on: boolean): Promise<void> {
     method: "POST",
   });
   if (!r.ok) throw new Error("could not update background mode");
+}
+
+// Real exit — with background mode on every other close path just hides the
+// window. Bound as window.go.main.App.Quit.
+export function desktopQuit(): void {
+  void wailsApp()?.Quit?.();
 }

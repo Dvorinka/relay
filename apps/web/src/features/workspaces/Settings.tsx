@@ -55,6 +55,7 @@ import {
 import {
   desktopAutostart,
   desktopBackground,
+  desktopQuit,
   desktopSetAutostart,
   desktopSetBackground,
   isDesktop,
@@ -355,9 +356,24 @@ function DesktopSection() {
           <p class="mt-0.5 text-[11.5px] text-faint">
             Closing the window keeps Relay connected — @mention alerts still
             arrive as system notifications. Reopening the app shows the window
-            again; turn this off to quit on close.
+            again.
           </p>
         </div>
+        <Show when={bg()!.enabled}>
+          <div>
+            <button
+              type="button"
+              onClick={() => desktopQuit()}
+              class="h-8 rounded-md border border-border bg-surface px-3 text-[12.5px] text-muted transition-colors hover:bg-hover hover:text-fg"
+            >
+              Quit Relay
+            </button>
+            <p class="mt-0.5 text-[11.5px] text-faint">
+              Exits the app entirely — closing the window only hides it while
+              background mode is on.
+            </p>
+          </div>
+        </Show>
       </Show>
       <FormError message={error()} />
     </div>

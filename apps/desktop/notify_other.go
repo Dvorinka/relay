@@ -9,3 +9,6 @@ import "errors"
 func notifyWindows(_, _ string) error {
 	return errors.New("windows toasts are windows-only")
 }
+
+// Toast activation callbacks only exist on Windows.
+func installToastCallback(_ *App) {}

@@ -377,11 +377,16 @@ const QUALIFIER_HINTS: Record<QualifierKind, string> = {
 const HAS_VALUES = ["image", "file", "link"] as const;
 
 // parseToken splits the query at the caret — qualifier + partial value.
-function activeToken(value: string, caret: number): { qual: QualifierKind; partial: string } | null {
+// Handles a half-typed quoted value: from:"jan|
+function activeToken(value: string, caret: number): { qual: QualifierKind; partial: string; quoted: boolean } | null {
   const head = value.slice(0, caret);
-  const m = head.match(/(^|\s)(from|in|has|mentions|before|after|during):([^\s]*)$/);
+  const m = head.match(/(^|\s)(from|in|has|mentions|before|after|during):(?:"([^"]*)"?|([^\s]*))$/);
   if (!m || !m[2]) return null;
-  return { qual: m[2] as QualifierKind, partial: m[3] ?? "" };
+  return {
+    qual: m[2] as QualifierKind,
+    partial: m[3] ?? m[4] ?? "",
+    quoted: m[3] !== undefined,
+  };
 }
 
 function RailSearch(props: {
@@ -423,6 +428,10 @@ function RailSearch(props: {
       }
     }, 250);
   }
+
+  // Clamp — the list can shrink while navigated (resources reloading).
+  const curIdx = () =>
+    Math.min(suggestIdx(), Math.max(suggestions().length - 1, 0));
 
   // Suggestions for the qualifier under the caret.
   const suggestions = createMemo(() => {
@@ -470,10 +479,12 @@ function RailSearch(props: {
     if (!tok || !inputEl) return;
     const head = q().slice(0, caret());
     const tail = q().slice(caret());
-    // Replace the partial token, keep a trailing space for the next term.
-    const next = head.replace(/(from|in|has|mentions|before|after|during):[^\s]*$/, `$1:${value} `) + tail;
+    // Quote multi-word values — the Go parser treats "..." as one token.
+    const rendered = value.includes(" ") ? `${tok.qual}:"${value}"` : `${tok.qual}:${value}`;
+    const next = head.replace(/(from|in|has|mentions|before|after|during):(?:"[^"]*"?|[^\s]*)$/, `${rendered} `) + tail;
+    const pos = head.replace(/(from|in|has|mentions|before|after|during):(?:"[^"]*"?|[^\s]*)$/, `${rendered} `).length;
     setQ(next);
-    onInput(next, head.replace(/[^\s]*$/, `${tok.qual}:${value} `).length);
+    onInput(next, pos);
     inputEl.focus();
   }
 
@@ -510,7 +521,7 @@ function RailSearch(props: {
                 }
                 if (e.key === "Tab" || e.key === "Enter") {
                   e.preventDefault();
-                  applySuggestion(list[suggestIdx()]!.value);
+                  applySuggestion(list[curIdx()]!.value);
                   return;
                 }
               }
@@ -537,7 +548,7 @@ function RailSearch(props: {
                     applySuggestion(s.value);
                   }}
                   class={`flex w-full items-baseline gap-2 px-2.5 py-1.5 text-left text-[12.5px] ${
-                    i() === suggestIdx() ? "bg-accent-soft text-fg" : "text-muted hover:bg-hover"
+                    i() === curIdx() ? "bg-accent-soft text-fg" : "text-muted hover:bg-hover"
                   }`}
                 >
                   <span class="min-w-0 flex-1 truncate font-medium">{s.label}</span>

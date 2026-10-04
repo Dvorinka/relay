@@ -31,28 +31,58 @@ func (s *Service) RegisterRoutes(priv gin.IRoutes) {
 	priv.GET("/search", s.handle)
 }
 
-var qualifier = regexp.MustCompile(`^(from|in|has|before|after|during|mentions):(\S+)`)
+var qualifier = regexp.MustCompile(`^(from|in|has|before|after|during|mentions):("([^"]*)"|(\S+))`)
+
+// fields splits on whitespace but keeps "quoted spans" together, so
+// from:"Jane Smith" arrives as a single token.
+func fields(s string) []string {
+	var out []string
+	var cur strings.Builder
+	inQ := false
+	for _, r := range s {
+		switch {
+		case r == '"':
+			inQ = !inQ
+			cur.WriteRune(r)
+		case (r == ' ' || r == '\t' || r == '\n') && !inQ:
+			if cur.Len() > 0 {
+				out = append(out, cur.String())
+				cur.Reset()
+			}
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	if cur.Len() > 0 {
+		out = append(out, cur.String())
+	}
+	return out
+}
 
 // splitQuery extracts Discord-style qualifiers; the remainder is FTS text.
 func splitQuery(raw string) (text, author, projectKey, has, mention string, before, after pgtype.Timestamptz) {
 	var words []string
-	for _, w := range strings.Fields(raw) {
+	for _, w := range fields(raw) {
 		if m := qualifier.FindStringSubmatch(w); m != nil {
+			val := m[3]
+			if val == "" {
+				val = strings.Trim(m[2], `"`)
+			}
 			switch m[1] {
 			case "from":
-				author = m[2]
+				author = val
 				continue
 			case "in":
-				projectKey = m[2]
+				projectKey = val
 				continue
 			case "has":
-				has = strings.ToLower(m[2])
+				has = strings.ToLower(val)
 				continue
 			case "mentions":
-				mention = m[2]
+				mention = val
 				continue
 			case "before", "after":
-				if t, err := time.Parse("2006-01-02", m[2]); err == nil {
+				if t, err := time.Parse("2006-01-02", val); err == nil {
 					ts := pgtype.Timestamptz{Time: t, Valid: true}
 					if m[1] == "before" {
 						before = ts
@@ -63,10 +93,10 @@ func splitQuery(raw string) (text, author, projectKey, has, mention string, befo
 				}
 			case "during":
 				// during:YYYY / YYYY-MM / YYYY-MM-DD — a period, not a bound.
-				layout := "2006-01-02"[:min(len(m[2]), 10)]
-				if t, err := time.Parse(layout, m[2]); err == nil {
+				layout := "2006-01-02"[:min(len(val), 10)]
+				if t, err := time.Parse(layout, val); err == nil {
 					var end time.Time
-					switch len(m[2]) {
+					switch len(val) {
 					case 4:
 						end = t.AddDate(1, 0, 0)
 					case 7:

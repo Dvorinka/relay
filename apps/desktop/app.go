@@ -75,15 +75,26 @@ func (c *Config) save() error {
 
 // App is the Wails-bound application object.
 type App struct {
-	cfg     *Config
-	ctx     context.Context
-	handler atomic.Value // stores http.Handler; swapped when a URL is saved
+	cfg      *Config
+	ctx      context.Context
+	handler  atomic.Value // stores http.Handler; swapped when a URL is saved
+	quitting atomic.Bool  // set by Quit — lets OnBeforeClose distinguish "close window" from "exit app"
 }
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	if a.cfg.ServerURL != "" {
 		wailsruntime.WindowSetTitle(ctx, "Relay")
+	}
+	installToastCallback(a)
+}
+
+// Quit is bound on window.go.main.App — the only way out while
+// run_in_background is on (every other close path just hides the window).
+func (a *App) Quit() {
+	a.quitting.Store(true)
+	if a.ctx != nil {
+		wailsruntime.Quit(a.ctx)
 	}
 }
 
