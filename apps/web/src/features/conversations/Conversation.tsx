@@ -27,6 +27,8 @@ import {
   IssueIcon,
   LinkIcon,
   LockIcon,
+  MaximizeIcon,
+  MinimizeIcon,
   PaperclipIcon,
   PencilIcon,
   PinIcon,
@@ -1253,7 +1255,11 @@ function MessageRow(props: {
           fallback={
             <>
               <Show when={m().body.trim().length > 0}>
-                <Markdown body={m().body} projectId={props.projectId} />
+                <Markdown
+                  body={m().body}
+                  projectId={props.projectId}
+                  mentions={m().mentions}
+                />
               </Show>
               <Show when={m().edited_at && !bubbles()}>
                 <span class="ml-0 align-middle text-[10.5px] text-faint">
@@ -3015,14 +3021,73 @@ function FilePreview(props: {
 }
 
 // ThreadPanel: a message-rooted conversation in a side rail. On small
-// screens it becomes a full overlay; the rail appears beside the chat on sm+.
+// screens it is a full overlay; on sm+ it sits beside the chat, resizable
+// by dragging its left edge, with a fullscreen toggle. Width persists.
+const THREAD_MIN_W = 260;
+const THREAD_W_KEY = "relay.threadWidth";
+
+function threadWidth(): number {
+  const n = Number(localStorage.getItem(THREAD_W_KEY));
+  return n > 0 ? n : 384;
+}
+
 function ThreadPanel(props: {
   projectId: string;
   thread: ThreadSummary;
   onClose: () => void;
 }) {
+  const [width, setWidth] = createSignal(threadWidth());
+  const [full, setFull] = createSignal(false);
+  let dragging = false;
+
+  const clamp = (w: number) =>
+    Math.min(
+      Math.max(w, THREAD_MIN_W),
+      Math.max(THREAD_MIN_W, Math.round(window.innerWidth * 0.9)),
+    );
+
+  const startDrag = (e: PointerEvent) => {
+    if (full()) return;
+    dragging = true;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    e.preventDefault();
+  };
+  const onDrag = (e: PointerEvent) => {
+    if (!dragging) return;
+    setWidth(clamp(window.innerWidth - e.clientX));
+  };
+  const endDrag = () => {
+    if (!dragging) return;
+    dragging = false;
+    localStorage.setItem(THREAD_W_KEY, String(width()));
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape" && full()) setFull(false);
+  };
+  onMount(() => window.addEventListener("keydown", onKey));
+  onCleanup(() => window.removeEventListener("keydown", onKey));
+
   return (
-    <div class="fixed inset-0 z-40 flex flex-col bg-surface sm:static sm:z-auto sm:w-80 sm:shrink-0 sm:border-l sm:border-border lg:w-96">
+    <div
+      class={
+        full()
+          ? "fixed inset-0 z-50 flex flex-col bg-surface"
+          : "thread-rail fixed inset-0 z-40 flex flex-col bg-surface sm:relative sm:z-auto sm:shrink-0 sm:border-l sm:border-border"
+      }
+      style={{ "--thread-w": `${width()}px` }}
+    >
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize thread panel"
+        class="absolute inset-y-0 -left-1.5 z-10 hidden w-3 cursor-col-resize touch-none sm:block"
+        onPointerDown={startDrag}
+        onPointerMove={onDrag}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+      >
+        <div class="mx-auto h-full w-px bg-border transition-colors hover:bg-accent" />
+      </div>
       <div class="flex items-center gap-2 border-b border-border px-3 py-2.5">
         <ThreadIcon class="h-4 w-4 shrink-0 text-faint" />
         <div class="min-w-0 flex-1">
@@ -3036,6 +3101,17 @@ function ThreadPanel(props: {
         </div>
         <button
           type="button"
+          onClick={() => setFull((v) => !v)}
+          aria-label={full() ? "Restore thread panel" : "Enlarge thread"}
+          title={full() ? "Restore" : "Enlarge to fullscreen"}
+          class="hidden rounded p-1 text-muted transition-colors hover:bg-hover hover:text-fg sm:block"
+        >
+          <Show when={full()} fallback={<MaximizeIcon class="h-4 w-4" />}>
+            <MinimizeIcon class="h-4 w-4" />
+          </Show>
+        </button>
+        <button
+          type="button"
           onClick={props.onClose}
           aria-label="Close thread"
           class="rounded p-1 text-muted transition-colors hover:bg-hover hover:text-fg"
@@ -3043,10 +3119,12 @@ function ThreadPanel(props: {
           <XIcon class="h-4 w-4" />
         </button>
       </div>
-      <ConversationThread
-        conversationId={props.thread.id}
-        projectId={props.projectId}
-      />
+      <div class="flex min-h-0 flex-1 flex-col">
+        <ConversationThread
+          conversationId={props.thread.id}
+          projectId={props.projectId}
+        />
+      </div>
     </div>
   );
 }

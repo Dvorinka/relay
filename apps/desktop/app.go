@@ -225,11 +225,9 @@ func (a *App) Notify(title, body string) error {
 			return exec.Command(path, "-e", script).Run()
 		}
 	case "windows":
-		// WebView2 implements the Notification API natively — report
-		// unsupported so the SPA falls back to it instead of swallowing
-		// the notification. A shell toast would need a packaged app
-		// identity we don't install.
-		return errors.New("webview handles notifications on windows")
+		// WebView2 never displays the DOM Notification API — a real toast
+		// goes through COM via go-toast (see notify_windows.go).
+		return notifyWindows(title, body)
 	}
 	return errors.New("no notification facility on this platform")
 }

@@ -112,7 +112,7 @@ func (q *Queries) CreateIssueForAgent(ctx context.Context, arg CreateIssueForAge
 }
 
 const getAttachmentByID = `-- name: GetAttachmentByID :one
-select id, project_id, uploader_id, storage_key, filename, content_type, size_bytes, status, created_at from attachments where id = $1
+select id, project_id, uploader_id, storage_key, filename, content_type, size_bytes, status, created_at, uploader_agent_id from attachments where id = $1
 `
 
 func (q *Queries) GetAttachmentByID(ctx context.Context, id pgtype.UUID) (Attachment, error) {
@@ -128,6 +128,7 @@ func (q *Queries) GetAttachmentByID(ctx context.Context, id pgtype.UUID) (Attach
 		&i.SizeBytes,
 		&i.Status,
 		&i.CreatedAt,
+		&i.UploaderAgentID,
 	)
 	return i, err
 }

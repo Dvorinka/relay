@@ -25,6 +25,7 @@ import {
   GitPullRequestIcon,
   IssueIcon,
   PlusIcon,
+  ReviewIcon,
   SettingsIcon,
   TrashIcon,
   XIcon,
@@ -36,6 +37,7 @@ import {
   inputClass,
   Spinner,
   SubmitButton,
+  Tip,
 } from "../../components/ui";
 import { api } from "../../lib/api";
 import { mediaURL, net } from "../../lib/net";
@@ -50,6 +52,7 @@ import { DevelopmentPanel, markGitHub } from "../github/GitHub";
 import { GitLog } from "../github/GitLog";
 import { PullRequestList } from "../github/PullRequestList";
 import { IssueList } from "../issues/IssueList";
+import { ProjectConfigSections } from "../issues/ProjectSettings";
 import { isClosed, statusDefs, StatusDot } from "../issues/meta";
 import { Reviews } from "../reviews/Reviews";
 import { WebhooksSection } from "../webhooks/Webhooks";
@@ -92,25 +95,27 @@ function BoardIcon(props: { class?: string }) {
 
 function HeadButton(props: {
   title: string;
+  hint?: string;
   active?: boolean;
   onClick: () => void;
   children: any;
 }) {
   return (
-    <button
-      type="button"
-      title={props.title}
-      aria-label={props.title}
-      aria-pressed={props.active}
-      onClick={props.onClick}
-      class={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
-        props.active
-          ? "bg-accent/10 text-accent"
-          : "text-muted hover:bg-hover hover:text-fg"
-      }`}
-    >
-      {props.children}
-    </button>
+    <Tip text={props.title} hint={props.hint} side="bottom">
+      <button
+        type="button"
+        aria-label={props.title}
+        aria-pressed={props.active}
+        onClick={props.onClick}
+        class={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
+          props.active
+            ? "bg-accent/10 text-accent"
+            : "text-muted hover:bg-hover hover:text-fg"
+        }`}
+      >
+        {props.children}
+      </button>
+    </Tip>
   );
 }
 
@@ -462,6 +467,7 @@ function SearchResultsView(props: {
 function ContextRail(props: {
   project: Project;
   onOpenView: (v: View) => void;
+  onOpenBriefs: () => void;
 }) {
   const session = useSession();
   const [issues, { refetch: refetchIssues }] = createResource(
@@ -471,6 +477,10 @@ function ContextRail(props: {
   const [reviews] = createResource(
     () => props.project.id,
     async (id) => (await api.listReviews(id, "pending")).reviews,
+  );
+  const [briefs] = createResource(
+    () => props.project.id,
+    async (id) => (await api.listBriefs(id)).briefs,
   );
   const [todos, { refetch: refetchTodos }] = createResource(
     () => props.project.id,
@@ -500,8 +510,11 @@ function ContextRail(props: {
   });
   onCleanup(unsub);
 
+  // PR mirrors carry github.kind="pr" — they're pull requests, not issues.
   const openIssues = createMemo(() =>
-    (issues.latest ?? []).filter((i) => !isClosed(i.status, statusDefs(props.project))).slice(0, 5),
+    (issues.latest ?? []).filter(
+      (i) => i.github?.kind !== "pr" && !isClosed(i.status, statusDefs(props.project)),
+    ).slice(0, 5),
   );
 
   return (
@@ -547,6 +560,27 @@ function ContextRail(props: {
           class="mt-1.5 text-[12px] text-accent hover:underline"
         >
           All reviews →
+        </button>
+      </RailSection>
+
+      <RailSection
+        label="Briefs"
+        count={(briefs.latest ?? []).length}
+      >
+        <button
+          type="button"
+          onClick={props.onOpenBriefs}
+          class="w-full rounded-lg border border-border bg-surface px-3 py-2 text-left transition-colors hover:border-muted/60"
+        >
+          <span class="flex items-center gap-2 text-[12.5px] font-medium">
+            <BriefsIcon class="h-3.5 w-3.5 text-muted" />
+            Visual explanations agents attach to work.
+          </span>
+          <span class="mt-1 block text-[11px] text-muted">
+            {briefs.state === "ready" && (briefs.latest?.length ?? 0) === 0
+              ? "No briefs yet — ask your agent to “explain this change”."
+              : `${briefs.latest?.length ?? 0} brief${(briefs.latest?.length ?? 0) === 1 ? "" : "s"} · ${(props.project.brief_policy ?? "on_request") === "on_request" ? "On request — only when asked" : props.project.brief_policy}`}
+          </span>
         </button>
       </RailSection>
 
@@ -682,6 +716,9 @@ function ViewSheet(props: {
   view: View;
   project: Project;
   onClose: () => void;
+  onProjectSaved: () => void;
+  onOpenBriefs: () => void;
+  onOpenView: (v: View) => void;
 }) {
   createEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -744,6 +781,18 @@ function ViewSheet(props: {
               <div class="mx-auto w-full max-w-2xl px-6 py-6">
                 <ProjectDetailsSection project={props.project} />
                 <ProjectIconSection project={props.project} />
+                <ProjectConfigSections
+                  project={props.project}
+                  onSaved={props.onProjectSaved}
+                />
+                <PendingReviewsSection
+                  project={props.project}
+                  onOpen={() => props.onOpenView("reviews")}
+                />
+                <BriefsSection
+                  project={props.project}
+                  onOpen={props.onOpenBriefs}
+                />
                 <ProjectRepoSection project={props.project} />
                 <WebhooksSection projectId={props.project.id} />
               </div>
@@ -751,6 +800,79 @@ function ViewSheet(props: {
           </Show>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Settings summary: how much agent work is waiting on the user's approval.
+function PendingReviewsSection(props: {
+  project: Project;
+  onOpen: () => void;
+}) {
+  const [reviews] = createResource(
+    () => props.project.id,
+    async (id) => (await api.listReviews(id, "pending")).reviews,
+  );
+  return (
+    <div class="mb-6">
+      <h3 class="mb-2 text-[13px] font-semibold">Pending reviews</h3>
+      <button
+        type="button"
+        onClick={props.onOpen}
+        class="flex w-full items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-left text-[12.5px] transition-colors hover:border-muted/60"
+      >
+        <ReviewIcon class="h-3.5 w-3.5 text-muted" />
+        <span class="min-w-0 flex-1">
+          {reviews.latest?.length ?? 0}
+        </span>
+        <span class="text-[11.5px] text-muted">
+          {(reviews.latest?.length ?? 0) === 0
+            ? "Queue is clear."
+            : "Waiting on your decision."}
+        </span>
+      </button>
+      <button
+        type="button"
+        onClick={props.onOpen}
+        class="mt-1.5 text-[12px] text-accent hover:underline"
+      >
+        All reviews →
+      </button>
+    </div>
+  );
+}
+
+// Settings summary: brief policy + entry point to the briefs panel.
+function BriefsSection(props: { project: Project; onOpen: () => void }) {
+  const [briefs] = createResource(
+    () => props.project.id,
+    async (id) => (await api.listBriefs(id)).briefs,
+  );
+  return (
+    <div class="mb-6">
+      <h3 class="mb-2 text-[13px] font-semibold">Briefs</h3>
+      <button
+        type="button"
+        onClick={props.onOpen}
+        class="flex w-full items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-left text-[12.5px] transition-colors hover:border-muted/60"
+      >
+        <BriefsIcon class="h-3.5 w-3.5 text-muted" />
+        <span class="min-w-0 flex-1">
+          Visual explanations agents attach to work.
+        </span>
+        <span class="text-[11.5px] text-muted">
+          {(briefs.latest?.length ?? 0) === 0
+            ? "None yet."
+            : `${briefs.latest?.length} posted`}
+        </span>
+      </button>
+      <button
+        type="button"
+        onClick={props.onOpen}
+        class="mt-1.5 text-[12px] text-accent hover:underline"
+      >
+        Open briefs →
+      </button>
     </div>
   );
 }
@@ -1095,7 +1217,7 @@ export default function ProjectPage() {
   });
 
 
-  const [overview] = createResource(
+  const [overview, { refetch: refetchOverview }] = createResource(
     () => params.projectId,
     (id) => api.projectOverview(id),
   );
@@ -1156,12 +1278,14 @@ export default function ProjectPage() {
           <div class="ml-auto flex items-center gap-1">
             <HeadButton
               title="Board"
+              hint="Kanban of this project's issues — opens a full-page view."
               onClick={() => navigate(`/app/p/${params.projectId}/board`)}
             >
               <BoardIcon class="h-4 w-4" />
             </HeadButton>
             <HeadButton
               title="Issues"
+              hint="Local Relay issues plus mirrored GitHub issues. Pull requests sit under their own icon."
               active={view() === "issues"}
               onClick={() =>
                 openView(view() === "issues" ? undefined : "issues")
@@ -1171,6 +1295,7 @@ export default function ProjectPage() {
             </HeadButton>
             <HeadButton
               title="Pull requests"
+              hint="PRs mirrored from the linked GitHub repository — open and closed."
               active={view() === "pulls"}
               onClick={() =>
                 openView(view() === "pulls" ? undefined : "pulls")
@@ -1180,6 +1305,7 @@ export default function ProjectPage() {
             </HeadButton>
             <HeadButton
               title="Commits"
+              hint="Recent commits on the linked repository's default branch."
               active={view() === "commits"}
               onClick={() =>
                 openView(view() === "commits" ? undefined : "commits")
@@ -1189,10 +1315,31 @@ export default function ProjectPage() {
             </HeadButton>
             <HeadButton
               title="Visual briefs"
+              hint="Diagrams and visual explanations agents attach to their work."
               active={briefsOpen()}
               onClick={() => setBriefsOpen(!briefsOpen())}
             >
               <BriefsIcon class="h-4 w-4" />
+            </HeadButton>
+            <HeadButton
+              title="Reviews"
+              hint="Agent work waiting for your approval — the review queue."
+              active={view() === "reviews"}
+              onClick={() =>
+                openView(view() === "reviews" ? undefined : "reviews")
+              }
+            >
+              <ReviewIcon class="h-4 w-4" />
+            </HeadButton>
+            <HeadButton
+              title="Project settings"
+              hint="Issue lanes, linked folder, brief policy, repositories and webhooks."
+              active={view() === "settings"}
+              onClick={() =>
+                openView(view() === "settings" ? undefined : "settings")
+              }
+            >
+              <SettingsIcon class="h-4 w-4" />
             </HeadButton>
           </div>
         </header>
@@ -1203,7 +1350,11 @@ export default function ProjectPage() {
       <Show when={project()} keyed>
         {(p) => (
           <div class="hidden lg:block">
-            <ContextRail project={p} onOpenView={openView} />
+            <ContextRail
+              project={p}
+              onOpenView={openView}
+              onOpenBriefs={() => setBriefsOpen(true)}
+            />
           </div>
         )}
       </Show>
@@ -1220,6 +1371,12 @@ export default function ProjectPage() {
             view={view()!}
             project={p}
             onClose={() => openView(undefined)}
+            onProjectSaved={() => {
+              refetchOverview();
+              projects.refresh();
+            }}
+            onOpenBriefs={() => setBriefsOpen(true)}
+            onOpenView={openView}
           />
         )}
       </Show>

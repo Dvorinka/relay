@@ -8,7 +8,7 @@
 //	relay-cli conversations <project_id>
 //	relay-cli messages <project_id|conversation_id> [--conv <id>] [--limit 30]
 //	relay-cli read <message_id>        (also marks the message read)
-//	relay-cli say <project_id> "text" [--reply <message_id>]
+//	relay-cli say <project_id> "text" [--reply <message_id>] [--attach f.png] [--silent]
 //	relay-cli react <message_id> <emoji>
 //	relay-cli msg-edit <message_id> "new text"
 //	relay-cli msg-del <message_id>
@@ -51,6 +51,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -71,6 +72,8 @@ var (
 	flagName    = flag.String("name", "", "agent name (redeem)")
 	flagTitle   = flag.String("title", "", "thread title (thread)")
 	flagMode    = flag.String("mode", "notify", "review mode for redeem: notify|gate")
+	flagAttach  = flag.String("attach", "", "comma-separated file paths to upload + attach (say)")
+	flagSilent  = flag.Bool("silent", false, "post without notifications (say, work beats)")
 )
 
 var rpcID atomic.Int64
@@ -397,7 +400,8 @@ Chat
   conversations <project_id>            list conversations
   messages <project_id|conversation_id> list messages (use --conv for a thread, --tags t to filter)
   read <project_id|conversation_id>     mark-read alias for messages
-  say <project_id> <body> [--reply id] [--tags a,b]  post a message (mentions: @user, KEY-1, repo#42)
+  say <project_id> <body> [--reply id] [--tags a,b] [--attach f.png] [--silent]
+                                              post a message (mentions: @user, KEY-1, repo#42)
   react <message_id> <emoji>            toggle a reaction
   msg-edit <message_id> <body>          edit an unread agent message
   msg-del <message_id>                  delete an own unread message
@@ -537,6 +541,34 @@ Environment: RELAY_URL, RELAY_TOKEN.
 		}
 		if *flagTags != "" {
 			a["tags"] = *flagTags
+		}
+		if *flagSilent {
+			a["silent"] = true
+		}
+		var ids []string
+		for _, f := range strings.Split(*flagAttach, ",") {
+			f = strings.TrimSpace(f)
+			if f == "" {
+				continue
+			}
+			data, err := os.ReadFile(f)
+			if err != nil {
+				fail("read attachment:", err)
+			}
+			att, err := s.tool("upload_attachment", map[string]any{
+				"project_id":  pid,
+				"name":        filepath.Base(f),
+				"data_base64": base64.StdEncoding.EncodeToString(data),
+			})
+			if err != nil {
+				fail("upload", f+":", err)
+			}
+			var m anyMap
+			_ = json.Unmarshal(att, &m)
+			ids = append(ids, str(m, "id"))
+		}
+		if len(ids) > 0 {
+			a["attachment_ids"] = strings.Join(ids, ",")
 		}
 		run("", "send_message", a)
 

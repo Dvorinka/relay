@@ -41,11 +41,54 @@ func (q *Queries) CountUsableAttachmentsInProject(ctx context.Context, arg Count
 	return count, err
 }
 
+const createAgentAttachment = `-- name: CreateAgentAttachment :one
+insert into attachments (id, project_id, uploader_agent_id, storage_key, filename, content_type, size_bytes)
+values ($1, $2, $3, $4,
+        $5, $6, $7)
+returning id, project_id, uploader_id, storage_key, filename, content_type, size_bytes, status, created_at, uploader_agent_id
+`
+
+type CreateAgentAttachmentParams struct {
+	ID              pgtype.UUID `json:"id"`
+	ProjectID       pgtype.UUID `json:"project_id"`
+	UploaderAgentID pgtype.UUID `json:"uploader_agent_id"`
+	StorageKey      string      `json:"storage_key"`
+	Filename        string      `json:"filename"`
+	ContentType     string      `json:"content_type"`
+	SizeBytes       int64       `json:"size_bytes"`
+}
+
+func (q *Queries) CreateAgentAttachment(ctx context.Context, arg CreateAgentAttachmentParams) (Attachment, error) {
+	row := q.db.QueryRow(ctx, createAgentAttachment,
+		arg.ID,
+		arg.ProjectID,
+		arg.UploaderAgentID,
+		arg.StorageKey,
+		arg.Filename,
+		arg.ContentType,
+		arg.SizeBytes,
+	)
+	var i Attachment
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.UploaderID,
+		&i.StorageKey,
+		&i.Filename,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UploaderAgentID,
+	)
+	return i, err
+}
+
 const createAttachment = `-- name: CreateAttachment :one
 insert into attachments (id, project_id, uploader_id, storage_key, filename, content_type, size_bytes)
 values ($1, $2, $3, $4,
         $5, $6, $7)
-returning id, project_id, uploader_id, storage_key, filename, content_type, size_bytes, status, created_at
+returning id, project_id, uploader_id, storage_key, filename, content_type, size_bytes, status, created_at, uploader_agent_id
 `
 
 type CreateAttachmentParams struct {
@@ -79,6 +122,7 @@ func (q *Queries) CreateAttachment(ctx context.Context, arg CreateAttachmentPara
 		&i.SizeBytes,
 		&i.Status,
 		&i.CreatedAt,
+		&i.UploaderAgentID,
 	)
 	return i, err
 }
@@ -93,7 +137,7 @@ func (q *Queries) DeleteAttachment(ctx context.Context, id pgtype.UUID) error {
 }
 
 const getAttachmentInProjectForUser = `-- name: GetAttachmentInProjectForUser :one
-select a.id, a.project_id, a.uploader_id, a.storage_key, a.filename, a.content_type, a.size_bytes, a.status, a.created_at from attachments a
+select a.id, a.project_id, a.uploader_id, a.storage_key, a.filename, a.content_type, a.size_bytes, a.status, a.created_at, a.uploader_agent_id from attachments a
 join projects p on p.id = a.project_id
 join workspace_members wm on wm.workspace_id = p.workspace_id and wm.user_id = $1
 where a.id = $2 and a.project_id = $3
@@ -120,6 +164,7 @@ func (q *Queries) GetAttachmentInProjectForUser(ctx context.Context, arg GetAtta
 		&i.SizeBytes,
 		&i.Status,
 		&i.CreatedAt,
+		&i.UploaderAgentID,
 	)
 	return i, err
 }
@@ -141,7 +186,7 @@ func (q *Queries) LinkMessageAttachment(ctx context.Context, arg LinkMessageAtta
 }
 
 const listAttachmentsForMessages = `-- name: ListAttachmentsForMessages :many
-select a.id, a.project_id, a.uploader_id, a.storage_key, a.filename, a.content_type, a.size_bytes, a.status, a.created_at, ma.message_id
+select a.id, a.project_id, a.uploader_id, a.storage_key, a.filename, a.content_type, a.size_bytes, a.status, a.created_at, a.uploader_agent_id, ma.message_id
 from message_attachments ma
 join attachments a on a.id = ma.attachment_id
 where ma.message_id = any($1::uuid[])
@@ -149,16 +194,17 @@ order by ma.position
 `
 
 type ListAttachmentsForMessagesRow struct {
-	ID          pgtype.UUID        `json:"id"`
-	ProjectID   pgtype.UUID        `json:"project_id"`
-	UploaderID  pgtype.UUID        `json:"uploader_id"`
-	StorageKey  string             `json:"storage_key"`
-	Filename    string             `json:"filename"`
-	ContentType string             `json:"content_type"`
-	SizeBytes   int64              `json:"size_bytes"`
-	Status      string             `json:"status"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	MessageID   pgtype.UUID        `json:"message_id"`
+	ID              pgtype.UUID        `json:"id"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	UploaderID      pgtype.UUID        `json:"uploader_id"`
+	StorageKey      string             `json:"storage_key"`
+	Filename        string             `json:"filename"`
+	ContentType     string             `json:"content_type"`
+	SizeBytes       int64              `json:"size_bytes"`
+	Status          string             `json:"status"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UploaderAgentID pgtype.UUID        `json:"uploader_agent_id"`
+	MessageID       pgtype.UUID        `json:"message_id"`
 }
 
 func (q *Queries) ListAttachmentsForMessages(ctx context.Context, ids []pgtype.UUID) ([]ListAttachmentsForMessagesRow, error) {
@@ -180,6 +226,7 @@ func (q *Queries) ListAttachmentsForMessages(ctx context.Context, ids []pgtype.U
 			&i.SizeBytes,
 			&i.Status,
 			&i.CreatedAt,
+			&i.UploaderAgentID,
 			&i.MessageID,
 		); err != nil {
 			return nil, err
@@ -194,7 +241,7 @@ func (q *Queries) ListAttachmentsForMessages(ctx context.Context, ids []pgtype.U
 
 const markAttachmentReady = `-- name: MarkAttachmentReady :one
 update attachments set status = 'ready' where id = $1
-returning id, project_id, uploader_id, storage_key, filename, content_type, size_bytes, status, created_at
+returning id, project_id, uploader_id, storage_key, filename, content_type, size_bytes, status, created_at, uploader_agent_id
 `
 
 func (q *Queries) MarkAttachmentReady(ctx context.Context, id pgtype.UUID) (Attachment, error) {
@@ -210,6 +257,7 @@ func (q *Queries) MarkAttachmentReady(ctx context.Context, id pgtype.UUID) (Atta
 		&i.SizeBytes,
 		&i.Status,
 		&i.CreatedAt,
+		&i.UploaderAgentID,
 	)
 	return i, err
 }

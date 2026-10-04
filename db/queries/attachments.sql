@@ -4,6 +4,12 @@ values (sqlc.arg(id), sqlc.arg(project_id), sqlc.arg(uploader_id), sqlc.arg(stor
         sqlc.arg(filename), sqlc.arg(content_type), sqlc.arg(size_bytes))
 returning *;
 
+-- name: CreateAgentAttachment :one
+insert into attachments (id, project_id, uploader_agent_id, storage_key, filename, content_type, size_bytes)
+values (sqlc.arg(id), sqlc.arg(project_id), sqlc.arg(uploader_agent_id), sqlc.arg(storage_key),
+        sqlc.arg(filename), sqlc.arg(content_type), sqlc.arg(size_bytes))
+returning *;
+
 -- name: MarkAttachmentReady :one
 update attachments set status = 'ready' where id = sqlc.arg(id)
 returning *;

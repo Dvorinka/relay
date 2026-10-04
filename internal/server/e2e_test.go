@@ -1504,3 +1504,146 @@ func TestAgentDeleteTombstone(t *testing.T) {
 		t.Fatalf("agents after delete = %d", n)
 	}
 }
+
+// Invite lifecycle: deleting (revoking) an invite kills only the unused
+// rli_ token. An agent that already redeemed keeps its rly_ token working;
+// explicit agent/token revocation still revokes. Regression coverage for
+// "the token should persist and be usable all the time".
+func TestInviteLifecycleKeepsToken(t *testing.T) {
+	dsn := os.Getenv("RELAY_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("RELAY_TEST_DATABASE_URL unset")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	goose.SetBaseFS(relaydb.MigrationsFS)
+	if err := goose.SetDialect("postgres"); err != nil {
+		t.Fatal(err)
+	}
+	if err := goose.UpContext(ctx, stdlib.OpenDBFromPool(pool), "migrations"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "delete from rate_limits"); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Config{
+		DatabaseURL:     dsn,
+		AuthSecret:      "test-secret-test-secret-test-secret",
+		InsecureDev:     true,
+		SessionTTLHours: 1,
+	}
+	srv := httptest.NewServer(New(cfg, zap.NewNop(), pool, "test"))
+	defer srv.Close()
+	c := &e2eClient{t: t, base: srv.URL}
+
+	code, reg := c.call("POST", "/api/auth/register",
+		fmt.Sprintf(`{"email":"inv-%d@relay.dev","password":"invpass12345","name":"Inv"}`,
+			time.Now().UnixNano()))
+	if code != 201 && code != 200 {
+		t.Fatalf("register: %d %v", code, reg)
+	}
+	code, ws := c.call("POST", "/api/workspaces", `{"name":"Inv WS"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("workspace: %d %v", code, ws)
+	}
+	wsID := ws["id"].(string)
+	code, proj := c.call("POST", "/api/projects",
+		fmt.Sprintf(`{"workspace_id":%q,"key":"INV","name":"Inv Lab"}`, wsID))
+	if code != 201 && code != 200 {
+		t.Fatalf("project: %d %v", code, proj)
+	}
+	projID := proj["id"].(string)
+
+	// workspace-wide invite (project_ids empty = all projects incl. future)
+	code, inv := c.call("POST", "/api/workspaces/"+wsID+"/agent-invites", `{}`)
+	if code != 201 {
+		t.Fatalf("invite: %d %v", code, inv)
+	}
+	inviteID := inv["id"].(string)
+	rli := inv["token"].(string)
+	if !strings.HasPrefix(rli, "rli_") {
+		t.Fatalf("invite token = %v", rli)
+	}
+
+	// redeem -> live rly_ token
+	code, red := c.call("POST", "/api/agent-invites/redeem",
+		fmt.Sprintf(`{"token":%q,"name":"Inv Bot"}`, rli))
+	if code != 201 {
+		t.Fatalf("redeem: %d %v", code, red)
+	}
+	rly := red["token"].(string)
+	agentID := red["agent"].(map[string]any)["id"].(string)
+
+	mcpUp := func(tok string) bool {
+		sid, env := c.mcp(tok, "", "1", "initialize",
+			`{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"e2e","version":"0"}}`)
+		if env["error"] != nil || sid == "" {
+			return false
+		}
+		_, env = c.mcp(tok, sid, "2", "tools/call",
+			fmt.Sprintf(`{"name":"get_project","arguments":{"project_id":%q}}`, projID))
+		res := mcpToolResultNoFail(env)
+		return res != nil
+	}
+	if !mcpUp(rly) {
+		t.Fatal("fresh rly_ token rejected")
+	}
+
+	// revoke the invite: the agent token must survive
+	code, _ = c.call("DELETE",
+		fmt.Sprintf("/api/workspaces/%s/agent-invites/%s", wsID, inviteID), "")
+	if code != 204 {
+		t.Fatalf("delete invite: %d", code)
+	}
+	if !mcpUp(rly) {
+		t.Fatal("agent token died with its invite — regression")
+	}
+
+	// the consumed invite itself stays dead
+	code, re2 := c.call("POST", "/api/agent-invites/redeem",
+		fmt.Sprintf(`{"token":%q,"name":"Inv Bot 2"}`, rli))
+	if code != 401 {
+		t.Fatalf("re-redeem after revoke: %d %v", code, re2)
+	}
+
+	// deleting the agent is the real revocation path
+	code, _ = c.call("DELETE", "/api/agents/"+agentID, "")
+	if code != 204 {
+		t.Fatalf("delete agent: %d", code)
+	}
+	if mcpUp(rly) {
+		t.Fatal("token still works after agent deletion")
+	}
+}
+
+// mcpToolResultNoFail mirrors mcpToolResult but returns nil instead of
+// failing the test, so callers can probe expected failures.
+func mcpToolResultNoFail(env map[string]any) map[string]any {
+	result, ok := env["result"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	if sc, ok := result["structuredContent"].(map[string]any); ok {
+		return sc
+	}
+	content, _ := result["content"].([]any)
+	for _, blk := range content {
+		m, _ := blk.(map[string]any)
+		if m["type"] == "text" {
+			var parsed map[string]any
+			if json.Unmarshal([]byte(m["text"].(string)), &parsed) == nil {
+				return parsed
+			}
+		}
+	}
+	if result["isError"] == true {
+		return nil
+	}
+	return map[string]any{}
+}

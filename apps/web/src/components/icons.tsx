@@ -195,6 +195,24 @@ export function BriefsIcon(props: IconProps): JSX.Element {
   );
 }
 
+export function ReviewIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      class={props.class}
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="3" y="2" width="10" height="12" rx="1.5" />
+      <path d="M5.5 8.25 7.25 10 10.5 6" />
+    </svg>
+  );
+}
+
 export function XIcon(props: IconProps): JSX.Element {
   return (
     <svg
@@ -523,6 +541,46 @@ export function LockIcon(props: IconProps): JSX.Element {
     >
       <rect x="3.5" y="7" width="9" height="6.5" rx="1.5" />
       <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />
+    </svg>
+  );
+}
+
+export function MaximizeIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <path d="M9 2h5v5" />
+      <path d="M14 2L8.5 7.5" />
+      <path d="M7 14H2V9" />
+      <path d="M2 14l5.5-5.5" />
+    </svg>
+  );
+}
+
+export function MinimizeIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <path d="M14 7H9V2" />
+      <path d="M9 7l5-5" />
+      <path d="M2 9h5v5" />
+      <path d="M7 9l-5 5" />
     </svg>
   );
 }

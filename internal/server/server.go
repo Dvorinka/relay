@@ -79,7 +79,7 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	briefSvc := briefs.NewService(log, pool)
 	convSvc.Push = pushSvc
 	hookSvc.Start(context.Background(), hub)
-	mcpHandler := mcpserver.New(db.New(pool), store, log, ghSvc, hub, pushSvc)
+	mcpHandler := mcpserver.New(db.New(pool), store, cfg.StorageMaxUploadMiB<<20, log, ghSvc, hub, pushSvc)
 
 	api := r.Group("/api", corsForTokenClients())
 	// Gin 404s unmatched methods before group middleware — handle CORS

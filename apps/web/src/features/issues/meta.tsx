@@ -6,6 +6,7 @@ import type {
   StatusDef,
 } from "@relay/api-client";
 import { Show } from "solid-js";
+import { Tip } from "../../components/ui";
 
 // Built-in lanes — mirrors internal/statuses.Defaults(). Custom project
 // lanes arrive on Project.statuses.
@@ -153,14 +154,27 @@ export function GitHubBadge(props: { issue: Issue }) {
   return (
     <Show when={gh()}>
       {(g) => (
-        <a
-          href={g().url}
-          target="_blank"
-          rel="noreferrer"
-          title={`${g().repo}#${g().number}`}
-          onClick={(e) => e.stopPropagation()}
-          class={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-[10.5px] transition-colors ${tone(g().state)} hover:bg-hover`}
+        <Tip
+          text={
+            g().kind === "pr"
+              ? `${g().repo}#${g().number} — pull request`
+              : `${g().repo}#${g().number} — GitHub issue`
+          }
+          hint={
+            g().kind === "pr"
+              ? "Mirrored pull request — click to open it on GitHub."
+              : "Mirrored GitHub issue — click to open it on GitHub."
+          }
+          side="bottom"
         >
+          <a
+            href={g().url}
+            target="_blank"
+            rel="noreferrer"
+            aria-label={`${g().repo}#${g().number} ${g().state}`}
+            onClick={(e) => e.stopPropagation()}
+            class={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-[10.5px] transition-colors ${tone(g().state)} hover:bg-hover`}
+          >
           <Show
             when={g().kind === "pr"}
             fallback={
@@ -174,7 +188,8 @@ export function GitHubBadge(props: { issue: Issue }) {
             </svg>
           </Show>
           #{g().number} {g().state}
-        </a>
+          </a>
+        </Tip>
       )}
     </Show>
   );

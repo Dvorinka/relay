@@ -2221,7 +2221,7 @@ export interface components {
             created_at: string;
         };
         /** @enum {string} */
-        AgentScope: "project:read" | "message:read" | "message:write" | "attachment:read" | "issue:read" | "issue:write" | "review:read" | "review:write" | "file:read" | "brief:read" | "brief:write";
+        AgentScope: "project:read" | "message:read" | "message:write" | "attachment:read" | "attachment:write" | "issue:read" | "issue:write" | "review:read" | "review:write" | "file:read" | "brief:read" | "brief:write";
         AgentGrant: {
             /** Format: uuid */
             project_id: string;
