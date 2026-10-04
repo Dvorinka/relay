@@ -301,8 +301,9 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 	), s.reactToMessage)
 
 	srv.AddTool(mcp.NewTool("set_avatar",
-		mcp.WithDescription("Set this agent's profile picture. Accepts a base64-encoded png/jpeg/gif/webp image, max 2 MiB decoded."),
-		mcp.WithString("image_base64", mcp.Required(), mcp.Description("Base64-encoded image bytes")),
+		mcp.WithDescription("Set this agent's profile picture. Pass image_base64 (png/jpeg/gif/webp/avif, max 2 MiB decoded) or image_url and the server fetches it."),
+		mcp.WithString("image_base64", mcp.Description("Base64-encoded image bytes")),
+		mcp.WithString("image_url", mcp.Description("http(s) image URL the server downloads and stores")),
 	), s.setAvatar)
 
 	srv.AddTool(mcp.NewTool("create_issue",
@@ -1376,26 +1377,40 @@ func (s *Service) reactToMessage(ctx context.Context, req mcp.CallToolRequest) (
 	return jsonResult(gin.H{"ok": true})
 }
 
-// setAvatar lets the agent upload its own profile picture - the same file
-// the workspace admin can set via PUT /api/agents/:id/avatar.
+// setAvatar lets the agent set its own profile picture - either
+// image_base64 bytes or image_url, which the server fetches itself.
 func (s *Service) setAvatar(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	if s.store == nil {
 		return mcp.NewToolResultError("storage not configured"), nil
 	}
-	raw, err := req.RequireString("image_base64")
-	if err != nil {
-		return errResult(err)
-	}
-	data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(raw))
-	if err != nil {
-		return mcp.NewToolResultError("image_base64 is not valid base64"), nil
-	}
-	if len(data) == 0 || len(data) > 2<<20 {
-		return mcp.NewToolResultError("image must be 1 byte to 2 MiB"), nil
-	}
-	ct, ok := avatars.AcceptedImageType(data)
-	if !ok {
-		return mcp.NewToolResultError("unsupported image type (detected " + ct + "); png, jpeg, gif, webp or avif"), nil
+	var data []byte
+	var ct string
+	if imageURL := req.GetString("image_url", ""); imageURL != "" {
+		d, c, err := avatars.FetchImage(ctx, imageURL)
+		if err != nil {
+			return mcp.NewToolResultError("could not fetch image_url: " + err.Error()), nil
+		}
+		if _, ok := avatars.AcceptedImageType(d); !ok {
+			return mcp.NewToolResultError("image_url did not return an image (detected " + c + ")"), nil
+		}
+		data, ct = d, c
+	} else {
+		raw, err := req.RequireString("image_base64")
+		if err != nil {
+			return errResult(err)
+		}
+		data, err = base64.StdEncoding.DecodeString(strings.TrimSpace(raw))
+		if err != nil {
+			return mcp.NewToolResultError("image_base64 is not valid base64"), nil
+		}
+		if len(data) == 0 || len(data) > 2<<20 {
+			return mcp.NewToolResultError("image must be 1 byte to 2 MiB"), nil
+		}
+		var ok bool
+		ct, ok = avatars.AcceptedImageType(data)
+		if !ok {
+			return mcp.NewToolResultError("unsupported image type (detected " + ct + "); png, jpeg, gif, webp or avif"), nil
+		}
 	}
 	key := "avatars/a/" + agent(ctx).ID.String()
 	if err := s.store.Put(ctx, key, bytes.NewReader(data), int64(len(data)), ct); err != nil {

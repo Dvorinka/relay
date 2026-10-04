@@ -24,9 +24,9 @@ import {
   SettingsIcon,
   XIcon,
 } from "../../components/icons";
-import { FormError, Spinner } from "../../components/ui";
+import { FormError, ImageURLField, Spinner } from "../../components/ui";
 import { api } from "../../lib/api";
-import { mediaURL } from "../../lib/net";
+import { mediaURL, net } from "../../lib/net";
 import { subscribe } from "../../lib/events";
 import { initials } from "../../lib/text";
 import { timeAgo } from "../../lib/time";
@@ -318,6 +318,11 @@ function ContextRail(props: {
     async (id) => (await api.listWorkspaceMembers(id)).members,
   );
 
+  const [agents] = createResource(
+    () => props.project.id,
+    async (id) => (await api.listProjectAgents(id)).agents,
+  );
+
   const unsub = subscribe((e) => {
     if (e.project_id === props.project.id && e.type.startsWith("issue.")) {
       refetchIssues();
@@ -447,6 +452,33 @@ function ContextRail(props: {
           </For>
         </div>
       </RailSection>
+
+      <Show when={(agents() ?? []).length > 0}>
+        <RailSection label="Agents" count={agents()?.length}>
+          <div class="flex flex-col gap-1">
+            <For each={agents()}>
+              {(a) => (
+                <div class="flex items-center gap-2.5 py-0.5">
+                  <Avatar.Root class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface">
+                    <Avatar.Fallback class="text-[10px] font-semibold text-muted">
+                      {initials(a.name)}
+                    </Avatar.Fallback>
+                    <Avatar.Image
+                      src={mediaURL(a.avatar_url)}
+                      alt=""
+                      class="h-full w-full rounded-full object-cover"
+                    />
+                  </Avatar.Root>
+                  <span class="min-w-0 flex-1 truncate text-[12.5px]">
+                    {a.name}
+                  </span>
+                  <span class="text-[10.5px] text-muted">agent</span>
+                </div>
+              )}
+            </For>
+          </div>
+        </RailSection>
+      </Show>
 
       <RailSection label="Workspace">
         <button
@@ -637,6 +669,25 @@ function ProjectIconSection(props: { project: Project }) {
           Use GitHub icon
         </button>
       </div>
+      <Show when={!net.isLocal()}>
+        <div class="mt-2 max-w-sm">
+          <ImageURLField
+            onSubmit={async (u) => {
+              setPending(true);
+              setError(null);
+              try {
+                await api.uploadImageURL(
+                  `/api/projects/${props.project.id}/icon`,
+                  u,
+                );
+                await projects.refresh();
+              } finally {
+                setPending(false);
+              }
+            }}
+          />
+        </div>
+      </Show>
       <FormError message={error()} />
     </div>
   );

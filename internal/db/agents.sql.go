@@ -582,6 +582,61 @@ func (q *Queries) ListMcpTokens(ctx context.Context, agentID pgtype.UUID) ([]Lis
 	return items, nil
 }
 
+const listProjectAgents = `-- name: ListProjectAgents :many
+select a.id, a.workspace_id, a.name, a.slug, a.description, a.avatar_key, a.created_by, a.created_at, a.updated_at, a.review_mode, g.scopes as grant_scopes
+from agents a
+join agent_project_permissions g on g.agent_id = a.id
+where g.project_id = $1
+order by a.name
+`
+
+type ListProjectAgentsRow struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Name        string             `json:"name"`
+	Slug        string             `json:"slug"`
+	Description string             `json:"description"`
+	AvatarKey   pgtype.Text        `json:"avatar_key"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	ReviewMode  string             `json:"review_mode"`
+	GrantScopes []string           `json:"grant_scopes"`
+}
+
+// agents holding a grant on a project; surfaced in the project's member list
+func (q *Queries) ListProjectAgents(ctx context.Context, projectID pgtype.UUID) ([]ListProjectAgentsRow, error) {
+	rows, err := q.db.Query(ctx, listProjectAgents, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListProjectAgentsRow{}
+	for rows.Next() {
+		var i ListProjectAgentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Name,
+			&i.Slug,
+			&i.Description,
+			&i.AvatarKey,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ReviewMode,
+			&i.GrantScopes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWorkspaceProjectIDs = `-- name: ListWorkspaceProjectIDs :many
 select id from projects where workspace_id = $1
 `

@@ -199,6 +199,15 @@ func TestCanonicalFlow(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("grant: %d", code)
 	}
+	// The granted agent surfaces in the project's agent list (project rail).
+	code, pa := c.call("GET", fmt.Sprintf("/api/projects/%s/agents", projID), "")
+	if code != 200 {
+		t.Fatalf("list project agents: %d", code)
+	}
+	paAgents := pa["agents"].([]any)
+	if len(paAgents) != 1 || paAgents[0].(map[string]any)["id"] != agentID {
+		t.Fatalf("project agents = %v", pa)
+	}
 	code, tok := c.call("POST", fmt.Sprintf("/api/agents/%s/tokens", agentID), `{"name":"e2e"}`)
 	if code != 201 && code != 200 {
 		t.Fatalf("mint: %d %v", code, tok)
