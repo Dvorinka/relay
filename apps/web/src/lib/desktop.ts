@@ -33,6 +33,7 @@ type WailsApp = {
     token: string,
   ) => Promise<{ status: number; body: string }>;
   Notify?: (title: string, body: string) => Promise<void>;
+  ServerConfig?: () => Promise<{ server_url?: string; offline?: boolean }>;
 };
 
 function wailsApp(): WailsApp | undefined {
@@ -111,6 +112,34 @@ export async function bridgeUpload(
     );
   }
   return body;
+}
+
+// Reads the shell's configured server URL. In proxy mode the SPA runs
+// same-origin on wails.localhost with localStorage relay.serverUrl cleared,
+// so flows that need the real URL — browser sign-in opens it in the system
+// browser — ask the shell. Returns "" in a normal browser or unconfigured.
+export async function desktopServerUrl(): Promise<string> {
+  // The bound method can't be intercepted by the SPA's service worker;
+  // the fetch path is the fallback for a shell without it.
+  const app = wailsApp();
+  if (typeof app?.ServerConfig === "function") {
+    try {
+      const cfg = await app.ServerConfig();
+      return typeof cfg?.server_url === "string" ? cfg.server_url : "";
+    } catch {
+      return "";
+    }
+  }
+  try {
+    const r = await fetch("/~desktop-config", { cache: "no-store" });
+    if (r.status !== 200 || !r.headers.get("content-type")?.includes("json")) {
+      return "";
+    }
+    const body = (await r.json()) as { server_url?: string };
+    return typeof body?.server_url === "string" ? body.server_url : "";
+  } catch {
+    return "";
+  }
 }
 
 // Persists a mode change into the desktop shell's relay-desktop.json and

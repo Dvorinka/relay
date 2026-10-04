@@ -1,6 +1,6 @@
 import { A } from "@solidjs/router";
 import { ApiClientError, createClient } from "@relay/api-client";
-import { createSignal, onCleanup, Show } from "solid-js";
+import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import {
   Field,
   FormError,
@@ -8,7 +8,11 @@ import {
   SubmitButton,
   inputClass,
 } from "../../components/ui";
-import { desktopOpen, isDesktop } from "../../lib/desktop";
+import {
+  desktopOpen,
+  desktopServerUrl,
+  isDesktop,
+} from "../../lib/desktop";
 import { net } from "../../lib/net";
 import { useSession } from "../../stores/session";
 import { AuthLayout } from "./AuthLayout";
@@ -23,10 +27,20 @@ export default function Login() {
   // the system browser approves it, we poll until it lands. The timer id in
   // browserPoll doubles as the "waiting" state.
   const [browserPoll, setBrowserPoll] = createSignal<number | null>(null);
+  // The proxied SPA clears localStorage relay.serverUrl on purpose (same-origin
+  // calls), so in the desktop shell the configured URL only exists in Go —
+  // fetched once for the browser sign-in open URL.
+  const [shellUrl, setShellUrl] = createSignal("");
   // "Different server" and "Work locally" only exist where the API isn't
   // same-origin: the desktop app or a cross-origin SPA. On a hosted
   // server's own web UI they would point at itself — meaningless.
   const altPaths = () => isDesktop() || !!net.serverUrl();
+
+  onMount(() => {
+    if (isDesktop() && !net.serverUrl()) {
+      void desktopServerUrl().then(setShellUrl);
+    }
+  });
 
   onCleanup(() => {
     const t = browserPoll();
@@ -45,11 +59,23 @@ export default function Login() {
   function targetServer(): string | null {
     const typed = serverUrl().trim().replace(/\/+$/, "");
     if (showServer() && typed) return typed;
-    return net.serverUrl() || (isDesktop() ? null : window.location.origin);
+    return (
+      net.serverUrl() ||
+      shellUrl() ||
+      (isDesktop() ? null : window.location.origin)
+    );
   }
 
   async function startBrowserAuth() {
-    const url = targetServer();
+    let url = targetServer();
+    if (!url && isDesktop()) {
+      // The onMount fetch may not have landed yet — ask the shell directly.
+      const shell = await desktopServerUrl();
+      if (shell) {
+        setShellUrl(shell);
+        url = shell;
+      }
+    }
     if (!url) {
       setShowServer(true);
       setError("Enter the server URL first");

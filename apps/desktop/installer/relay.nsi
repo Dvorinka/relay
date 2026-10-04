@@ -84,13 +84,17 @@ ${UnStrLoc}
 
 !insertmacro MUI_LANGUAGE "English"
 
-; Refuse to fight a running instance during an upgrade.
+; Refuse to fight a running instance during an upgrade. taskkill returns
+; once the kill is issued, not once the process exits — give teardown a
+; moment or Delete hits a still-locked executable.
 Function .onInit
   nsExec::ExecToLog 'taskkill /F /IM ${APP_EXE} /T'
+  Sleep 800
 FunctionEnd
 
 Function un.onInit
   nsExec::ExecToLog 'taskkill /F /IM ${APP_EXE} /T'
+  Sleep 800
 FunctionEnd
 
 ; The shell is a WebView2 host — no runtime, no window. Evergreen runtime
