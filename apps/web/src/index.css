@@ -258,6 +258,14 @@ body {
   border: 0;
   border-top: 1px solid var(--border);
 }
+/* Tables have intrinsic column widths — scroll inside the block instead of
+   widening the message row past the viewport. */
+.md table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
 .md img {
   max-width: 100%;
 }
