@@ -30,15 +30,22 @@ wails build -platform windows/amd64 -o relay-desktop.exe
 
 ## Windows installer
 
-`installer/relay.nsi` builds a per-user NSIS setup wizard — Start Menu and
-desktop shortcuts, Add/Remove Programs entry, uninstaller, and an evergreen
-WebView2 bootstrap when the runtime is absent. No admin rights required.
+`installer/relay.nsi` builds the per-user NSIS setup wizard — the only
+Windows installer: Start Menu and desktop shortcuts, Add/Remove Programs
+entry, uninstaller, and an evergreen WebView2 bootstrap when the runtime is
+absent. No admin rights required.
+
+Pass `-DCLI_EXE` and the wizard gains a components page with **Relay CLI
+(relay-cli.exe)** checked by default — the terminal client lands next to the
+app and the install dir joins the user `Path`, so one setup covers both.
+Unchecking the component skips it entirely.
 
 ```bash
 # needs nsis (apt install nsis); paths resolve relative to the .nsi file,
-# so pass absolute -DEXE/-DOUTFILE
+# so pass absolute -DEXE/-DCLI_EXE/-DOUTFILE
 makensis -DVERSION=1.0.0 -DVI_VERSION=1.0.0.0 \
   -DEXE=/abs/path/relay-desktop-windows-amd64.exe \
+  -DCLI_EXE=/abs/path/relay-cli-windows-amd64.exe \
   -DOUTFILE=/abs/path/Relay-Setup-1.0.0.exe \
   installer/relay.nsi
 ```
@@ -46,30 +53,24 @@ makensis -DVERSION=1.0.0 -DVI_VERSION=1.0.0.0 \
 The release workflow produces `Relay-Setup-<version>.exe` alongside the raw
 `relay-desktop-windows-amd64.exe` on every `v*` tag.
 
-## Windows MSI
+## Sign-in
 
-`installer/relay.wxs` builds a per-user MSI via WiX — same install location
-(`%LOCALAPPDATA%\Programs\Relay`), shortcuts, and ARP entry as the NSIS
-installer, plus in-place `MajorUpgrade` semantics. Useful for scripted or
-managed installs (`msiexec /i Relay-Setup-x.y.z.msi /qn`). WiX only builds on
-Windows (CI uses `windows-latest`):
-
-```powershell
-dotnet tool install --global wix
-wix build -arch x64 -o Relay-Setup-1.0.0.msi `
-  -d VERSION=1.0.0 -d EXE=dist\relay-desktop-windows-amd64.exe `
-  -d ICON=build\windows\icon.ico installer\relay.wxs
-```
-
-Unlike the NSIS installer, the MSI does not bootstrap the WebView2 Runtime —
-present on Windows 11 and patched Windows 10, deploy separately on bare
-images.
+The login page offers three paths: the account form (with an optional
+"Different server" URL field), **Work locally** (embedded bundle, "This
+device" workspace), and **Sign in via browser**. Browser sign-in POSTs
+`/api/auth/browser/start` for a single-use 10-minute code, opens
+`<server>/connect?code=…` in the system browser via `/~desktop-open`,
+and polls `/api/auth/browser/poll` every 2 s until the signed-in user
+approves on `/api/auth/browser/approve` — which parks a session token the
+poll then consumes exactly once.
 
 ## Linux install
 
 `installer/install-linux.sh` does a per-user install — binary to
 `~/.local/bin`, icon, and a `relay.desktop` entry whose `Exec=` is an
-absolute path so the app grid launch does not depend on a shell `PATH`:
+absolute path so the app grid launch does not depend on a shell `PATH`.
+When `build/bin/relay-cli` exists it is installed alongside, so building
+the CLI into `build/bin` gives Linux the same one-shot install:
 
 ```bash
 wails build && ./installer/install-linux.sh
@@ -111,8 +112,5 @@ ignored. The mark renders from `assets/brand/kit/relay-mark-accent-app-icon.svg`
 
 - System tray & global screenshot hotkey — need OS-specific hooks that
   don't fit the thin-shell model; revisit with a tray lib after 1.0.
-- Native desktop notifications — the webview hosts the remote bundle, so
-  the Wails JS bridge isn't injected; a small bundled JS snippet or the
-  WebView2 notification API is the upgrade path.
 - `relay://` deep links — needs platform registration (documented in
   docs/DESKTOP.md when it lands).

@@ -42,6 +42,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
@@ -331,7 +332,10 @@ func render(kind string, raw json.RawMessage) {
 		for _, t := range rows("todos") {
 			m := asMap(t)
 			mark := " "
-			if m["done"] == true {
+			switch str(m, "status") {
+			case "in_progress":
+				mark = "~"
+			case "done":
 				mark = "x"
 			}
 			fmt.Printf("[%s] %s  %s\n", mark, str(m, "content"), str(m, "id"))
@@ -411,6 +415,13 @@ Work
   todos <project_id>                    list todos
   todo-add <project_id> <text>          add a todo
   todo-done|todo-undo|todo-del <id>     update todos
+  todo-set <id> <status>                set status (todo|in_progress|done)
+  todo-sync <project_id> --file list.json   mirror your whole task list in one call
+  work-start <project_id> <title>       status message + progress thread
+  work-stop <status_msg_id> [summary]   close the work status
+  ask <message_id> <user> <question>    ask a person (thread + @mention)
+  resolve <question_msg_id> [note]      mark a question answered
+  events                                stream live events for your grants (Ctrl+C to stop)
 
 Files & attachments
   files <project_id> [path]             list the linked folder
@@ -634,6 +645,71 @@ Environment: RELAY_URL, RELAY_TOKEN.
 	case "todo-del":
 		run("", "todo_delete", map[string]any{"todo_id": need(args, 1, "todo_id")})
 
+	case "todo-set":
+		// todo-set <todo_id> <status> — todo|in_progress|done
+		run("", "todo_update", map[string]any{
+			"todo_id": need(args, 1, "todo_id"),
+			"status":  need(args, 2, "status (todo|in_progress|done)"),
+		})
+
+	case "todo-sync":
+		// todo-sync <project_id> --file list.json | --file -
+		// Mirrors the whole harness task list in one call:
+		// [{id?, content, status?, issue_id?}] — echoed ids keep rows stable.
+		pid := need(args, 1, "project_id")
+		var raw []byte
+		var err error
+		switch {
+		case *flagFile == "-":
+			raw, err = io.ReadAll(os.Stdin)
+		case *flagFile != "":
+			raw, err = os.ReadFile(*flagFile)
+		default:
+			fail("todo-sync needs --file list.json or --file - for stdin")
+		}
+		if err != nil {
+			fail(err)
+		}
+		var items []any
+		if err := json.Unmarshal(raw, &items); err != nil {
+			fail("bad todo JSON:", err)
+		}
+		run("", "todo_sync", map[string]any{"project_id": pid, "items": items})
+
+	case "work-start":
+		// work-start <project_id> <title> — status message + progress thread
+		run("", "work_start", map[string]any{
+			"project_id": need(args, 1, "project_id"),
+			"title":      need(args, 2, "title"),
+		})
+
+	case "work-stop":
+		// work-stop <status_message_id> [summary]
+		a := map[string]any{"message_id": need(args, 1, "status message id")}
+		if len(args) > 2 {
+			a["summary"] = args[2]
+		}
+		run("", "work_stop", a)
+
+	case "ask":
+		// ask <message_id> <user> <question> — thread + @mention
+		run("", "request_input", map[string]any{
+			"message_id": need(args, 1, "message_id"),
+			"user":       need(args, 2, "user"),
+			"question":   need(args, 3, "question"),
+		})
+
+	case "resolve":
+		// resolve <question_message_id> [note] — clears needs-input
+		a := map[string]any{"message_id": need(args, 1, "question message id")}
+		if len(args) > 2 {
+			a["note"] = args[2]
+		}
+		run("", "resolve_input", a)
+
+	case "events":
+		streamEvents(s)
+
 	case "search":
 		run("", "search_messages", map[string]any{
 			"project_id": need(args, 1, "project_id"),
@@ -841,6 +917,40 @@ Environment: RELAY_URL, RELAY_TOKEN.
 	}
 }
 
+// streamEvents tails GET /api/agent/events and prints each SSE data line —
+// the agent-side half of live sync (todo.changed, message.created, …).
+func streamEvents(s *session) {
+	req, err := http.NewRequest("GET",
+		strings.TrimRight(*flagURL, "/")+"/api/agent/events", nil)
+	if err != nil {
+		fail(err)
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	if s.token != "" {
+		req.Header.Set("Authorization", "Bearer "+s.token)
+	}
+	// streams outlive the shared client's request timeout
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		fail("events:", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		fail("events:", resp.Status)
+	}
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for sc.Scan() {
+		line := sc.Text()
+		if data, ok := strings.CutPrefix(line, "data: "); ok {
+			fmt.Println(data)
+		}
+	}
+	if err := sc.Err(); err != nil {
+		fail("events stream:", err)
+	}
+}
+
 // redeemInvite exchanges an rli_ invite token for a live rly_ agent token.
 // Plain REST — no MCP session exists yet. Prints the token plainly so a
 // script can capture it: RELAY_TOKEN=$(relay-cli redeem rli_... --name bot)
@@ -909,6 +1019,7 @@ func completionScript(shell string) string {
 	cmds := "projects conversations messages read say react msg-edit msg-del " +
 		"pin unpin pins forward thread avatar issues " +
 		"issue issue-new issue-set todos todo-add todo-done todo-undo todo-del " +
+		"todo-set todo-sync work-start work-stop ask resolve events " +
 		"search files file-read gh reviews review review-submit review-await " +
 		"briefs brief brief-new brief-set brief-policy attachment redeem completion"
 	switch shell {

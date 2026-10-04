@@ -20,6 +20,7 @@
   --color-accent-ink: var(--accent-ink);
   --color-accent-soft: var(--accent-soft);
   --color-hover: var(--hover);
+  --color-danger: var(--danger);
 }
 
 /* Warm light - design/design.html reference */
@@ -36,6 +37,7 @@
   --accent: #06b6d4;
   --accent-ink: #0891b2;
   --accent-soft: rgb(6 182 212 / 0.1);
+  --danger: #dc2626;
   --hover: rgb(16 19 24 / 0.05);
   --code-bg: #f4f2ee;
   color-scheme: light;
@@ -55,6 +57,7 @@
   --accent: #06b6d4;
   --accent-ink: #22d3ee;
   --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  --danger: #f87171;
   --hover: rgb(255 255 255 / 0.05);
   --code-bg: #060607;
   color-scheme: dark;
@@ -224,26 +227,28 @@ body {
   max-width: 100%;
 }
 
-/* Chat scroll port — thin themed scrollbar instead of the native chrome */
-.chat-scroll {
+/* Thin themed scrollbar on every scroller — replaces the native chrome so
+   overlays (chat, settings, dialogs) don't double up or clash with the theme */
+* {
   scrollbar-width: thin;
   scrollbar-color: var(--border-hi) transparent;
 }
-.chat-scroll::-webkit-scrollbar {
+*::-webkit-scrollbar {
   width: 10px;
+  height: 10px;
 }
-.chat-scroll::-webkit-scrollbar-track {
+*::-webkit-scrollbar-track {
   background: transparent;
 }
-.chat-scroll::-webkit-scrollbar-thumb {
+*::-webkit-scrollbar-thumb {
   background: var(--border-hi);
   border: 3px solid var(--bg);
   border-radius: 6px;
 }
-.chat-scroll::-webkit-scrollbar-thumb:hover {
+*::-webkit-scrollbar-thumb:hover {
   background: var(--faint);
 }
-.chat-scroll::-webkit-scrollbar-corner {
+*::-webkit-scrollbar-corner {
   background: transparent;
 }
 

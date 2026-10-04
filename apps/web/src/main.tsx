@@ -15,6 +15,8 @@ import ProjectPage from "./features/projects/ProjectPage";
 import "./index.css";
 import Home from "./pages/Home";
 import Inbox from "./pages/Inbox";
+import AgentProfile from "./pages/AgentProfile";
+import Connect from "./pages/Connect";
 import UserProfile from "./pages/UserProfile";
 import { SessionProvider, useSession } from "./stores/session";
 
@@ -62,6 +64,7 @@ render(
         <Route path="/register" component={Register} />
         <Route path="/forgot" component={ForgotPassword} />
         <Route path="/reset" component={ResetPassword} />
+        <Route path="/connect" component={Connect} />
         <Route path="/" component={() => <Navigate href="/app" />} />
         <Route path="/app" component={App}>
           <Route path="/" component={Home} />
@@ -71,6 +74,7 @@ render(
           <Route path="/p/:projectId/i/:issueId" component={IssuePage} />
           <Route path="/p/:projectId/k/:key" component={IssueKeyRedirect} />
           <Route path="/u/:userId" component={UserProfile} />
+          <Route path="/ag/:agentId" component={AgentProfile} />
           <Route path="/settings" component={Settings} />
         </Route>
       </Router>

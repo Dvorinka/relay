@@ -11,6 +11,17 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countMessageAttachments = `-- name: CountMessageAttachments :one
+select count(*) from message_attachments where message_id = $1
+`
+
+func (q *Queries) CountMessageAttachments(ctx context.Context, messageID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countMessageAttachments, messageID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countUsableAttachmentsInProject = `-- name: CountUsableAttachmentsInProject :one
 select count(*) from attachments
 where project_id = $1 and status = 'ready'

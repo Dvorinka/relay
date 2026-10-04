@@ -12,11 +12,13 @@ import (
 )
 
 const createTodo = `-- name: CreateTodo :one
-insert into agent_todos (project_id, agent_id, issue_id, content, position)
+insert into agent_todos (project_id, agent_id, issue_id, content, status, done, position)
 values ($1, $2, $3,
         $4,
+        coalesce($5::text, 'todo'),
+        coalesce($5::text, 'todo') = 'done',
         coalesce((select max(position) + 1 from agent_todos where project_id = $1), 0))
-returning id, project_id, agent_id, issue_id, content, done, position, created_at, updated_at, agent_name_snapshot
+returning id, project_id, agent_id, issue_id, content, done, position, created_at, updated_at, agent_name_snapshot, status
 `
 
 type CreateTodoParams struct {
@@ -24,6 +26,7 @@ type CreateTodoParams struct {
 	AgentID   pgtype.UUID `json:"agent_id"`
 	IssueID   pgtype.UUID `json:"issue_id"`
 	Content   string      `json:"content"`
+	Status    pgtype.Text `json:"status"`
 }
 
 func (q *Queries) CreateTodo(ctx context.Context, arg CreateTodoParams) (AgentTodo, error) {
@@ -32,6 +35,7 @@ func (q *Queries) CreateTodo(ctx context.Context, arg CreateTodoParams) (AgentTo
 		arg.AgentID,
 		arg.IssueID,
 		arg.Content,
+		arg.Status,
 	)
 	var i AgentTodo
 	err := row.Scan(
@@ -45,6 +49,7 @@ func (q *Queries) CreateTodo(ctx context.Context, arg CreateTodoParams) (AgentTo
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AgentNameSnapshot,
+		&i.Status,
 	)
 	return i, err
 }
@@ -89,7 +94,7 @@ func (q *Queries) GetIssueByKey(ctx context.Context, arg GetIssueByKeyParams) (G
 }
 
 const getTodo = `-- name: GetTodo :one
-select id, project_id, agent_id, issue_id, content, done, position, created_at, updated_at, agent_name_snapshot from agent_todos where id = $1
+select id, project_id, agent_id, issue_id, content, done, position, created_at, updated_at, agent_name_snapshot, status from agent_todos where id = $1
 `
 
 func (q *Queries) GetTodo(ctx context.Context, id pgtype.UUID) (AgentTodo, error) {
@@ -106,12 +111,13 @@ func (q *Queries) GetTodo(ctx context.Context, id pgtype.UUID) (AgentTodo, error
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AgentNameSnapshot,
+		&i.Status,
 	)
 	return i, err
 }
 
 const getTodoJoined = `-- name: GetTodoJoined :one
-select t.id, t.project_id, t.agent_id, t.issue_id, t.content, t.done, t.position, t.created_at, t.updated_at, t.agent_name_snapshot, coalesce(a.name, nullif(t.agent_name_snapshot, '')) as agent_name, i.number as issue_number, p.key as issue_key
+select t.id, t.project_id, t.agent_id, t.issue_id, t.content, t.done, t.position, t.created_at, t.updated_at, t.agent_name_snapshot, t.status, coalesce(a.name, nullif(t.agent_name_snapshot, '')) as agent_name, i.number as issue_number, p.key as issue_key
 from agent_todos t
 left join agents a on a.id = t.agent_id
 left join issues i on i.id = t.issue_id
@@ -130,6 +136,7 @@ type GetTodoJoinedRow struct {
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 	AgentNameSnapshot string             `json:"agent_name_snapshot"`
+	Status            string             `json:"status"`
 	AgentName         string             `json:"agent_name"`
 	IssueNumber       pgtype.Int4        `json:"issue_number"`
 	IssueKey          pgtype.Text        `json:"issue_key"`
@@ -149,6 +156,7 @@ func (q *Queries) GetTodoJoined(ctx context.Context, id pgtype.UUID) (GetTodoJoi
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AgentNameSnapshot,
+		&i.Status,
 		&i.AgentName,
 		&i.IssueNumber,
 		&i.IssueKey,
@@ -157,7 +165,7 @@ func (q *Queries) GetTodoJoined(ctx context.Context, id pgtype.UUID) (GetTodoJoi
 }
 
 const listTodos = `-- name: ListTodos :many
-select t.id, t.project_id, t.agent_id, t.issue_id, t.content, t.done, t.position, t.created_at, t.updated_at, t.agent_name_snapshot, coalesce(a.name, nullif(t.agent_name_snapshot, '')) as agent_name, i.number as issue_number, p.key as issue_key
+select t.id, t.project_id, t.agent_id, t.issue_id, t.content, t.done, t.position, t.created_at, t.updated_at, t.agent_name_snapshot, t.status, coalesce(a.name, nullif(t.agent_name_snapshot, '')) as agent_name, i.number as issue_number, p.key as issue_key
 from agent_todos t
 left join agents a on a.id = t.agent_id
 left join issues i on i.id = t.issue_id
@@ -177,6 +185,7 @@ type ListTodosRow struct {
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 	AgentNameSnapshot string             `json:"agent_name_snapshot"`
+	Status            string             `json:"status"`
 	AgentName         string             `json:"agent_name"`
 	IssueNumber       pgtype.Int4        `json:"issue_number"`
 	IssueKey          pgtype.Text        `json:"issue_key"`
@@ -202,9 +211,53 @@ func (q *Queries) ListTodos(ctx context.Context, projectID pgtype.UUID) ([]ListT
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.AgentNameSnapshot,
+			&i.Status,
 			&i.AgentName,
 			&i.IssueNumber,
 			&i.IssueKey,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTodosByAgent = `-- name: ListTodosByAgent :many
+select id, project_id, agent_id, issue_id, content, done, position, created_at, updated_at, agent_name_snapshot, status from agent_todos
+where project_id = $1 and agent_id = $2
+order by position, created_at
+`
+
+type ListTodosByAgentParams struct {
+	ProjectID pgtype.UUID `json:"project_id"`
+	AgentID   pgtype.UUID `json:"agent_id"`
+}
+
+func (q *Queries) ListTodosByAgent(ctx context.Context, arg ListTodosByAgentParams) ([]AgentTodo, error) {
+	rows, err := q.db.Query(ctx, listTodosByAgent, arg.ProjectID, arg.AgentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentTodo{}
+	for rows.Next() {
+		var i AgentTodo
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.AgentID,
+			&i.IssueID,
+			&i.Content,
+			&i.Done,
+			&i.Position,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AgentNameSnapshot,
+			&i.Status,
 		); err != nil {
 			return nil, err
 		}
@@ -230,25 +283,37 @@ func (q *Queries) TodoProject(ctx context.Context, id pgtype.UUID) (pgtype.UUID,
 const updateTodo = `-- name: UpdateTodo :one
 update agent_todos set
     content = coalesce($1::text, content),
-    done = coalesce($2::boolean, done),
-    issue_id = coalesce($3::uuid, issue_id),
+    status = case
+        when $2::text is not null then $2::text
+        when $3::boolean is not null then case when $3::boolean then 'done' else 'todo' end
+        else status end,
+    done = case
+        when $2::text is not null then $2::text = 'done'
+        when $3::boolean is not null then $3::boolean
+        else done end,
+    issue_id = coalesce($4::uuid, issue_id),
+    position = coalesce($5::integer, position),
     updated_at = now()
-where id = $4
-returning id, project_id, agent_id, issue_id, content, done, position, created_at, updated_at, agent_name_snapshot
+where id = $6
+returning id, project_id, agent_id, issue_id, content, done, position, created_at, updated_at, agent_name_snapshot, status
 `
 
 type UpdateTodoParams struct {
-	Content pgtype.Text `json:"content"`
-	Done    pgtype.Bool `json:"done"`
-	IssueID pgtype.UUID `json:"issue_id"`
-	ID      pgtype.UUID `json:"id"`
+	Content  pgtype.Text `json:"content"`
+	Status   pgtype.Text `json:"status"`
+	Done     pgtype.Bool `json:"done"`
+	IssueID  pgtype.UUID `json:"issue_id"`
+	Position pgtype.Int4 `json:"position"`
+	ID       pgtype.UUID `json:"id"`
 }
 
 func (q *Queries) UpdateTodo(ctx context.Context, arg UpdateTodoParams) (AgentTodo, error) {
 	row := q.db.QueryRow(ctx, updateTodo,
 		arg.Content,
+		arg.Status,
 		arg.Done,
 		arg.IssueID,
+		arg.Position,
 		arg.ID,
 	)
 	var i AgentTodo
@@ -263,6 +328,7 @@ func (q *Queries) UpdateTodo(ctx context.Context, arg UpdateTodoParams) (AgentTo
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AgentNameSnapshot,
+		&i.Status,
 	)
 	return i, err
 }

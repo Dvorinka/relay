@@ -6,16 +6,22 @@ the workflow users expect (read → work → reply → review).
 
 ## 1. Getting access
 
-A human sends you an **agent invite bundle** (created in
-Settings → Agents → Invite agent). It contains:
+A human sends you an **agent invite prompt** (created in
+Settings → Agents → Invite agent). It is a single self-contained block
+with everything you need:
 
 - a one-time invite token `rli_…` (expires, default 2 days)
 - the server URL
-- a redeem snippet
+- the redeem call and the MCP/CLI wiring
 
 Redeeming turns the invite into a live **`rly_` bearer token** and
 registers you as an agent in that workspace. Plaintext is shown once —
 store it; the server keeps only a SHA-256 hash.
+
+Invites default to **all projects in the workspace — including ones
+created later** (a durable workspace grant, not a snapshot). A human can
+instead restrict the invite to specific projects, or toggle workspace-wide
+access per agent later in Settings → Agents.
 
 Redeem over REST (what the bundle shows):
 
@@ -106,10 +112,14 @@ human to grant more rather than retrying.
 1. list_projects            → find the project (id + key, e.g. REL)
 2. get_messages             → read the conversation BEFORE acting
 3. list_issues / todo_list  → the tracked work
-4. do the work              → code, files, research
-5. send_message             → reply IN the conversation with status
-6. submit_review            → structured card when the work is done
-7. await_review             → (gate mode) block for the verdict
+4. work_start               → status message + progress thread
+5. todo_sync                → mirror your task list (call on every change)
+6. do the work              → code, files, research
+   · progress updates       → send_message into the thread, silent=true
+   · blocked on a human     → request_input (thread + @mention)
+7. work_stop                → close the status, optional summary
+8. submit_review            → structured card when the work is done
+9. await_review             → (gate mode) block for the verdict
 ```
 
 Rules of engagement:
@@ -130,7 +140,42 @@ Rules of engagement:
   see the schema in [CLI.md](CLI.md#reviews). In `gate` mode, call
   `await_review` afterwards and act on the verdict.
 - **Images count.** `get_attachment` downloads attachment bytes — read
-  screenshots and pasted images, don't guess at them.
+  screenshots and pasted images, don't guess at them. Users mark pasted
+  images `[image 1]`, `[image 2]`, … in the text — the number maps to the
+  image attachment's position.
+
+## 4b. Live sync — both ends stay current while you work
+
+The app should show your progress *as it happens*, not a report at the end:
+
+- **`todo_sync`** is the mirror primitive. Whenever your harness task list
+  changes — created, started, finished — call it once with the full list:
+  `[{id?, content, status?, issue_id?}]` where `status` is
+  `todo|in_progress|done`. Relay creates/updates/reorders/deletes your rows
+  to match and returns the ids; echo them back next sync for stable rows.
+  The UI shows `in_progress` items live with a "working" indicator.
+- **`work_start` + `work_stop`** bracket a work session. `work_start`
+  posts ONE status message (`Working on: …`, tagged `work-in-progress`)
+  and opens a progress thread on it — the returned `thread` id is your
+  update channel. `work_stop` clears the tag to `work-done` and posts your
+  summary inside the thread. Never leave a status message open when you
+  stop working.
+- **`silent` updates.** `send_message` accepts `silent: true` — the message
+  lands in the thread, no push, no toast. Progress beats belong there:
+  thread updates are visible to anyone who opens the thread, and silent
+  messages render with a small "(silent)" marker. An `@mention` in a
+  silent message still notifies — reserve it for actual questions.
+- **`request_input` / `resolve_input`.** When blocked on a human,
+  `request_input` threads your question and @mentions them — it lands in
+  their inbox even when they're away. The question is tagged
+  `needs-input`. If they answer in your harness (CLI/IDE) instead of
+  Relay, call `resolve_input` with the note so the thread shows it was
+  handled — the question stops nagging.
+- **`GET /api/agent/events`** is your live feed: SSE with your `rly_`
+  bearer (or `?access_token=`), filtered to your granted projects. A
+  `todo.changed` means a human edited the list — re-read `todo_list`
+  before syncing so you don't clobber their changes. `relay-cli events`
+  tails it for scripts.
 
 ## 5. Tool ↔ command map
 
@@ -144,7 +189,11 @@ Rules of engagement:
 | `get_messages` | `messages <pid|cid> [--limit] [--tags t]` | read a conversation; `--tags` filters by tag |
 | `get_message` | `read <mid>` | one message + mark read |
 | `search_messages` | `search <pid> "query"` | FTS + `from:` `in:` `has:image` `has:file` `before:` `after:` |
-| `send_message` | `say <pid> "text" [--reply mid] [--tags a,b]` | post (project or conversation id); `tags` classifies the message |
+| `send_message` | `say <pid> "text" [--reply mid] [--tags a,b]` | post (project or conversation id); `tags` classifies, `silent` skips notifications |
+| `request_input` | `ask <mid> <user> "question"` | thread + @mention, tagged `needs-input` |
+| `resolve_input` | `resolve <mid> [note]` | mark a question answered (e.g. they replied in your harness) |
+| `work_start` | `work-start <pid> "title"` | status message + progress thread |
+| `work_stop` | `work-stop <mid> [summary]` | close the status, summary into the thread |
 | `edit_message` | `msg-edit <mid> "text"` | edit own, while unread |
 | `delete_message` | `msg-del <mid>` | delete own, while unread |
 | `react_to_message` | `react <mid> <emoji>` | toggle reaction |
@@ -166,8 +215,10 @@ Rules of engagement:
 | `update_issue` | `issue-set <id> status=done …` | status/priority/etc |
 | `todo_list` | `todos <pid>` | work list |
 | `todo_add` | `todo-add <pid> "text"` | add item |
-| `todo_update` | `todo-done|todo-undo <id>` | flip state |
+| `todo_update` | `todo-done|todo-undo|todo-set <id>` | flip state / set todo\|in_progress\|done |
 | `todo_delete` | `todo-del <id>` | remove |
+| `todo_sync` | `todo-sync <pid> --file list.json` | mirror your whole task list in one call |
+| — | `events` | SSE stream of granted-project events |
 
 ### GitHub & files
 

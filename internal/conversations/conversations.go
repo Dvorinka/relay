@@ -173,7 +173,7 @@ func (s *Service) handleListMessages(c *gin.Context) {
 		m := rows[i]
 		msgs = append(msgs, MessageJSON(MessageView{
 			ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
-			Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+			Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Silent: m.Silent, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 			AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 			AuthorKindSnapshot: m.AuthorKindSnapshot,
 			AuthorName:         m.AuthorName, AuthorAvatar: m.AuthorAvatar,
@@ -269,7 +269,7 @@ func (s *Service) handlePostMessage(c *gin.Context) {
 	atts := s.attachmentsFor(c, []pgtype.UUID{m.ID})
 	out := MessageJSON(MessageView{
 		ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
-		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Silent: m.Silent, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 		AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 		AuthorKindSnapshot: m.AuthorKindSnapshot,
 		AuthorName:         m.AuthorName, AuthorAvatar: m.AuthorAvatar,
@@ -308,7 +308,8 @@ func (s *Service) handleEditMessage(c *gin.Context) {
 	}
 	user := auth.CurrentUser(c)
 	var req struct {
-		Body string `json:"body"`
+		Body          string   `json:"body"`
+		AttachmentIDs []string `json:"attachment_ids"` // appended, not replaced
 	}
 	if !httpx.BindJSON(c, &req) {
 		return
@@ -332,11 +333,45 @@ func (s *Service) handleEditMessage(c *gin.Context) {
 		httpx.Error(c, http.StatusConflict, "message_locked", "an agent has read this message; it can no longer be edited")
 		return
 	}
+	attIDs, bad := parseUUIDs(req.AttachmentIDs)
+	if bad {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "invalid attachment id")
+		return
+	}
+	if len(attIDs) > 0 {
+		existing, err := s.q.CountMessageAttachments(c.Request.Context(), id)
+		if err != nil {
+			httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
+		if int(existing)+len(attIDs) > 20 {
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "at most 20 attachments per message")
+			return
+		}
+		// attachment project must match the message's project
+		projectID := s.convProjectID(c, conversationIDFor(c, s.q, id))
+		n, err := s.q.CountUsableAttachmentsInProject(c.Request.Context(),
+			db.CountUsableAttachmentsInProjectParams{ProjectID: projectID, Ids: attIDs})
+		if err != nil || int(n) != len(attIDs) {
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "unknown or pending attachment id")
+			return
+		}
+	}
 	if _, err := s.q.UpdateMessageBody(c.Request.Context(), db.UpdateMessageBodyParams{
 		ID: id, AuthorUserID: user.ID, Body: req.Body,
 	}); err != nil {
 		httpx.Error(c, http.StatusForbidden, "forbidden", "only the author can edit a message")
 		return
+	}
+	if len(attIDs) > 0 {
+		base, _ := s.q.CountMessageAttachments(c.Request.Context(), id)
+		for i, aid := range attIDs {
+			if err := s.q.LinkMessageAttachment(c.Request.Context(), db.LinkMessageAttachmentParams{
+				MessageID: id, AttachmentID: aid, Position: int32(int(base) + i),
+			}); err != nil {
+				s.log.Error("link attachment failed", zap.Error(err))
+			}
+		}
 	}
 	m, err := s.q.GetMessageByID(c.Request.Context(), id)
 	if err != nil {
@@ -353,7 +388,7 @@ func (s *Service) handleEditMessage(c *gin.Context) {
 	}
 	out := MessageJSON(MessageView{
 		ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
-		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Silent: m.Silent, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 		AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 		AuthorKindSnapshot: m.AuthorKindSnapshot,
 		AuthorName:         m.AuthorName, AuthorAvatar: m.AuthorAvatar,
@@ -430,7 +465,7 @@ func (s *Service) messagePayload(c *gin.Context, id pgtype.UUID) (gin.H, bool) {
 	read := s.agentReadSet(c, []pgtype.UUID{m.ID})
 	return MessageJSON(MessageView{
 		ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
-		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Silent: m.Silent, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 		AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 		AuthorKindSnapshot: m.AuthorKindSnapshot,
 		AuthorName:         m.AuthorName, AuthorAvatar: m.AuthorAvatar,
@@ -516,7 +551,7 @@ func (s *Service) handleListPins(c *gin.Context) {
 	for _, m := range rows {
 		msgs = append(msgs, MessageJSON(MessageView{
 			ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
-			Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+			Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Silent: m.Silent, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 			AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 			AuthorKindSnapshot: m.AuthorKindSnapshot,
 			AuthorName:         m.AuthorName, AuthorAvatar: m.AuthorAvatar,
@@ -762,7 +797,7 @@ func (s *Service) postThreadNotice(c *gin.Context, parent db.Conversation, threa
 	}
 	out := MessageJSON(MessageView{
 		ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
-		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Silent: m.Silent, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 		AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 		AuthorKindSnapshot: m.AuthorKindSnapshot,
 		AuthorName:         m.AuthorName, AuthorAvatar: m.AuthorAvatar,
@@ -1087,6 +1122,7 @@ type MessageView struct {
 	Body                         string
 	Mentions                     []byte
 	Tags                         []string
+	Silent                       bool
 	CreatedAt, EditedAt          pgtype.Timestamptz
 	AuthorUserID, AuthorAgentID  pgtype.UUID
 	AuthorKindSnapshot           string
@@ -1192,6 +1228,7 @@ func MessageJSON(v MessageView) gin.H {
 		"body":        v.Body,
 		"mentions":    mrefs,
 		"tags":        nonEmptyTags(v.Tags),
+		"silent":      v.Silent,
 		"parent":      parent,
 		"thread":      thread,
 		"pinned_at":   pinned,

@@ -19,6 +19,8 @@ type Agent struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 	ReviewMode  string             `json:"review_mode"`
+	GrantAll    bool               `json:"grant_all"`
+	GrantScopes []string           `json:"grant_scopes"`
 }
 
 type AgentInvite struct {
@@ -72,6 +74,7 @@ type AgentTodo struct {
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 	AgentNameSnapshot string             `json:"agent_name_snapshot"`
+	Status            string             `json:"status"`
 }
 
 type Attachment struct {
@@ -223,6 +226,7 @@ type Message struct {
 	Tags               []string           `json:"tags"`
 	AuthorNameSnapshot string             `json:"author_name_snapshot"`
 	AuthorKindSnapshot string             `json:"author_kind_snapshot"`
+	Silent             bool               `json:"silent"`
 }
 
 type MessageAttachment struct {

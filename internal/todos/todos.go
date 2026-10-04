@@ -103,7 +103,7 @@ func todoJSON(t db.ListTodosRow) gin.H {
 	}
 	return gin.H{
 		"id": t.ID.String(), "project_id": t.ProjectID.String(),
-		"content": t.Content, "done": t.Done, "position": t.Position,
+		"content": t.Content, "done": t.Done, "status": t.Status, "position": t.Position,
 		"agent": agent, "issue": issue,
 		"created_at": t.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
 		"updated_at": t.UpdatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
@@ -163,6 +163,7 @@ func (s *Service) handleUpdate(c *gin.Context) {
 	var req struct {
 		Content *string `json:"content"`
 		Done    *bool   `json:"done"`
+		Status  *string `json:"status"`
 		IssueID *string `json:"issue_id"`
 	}
 	if !httpx.BindJSON(c, &req) {
@@ -180,6 +181,15 @@ func (s *Service) handleUpdate(c *gin.Context) {
 	}
 	if req.Done != nil {
 		params.Done = pgtype.Bool{Bool: *req.Done, Valid: true}
+	}
+	if req.Status != nil {
+		switch *req.Status {
+		case "todo", "in_progress", "done":
+			params.Status = pgtype.Text{String: *req.Status, Valid: true}
+		default:
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "status must be todo|in_progress|done")
+			return
+		}
 	}
 	if req.IssueID != nil {
 		var iid pgtype.UUID

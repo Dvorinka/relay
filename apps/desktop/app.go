@@ -113,6 +113,18 @@ func (a *App) buildHandler() http.Handler {
 	return mux
 }
 
+// ServerConfig exposes the shell's configured server to the SPA. A bound
+// method rather than a fetch path because the SPA's service worker can
+// intercept same-origin fetches on wails.localhost — the proxied SPA clears
+// localStorage relay.serverUrl, so browser sign-in needs this to learn the
+// real URL it should open in the system browser.
+func (a *App) ServerConfig() map[string]any {
+	return map[string]any{
+		"server_url": a.cfg.ServerURL,
+		"offline":    a.cfg.Offline,
+	}
+}
+
 // openExternal hands a URL to the OS browser. The SPA calls this for flows
 // that need the user's real browser session (GitHub App registration needs a
 // GitHub login the webview doesn't have). Absolute http(s) URLs open as-is;
@@ -213,10 +225,11 @@ func (a *App) Notify(title, body string) error {
 			return exec.Command(path, "-e", script).Run()
 		}
 	case "windows":
-		// WebView2 implements the Notification API natively — the SPA only
-		// reaches this bridge when that path failed, so a shell toast would
-		// need a packaged app identity. No-op rather than error.
-		return nil
+		// WebView2 implements the Notification API natively — report
+		// unsupported so the SPA falls back to it instead of swallowing
+		// the notification. A shell toast would need a packaged app
+		// identity we don't install.
+		return errors.New("webview handles notifications on windows")
 	}
 	return errors.New("no notification facility on this platform")
 }
@@ -278,6 +291,18 @@ func offlineAvailable() bool {
 // only: WebKitGTK can drop POST bodies.
 func (a *App) configFromSPA(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	if q.Get("server_url") == "" && q.Get("offline") == "" {
+		// Read path: the proxied SPA can't see the configured server (its
+		// localStorage relay.serverUrl is cleared by the choice bridge), so
+		// flows that need the real URL — browser sign-in opens it in the
+		// system browser — ask the shell for it.
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"server_url": a.cfg.ServerURL,
+			"offline":    a.cfg.Offline,
+		})
+		return
+	}
 	if err := a.applyChoice(q.Get("server_url"), q.Get("offline") == "1"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

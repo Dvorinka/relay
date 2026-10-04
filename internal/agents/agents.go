@@ -188,6 +188,7 @@ func (s *Service) handleListProjectAgents(c *gin.Context) {
 		out = append(out, agentJSON(db.Agent{
 			ID: r.ID, WorkspaceID: r.WorkspaceID, Name: r.Name, Slug: r.Slug,
 			Description: r.Description, AvatarKey: r.AvatarKey, ReviewMode: r.ReviewMode,
+			GrantAll: r.GrantAll, GrantScopes: r.EffectiveScopes,
 			CreatedAt: r.CreatedAt,
 		}, nil, lastSeenFor(c, s.q, r.ID)))
 	}
@@ -267,12 +268,36 @@ func (s *Service) handleGet(c *gin.Context) {
 func (s *Service) handleUpdate(c *gin.Context) {
 	a := currentAgent(c)
 	var req struct {
-		Name        *string `json:"name"`
-		Description *string `json:"description"`
-		ReviewMode  *string `json:"review_mode"`
+		Name        *string  `json:"name"`
+		Description *string  `json:"description"`
+		ReviewMode  *string  `json:"review_mode"`
+		GrantAll    *bool    `json:"grant_all"`
+		GrantScopes []string `json:"grant_scopes"`
 	}
 	if !httpx.BindJSON(c, &req) {
 		return
+	}
+	if req.GrantAll != nil {
+		scopes := req.GrantScopes
+		if *req.GrantAll {
+			if len(scopes) == 0 {
+				scopes = DefaultInviteScopes
+			}
+			for _, sc := range scopes {
+				if !Scopes[sc] {
+					httpx.Error(c, http.StatusBadRequest, "bad_request", "unknown scope: "+sc)
+					return
+				}
+			}
+		}
+		row, err := s.q.SetAgentGrantAll(c.Request.Context(), db.SetAgentGrantAllParams{
+			ID: a.ID, GrantAll: *req.GrantAll, GrantScopes: scopes,
+		})
+		if err != nil {
+			httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
+		a = row
 	}
 	params := db.UpdateAgentParams{ID: a.ID}
 	if req.Name != nil {
@@ -614,20 +639,23 @@ func (s *Service) handleRedeemInvite(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
-	projects := inv.ProjectIds
-	if len(projects) == 0 {
-		projects, err = s.q.ListWorkspaceProjectIDs(c.Request.Context(), inv.WorkspaceID)
-		if err != nil {
-			httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
-			return
-		}
-	}
-	for _, pid := range projects {
-		if _, err := s.q.UpsertAgentGrant(c.Request.Context(), db.UpsertAgentGrantParams{
-			AgentID: agent.ID, ProjectID: pid, Scopes: inv.Scopes,
+	// project_ids empty = workspace-wide grant that also covers projects
+	// created later (grant_all); explicit lists stay per-project rows.
+	if len(inv.ProjectIds) == 0 {
+		if _, err := s.q.SetAgentGrantAll(c.Request.Context(), db.SetAgentGrantAllParams{
+			ID: agent.ID, GrantAll: true, GrantScopes: inv.Scopes,
 		}); err != nil {
 			httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 			return
+		}
+	} else {
+		for _, pid := range inv.ProjectIds {
+			if _, err := s.q.UpsertAgentGrant(c.Request.Context(), db.UpsertAgentGrantParams{
+				AgentID: agent.ID, ProjectID: pid, Scopes: inv.Scopes,
+			}); err != nil {
+				httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+				return
+			}
 		}
 	}
 	token, hash, err := mintToken()
@@ -728,10 +756,15 @@ func agentJSON(a db.Agent, grants []gin.H, lastSeen pgtype.Timestamptz) gin.H {
 	if a.AvatarKey.Valid {
 		avatar = "/api/files/" + a.AvatarKey.String
 	}
+	scopes := a.GrantScopes
+	if scopes == nil {
+		scopes = []string{}
+	}
 	return gin.H{
 		"id": a.ID.String(), "workspace_id": a.WorkspaceID.String(),
 		"name": a.Name, "slug": a.Slug, "description": a.Description,
 		"avatar_url": avatar, "review_mode": a.ReviewMode,
+		"grant_all": a.GrantAll, "grant_scopes": scopes,
 		"grants": grants, "last_seen_at": seen,
 		"created_at": a.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
 	}
@@ -749,6 +782,7 @@ func agentFromListRow(r db.ListAgentsForWorkspaceRow) db.Agent {
 	return db.Agent{
 		ID: r.ID, WorkspaceID: r.WorkspaceID, Name: r.Name, Slug: r.Slug,
 		Description: r.Description, AvatarKey: r.AvatarKey, ReviewMode: r.ReviewMode,
+		GrantAll: r.GrantAll, GrantScopes: r.GrantScopes,
 		CreatedBy: r.CreatedBy,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}

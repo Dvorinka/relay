@@ -4,7 +4,7 @@ import { api } from "../../lib/api";
 import { ApiClientError } from "@relay/api-client";
 import { statusDefs } from "./meta";
 import { CheckIcon, PlusIcon, XIcon } from "../../components/icons";
-import { inputClass, primaryButtonClass } from "../../components/ui";
+import { ColorField, inputClass, primaryButtonClass } from "../../components/ui";
 
 // Project-level customization sheet: issue lanes (custom statuses) and the
 // linked local folder. Opened from the board header gear.
@@ -99,12 +99,10 @@ export function ProjectSettings(props: {
             <For each={defs()}>
               {(d, i) => (
                 <li class="flex items-center gap-2">
-                  <input
-                    type="color"
+                  <ColorField
                     value={d.color}
-                    aria-label={`Color for ${d.label}`}
-                    onInput={(e) => patch(i(), { color: e.currentTarget.value })}
-                    class="h-7 w-7 shrink-0 cursor-pointer rounded border border-border bg-transparent p-0.5"
+                    label={`Color for ${d.label}`}
+                    onPick={(hex) => patch(i(), { color: hex })}
                   />
                   <input
                     value={d.label}

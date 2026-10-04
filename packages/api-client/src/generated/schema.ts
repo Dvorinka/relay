@@ -106,6 +106,60 @@ export interface paths {
         patch: operations["updateMe"];
         trace?: never;
     };
+    "/api/auth/browser/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start a browser sign-in flow (desktop shell)
+         * @description Mints a one-shot code. The desktop opens {publicUrl}/connect?code=… in the system browser and polls /browser/poll until a signed-in user approves.
+         */
+        post: operations["browserAuthStart"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/browser/poll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Poll a pending browser sign-in (desktop shell) */
+        get: operations["browserAuthPoll"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/browser/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve a browser sign-in code (signed-in user) */
+        post: operations["browserAuthApprove"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/password/forgot": {
         parameters: {
             query?: never;
@@ -646,7 +700,7 @@ export interface paths {
         delete: operations["deleteMessage"];
         options?: never;
         head?: never;
-        /** Edit a message's body - author only, locked once any agent has read it */
+        /** Edit a message's body and append attachments - author only, locked once any agent has read it */
         patch: operations["editMessage"];
         trace?: never;
     };
@@ -964,7 +1018,7 @@ export interface paths {
         delete: operations["deleteAgent"];
         options?: never;
         head?: never;
-        /** Rename/redescribe an agent (owner/admin) */
+        /** Rename/redescribe an agent, or toggle its workspace-wide grant (owner/admin) */
         patch: operations["updateAgent"];
         trace?: never;
     };
@@ -1032,7 +1086,7 @@ export interface paths {
         put?: never;
         /**
          * Mint a one-shot agent invite; the rli_ token is returned once (owner/admin)
-         * @description The user invites; the agent registers itself by redeeming the token at POST /api/agent-invites/redeem. Empty project_ids means every workspace project at redeem time; empty scopes means the default full set.
+         * @description The user invites; the agent registers itself by redeeming the token at POST /api/agent-invites/redeem. Empty project_ids means every workspace project, including ones created later; empty scopes means the default full set.
          */
         post: operations["createAgentInvite"];
         delete?: never;
@@ -1441,6 +1495,30 @@ export interface paths {
          *     projects the caller can access. Heartbeat comments every 25s.
          */
         get: operations["streamEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Server-sent events for an agent token
+         * @description Same event envelope as `/api/events` but authenticated with an agent
+         *     `rly_` bearer token (Authorization header or `access_token` query —
+         *     EventSource cannot set headers). Events are filtered to projects the
+         *     agent's grant covers, so a harness can mirror todo/issue/message
+         *     state live.
+         */
+        get: operations["streamAgentEvents"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2001,6 +2079,8 @@ export interface components {
             body: string;
             /** @description Free-form classification tags (frontend, backend, visual, mcp, …); lowercase slug, max 8 */
             tags?: string[];
+            /** @description Agent progress update posted without notifications — clients should not toast it */
+            silent?: boolean;
             /** @description Structured entity references extracted from the body */
             mentions?: components["schemas"]["MentionRef"][];
             parent?: components["schemas"]["MessageParent"] | null;
@@ -2163,6 +2243,10 @@ export interface components {
              * @enum {string}
              */
             review_mode: "notify" | "gate";
+            /** @description Workspace-wide grant - every current and future project with grant_scopes */
+            grant_all?: boolean;
+            /** @description Scope set applied by grant_all; also the fallback scopes in project agent listings */
+            grant_scopes?: components["schemas"]["AgentScope"][];
             grants: components["schemas"]["AgentGrant"][];
             /**
              * Format: date-time
@@ -2284,7 +2368,7 @@ export interface components {
         AgentInvite: {
             /** Format: uuid */
             id: string;
-            /** @description Empty = every workspace project at redeem time. */
+            /** @description Empty = every workspace project, including ones created later. */
             project_ids: string[];
             scopes: components["schemas"]["AgentScope"][];
             /** Format: date-time */
@@ -2550,6 +2634,103 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+        };
+    };
+    browserAuthStart: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pending sign-in created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                        expires_in: number;
+                    };
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    browserAuthPoll: {
+        parameters: {
+            query: {
+                code: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description pending, or approved with a session token (consumed once) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        status: "pending" | "approved";
+                        /** @description Present only when approved */
+                        token?: string;
+                    };
+                };
+            };
+            /** @description Unknown or expired code */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    browserAuthApprove: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    code: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Approved; token is parked for the polling desktop */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            /** @description Unknown or expired code */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
         };
     };
     forgotPassword: {
@@ -3737,6 +3918,8 @@ export interface operations {
             content: {
                 "application/json": {
                     body: string;
+                    /** @description New ready attachments to append; existing links are preserved */
+                    attachment_ids?: string[];
                 };
             };
         };
@@ -4472,6 +4655,10 @@ export interface operations {
                     description?: string;
                     /** @enum {string} */
                     review_mode?: "notify" | "gate";
+                    /** @description true grants every workspace project (incl. future ones) with grant_scopes; false returns to explicit per-project grants */
+                    grant_all?: boolean;
+                    /** @description Scope set used when grant_all is on; defaults to the standard invite set */
+                    grant_scopes?: components["schemas"]["AgentScope"][];
                 };
             };
         };
@@ -5250,6 +5437,11 @@ export interface operations {
                 "application/json": {
                     content?: string;
                     done?: boolean;
+                    /**
+                     * @description Finer-grained state — mirrors a harness task list. Sets done when 'done'.
+                     * @enum {string}
+                     */
+                    status?: "todo" | "in_progress" | "done";
                     issue_id?: string;
                 };
             };
@@ -5355,6 +5547,26 @@ export interface operations {
         };
     };
     streamEvents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description text/event-stream */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": unknown;
+                };
+            };
+        };
+    };
+    streamAgentEvents: {
         parameters: {
             query?: never;
             header?: never;

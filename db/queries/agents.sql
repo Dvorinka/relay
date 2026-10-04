@@ -102,20 +102,43 @@ where t.token_hash = sqlc.arg(token_hash)
 update mcp_tokens set last_used_at = now() where id = sqlc.arg(id);
 
 -- name: AgentScopeForProject :one
--- scopes the agent holds on a project; empty set when ungranted
-select coalesce(g.scopes, '{}'::text[]) as scopes
+-- scopes the agent holds on a project; empty set when ungranted. An
+-- explicit grant row wins; grant_all agents fall back to grant_scopes,
+-- which is what lets workspace-wide invites cover future projects.
+select coalesce(
+    g.scopes,
+    case when a.grant_all then a.grant_scopes else '{}'::text[] end
+) as scopes
 from agents a
 left join agent_project_permissions g
        on g.agent_id = a.id and g.project_id = sqlc.arg(project_id)
 where a.id = sqlc.arg(agent_id);
 
+-- name: SetAgentGrantAll :one
+update agents set
+    grant_all = sqlc.arg(grant_all),
+    grant_scopes = case when sqlc.arg(grant_all)
+                        then sqlc.arg(grant_scopes)::text[]
+                        else '{}'::text[] end,
+    updated_at = now()
+where id = sqlc.arg(id)
+returning *;
+
 -- name: AgentLastSeen :one
 select cast(max(last_used_at) as timestamptz) as last_seen_at from mcp_tokens where agent_id = sqlc.arg(agent_id);
 
 -- name: ListGrantedProjects :many
-select p.* from agent_project_permissions g
-join projects p on p.id = g.project_id
-where g.agent_id = sqlc.arg(agent_id) and 'project:read' = any(g.scopes)
+-- explicit grants plus, for grant_all agents carrying project:read, every
+-- project in the workspace
+select p.* from projects p
+join agents a on a.id = sqlc.arg(agent_id)
+left join agent_project_permissions g
+       on g.agent_id = a.id and g.project_id = p.id
+where p.workspace_id = a.workspace_id
+  and (
+    'project:read' = any(g.scopes)
+    or (a.grant_all and 'project:read' = any(a.grant_scopes))
+  )
 order by p.name;
 
 -- name: UpdateAgentAvatar :one
@@ -152,9 +175,13 @@ delete from agent_invites where id = sqlc.arg(id);
 select id from projects where workspace_id = sqlc.arg(workspace_id);
 
 -- name: ListProjectAgents :many
--- agents holding a grant on a project; surfaced in the project's member list
-select a.*, g.scopes as grant_scopes
+-- agents holding a grant on a project (explicit or workspace-wide);
+-- surfaced in the project's member list
+select a.*, coalesce(g.scopes, a.grant_scopes) as effective_scopes
 from agents a
-join agent_project_permissions g on g.agent_id = a.id
-where g.project_id = sqlc.arg(project_id)
+join projects p on p.id = sqlc.arg(project_id)
+left join agent_project_permissions g
+       on g.agent_id = a.id and g.project_id = p.id
+where a.workspace_id = p.workspace_id
+  and (g.agent_id is not null or a.grant_all)
 order by a.name;

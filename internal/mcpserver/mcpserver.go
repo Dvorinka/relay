@@ -260,6 +260,7 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithString("body", mcp.Required(), mcp.Description("Markdown body")),
 		mcp.WithString("reply_to", mcp.Description("Message UUID this message replies to")),
 		mcp.WithString("tags", mcp.Description("Comma-separated tags classifying the message, e.g. frontend,backend,visual,mcp")),
+		mcp.WithBoolean("silent", mcp.Description("true posts without any notification/push — use for routine progress updates inside a work thread. @mentions in a silent message still notify.")),
 	), s.sendMessage)
 
 	srv.AddTool(mcp.NewTool("edit_message",
@@ -285,6 +286,25 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithString("user", mcp.Required(), mcp.Description("workspace member name to @mention, e.g. tdvorak")),
 		mcp.WithString("question", mcp.Required(), mcp.Description("what you need from them")),
 	), s.requestInput)
+
+	srv.AddTool(mcp.NewTool("resolve_input",
+		mcp.WithDescription("Mark a request_input question resolved: removes its 'needs-input' tag and, when note is given, posts the answer into the same thread. Call this when the user answered you outside Relay (e.g. in your CLI/IDE harness) so the chat thread shows the question is handled."),
+		mcp.WithString("message_id", mcp.Required(), mcp.Description("the request_input question message id")),
+		mcp.WithString("note", mcp.Description("optional: how it was resolved, e.g. 'answered in CLI — use staging env'")),
+	), s.resolveInput)
+
+	srv.AddTool(mcp.NewTool("work_start",
+		mcp.WithDescription("Announce you are starting work: posts one status message in the project conversation and opens a progress thread on it. Post ongoing updates into that thread with send_message silent=true — never as new top-level messages. Call work_stop when finished."),
+		mcp.WithString("project_id", mcp.Required()),
+		mcp.WithString("title", mcp.Required(), mcp.Description("short description of the work, e.g. 'Fixing invite revocation'")),
+		mcp.WithString("conversation_id", mcp.Description("override target conversation; defaults to the project chat")),
+	), s.workStart)
+
+	srv.AddTool(mcp.NewTool("work_stop",
+		mcp.WithDescription("Finish a work_start status message: clears its 'work-in-progress' tag and posts an optional summary into the progress thread. Always call when you finish or abandon the work so the chat shows the true state."),
+		mcp.WithString("message_id", mcp.Required(), mcp.Description("the status message id returned by work_start")),
+		mcp.WithString("summary", mcp.Description("optional closing summary posted into the thread")),
+	), s.workStop)
 
 	srv.AddTool(mcp.NewTool("pin_message",
 		mcp.WithDescription("Pin (or unpin) a message in its conversation. Pinned messages surface in the channel's pins list."),
@@ -380,10 +400,11 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 	), s.todoAdd)
 
 	srv.AddTool(mcp.NewTool("todo_update",
-		mcp.WithDescription("Update a todo: content, done flag, or linked issue."),
+		mcp.WithDescription("Update a todo: content, status (todo|in_progress|done), done flag, or linked issue."),
 		mcp.WithString("todo_id", mcp.Required()),
 		mcp.WithString("content"),
 		mcp.WithBoolean("done"),
+		mcp.WithString("status", mcp.Description("todo|in_progress|done — preferred over done")),
 		mcp.WithString("issue_id"),
 	), s.todoUpdate)
 
@@ -391,6 +412,12 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithDescription("Delete a todo item."),
 		mcp.WithString("todo_id", mcp.Required()),
 	), s.todoDelete)
+
+	srv.AddTool(mcp.NewTool("todo_sync",
+		mcp.WithDescription("Mirror your harness task list into Relay in one call: pass the full current list and this tool creates, updates, reorders, and deletes your todos to match. Items echo back the Relay id — pass it on later syncs to keep rows stable. Other agents' todos are untouched. Call it whenever your task list changes so the app shows live progress."),
+		mcp.WithString("project_id", mcp.Required()),
+		mcp.WithArray("items", mcp.Required(), mcp.Description("ordered list: [{id?, content, status?, issue_id?}] — status todo|in_progress|done; omit id to create")),
+	), s.todoSync)
 
 	srv.AddTool(mcp.NewTool("mark_message_read",
 		mcp.WithDescription("Mark a message as read by this agent."),
@@ -552,6 +579,7 @@ func messageJSON(m db.GetMessageFullRow) gin.H {
 		"body":            m.Body,
 		"mentions":        mrefs,
 		"tags":            m.Tags,
+		"silent":          m.Silent,
 		"parent":          parent,
 		"thread":          thread,
 		"pinned_at":       pinnedAt,
@@ -980,10 +1008,12 @@ func (s *Service) sendMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 	if terr != nil {
 		return mcp.NewToolResultError(terr.Error()), nil
 	}
-	mj, _ := json.Marshal(s.resolveMentions(ctx, pid, mentions.Extract(body)))
+	silent := req.GetBool("silent", false)
+	refs := s.resolveMentions(ctx, pid, mentions.Extract(body))
+	mj, _ := json.Marshal(refs)
 	id, err := s.q.CreateAgentMessage(ctx, db.CreateAgentMessageParams{
 		ConversationID: cid, AgentID: agent(ctx).ID, Body: body, ParentID: parent,
-		Mentions: mj, Tags: tags,
+		Mentions: mj, Tags: tags, Silent: silent,
 	})
 	if err != nil {
 		return errResult(err)
@@ -993,7 +1023,8 @@ func (s *Service) sendMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 		return errResult(err)
 	}
 	s.publish(ctx, cid, "message.created", map[string]any{"conversation_id": cid.String(), "message": messageJSON(m)})
-	if s.Push != nil {
+	// silent = no push; an @mention still earns one — that is the contract
+	if s.Push != nil && (!silent || len(refs) > 0) {
 		s.Push.NotifyMessage(pid, pgtype.UUID{}, body, m.ID,
 			"/app/p/"+pid.String(), agent(ctx).Name)
 	}
@@ -1329,6 +1360,7 @@ func (s *Service) requestInput(ctx context.Context, req mcp.CallToolRequest) (*m
 	qid, err := s.q.CreateAgentMessage(ctx, db.CreateAgentMessageParams{
 		ConversationID: tr.ID, AgentID: agent(ctx).ID, Body: body,
 		ParentID: pgtype.UUID{Bytes: mid.Bytes, Valid: true}, Mentions: mj,
+		Tags: []string{"needs-input"},
 	})
 	if err != nil {
 		return errResult(err)
@@ -1355,6 +1387,171 @@ func (s *Service) requestInput(ctx context.Context, req mcp.CallToolRequest) (*m
 		"thread":  threadOut(tr),
 		"message": messageJSON(m),
 	})
+}
+
+// resolveInput clears the 'needs-input' tag a request_input question carries
+// and optionally posts how it was answered into the same thread — keeps the
+// chat honest when the user replied in the harness instead of Relay.
+func (s *Service) resolveInput(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	mid, err := uuidArg(req, "message_id")
+	if err != nil {
+		return errResult(err)
+	}
+	pid, err := s.q.ResolveMessageProject(ctx, mid)
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "message:write"); err != nil {
+		return errResult(err)
+	}
+	m, err := s.q.GetMessageFull(ctx, mid)
+	if err != nil {
+		return errResult(errors.New("message not found"))
+	}
+	tags := make([]string, 0, len(m.Tags))
+	had := false
+	for _, t := range m.Tags {
+		if t == "needs-input" {
+			had = true
+			continue
+		}
+		tags = append(tags, t)
+	}
+	if !had {
+		return mcp.NewToolResultError("message is not tagged needs-input"), nil
+	}
+	if err := s.q.SetMessageTags(ctx, db.SetMessageTagsParams{ID: mid, Tags: tags}); err != nil {
+		return errResult(err)
+	}
+	cid, _ := s.q.GetMessageConversation(ctx, mid)
+	note := strings.TrimSpace(req.GetString("note", ""))
+	if note != "" {
+		nid, err := s.q.CreateAgentMessage(ctx, db.CreateAgentMessageParams{
+			ConversationID: cid, AgentID: agent(ctx).ID, Body: "Resolved — " + note,
+			ParentID: mid, Silent: true,
+		})
+		if err == nil {
+			if nm, err := s.q.GetMessageFull(ctx, nid); err == nil {
+				s.publish(ctx, cid, "message.created",
+					map[string]any{"conversation_id": cid.String(), "message": messageJSON(nm)})
+			}
+		}
+	}
+	if fresh, err := s.q.GetMessageFull(ctx, mid); err == nil {
+		s.publish(ctx, cid, "message.updated", map[string]any{
+			"conversation_id": cid.String(), "message": messageJSON(fresh)})
+	}
+	return jsonResult(gin.H{"resolved": mid.String(), "note": note})
+}
+
+// workStart posts a single visible status message tagged 'work-in-progress'
+// and opens the progress thread on it. The thread id is what progress
+// updates reply into — send_message with silent=true keeps them out of
+// everyone's notifications.
+func (s *Service) workStart(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pid, err := uuidArg(req, "project_id")
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "message:write"); err != nil {
+		return errResult(err)
+	}
+	title := strings.TrimSpace(req.GetString("title", ""))
+	if title == "" || len([]rune(title)) > 200 {
+		return mcp.NewToolResultError("title is required (max 200 chars)"), nil
+	}
+	var cid pgtype.UUID
+	if v := req.GetString("conversation_id", ""); v != "" {
+		if err := cid.Scan(v); err != nil || !cid.Valid {
+			return mcp.NewToolResultError("invalid conversation_id"), nil
+		}
+		if cpid, err := s.q.ResolveConversationProject(ctx, cid); err != nil || cpid != pid {
+			return mcp.NewToolResultError("conversation_id is not in this project"), nil
+		}
+	} else {
+		conv, err := s.q.GetProjectConversation(ctx, pid)
+		if err != nil {
+			conv, err = s.q.CreateProjectConversation(ctx, pid)
+		}
+		if err != nil {
+			return errResult(err)
+		}
+		cid = conv.ID
+	}
+	mid, err := s.q.CreateAgentMessage(ctx, db.CreateAgentMessageParams{
+		ConversationID: cid, AgentID: agent(ctx).ID,
+		Body: "Working on: " + title, Tags: []string{"work-in-progress"},
+	})
+	if err != nil {
+		return errResult(err)
+	}
+	tr, _, _, err := s.openThread(ctx, mid, pid, title)
+	if err != nil {
+		return errResult(err)
+	}
+	m, err := s.q.GetMessageFull(ctx, mid)
+	if err != nil {
+		return errResult(err)
+	}
+	s.publish(ctx, cid, "message.created",
+		map[string]any{"conversation_id": cid.String(), "message": messageJSON(m)})
+	return jsonResult(gin.H{
+		"message_id":       mid.String(),
+		"conversation_id":  cid.String(),
+		"thread":           threadOut(tr),
+		"progress_updates": "post into the thread with send_message conversation_id=" + tr.ID.String() + " silent=true",
+	})
+}
+
+// workStop clears 'work-in-progress' from the status message and posts an
+// optional summary into the progress thread.
+func (s *Service) workStop(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	mid, err := uuidArg(req, "message_id")
+	if err != nil {
+		return errResult(err)
+	}
+	pid, err := s.q.ResolveMessageProject(ctx, mid)
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "message:write"); err != nil {
+		return errResult(err)
+	}
+	m, err := s.q.GetMessageFull(ctx, mid)
+	if err != nil {
+		return errResult(errors.New("message not found"))
+	}
+	tags := make([]string, 0, len(m.Tags))
+	for _, t := range m.Tags {
+		if t != "work-in-progress" {
+			tags = append(tags, t)
+		}
+	}
+	tags = append(tags, "work-done")
+	if err := s.q.SetMessageTags(ctx, db.SetMessageTagsParams{ID: mid, Tags: tags}); err != nil {
+		return errResult(err)
+	}
+	cid, _ := s.q.GetMessageConversation(ctx, mid)
+	if summary := strings.TrimSpace(req.GetString("summary", "")); summary != "" {
+		// summaries belong in the progress thread, not the main chat
+		target := cid
+		if tr, err := s.q.GetThreadByParentMessage(ctx, mid); err == nil {
+			target = tr.ID
+		}
+		if nid, err := s.q.CreateAgentMessage(ctx, db.CreateAgentMessageParams{
+			ConversationID: target, AgentID: agent(ctx).ID, Body: summary, ParentID: mid,
+		}); err == nil {
+			if nm, err := s.q.GetMessageFull(ctx, nid); err == nil {
+				s.publish(ctx, target, "message.created",
+					map[string]any{"conversation_id": target.String(), "message": messageJSON(nm)})
+			}
+		}
+	}
+	if fresh, err := s.q.GetMessageFull(ctx, mid); err == nil {
+		s.publish(ctx, cid, "message.updated", map[string]any{
+			"conversation_id": cid.String(), "message": messageJSON(fresh)})
+	}
+	return jsonResult(gin.H{"stopped": mid.String()})
 }
 
 // pinMessage mirrors PUT/DELETE /messages/:id/pin — project members (and
@@ -1732,6 +1929,7 @@ func (s *Service) ghGetPR(ctx context.Context, req mcp.CallToolRequest) (*mcp.Ca
 func todoOut(t db.ListTodosRow) gin.H {
 	out := gin.H{
 		"id": t.ID.String(), "content": t.Content, "done": t.Done,
+		"status": t.Status, "position": t.Position,
 		"created_at": t.CreatedAt.Time, "updated_at": t.UpdatedAt.Time,
 	}
 	if t.AgentID.Valid || t.AgentName != "" {
@@ -1791,7 +1989,8 @@ func (s *Service) todoAdd(ctx context.Context, req mcp.CallToolRequest) (*mcp.Ca
 	if err != nil {
 		return errResult(err)
 	}
-	return jsonResult(gin.H{"id": row.ID.String(), "done": row.Done, "content": row.Content})
+	s.publishPID(pid, "todo.changed", nil)
+	return jsonResult(gin.H{"id": row.ID.String(), "done": row.Done, "content": row.Content, "status": row.Status})
 }
 
 // todoProject resolves todo_id -> project row for the scope check.
@@ -1823,6 +2022,14 @@ func (s *Service) todoUpdate(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	if v, ok := args["done"].(bool); ok {
 		params.Done = pgtype.Bool{Bool: v, Valid: true}
 	}
+	if v, ok := args["status"].(string); ok && v != "" {
+		switch v {
+		case "todo", "in_progress", "done":
+			params.Status = pgtype.Text{String: v, Valid: true}
+		default:
+			return mcp.NewToolResultError("status must be todo|in_progress|done"), nil
+		}
+	}
 	if v, ok := args["issue_id"].(string); ok {
 		var iid pgtype.UUID
 		if v != "" {
@@ -1836,7 +2043,8 @@ func (s *Service) todoUpdate(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	if err != nil {
 		return errResult(err)
 	}
-	return jsonResult(gin.H{"id": row.ID.String(), "done": row.Done, "content": row.Content})
+	s.publishPID(pid, "todo.changed", nil)
+	return jsonResult(gin.H{"id": row.ID.String(), "done": row.Done, "content": row.Content, "status": row.Status})
 }
 
 func (s *Service) todoDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1850,7 +2058,128 @@ func (s *Service) todoDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	if err := s.q.DeleteTodo(ctx, t.ID); err != nil {
 		return errResult(err)
 	}
+	s.publishPID(pid, "todo.changed", nil)
 	return jsonResult(gin.H{"deleted": t.ID.String()})
+}
+
+// todoSync reconciles this agent's todos in the project against the harness
+// list in one round trip. Items carry an optional Relay id for stability
+// across syncs — new items get created, missing ones get deleted, order
+// becomes position. Other agents' rows are never touched.
+func (s *Service) todoSync(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pid, err := uuidArg(req, "project_id")
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "issue:write"); err != nil {
+		return errResult(err)
+	}
+	raw, ok := req.GetArguments()["items"].([]any)
+	if !ok {
+		return mcp.NewToolResultError("items must be an array of {id?, content, status?, issue_id?}"), nil
+	}
+	if len(raw) > 200 {
+		return mcp.NewToolResultError("at most 200 todos"), nil
+	}
+	type item struct {
+		id      pgtype.UUID
+		content string
+		status  string
+		issueID pgtype.UUID
+	}
+	parsed := make([]item, 0, len(raw))
+	for i, e := range raw {
+		m, ok := e.(map[string]any)
+		if !ok {
+			return mcp.NewToolResultError("items must be objects"), nil
+		}
+		var it item
+		if v, _ := m["content"].(string); strings.TrimSpace(v) != "" {
+			it.content = strings.TrimSpace(v)
+		} else {
+			return mcp.NewToolResultError("item " + strconv.Itoa(i) + ": content is required"), nil
+		}
+		if v, _ := m["status"].(string); v != "" {
+			switch v {
+			case "todo", "in_progress", "done":
+				it.status = v
+			default:
+				return mcp.NewToolResultError("item " + strconv.Itoa(i) + ": bad status"), nil
+			}
+		} else {
+			it.status = "todo"
+		}
+		if v, _ := m["id"].(string); v != "" {
+			if err := it.id.Scan(v); err != nil || !it.id.Valid {
+				return mcp.NewToolResultError("item " + strconv.Itoa(i) + ": bad id"), nil
+			}
+		}
+		if v, _ := m["issue_id"].(string); v != "" {
+			if err := it.issueID.Scan(v); err != nil {
+				return mcp.NewToolResultError("item " + strconv.Itoa(i) + ": bad issue_id"), nil
+			}
+		}
+		parsed = append(parsed, it)
+	}
+	existing, err := s.q.ListTodosByAgent(ctx, db.ListTodosByAgentParams{
+		ProjectID: pid, AgentID: agent(ctx).ID,
+	})
+	if err != nil {
+		return errResult(err)
+	}
+	byID := make(map[[16]byte]db.AgentTodo, len(existing))
+	for _, t := range existing {
+		byID[t.ID.Bytes] = t
+	}
+	seen := make(map[[16]byte]bool, len(parsed))
+	out := make([]gin.H, 0, len(parsed))
+	for i, it := range parsed {
+		status := pgtype.Text{String: it.status, Valid: true}
+		pos := pgtype.Int4{Int32: int32(i), Valid: true}
+		var row db.AgentTodo
+		if it.id.Valid {
+			if cur, ok := byID[it.id.Bytes]; ok {
+				row, err = s.q.UpdateTodo(ctx, db.UpdateTodoParams{
+					ID: cur.ID, Content: pgtype.Text{String: it.content, Valid: true},
+					Status: status, IssueID: it.issueID, Position: pos,
+				})
+				if err != nil {
+					return errResult(err)
+				}
+			} else {
+				// stale id — recreate rather than fail the whole sync
+				row, err = s.q.CreateTodo(ctx, db.CreateTodoParams{
+					ProjectID: pid, AgentID: agent(ctx).ID, IssueID: it.issueID,
+					Content: it.content, Status: status,
+				})
+				if err == nil {
+					row, _ = s.q.UpdateTodo(ctx, db.UpdateTodoParams{ID: row.ID, Position: pos})
+				}
+			}
+			if err != nil {
+				return errResult(err)
+			}
+			seen[row.ID.Bytes] = true
+		} else {
+			row, err = s.q.CreateTodo(ctx, db.CreateTodoParams{
+				ProjectID: pid, AgentID: agent(ctx).ID, IssueID: it.issueID,
+				Content: it.content, Status: status,
+			})
+			if err != nil {
+				return errResult(err)
+			}
+			row, _ = s.q.UpdateTodo(ctx, db.UpdateTodoParams{ID: row.ID, Position: pos})
+			seen[row.ID.Bytes] = true
+		}
+		out = append(out, gin.H{"id": row.ID.String(), "content": row.Content, "status": row.Status})
+	}
+	for _, t := range existing {
+		if !seen[t.ID.Bytes] {
+			_ = s.q.DeleteTodo(ctx, t.ID)
+		}
+	}
+	s.publishPID(pid, "todo.changed", nil)
+	return jsonResult(out)
 }
 
 func clampInt(v, lo, hi int) int {

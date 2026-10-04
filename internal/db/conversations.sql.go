@@ -285,7 +285,7 @@ func (q *Queries) GetConversationForUser(ctx context.Context, arg GetConversatio
 }
 
 const getMessageByID = `-- name: GetMessageByID :one
-select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.silent, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
        m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
        coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
@@ -319,6 +319,7 @@ type GetMessageByIDRow struct {
 	Body               string             `json:"body"`
 	Mentions           []byte             `json:"mentions"`
 	Tags               []string           `json:"tags"`
+	Silent             bool               `json:"silent"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	EditedAt           pgtype.Timestamptz `json:"edited_at"`
 	DeletedAt          pgtype.Timestamptz `json:"deleted_at"`
@@ -350,6 +351,7 @@ func (q *Queries) GetMessageByID(ctx context.Context, id pgtype.UUID) (GetMessag
 		&i.Body,
 		&i.Mentions,
 		&i.Tags,
+		&i.Silent,
 		&i.CreatedAt,
 		&i.EditedAt,
 		&i.DeletedAt,
@@ -558,7 +560,7 @@ func (q *Queries) GetThreadByParentMessage(ctx context.Context, parentMessageID 
 }
 
 const listMessages = `-- name: ListMessages :many
-select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.silent, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
        m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
        coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
@@ -605,6 +607,7 @@ type ListMessagesRow struct {
 	Body               string             `json:"body"`
 	Mentions           []byte             `json:"mentions"`
 	Tags               []string           `json:"tags"`
+	Silent             bool               `json:"silent"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	EditedAt           pgtype.Timestamptz `json:"edited_at"`
 	DeletedAt          pgtype.Timestamptz `json:"deleted_at"`
@@ -649,6 +652,7 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]L
 			&i.Body,
 			&i.Mentions,
 			&i.Tags,
+			&i.Silent,
 			&i.CreatedAt,
 			&i.EditedAt,
 			&i.DeletedAt,
@@ -681,7 +685,7 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]L
 }
 
 const listPinnedMessages = `-- name: ListPinnedMessages :many
-select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.silent, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
        m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
        coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
@@ -718,6 +722,7 @@ type ListPinnedMessagesRow struct {
 	Body               string             `json:"body"`
 	Mentions           []byte             `json:"mentions"`
 	Tags               []string           `json:"tags"`
+	Silent             bool               `json:"silent"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	EditedAt           pgtype.Timestamptz `json:"edited_at"`
 	DeletedAt          pgtype.Timestamptz `json:"deleted_at"`
@@ -756,6 +761,7 @@ func (q *Queries) ListPinnedMessages(ctx context.Context, conversationID pgtype.
 			&i.Body,
 			&i.Mentions,
 			&i.Tags,
+			&i.Silent,
 			&i.CreatedAt,
 			&i.EditedAt,
 			&i.DeletedAt,
@@ -936,7 +942,7 @@ func (q *Queries) MarkMessageRead(ctx context.Context, arg MarkMessageReadParams
 }
 
 const mentionsForUser = `-- name: MentionsForUser :many
-select m.id, m.conversation_id, m.body, m.created_at, m.edited_at,
+select m.id, m.conversation_id, m.body, m.tags, m.silent, m.created_at, m.edited_at,
        m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
        coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
@@ -965,6 +971,8 @@ type MentionsForUserRow struct {
 	ID                   pgtype.UUID        `json:"id"`
 	ConversationID       pgtype.UUID        `json:"conversation_id"`
 	Body                 string             `json:"body"`
+	Tags                 []string           `json:"tags"`
+	Silent               bool               `json:"silent"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 	EditedAt             pgtype.Timestamptz `json:"edited_at"`
 	AuthorUserID         pgtype.UUID        `json:"author_user_id"`
@@ -994,6 +1002,8 @@ func (q *Queries) MentionsForUser(ctx context.Context, userID pgtype.UUID) ([]Me
 			&i.ID,
 			&i.ConversationID,
 			&i.Body,
+			&i.Tags,
+			&i.Silent,
 			&i.CreatedAt,
 			&i.EditedAt,
 			&i.AuthorUserID,
@@ -1092,7 +1102,7 @@ func (q *Queries) PinMessage(ctx context.Context, id pgtype.UUID) (PinMessageRow
 }
 
 const recentProjectMessages = `-- name: RecentProjectMessages :many
-select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.silent, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
        m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
        coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
@@ -1117,6 +1127,7 @@ type RecentProjectMessagesRow struct {
 	Body               string             `json:"body"`
 	Mentions           []byte             `json:"mentions"`
 	Tags               []string           `json:"tags"`
+	Silent             bool               `json:"silent"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	EditedAt           pgtype.Timestamptz `json:"edited_at"`
 	DeletedAt          pgtype.Timestamptz `json:"deleted_at"`
@@ -1146,6 +1157,7 @@ func (q *Queries) RecentProjectMessages(ctx context.Context, projectID pgtype.UU
 			&i.Body,
 			&i.Mentions,
 			&i.Tags,
+			&i.Silent,
 			&i.CreatedAt,
 			&i.EditedAt,
 			&i.DeletedAt,

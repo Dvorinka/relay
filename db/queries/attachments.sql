@@ -29,6 +29,9 @@ where project_id = sqlc.arg(project_id) and status = 'ready'
 insert into message_attachments (message_id, attachment_id, position)
 values (sqlc.arg(message_id), sqlc.arg(attachment_id), sqlc.arg(position));
 
+-- name: CountMessageAttachments :one
+select count(*) from message_attachments where message_id = sqlc.arg(message_id);
+
 -- name: ListAttachmentsForMessages :many
 select a.*, ma.message_id
 from message_attachments ma

@@ -30,6 +30,7 @@ import {
   XIcon,
 } from "../../components/icons";
 import {
+  ColorField,
   FormError,
   ImageURLField,
   inputClass,
@@ -142,8 +143,13 @@ function TodoList(props: {
 }) {
   const [text, setText] = createSignal("");
   const [err, setErr] = createSignal("");
+  // in_progress floats to the top — that's what an agent is doing right now.
+  const order = (t: Todo) =>
+    t.status === "in_progress" ? 0 : t.done ? 2 : 1;
   const sorted = () =>
-    [...props.todos].sort((a, b) => Number(a.done) - Number(b.done));
+    [...props.todos].sort((a, b) => order(a) - order(b));
+  const working = () =>
+    props.todos.filter((t) => t.status === "in_progress");
 
   async function add(e: SubmitEvent) {
     e.preventDefault();
@@ -161,7 +167,10 @@ function TodoList(props: {
 
   async function toggle(t: Todo) {
     try {
-      await api.updateTodo(t.id, { done: !t.done });
+      await api.updateTodo(t.id, {
+        done: !t.done,
+        status: t.done ? "todo" : "done",
+      });
       props.onChanged();
     } catch (ex) {
       setErr(ex instanceof Error ? ex.message : "could not update todo");
@@ -179,6 +188,16 @@ function TodoList(props: {
 
   return (
     <div class="flex flex-col gap-1">
+      <Show when={working().length > 0}>
+        <p class="mb-0.5 flex items-center gap-1.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+          <span class="relative flex h-2 w-2">
+            <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-500 opacity-60" />
+            <span class="relative inline-flex h-2 w-2 rounded-full bg-amber-500" />
+          </span>
+          {working().map((t) => t.agent?.name ?? "Someone").join(", ")}{" "}
+          working — {working().length} active
+        </p>
+      </Show>
       <form onSubmit={add} class="flex gap-1.5">
         <input
           type="text"
@@ -212,17 +231,28 @@ function TodoList(props: {
               class={`mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border transition-colors ${
                 t.done
                   ? "border-accent bg-accent text-white"
-                  : "border-muted/60 text-transparent hover:border-accent"
+                  : t.status === "in_progress"
+                    ? "border-amber-500 text-transparent"
+                    : "border-muted/60 text-transparent hover:border-accent"
               }`}
             >
               <CheckIcon class="h-2.5 w-2.5" />
             </button>
             <span
               class={`min-w-0 flex-1 text-[12.5px] leading-snug ${
-                t.done ? "text-muted line-through" : ""
+                t.done
+                  ? "text-muted line-through"
+                  : t.status === "in_progress"
+                    ? "font-medium"
+                    : ""
               }`}
             >
               {t.content}
+              <Show when={t.status === "in_progress"}>
+                <span class="ml-1 text-[10.5px] font-medium text-amber-600 dark:text-amber-400">
+                  in progress
+                </span>
+              </Show>
               <Show when={t.agent}>
                 <span class="ml-1 text-[10.5px] text-muted">
                   · {t.agent!.name}
@@ -732,6 +762,7 @@ function ProjectDetailsSection(props: { project: Project }) {
   const [error, setError] = createSignal<string | null>(null);
   const [saved, setSaved] = createSignal(false);
   const [pending, setPending] = createSignal(false);
+  const [color, setColor] = createSignal(props.project.color || "#06b6d4");
 
   async function onSubmit(e: SubmitEvent) {
     e.preventDefault();
@@ -771,13 +802,11 @@ function ProjectDetailsSection(props: { project: Project }) {
             value={props.project.name}
             class={`${inputClass} max-w-xs`}
           />
-          <input
-            type="color"
-            name="color"
-            value={props.project.color || "#06b6d4"}
-            aria-label="Project color"
-            title="Rail color"
-            class="h-8 w-9 shrink-0 cursor-pointer rounded border border-border bg-surface p-0.5"
+          <input type="hidden" name="color" value={color()} />
+          <ColorField
+            value={color()}
+            onPick={setColor}
+            label="Project color"
           />
         </div>
         <div class="flex items-start gap-3">
