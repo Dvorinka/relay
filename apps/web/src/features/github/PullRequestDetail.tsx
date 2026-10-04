@@ -35,7 +35,7 @@ export function PullRequestDetail(props: {
         <span class="min-w-0 flex-1 truncate font-mono text-[12px] text-muted">
           {props.repo}#{props.number}
         </span>
-        <Show when={detail()?.pull.url}>
+        <Show when={detail.latest?.pull.url}>
           {(url) => (
             <a
               href={url()}
@@ -51,20 +51,20 @@ export function PullRequestDetail(props: {
       </div>
 
       <Show
-        when={detail()}
+        when={detail.latest}
         fallback={
           <div class="flex flex-1 items-center justify-center py-16">
             <Show
-              when={detail.state === "errored"}
+              when={detail.error}
               fallback={<Spinner class="h-4 w-4" />}
             >
-              <FormError
-                message={
-                  detail.error instanceof Error
-                    ? detail.error.message
-                    : "Could not load the pull request"
-                }
-              />
+              {(err) => (
+                <FormError
+                  message={
+                    (err() as Error)?.message ?? "Could not load the pull request"
+                  }
+                />
+              )}
             </Show>
           </div>
         }

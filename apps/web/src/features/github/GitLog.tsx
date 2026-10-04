@@ -85,11 +85,17 @@ export function GitLog(props: { projectId: string }) {
           </Show>
         </div>
         <div class="min-h-0 flex-1 overflow-y-auto">
+          {/* .latest instead of (): an errored fetch degrades to an
+              inline message instead of throwing (no ErrorBoundary). */}
           <Show
-            when={log()}
+            when={log.latest}
             fallback={
               <div class="flex justify-center py-16">
-                <Spinner class="h-4 w-4" />
+                <Show when={log.error} fallback={<Spinner class="h-4 w-4" />}>
+                  <p class="px-6 py-10 text-center text-[13px] text-muted">
+                    Couldn't load commits for this branch.
+                  </p>
+                </Show>
               </div>
             }
           >

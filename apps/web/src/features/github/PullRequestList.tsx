@@ -18,7 +18,7 @@ export function PullRequestList(props: { projectId: string }) {
   } | null>(null);
 
   const rows = () =>
-    (dev()?.repos ?? []).flatMap((r) =>
+    (dev.latest?.repos ?? []).flatMap((r) =>
       r.prs.map((pr) => ({ ...pr, repo: r.repo.full_name })),
     );
 
@@ -36,10 +36,17 @@ export function PullRequestList(props: { projectId: string }) {
     >
     <div class="min-h-0 flex-1 overflow-y-auto">
       <Show
-        when={dev()}
+        when={dev.latest}
         fallback={
           <div class="flex flex-1 items-center justify-center py-16">
-            <Spinner class="h-4 w-4" />
+            <Show
+              when={dev.error}
+              fallback={<Spinner class="h-4 w-4" />}
+            >
+              <p class="px-6 py-10 text-center text-[13px] text-muted">
+                Couldn't load pull requests.
+              </p>
+            </Show>
           </div>
         }
       >

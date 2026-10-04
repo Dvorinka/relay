@@ -76,7 +76,7 @@ func (q *Queries) SearchIssues(ctx context.Context, arg SearchIssuesParams) ([]S
 
 const searchMessages = `-- name: SearchMessages :many
 select m.id, m.body, m.created_at, c.project_id,
-       coalesce(u.name, a.name, '') as author_name,
+       coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(ts_rank(to_tsvector('english', m.body),
                websearch_to_tsquery('english', nullif($2, ''))), 0) as rank
 from messages m
@@ -87,7 +87,7 @@ left join users u on u.id = m.author_user_id
 left join agents a on a.id = m.author_agent_id
 where m.deleted_at is null
   and ($2 = '' or to_tsvector('english', m.body) @@ websearch_to_tsquery('english', $2))
-  and ($3 = '' or coalesce(u.name, a.name, '') ilike $3)
+  and ($3 = '' or coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') ilike $3)
   and ($4 = '' or upper(p.key) = upper($4))
   and ($5::bool is not true or exists (
         select 1 from message_attachments ma

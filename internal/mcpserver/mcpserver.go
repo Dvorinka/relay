@@ -1600,8 +1600,12 @@ func todoOut(t db.ListTodosRow) gin.H {
 		"id": t.ID.String(), "content": t.Content, "done": t.Done,
 		"created_at": t.CreatedAt.Time, "updated_at": t.UpdatedAt.Time,
 	}
-	if t.AgentID.Valid {
-		out["agent"] = gin.H{"id": t.AgentID.String(), "name": t.AgentName.String}
+	if t.AgentID.Valid || t.AgentName != "" {
+		a := gin.H{"name": t.AgentName}
+		if t.AgentID.Valid {
+			a["id"] = t.AgentID.String()
+		}
+		out["agent"] = a
 	}
 	if t.IssueID.Valid && t.IssueKey.Valid {
 		out["issue"] = gin.H{"id": t.IssueID.String(),

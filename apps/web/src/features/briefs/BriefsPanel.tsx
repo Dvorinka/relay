@@ -82,7 +82,7 @@ export function BriefsPanel(props: {
             </p>
           </Show>
           <Show
-            when={(briefs()?.briefs.length ?? 0) > 0 || creating()}
+            when={(briefs.latest?.briefs.length ?? 0) > 0 || creating()}
             fallback={
               <p class="py-10 text-center text-[13px] text-muted">
                 No briefs yet. Ask your agent to "explain this change" and it
@@ -104,7 +104,7 @@ export function BriefsPanel(props: {
               />
             </Show>
             <ul class="flex flex-col gap-2">
-              <For each={briefs()?.briefs}>
+              <For each={briefs.latest?.briefs}>
                 {(b) => (
                   <li>
                     <button

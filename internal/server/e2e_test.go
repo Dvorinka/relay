@@ -1329,3 +1329,155 @@ func TestSearchQualifiers(t *testing.T) {
 		t.Fatalf("before:future should match everything: %v", got)
 	}
 }
+
+// TestAgentDeleteTombstone covers the two fixes for agent deletion: the
+// DELETE succeeds despite authored content (FKs are set null), and past
+// messages keep the agent's name and kind via the tombstone snapshot.
+func TestAgentDeleteTombstone(t *testing.T) {
+	dsn := os.Getenv("RELAY_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("RELAY_TEST_DATABASE_URL unset")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	goose.SetBaseFS(relaydb.MigrationsFS)
+	if err := goose.SetDialect("postgres"); err != nil {
+		t.Fatal(err)
+	}
+	if err := goose.UpContext(ctx, stdlib.OpenDBFromPool(pool), "migrations"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "delete from rate_limits"); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{
+		DatabaseURL:     dsn,
+		AuthSecret:      "test-secret-test-secret-test-secret",
+		InsecureDev:     true,
+		SessionTTLHours: 1,
+	}
+	srv := httptest.NewServer(New(cfg, zap.NewNop(), pool, "test"))
+	defer srv.Close()
+	c := &e2eClient{t: t, base: srv.URL}
+
+	code, reg := c.call("POST", "/api/auth/register",
+		fmt.Sprintf(`{"email":"ghost-%d@relay.dev","password":"ghostpass1234","name":"GhostOwner"}`,
+			time.Now().UnixNano()))
+	if code != 201 && code != 200 {
+		t.Fatalf("register: %d %v", code, reg)
+	}
+	code, ws := c.call("POST", "/api/workspaces", `{"name":"Ghost WS"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("workspace: %d %v", code, ws)
+	}
+	wsID := ws["id"].(string)
+	code, proj := c.call("POST", "/api/projects",
+		fmt.Sprintf(`{"workspace_id":%q,"key":"GHO","name":"Ghost Lab"}`, wsID))
+	if code != 201 && code != 200 {
+		t.Fatalf("project: %d %v", code, proj)
+	}
+	projID := proj["id"].(string)
+
+	code, agent := c.call("POST", "/api/workspaces/"+wsID+"/agents",
+		`{"name":"Ghosty","review_mode":"notify"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("agent: %d %v", code, agent)
+	}
+	agentID := agent["id"].(string)
+	code, _ = c.call("PUT", fmt.Sprintf("/api/agents/%s/projects/%s", agentID, projID),
+		`{"scopes":["project:read","message:read","message:write","issue:write"]}`)
+	if code != 200 {
+		t.Fatalf("grant: %d", code)
+	}
+	code, tok := c.call("POST", fmt.Sprintf("/api/agents/%s/tokens", agentID), `{"name":"e2e"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("mint: %d %v", code, tok)
+	}
+	token := tok["token"].(string)
+
+	sid, _ := c.mcp(token, "", "1", "initialize",
+		`{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"e2e","version":"0"}}`)
+
+	code, conv := c.call("GET", "/api/projects/"+projID+"/conversation", "")
+	if code != 200 {
+		t.Fatalf("conversation: %d %v", code, conv)
+	}
+	convID := conv["id"].(string)
+
+	// agent-authored message — this is the row a NO ACTION FK used to block on
+	_, env := c.mcp(token, sid, "2", "tools/call",
+		fmt.Sprintf(`{"name":"send_message","arguments":{"conversation_id":%q,"body":"ghost was here"}}`, convID))
+	amsg := mcpToolResult(t, env)
+	if amsg["author"].(map[string]any)["name"] != "Ghosty" {
+		t.Fatalf("agent message author = %v", amsg["author"])
+	}
+
+	// agent-attributed todo — attribution must survive the delete too
+	c.mcp(token, sid, "3", "tools/call",
+		fmt.Sprintf(`{"name":"todo_add","arguments":{"project_id":%q,"content":"ghost chore"}}`, projID))
+
+	// delete succeeds even though the agent authored a message
+	code, del := c.call("DELETE", "/api/agents/"+agentID, "")
+	if code != 204 {
+		t.Fatalf("delete agent: %d %v", code, del)
+	}
+
+	// the dead token can no longer authenticate
+	if sid2, _ := c.mcp(token, sid, "3", "tools/call",
+		`{"name":"list_projects","arguments":{}}`); sid2 != "" {
+		t.Fatal("token of a deleted agent should not authenticate")
+	}
+
+	// history keeps the agent's name and kind; id is null
+	code, lst := c.call("GET", "/api/conversations/"+convID+"/messages", "")
+	if code != 200 {
+		t.Fatalf("list: %d %v", code, lst)
+	}
+	var ghost map[string]any
+	for _, mm := range lst["messages"].([]any) {
+		m := mm.(map[string]any)
+		if m["body"] == "ghost was here" {
+			ghost = m
+		}
+	}
+	if ghost == nil {
+		t.Fatal("agent message missing after delete")
+	}
+	author := ghost["author"].(map[string]any)
+	if author["kind"] != "agent" || author["name"] != "Ghosty" || author["id"] != nil {
+		t.Fatalf("tombstoned author wrong: %v", author)
+	}
+
+	// the todo keeps the dead agent's name, with no dangling id
+	code, todos := c.call("GET", "/api/projects/"+projID+"/todos", "")
+	if code != 200 {
+		t.Fatalf("list todos: %d %v", code, todos)
+	}
+	var gtodo map[string]any
+	for _, tt := range todos["todos"].([]any) {
+		td := tt.(map[string]any)
+		if td["content"] == "ghost chore" {
+			gtodo = td
+		}
+	}
+	if gtodo == nil {
+		t.Fatal("agent todo missing after delete")
+	}
+	ag, _ := gtodo["agent"].(map[string]any)
+	if ag == nil || ag["name"] != "Ghosty" || ag["id"] != nil {
+		t.Fatalf("tombstoned todo attribution wrong: %v", gtodo["agent"])
+	}
+
+	// and the agent is gone from the workspace list
+	code, agents := c.call("GET", "/api/workspaces/"+wsID+"/agents", "")
+	if code != 200 {
+		t.Fatalf("list agents: %d", code)
+	}
+	if n := len(agents["agents"].([]any)); n != 0 {
+		t.Fatalf("agents after delete = %d", n)
+	}
+}
