@@ -160,6 +160,9 @@ export default function Shell() {
         domStorageEnabled
         pullToRefreshEnabled
         setSupportMultipleWindows={false}
+        setBuiltInZoomControls={false}
+        setDisplayZoomControls={false}
+        scalesPageToFit={false}
         sharedCookiesEnabled
         onNavigationStateChange={(nav) => setCanGoBack(nav.canGoBack)}
         onLoadStart={() => {
