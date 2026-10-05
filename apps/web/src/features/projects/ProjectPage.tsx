@@ -1476,6 +1476,13 @@ export default function ProjectPage() {
     }
   });
 
+  // ?briefs=1 opens the briefs panel — deep link for unread-brief rows.
+  createEffect(() => {
+    if (searchParams.briefs) {
+      setBriefsOpen(true);
+      setSearchParams({ briefs: undefined });
+    }
+  });
 
   const [overview, { refetch: refetchOverview }] = createResource(
     () => params.projectId,

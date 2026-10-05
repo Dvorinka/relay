@@ -1,6 +1,7 @@
 import { A } from "@solidjs/router";
 import { createResource, For, onCleanup, Show } from "solid-js";
 import { Avatar } from "@ark-ui/solid";
+import type { UnreadConversation } from "@relay/api-client";
 import { Spinner } from "../components/ui";
 import { api } from "../lib/api";
 import { mediaURL } from "../lib/net";
@@ -8,7 +9,13 @@ import { subscribe } from "../lib/events";
 import { initials, messagePreview } from "../lib/text";
 import { timeAgo } from "../lib/time";
 import { useProjects } from "../stores/projects";
-import { refreshUnread, useUnread } from "../stores/unread";
+import {
+  markAllRead,
+  markConversationRead,
+  refreshUnread,
+  useUnread,
+  useUnreadConversations,
+} from "../stores/unread";
 
 function PendingReviews() {
   const [reviews, { refetch }] = createResource(() =>
@@ -72,18 +79,83 @@ function PendingReviews() {
   );
 }
 
-// Channels with unread messages — each row jumps to the project, where the
-// "New" divider lands on the oldest unread message.
+// Conversations with unread messages — each row lands on the exact place:
+// the channel scrolls to its "New" divider, issues open their page, threads
+// jump to the parent message, briefs open the briefs panel. Older servers
+// return only per-project counts — fall back to project rows for those.
 function UnreadChannels() {
   const { unread } = useUnread();
+  const { unreadConversations } = useUnreadConversations();
   const projects = useProjects();
-  const rows = () =>
-    Object.entries(unread())
-      .map(([projectId, count]) => ({
-        count,
-        project: projects.projects()?.find((p) => p.id === projectId),
-      }))
-      .filter((r) => r.count > 0 && r.project);
+  const projectOf = (id: string) =>
+    projects.projects()?.find((p) => p.id === id);
+
+  type Row = {
+    count: number;
+    project: NonNullable<ReturnType<typeof projectOf>>;
+    where: string | null;
+    href: string;
+    conv: UnreadConversation | null;
+  };
+
+  const hrefFor = (c: UnreadConversation): string => {
+    switch (c.kind) {
+      case "issue":
+        return `/app/p/${c.project_id}/i/${c.issue_id}`;
+      case "brief":
+        return `/app/p/${c.project_id}?briefs=1`;
+      case "thread":
+        return `/app/p/${c.project_id}?msg=${c.parent_message_id}`;
+      default:
+        return `/app/p/${c.project_id}`;
+    }
+  };
+
+  const whereFor = (c: UnreadConversation, key: string): string => {
+    switch (c.kind) {
+      case "issue":
+        return `${key}-${c.issue_number ?? "?"}${c.issue_title ? ` · ${c.issue_title}` : ""}`;
+      case "brief":
+        return `brief${c.brief_title ? ` · ${c.brief_title}` : ""}`;
+      case "thread":
+        return `thread${c.title ? ` · ${c.title}` : ""}`;
+      default:
+        return "channel";
+    }
+  };
+
+  const rows = (): Row[] => {
+    const convs = unreadConversations();
+    if (convs.length > 0) {
+      return convs
+        .map((c): Row | null => {
+          const p = projectOf(c.project_id);
+          if (!p || c.unread <= 0) return null;
+          return {
+            count: c.unread,
+            project: p,
+            where: whereFor(c, p.key),
+            href: hrefFor(c),
+            conv: c,
+          };
+        })
+        .filter((r): r is Row => r !== null)
+        .sort((a, b) => b.count - a.count);
+    }
+    return Object.entries(unread())
+      .map(([projectId, count]): Row | null => {
+        const p = projectOf(projectId);
+        if (!p || count <= 0) return null;
+        return {
+          count,
+          project: p,
+          where: null,
+          href: `/app/p/${projectId}`,
+          conv: null,
+        };
+      })
+      .filter((r): r is Row => r !== null);
+  };
 
   return (
     <Show when={rows().length > 0}>
@@ -93,31 +165,55 @@ function UnreadChannels() {
           <span class="rounded-full bg-accent/15 px-1.5 py-0.5 text-[10px] font-medium text-accent">
             {rows().reduce((s, r) => s + r.count, 0)}
           </span>
+          <Show when={unreadConversations().length > 0}>
+            <button
+              type="button"
+              onClick={() => void markAllRead()}
+              class="ml-auto text-[11px] font-normal normal-case tracking-normal text-muted transition-colors hover:text-accent"
+            >
+              mark all read
+            </button>
+          </Show>
         </h2>
         <ul class="divide-y divide-border overflow-hidden rounded-md border border-border">
           <For each={rows()}>
             {(r) => (
-              <li>
+              <li class="group relative">
                 <A
-                  href={`/app/p/${r.project!.id}`}
+                  href={r.href}
                   class="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-hover"
                 >
                   <span
                     class="h-2.5 w-2.5 shrink-0 rounded-full"
                     style={{
-                      "background-color": r.project!.color ?? "var(--accent)",
+                      "background-color": r.project.color ?? "var(--accent)",
                     }}
                   />
-                  <span class="truncate text-[13px] font-medium">
-                    {r.project!.name}
+                  <span class="shrink-0 truncate text-[14px] font-medium sm:text-[13px]">
+                    {r.project.name}
                   </span>
-                  <span class="font-mono text-[11px] text-muted">
-                    {r.project!.key}
+                  <span class="min-w-0 flex-1 truncate text-[13px] text-muted sm:text-[12px]">
+                    {r.where ?? r.project.key}
                   </span>
                   <span class="ml-auto rounded-full bg-accent px-1.5 py-px font-mono text-[10px] font-semibold leading-4 text-white">
                     {r.count > 99 ? "99+" : r.count}
                   </span>
                 </A>
+                <Show when={r.conv}>
+                  {(c) => (
+                    <button
+                      type="button"
+                      aria-label={`Mark ${r.project.name} ${r.where ?? "channel"} read`}
+                      title="Mark read"
+                      onClick={() => void markConversationRead(c())}
+                      class="absolute right-10 top-1/2 -translate-y-1/2 rounded p-1 text-faint opacity-60 transition-opacity hover:text-accent sm:opacity-0 sm:group-hover:opacity-100"
+                    >
+                      <svg viewBox="0 0 16 16" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M2.5 8.5l3.5 3.5 7-8" />
+                      </svg>
+                    </button>
+                  )}
+                </Show>
               </li>
             )}
           </For>
@@ -140,7 +236,15 @@ export default function Inbox() {
       void refreshUnread();
     }
   });
-  onCleanup(unsub);
+  const onPull = () => {
+    void refetch();
+    void refreshUnread();
+  };
+  window.addEventListener("relay:refresh", onPull);
+  onCleanup(() => {
+    unsub();
+    window.removeEventListener("relay:refresh", onPull);
+  });
 
   return (
     <div class="flex h-full flex-col">

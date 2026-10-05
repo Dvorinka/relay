@@ -19,6 +19,7 @@ import { subscribe } from "../../lib/events";
 import { mediaURL } from "../../lib/net";
 import { initials } from "../../lib/text";
 import { useSession } from "../../stores/session";
+import { useUnreadByIssue } from "../../stores/unread";
 import {
   isClosed,
   GitHubBadge,
@@ -48,12 +49,14 @@ function IssueRow(props: {
   defs: StatusDef[];
 }) {
   const i = () => props.issue;
+  const unreadByIssue = useUnreadByIssue();
+  const unread = () => unreadByIssue().get(i().id) ?? 0;
   return (
     <li>
       <A
         href={`/app/p/${props.projectId}/i/${i().id}`}
         onMouseEnter={props.onHover}
-        class={`flex items-center gap-2 px-3 py-2 text-[13px] transition-colors ${
+        class={`flex items-center gap-2 px-3 py-2.5 text-[14px] transition-colors sm:py-2 sm:text-[13px] ${
           props.selected ? "bg-hover" : ""
         }`}
         data-selected={props.selected || undefined}
@@ -62,6 +65,13 @@ function IssueRow(props: {
           {i().key}
         </span>
         <span class="min-w-0 flex-1 basis-32 truncate">{i().title}</span>
+        <Show when={unread() > 0}>
+          <Tip text={`${unread()} unread message${unread() === 1 ? "" : "s"}`} hint="Open the issue to read them" side="bottom">
+            <span class="shrink-0 rounded-full bg-accent px-1.5 py-px font-mono text-[10px] font-semibold leading-4 text-white">
+              {unread() > 99 ? "99+" : unread()}
+            </span>
+          </Tip>
+        </Show>
         <GitHubBadge issue={i()} />
         <Show when={i().labels.length > 0}>
           <span class="hidden shrink-0 gap-1 md:flex">

@@ -1,9 +1,9 @@
 import { A } from "@solidjs/router";
-import { ApiClientError, createClient } from "@relay/api-client";
+import { ApiClientError } from "@relay/api-client";
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import { FormError, Spinner } from "../../components/ui";
 import {
-  desktopOpen,
+  browserAuth,
   desktopServerUrl,
   isDesktop,
 } from "../../lib/desktop";
@@ -22,10 +22,11 @@ export default function Login() {
   const [pending, setPending] = createSignal(false);
   const [showServer, setShowServer] = createSignal(!!net.serverUrl());
   const [serverUrl, setServerUrl] = createSignal(net.serverUrl());
-  // Browser sign-in (desktop shell): start mints a code on the target server,
-  // the system browser approves it, we poll until it lands. The timer id in
-  // browserPoll doubles as the "waiting" state.
-  const [browserPoll, setBrowserPoll] = createSignal<number | null>(null);
+  // Browser sign-in (desktop shell): browserAuth() mints a code on the target
+  // server, the system browser approves it, the promise resolves with a token.
+  // browserPending is the "waiting" state; cancelAuth stops polling.
+  const [browserPending, setBrowserPending] = createSignal(false);
+  let cancelAuth: (() => void) | null = null;
   // The proxied SPA clears localStorage relay.serverUrl on purpose (same-origin
   // calls), so in the desktop shell the configured URL only exists in Go —
   // fetched once for the browser sign-in open URL.
@@ -41,15 +42,11 @@ export default function Login() {
     }
   });
 
-  onCleanup(() => {
-    const t = browserPoll();
-    if (t !== null) window.clearInterval(t);
-  });
+  onCleanup(() => cancelAuth?.());
 
   function stopBrowserAuth() {
-    const t = browserPoll();
-    if (t !== null) window.clearInterval(t);
-    setBrowserPoll(null);
+    cancelAuth?.();
+    setBrowserPending(false);
   }
 
   // The server URL field wins while it is visible; otherwise the stored
@@ -81,37 +78,18 @@ export default function Login() {
       return;
     }
     setError(null);
-    const client = createClient(url);
-    let code: string;
+    setBrowserPending(true);
+    const { promise, cancel } = browserAuth(url);
+    cancelAuth = cancel;
     try {
-      const res = await client.browserAuthStart();
-      code = res.code;
-    } catch {
-      setError("Could not reach that server");
-      return;
+      const token = await promise;
+      if (token !== null) await session.adoptToken(url, token);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Sign in failed");
+    } finally {
+      setBrowserPending(false);
+      cancelAuth = null;
     }
-    const opened = await desktopOpen(
-      `${url}/connect?code=${encodeURIComponent(code)}`,
-    );
-    if (!opened) {
-      setError("Could not open the system browser");
-      return;
-    }
-    const timer = window.setInterval(() => {
-      void (async () => {
-        try {
-          const res = await client.browserAuthPoll(code);
-          if (res.status === "approved" && res.token) {
-            stopBrowserAuth();
-            await session.adoptToken(url, res.token);
-          }
-        } catch {
-          stopBrowserAuth();
-          setError("The approval code expired — try again");
-        }
-      })();
-    }, 2000);
-    setBrowserPoll(timer);
   }
 
   async function onSubmit(e: SubmitEvent) {
@@ -216,7 +194,7 @@ export default function Login() {
       <Show when={isDesktop()}>
         <div class="mt-5 border-t border-border pt-4">
           <Show
-            when={browserPoll() === null}
+            when={!browserPending()}
             fallback={
               <div class="flex items-center gap-2.5 rounded-md border border-border bg-surface px-3 py-2.5">
                 <Spinner class="h-3.5 w-3.5" />

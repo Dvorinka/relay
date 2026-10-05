@@ -29,11 +29,40 @@ const [installing, setInstalling] = createSignal(false);
 const [installError, setInstallError] = createSignal<string | null>(null);
 type DesktopPlatformLike = "windows" | "linux" | "darwin" | null;
 
+// "Install updates automatically" — persisted; on by default so a desktop
+// install self-maintains. The actual install only ever runs at startup:
+// SelfUpdate kills the process and relaunches, so mid-session installs would
+// lose open work. Running it at boot lands the new version before the user
+// touches anything.
+const AUTO_KEY = "relay.updates.auto";
+const [autoUpdate, setAutoUpdateSig] = createSignal(
+  localStorage.getItem(AUTO_KEY) !== "0",
+);
+export function useAutoUpdate() {
+  return autoUpdate;
+}
+export function setAutoUpdate(on: boolean) {
+  setAutoUpdateSig(on);
+  localStorage.setItem(AUTO_KEY, on ? "1" : "0");
+}
+
 if (isDesktop()) {
   void desktopVersion().then((v) => {
     if (v) setClientVersion(v);
   });
-  void desktopPlatform().then(setPlatform);
+  void desktopPlatform().then(async (p) => {
+    setPlatform(p);
+    if (!canSelfUpdate()) return;
+    if (autoUpdate()) {
+      await checkForUpdates();
+      // resolves only on failure — a successful install exits the process
+      // and the new build relaunches
+      if (updateAvailable()) void installUpdate();
+    }
+    // long-lived desktop windows surface a badge without a manual check;
+    // installing still waits for the next launch
+    setInterval(() => void checkForUpdates(), 6 * 60 * 60 * 1000);
+  });
 }
 
 const RELEASES_URL =

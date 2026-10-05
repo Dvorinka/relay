@@ -7,6 +7,7 @@ import {
   createResource,
   createSignal,
   For,
+  onCleanup,
   Show,
   type ParentProps,
 } from "solid-js";
@@ -35,6 +36,7 @@ import {
   rememberConnection,
 } from "../../lib/connections";
 import { api } from "../../lib/api";
+import { browserAuth } from "../../lib/desktop";
 import { mediaURL, net } from "../../lib/net";
 import {
   deliver,
@@ -60,7 +62,11 @@ import {
   desktopSetBackground,
   isDesktop,
 } from "../../lib/desktop";
-import { syncToServer } from "../../lib/sync";
+import {
+  syncToServer,
+  syncWithToken,
+  type SyncResult,
+} from "../../lib/sync";
 import { useSession } from "../../stores/session";
 import {
   setChatStyle,
@@ -757,16 +763,20 @@ function NameColorRow() {
 }
 
 // Connection card: which backend this app talks to. Local mode stores
-// everything on this device; "Connect a server" moves to a real Relay
-// backend, and "Sync to server" pushes the local store up once connected.
+// everything on this device; one connect form handles both auth styles —
+// email+password in-app or approval in the system browser — and the
+// "copy data" checkbox decides whether the local store syncs up first.
 function ConnectionSection() {
   const session = useSession();
   const [syncPending, setSyncPending] = createSignal(false);
   const [connectPending, setConnectPending] = createSignal(false);
+  const [browserPending, setBrowserPending] = createSignal(false);
   const [switching, setSwitching] = createSignal(false);
   const [step, setStep] = createSignal("");
   const [result, setResult] = createSignal<string | null>(null);
   const [error, setError] = createSignal<string | null>(null);
+  let cancelAuth: (() => void) | null = null;
+  onCleanup(() => cancelAuth?.());
 
   // Local mode and server switching only make sense off the server's own
   // hosted UI — the desktop app or a cross-origin client. Same rule as
@@ -778,9 +788,20 @@ function ConnectionSection() {
       ? "This device (local)"
       : net.serverUrl() || window.location.origin;
 
-  async function onSync(e: SubmitEvent) {
-    e.preventDefault();
-    const data = new FormData(e.currentTarget as HTMLFormElement);
+  const syncSummary = (r: SyncResult) =>
+    `Synced ${r.projects} project(s), ${r.messages} message(s), ${r.issues} issue(s), ${r.todos} todo(s), ${r.briefs} brief(s).`;
+
+  // Any button inside the merged connect form reaches the shared fields.
+  function formData(el: HTMLElement): FormData | null {
+    const form = el.closest("form");
+    return form ? new FormData(form) : null;
+  }
+
+  // "Copy data without connecting": sync and stay local.
+  async function onSyncOnly(e: MouseEvent) {
+    const form = (e.currentTarget as HTMLElement).closest("form");
+    if (!form?.reportValidity()) return;
+    const data = new FormData(form);
     setError(null);
     setResult(null);
     setSyncPending(true);
@@ -791,9 +812,7 @@ function ConnectionSection() {
         String(data.get("password") ?? ""),
         setStep,
       );
-      setResult(
-        `Synced ${r.projects} project(s), ${r.messages} message(s), ${r.issues} issue(s), ${r.todos} todo(s), ${r.briefs} brief(s). Local data is unchanged.`,
-      );
+      setResult(`${syncSummary(r)} Local data is unchanged.`);
     } catch (err) {
       setError(errorMessage(err, "Sync failed"));
     } finally {
@@ -802,25 +821,65 @@ function ConnectionSection() {
     }
   }
 
+  // "Connect & sign in": optional sync first (data lands before we leave
+  // local mode), then the normal login switches the session over.
   async function onConnect(e: SubmitEvent) {
     e.preventDefault();
     const data = new FormData(e.currentTarget as HTMLFormElement);
+    const url = String(data.get("server_url") ?? "");
+    const email = String(data.get("email") ?? "");
+    const password = String(data.get("password") ?? "");
     setError(null);
+    setResult(null);
     setConnectPending(true);
     try {
-      await session.login(
-        {
-          email: String(data.get("email") ?? ""),
-          password: String(data.get("password") ?? ""),
-        },
-        String(data.get("server_url") ?? ""),
-      );
+      if (data.get("copy") === "on") {
+        setResult(`${syncSummary(await syncToServer(url, email, password, setStep))}`);
+      }
+      await session.login({ email, password }, url);
     } catch (err) {
       setError(errorMessage(err, "Could not connect"));
+    } finally {
       setConnectPending(false);
+      setStep("");
+    }
+  }
+
+  // Browser sign-in: no password fields needed — approval happens on the
+  // server's /connect page in the system browser. Sync runs on the minted
+  // token before the session switches.
+  async function onBrowserAuth(e: MouseEvent) {
+    const el = e.currentTarget as HTMLElement;
+    const urlInput = el.closest("form")?.elements.namedItem("server_url");
+    if (urlInput instanceof HTMLInputElement && !urlInput.reportValidity()) {
       return;
     }
-    setConnectPending(false);
+    const data = formData(el);
+    const url = String(data?.get("server_url") ?? "");
+    setError(null);
+    setResult(null);
+    setBrowserPending(true);
+    const { promise, cancel } = browserAuth(url);
+    cancelAuth = cancel;
+    try {
+      const token = await promise;
+      if (token === null) return; // user cancelled
+      if (data?.get("copy") === "on") {
+        setResult(`${syncSummary(await syncWithToken(url, token, setStep))}`);
+      }
+      await session.adoptToken(url, token);
+    } catch (err) {
+      setError(errorMessage(err, "Browser sign-in failed"));
+    } finally {
+      setBrowserPending(false);
+      cancelAuth = null;
+      setStep("");
+    }
+  }
+
+  function stopBrowserAuth() {
+    cancelAuth?.();
+    setBrowserPending(false);
   }
 
   // Add a second server WITHOUT leaving the current one: sign in there,
@@ -923,10 +982,11 @@ function ConnectionSection() {
       </Show>
 
       <Show when={net.isLocal()}>
-        <form onSubmit={onSync} class="flex max-w-sm flex-col gap-3">
+        <form onSubmit={onConnect} class="flex max-w-sm flex-col gap-3">
           <p class="text-[12.5px] text-muted">
-            Copy this device's workspace to a server. Creates projects,
-            replays messages and issues — local data stays here either way.
+            Connect to a Relay server — you'll sign in there and leave local
+            mode. Tick "copy data" to bring this device's workspace with you;
+            it stays here either way.
           </p>
           <input
             type="url"
@@ -954,14 +1014,57 @@ function ConnectionSection() {
             aria-label="Account password"
             class={inputClass}
           />
+          <label class="flex items-center gap-2 text-[12.5px] text-muted">
+            <input type="checkbox" name="copy" checked />
+            Copy this device's data to the server
+          </label>
           <Show when={step()}>
             <p class="text-[12px] text-muted">{step()}…</p>
           </Show>
-          <div>
-            <SubmitButton pending={syncPending()}>
-              {syncPending() ? "Syncing..." : "Sync to server"}
+          <div class="flex items-center gap-3">
+            <SubmitButton pending={connectPending()}>
+              {connectPending() ? "Connecting..." : "Connect & sign in"}
             </SubmitButton>
+            <button
+              type="button"
+              onClick={onSyncOnly}
+              disabled={syncPending() || connectPending() || browserPending()}
+              class="text-[12px] text-muted underline-offset-2 hover:text-fg hover:underline disabled:opacity-60"
+            >
+              {syncPending() ? "Syncing..." : "Copy data without connecting"}
+            </button>
           </div>
+          <Show when={isDesktop()}>
+            <div class="border-t border-border pt-3">
+              <Show
+                when={!browserPending()}
+                fallback={
+                  <div class="flex items-center gap-2.5 rounded-md border border-border bg-surface px-3 py-2.5">
+                    <Spinner class="h-3.5 w-3.5" />
+                    <p class="flex-1 text-[12.5px] text-muted">
+                      Waiting for approval in your browser…
+                    </p>
+                    <button
+                      type="button"
+                      class="text-[12px] text-muted underline-offset-2 hover:text-fg hover:underline"
+                      onClick={stopBrowserAuth}
+                    >
+                      cancel
+                    </button>
+                  </div>
+                }
+              >
+                <button
+                  type="button"
+                  onClick={onBrowserAuth}
+                  disabled={syncPending() || connectPending()}
+                  class="w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-muted transition-colors hover:bg-hover hover:text-fg disabled:opacity-60"
+                >
+                  Sign in via browser — approve there, no password needed
+                </button>
+              </Show>
+            </div>
+          </Show>
         </form>
       </Show>
 
@@ -1066,46 +1169,6 @@ function ConnectionSection() {
             </form>
           </Show>
         </div>
-      </Show>
-
-      <Show when={net.isLocal()}>
-        <form onSubmit={onConnect} class="flex max-w-sm flex-col gap-3 border-t border-border pt-4">
-          <p class="text-[12.5px] text-muted">
-            Or connect a server now — you'll sign in there and leave local
-            mode. Sync first if you want this device's data kept.
-          </p>
-          <input
-            type="url"
-            name="server_url"
-            required
-            placeholder="https://relay.example.com"
-            aria-label="Server URL"
-            class={inputClass}
-          />
-          <input
-            type="email"
-            name="email"
-            required
-            autocomplete="email"
-            placeholder="you@example.com"
-            aria-label="Account email"
-            class={inputClass}
-          />
-          <input
-            type="password"
-            name="password"
-            required
-            autocomplete="current-password"
-            placeholder="Password"
-            aria-label="Account password"
-            class={inputClass}
-          />
-          <div>
-            <SubmitButton pending={connectPending()}>
-              {connectPending() ? "Connecting..." : "Connect & sign in"}
-            </SubmitButton>
-          </div>
-        </form>
       </Show>
 
       <FormError message={error()} />
