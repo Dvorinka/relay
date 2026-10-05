@@ -3789,6 +3789,11 @@ export interface operations {
                     "application/json": {
                         messages: components["schemas"]["Message"][];
                         has_more: boolean;
+                        /**
+                         * Format: uuid
+                         * @description Oldest message this user has not read — the "New" divider boundary. Only present on the first page (no `before` cursor) and only when unread messages exist.
+                         */
+                        first_unread_id?: string;
                     };
                 };
             };
