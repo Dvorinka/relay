@@ -40,10 +40,14 @@ module.exports = function withReleaseSigning(config) {
                 : signingConfigs.debug)`,
     );
 
-    // versionCode from the environment for monotonic releases.
+    // versionCode/versionName from the environment for monotonic releases.
     g = g.replace(
       /versionCode \d+/,
       `versionCode Integer.parseInt(System.getenv("RELAY_VERSION_CODE") ?: "1")`,
+    );
+    g = g.replace(
+      /versionName "[^"]*"/,
+      `versionName (System.getenv("RELAY_VERSION_NAME") ?: "1.0.0")`,
     );
 
     c.modResults.contents = g;
