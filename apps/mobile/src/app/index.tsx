@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   BackHandler,
+  Image,
   KeyboardAvoidingView,
   Linking,
   Platform,
@@ -242,8 +243,16 @@ function ConnectScreen(props: {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <View style={styles.connect}>
-        <Text style={styles.title}>Relay</Text>
-        <Text style={styles.subtitle}>Connect to your Relay server</Text>
+        <Image
+          source={require("../../assets/icon.png")}
+          style={styles.logo}
+          resizeMode="contain"
+        />
+        <Text style={styles.title}>Welcome to Relay</Text>
+        <Text style={styles.subtitle}>
+          Connect to your Relay server to continue
+        </Text>
+        <Text style={styles.label}>Server URL</Text>
         <TextInput
           style={[styles.input, error && styles.inputError]}
           value={url}
@@ -298,29 +307,54 @@ const styles = StyleSheet.create({
   errBtnText: { color: C.accent, fontSize: 13 },
   connect: {
     flex: 1,
-    justifyContent: "center",
-    padding: 24,
-    gap: 10,
+    paddingHorizontal: 24,
+    paddingTop: 72,
   },
-  title: { color: C.text, fontSize: 22, fontWeight: "700" },
-  subtitle: { color: C.muted, fontSize: 14, marginBottom: 8 },
+  logo: {
+    width: 72,
+    height: 72,
+    alignSelf: "center",
+    marginBottom: 20,
+  },
+  title: {
+    color: C.text,
+    fontSize: 24,
+    fontWeight: "700",
+    textAlign: "center",
+  },
+  subtitle: {
+    color: C.muted,
+    fontSize: 15,
+    textAlign: "center",
+    marginTop: 8,
+    marginBottom: 28,
+  },
+  label: {
+    color: C.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+    marginBottom: 8,
+  },
   input: {
     borderWidth: 1,
     borderColor: C.border,
-    borderRadius: 8,
+    borderRadius: 10,
     color: C.text,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 14,
+    height: 48,
     fontSize: 15,
     backgroundColor: C.surface,
   },
   inputError: { borderColor: "#c0392b" },
   connectBtn: {
-    marginTop: 6,
+    marginTop: 20,
     backgroundColor: C.accent,
-    borderRadius: 8,
-    paddingVertical: 11,
+    borderRadius: 10,
+    height: 48,
     alignItems: "center",
+    justifyContent: "center",
   },
-  connectBtnText: { color: "#062a30", fontSize: 14, fontWeight: "600" },
+  connectBtnText: { color: "#062a30", fontSize: 15, fontWeight: "600" },
 });

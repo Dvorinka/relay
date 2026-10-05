@@ -1,14 +1,14 @@
 import { A, useSearchParams } from "@solidjs/router";
 import { ApiClientError } from "@relay/api-client";
 import { createSignal, Show } from "solid-js";
-import {
-  Field,
-  FormError,
-  SubmitButton,
-  inputClass,
-} from "../../components/ui";
+import { FormError } from "../../components/ui";
 import { api } from "../../lib/api";
-import { AuthLayout } from "./AuthLayout";
+import {
+  AuthField,
+  AuthLayout,
+  authButtonClass,
+  authInputClass,
+} from "./AuthLayout";
 
 export default function ResetPassword() {
   const [params] = useSearchParams<{ token?: string }>();
@@ -47,7 +47,10 @@ export default function ResetPassword() {
   }
 
   return (
-    <AuthLayout title="Set a new password">
+    <AuthLayout
+      title="Set a new password"
+      subtitle="Choose a strong password for your account"
+    >
       <Show
         when={token()}
         fallback={
@@ -75,29 +78,29 @@ export default function ResetPassword() {
             </p>
           }
         >
-          <form onSubmit={onSubmit} class="flex flex-col gap-4">
-            <Field label="New password">
+          <form onSubmit={onSubmit} class="flex flex-col gap-5">
+            <AuthField label="New password">
               <input
                 type="password"
                 name="password"
                 required
                 autocomplete="new-password"
-                class={inputClass}
+                class={authInputClass}
               />
-            </Field>
-            <Field label="Confirm password">
+            </AuthField>
+            <AuthField label="Confirm password">
               <input
                 type="password"
                 name="confirm"
                 required
                 autocomplete="new-password"
-                class={inputClass}
+                class={authInputClass}
               />
-            </Field>
+            </AuthField>
             <FormError message={error()} />
-            <SubmitButton pending={pending()} class="w-full">
+            <button type="submit" disabled={pending()} class={authButtonClass}>
               {pending() ? "Updating..." : "Update password"}
-            </SubmitButton>
+            </button>
           </form>
         </Show>
       </Show>

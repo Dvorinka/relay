@@ -1,12 +1,12 @@
 import { A } from "@solidjs/router";
 import { createSignal, Show } from "solid-js";
-import {
-  Field,
-  SubmitButton,
-  inputClass,
-} from "../../components/ui";
 import { api } from "../../lib/api";
-import { AuthLayout } from "./AuthLayout";
+import {
+  AuthField,
+  AuthLayout,
+  authButtonClass,
+  authInputClass,
+} from "./AuthLayout";
 
 export default function ForgotPassword() {
   const [sent, setSent] = createSignal(false);
@@ -30,6 +30,7 @@ export default function ForgotPassword() {
   return (
     <AuthLayout
       title="Reset your password"
+      subtitle="Enter your email and we'll send you a reset link"
       footer={
         <>
           Remembered it?{" "}
@@ -47,19 +48,19 @@ export default function ForgotPassword() {
           </p>
         }
       >
-        <form onSubmit={onSubmit} class="flex flex-col gap-4">
-          <Field label="Email">
+        <form onSubmit={onSubmit} class="flex flex-col gap-5">
+          <AuthField label="Email">
             <input
               type="email"
               name="email"
               required
               autocomplete="email"
-              class={inputClass}
+              class={authInputClass}
             />
-          </Field>
-          <SubmitButton pending={pending()} class="w-full">
+          </AuthField>
+          <button type="submit" disabled={pending()} class={authButtonClass}>
             {pending() ? "Sending..." : "Send reset link"}
-          </SubmitButton>
+          </button>
         </form>
       </Show>
     </AuthLayout>

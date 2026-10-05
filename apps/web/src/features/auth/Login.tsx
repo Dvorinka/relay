@@ -1,13 +1,7 @@
 import { A } from "@solidjs/router";
 import { ApiClientError, createClient } from "@relay/api-client";
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
-import {
-  Field,
-  FormError,
-  Spinner,
-  SubmitButton,
-  inputClass,
-} from "../../components/ui";
+import { FormError, Spinner } from "../../components/ui";
 import {
   desktopOpen,
   desktopServerUrl,
@@ -15,7 +9,12 @@ import {
 } from "../../lib/desktop";
 import { net } from "../../lib/net";
 import { useSession } from "../../stores/session";
-import { AuthLayout } from "./AuthLayout";
+import {
+  AuthField,
+  AuthLayout,
+  authButtonClass,
+  authInputClass,
+} from "./AuthLayout";
 
 export default function Login() {
   const session = useSession();
@@ -144,7 +143,8 @@ export default function Login() {
 
   return (
     <AuthLayout
-      title="Sign in"
+      title="Welcome back"
+      subtitle="Sign in to continue to Relay"
       footer={
         <>
           New here?{" "}
@@ -154,61 +154,64 @@ export default function Login() {
         </>
       }
     >
-      <form onSubmit={onSubmit} class="flex flex-col gap-4">
-        <Field label="Email">
+      <form onSubmit={onSubmit} class="flex flex-col gap-5">
+        <AuthField label="Email">
           <input
             type="email"
             name="email"
             required
             autocomplete="email"
-            class={inputClass}
+            class={authInputClass}
           />
-        </Field>
-        <Field label="Password">
-          <input
-            type="password"
-            name="password"
-            required
-            autocomplete="current-password"
-            class={inputClass}
-          />
-        </Field>
+        </AuthField>
+        <div>
+          <AuthField label="Password">
+            <input
+              type="password"
+              name="password"
+              required
+              autocomplete="current-password"
+              class={authInputClass}
+            />
+          </AuthField>
+          <div class="mt-1.5 flex items-center justify-between">
+            <Show when={altPaths()} fallback={<span />}>
+              <button
+                type="button"
+                class="text-[13px] text-muted underline-offset-2 hover:text-fg hover:underline"
+                onClick={() => setShowServer((v) => !v)}
+              >
+                {showServer() ? "This server" : "Different server"}
+              </button>
+            </Show>
+            <A
+              href="/forgot"
+              class="text-[13px] text-accent underline-offset-2 hover:underline"
+            >
+              Forgot password?
+            </A>
+          </div>
+        </div>
         <Show when={showServer()}>
-          <Field label="Server URL">
+          <AuthField label="Server URL">
             <input
               type="url"
               name="server_url"
               placeholder="https://relay.example.com"
               value={serverUrl()}
               onInput={(e) => setServerUrl(e.currentTarget.value)}
-              class={inputClass}
+              class={authInputClass}
             />
-          </Field>
+          </AuthField>
         </Show>
-        <div class="flex items-center justify-between">
-          <Show
-            when={altPaths()}
-            fallback={<span />}
-          >
-            <button
-              type="button"
-              class="text-[13px] text-muted underline-offset-2 hover:text-fg hover:underline"
-              onClick={() => setShowServer((v) => !v)}
-            >
-              {showServer() ? "This server" : "Different server"}
-            </button>
-          </Show>
-          <A
-            href="/forgot"
-            class="text-[13px] text-muted underline-offset-2 hover:text-fg hover:underline"
-          >
-            Forgot password?
-          </A>
-        </div>
         <FormError message={error()} />
-        <SubmitButton pending={pending()} class="w-full">
+        <button
+          type="submit"
+          disabled={pending()}
+          class={authButtonClass}
+        >
           {pending() ? "Signing in..." : "Sign in"}
-        </SubmitButton>
+        </button>
       </form>
       <Show when={isDesktop()}>
         <div class="mt-5 border-t border-border pt-4">

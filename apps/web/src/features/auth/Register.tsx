@@ -1,14 +1,14 @@
 import { A } from "@solidjs/router";
 import { ApiClientError } from "@relay/api-client";
 import { createSignal } from "solid-js";
-import {
-  Field,
-  FormError,
-  SubmitButton,
-  inputClass,
-} from "../../components/ui";
+import { FormError } from "../../components/ui";
 import { useSession } from "../../stores/session";
-import { AuthLayout } from "./AuthLayout";
+import {
+  AuthField,
+  AuthLayout,
+  authButtonClass,
+  authInputClass,
+} from "./AuthLayout";
 
 export default function Register() {
   const session = useSession();
@@ -40,7 +40,8 @@ export default function Register() {
 
   return (
     <AuthLayout
-      title="Create your account"
+      title="Create an account"
+      subtitle="Join your Relay workspace"
       footer={
         <>
           Already have an account?{" "}
@@ -50,38 +51,38 @@ export default function Register() {
         </>
       }
     >
-      <form onSubmit={onSubmit} class="flex flex-col gap-4">
-        <Field label="Name">
+      <form onSubmit={onSubmit} class="flex flex-col gap-5">
+        <AuthField label="Name">
           <input
             type="text"
             name="name"
             required
             autocomplete="name"
-            class={inputClass}
+            class={authInputClass}
           />
-        </Field>
-        <Field label="Email">
+        </AuthField>
+        <AuthField label="Email">
           <input
             type="email"
             name="email"
             required
             autocomplete="email"
-            class={inputClass}
+            class={authInputClass}
           />
-        </Field>
-        <Field label="Password">
+        </AuthField>
+        <AuthField label="Password">
           <input
             type="password"
             name="password"
             required
             autocomplete="new-password"
-            class={inputClass}
+            class={authInputClass}
           />
-        </Field>
+        </AuthField>
         <FormError message={error()} />
-        <SubmitButton pending={pending()} class="w-full">
+        <button type="submit" disabled={pending()} class={authButtonClass}>
           {pending() ? "Creating account..." : "Create account"}
-        </SubmitButton>
+        </button>
       </form>
     </AuthLayout>
   );
