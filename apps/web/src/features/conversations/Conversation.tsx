@@ -47,6 +47,7 @@ import {
   Tip,
 } from "../../components/ui";
 import { api } from "../../lib/api";
+import { copyText } from "../../lib/clipboard";
 import { openProfile } from "../../components/ProfileModal";
 import { subscribe } from "../../lib/events";
 import { loadNameColors, nameColorFor } from "../../lib/namecolors";
@@ -136,28 +137,7 @@ function stamp(iso: string): string {
   return `${dayLabel(iso)} at ${shortTime(iso)}`;
 }
 
-// Clipboard write that never touches window.prompt: async clipboard API
-// first, then the legacy execCommand path for insecure contexts.
-async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    const el = document.createElement("textarea");
-    el.value = text;
-    el.style.cssText = "position:fixed;top:-9999px;opacity:0";
-    document.body.appendChild(el);
-    el.select();
-    let ok = false;
-    try {
-      ok = document.execCommand("copy");
-    } catch {
-      /* unsupported */
-    }
-    el.remove();
-    return ok;
-  }
-}
+
 
 function MessageAvatar(props: { message: Message; small?: boolean; tiny?: boolean }) {
   const m = () => props.message;
@@ -992,6 +972,10 @@ function MessageRow(props: {
   function startEdit() {
     setEditDraft(m().body);
     setEditError(null);
+    for (const p of editFiles()) {
+      if (p.previewUrl) URL.revokeObjectURL(p.previewUrl);
+    }
+    setEditFiles([]);
     setEditing(true);
     requestAnimationFrame(() => {
       editEl?.focus();
@@ -1060,6 +1044,33 @@ function MessageRow(props: {
 
   const editFilesReady = () =>
     editFiles().every((p) => p.status !== "uploading");
+
+  // Pasting a screenshot while editing stages it like the composer's flow:
+  // upload starts immediately and an [image N] marker lands at the caret so
+  // the reader can tell which words describe which image.
+  function onEditPaste(e: ClipboardEvent & { currentTarget: HTMLTextAreaElement }) {
+    const files = Array.from(e.clipboardData?.files ?? []);
+    if (files.length === 0) return;
+    e.preventDefault();
+    const el = e.currentTarget;
+    let n = editFiles().filter(
+      (p) => p.file.type.startsWith("image/") && p.status !== "error",
+    ).length;
+    for (const file of files) {
+      addEditFiles([file]);
+      if (!file.type.startsWith("image/")) continue;
+      n += 1;
+      const cur = editDraft();
+      const start = el.selectionStart ?? cur.length;
+      const end = el.selectionEnd ?? cur.length;
+      const pre = start > 0 && !/\s/.test(cur[start - 1]!) ? " " : "";
+      const post = end < cur.length && !/\s/.test(cur[end]!) ? " " : " ";
+      const text = `[image ${n}]`;
+      setEditDraft(cur.slice(0, start) + pre + text + post + cur.slice(end));
+      const pos = start + pre.length + text.length + post.length;
+      el.selectionStart = el.selectionEnd = pos;
+    }
+  }
 
   async function saveEdit() {
     const body = editDraft().trim();
@@ -1320,6 +1331,7 @@ function MessageRow(props: {
                   setEditing(false);
                 }
               }}
+              onPaste={onEditPaste}
               class="max-h-80 w-full resize-none bg-transparent px-2 py-1.5 text-[14px] leading-6 outline-none"
             />
             <Show when={editFiles().length > 0}>
@@ -3148,6 +3160,7 @@ function ThreadPanel(props: {
 }) {
   const [width, setWidth] = createSignal(threadWidth());
   const [full, setFull] = createSignal(false);
+  const [idCopied, setIdCopied] = createSignal(false);
   let dragging = false;
 
   const clamp = (w: number) =>
@@ -3209,6 +3222,22 @@ function ThreadPanel(props: {
             {props.thread.reply_count === 1 ? "reply" : "replies"}
           </p>
         </div>
+        <button
+          type="button"
+          onClick={async () => {
+            if (await copyText(props.thread.id)) {
+              setIdCopied(true);
+              setTimeout(() => setIdCopied(false), 1500);
+            }
+          }}
+          aria-label="Copy thread ID"
+          title={idCopied() ? "Thread ID copied" : "Copy thread ID"}
+          class="rounded p-1 text-muted transition-colors hover:bg-hover hover:text-fg"
+        >
+          <Show when={idCopied()} fallback={<LinkIcon class="h-4 w-4" />}>
+            <CheckIcon class="h-4 w-4" />
+          </Show>
+        </button>
         <button
           type="button"
           onClick={() => setFull((v) => !v)}

@@ -314,8 +314,12 @@ func render(kind string, raw json.RawMessage) {
 				name += "·agent"
 			}
 			if p := asMap(m["parent"]); p != nil {
-				fmt.Printf("  %s\n  └ reply to %s: %s\n", str(p, "id"),
-					str(p, "author"), truncate(str(p, "preview"), 60))
+				truncNote := ""
+				if p["truncated"] == true {
+					truncNote = " …(truncated — relay-cli read " + str(p, "id") + " for the full message)"
+				}
+				fmt.Printf("  %s\n  └ reply to %s: %s%s\n", str(p, "id"),
+					str(p, "author"), truncate(str(p, "preview"), 60), truncNote)
 			}
 			atts := len(list(asMap(m), "attachments"))
 			suffix := ""
@@ -406,6 +410,9 @@ func main() {
 		_, _ = fmt.Fprintf(flag.CommandLine.Output(), `relay-cli — Relay for agents and humans, via MCP.
 
 Usage: relay-cli [--url URL] [--token rly_...] [--json] <command> [args] [flags]
+
+Guide
+  guide                                 print the platform agent guide (read first on a new workspace)
 
 Chat
   projects                              list granted projects
@@ -519,6 +526,14 @@ Environment: RELAY_URL, RELAY_TOKEN.
 	}
 
 	switch args[0] {
+	case "guide":
+		// the embedded platform manual — plain text, not JSON
+		res, err := s.tool("get_guide", nil)
+		if err != nil {
+			fail(err)
+		}
+		fmt.Print(string(res))
+
 	case "projects":
 		run("projects", "list_projects", nil)
 
@@ -1060,7 +1075,7 @@ func atoi(s string) int {
 }
 
 func completionScript(shell string) string {
-	cmds := "projects conversations messages read say react msg-edit msg-del " +
+	cmds := "guide projects conversations messages read say react msg-edit msg-del " +
 		"pin unpin pins forward thread avatar issues " +
 		"issue issue-new issue-set todos todo-add todo-done todo-undo todo-del " +
 		"todo-set todo-sync work-start work-stop ask resolve events " +

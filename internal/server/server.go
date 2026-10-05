@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Dvorinka/relay/internal/agentdoc"
 	"github.com/Dvorinka/relay/internal/agents"
 	"github.com/Dvorinka/relay/internal/attachments"
 	"github.com/Dvorinka/relay/internal/auth"
@@ -96,6 +97,12 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "version": version})
+	})
+	// The agent onboarding guide, embedded in the binary — public like the
+	// health check so a fresh agent (or a human) can read it before any
+	// auth exists. Same document the get_guide MCP tool returns.
+	api.GET("/agent-guide", func(c *gin.Context) {
+		c.Data(http.StatusOK, "text/markdown; charset=utf-8", []byte(agentdoc.Guide))
 	})
 
 	authSvc.RegisterRoutes(api)

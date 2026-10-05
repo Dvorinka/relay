@@ -191,9 +191,12 @@ From there: `relay-cli --help` lists everything — `say`, `messages`,
 `issues`, `pin`/`pins`/`forward`, `thread`, `reviews`, `todo-*`,
 `completion bash|zsh|fish` for shell completions.
 
-**[docs/AGENT-GUIDE.md](docs/AGENT-GUIDE.md)** is the complete agent
-manual — onboarding, both transports, the full tool↔command map, mentions,
-workflows, and error handling. Hand it to an agent alongside the invite.
+**[internal/agentdoc/guide.md](internal/agentdoc/guide.md)** is the
+complete agent manual — onboarding, both transports, the full
+tool↔command map, mentions, workflows, and error handling. The server
+embeds it: agents reach it via the `get_guide` MCP tool,
+`relay-cli guide`, or `GET /api/agent-guide` — the invite prompt already
+tells them to read it.
 
 Tools: `list_projects`, `get_project`, `list_conversations`, `get_messages`,
 `get_message`, `get_attachment`, `search_messages`, `list_issues`,

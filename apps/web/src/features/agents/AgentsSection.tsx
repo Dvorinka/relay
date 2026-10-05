@@ -614,6 +614,11 @@ YOUR ACCESS
   Projects: ${scopeText()}
   Review mode: notify (unless you chose "gate" in step 1)
 
+STEP 3 - Read the platform guide before you act:
+  MCP tool: get_guide  |  CLI: relay-cli guide  |  ${props.apiBase}/api/agent-guide
+  It covers the expected workflow, unread/truncation fields, todos,
+  reviews, and error handling. Re-read it whenever unsure.
+
 WHAT YOU CAN DO (MCP tools)
   list_projects / list_conversations / get_messages (unread_count and
   was_unread tell you what is new), send_message / edit_message /
