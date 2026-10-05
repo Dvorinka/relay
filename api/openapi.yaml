@@ -2627,10 +2627,40 @@ paths:
   /api/me/unread:
     get:
       operationId: unreadCounts
-      summary: Per-project unread message counts
+      summary: Per-project unread message counts plus the per-conversation breakdown
       tags: [realtime]
       responses:
-        "200": { description: "project_id -> count map" }
+        "200":
+          description: "unread: project_id -> count; reviews: project_id -> pending count; conversations: per-conversation unread detail for deep links"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  unread:
+                    type: object
+                    additionalProperties: { type: integer }
+                  reviews:
+                    type: object
+                    additionalProperties: { type: integer }
+                  conversations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        conversation_id: { type: string, format: uuid }
+                        project_id: { type: string, format: uuid }
+                        kind: { type: string, enum: [project, issue, brief, thread] }
+                        unread: { type: integer }
+                        first_unread_id: { type: string, format: uuid }
+                        issue_id: { type: string, format: uuid }
+                        issue_number: { type: integer }
+                        issue_title: { type: string }
+                        brief_id: { type: string, format: uuid }
+                        brief_title: { type: string }
+                        parent_message_id: { type: string, format: uuid }
+                        title: { type: string }
+                      required: [conversation_id, project_id, kind, unread]
 
   /api/search:
     get:
@@ -2641,6 +2671,30 @@ paths:
         - { name: q, in: query, required: true, schema: { type: string, minLength: 2, maxLength: 200 } }
       responses:
         "200": { description: "Grouped, ranked results" }
+
+  /api/me/activity:
+    get:
+      operationId: myActivity
+      summary: Cross-project dashboard feed — open issues, open GitHub PRs, latest messages
+      tags: [realtime]
+      responses:
+        "200":
+          description: "open_issues/open_prs: recently-touched open work; recent_messages: newest messages across all visible projects"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [open_issues, open_prs, recent_messages]
+                properties:
+                  open_issues:
+                    type: array
+                    items: { $ref: "#/components/schemas/ActivityIssue" }
+                  open_prs:
+                    type: array
+                    items: { $ref: "#/components/schemas/ActivityIssue" }
+                  recent_messages:
+                    type: array
+                    items: { $ref: "#/components/schemas/ActivityMessage" }
 
   /api/me/mentions:
     get:
@@ -2933,6 +2987,52 @@ components:
         local_path: { type: ["string", "null"], description: "Linked local folder on the server host" }
         brief_policy: { $ref: "#/components/schemas/BriefPolicy" }
         created_at: { type: string, format: date-time }
+        last_activity_at:
+          type: string
+          format: date-time
+          description: "Newest message or issue activity; projects list only"
+        open_issues:
+          type: integer
+          description: "Issues not in a closed status; projects list only"
+        open_prs:
+          type: integer
+          description: "Open GitHub-linked pull requests; projects list only"
+        members:
+          type: integer
+          description: "Project member count; projects list only"
+
+    ActivityIssue:
+      type: object
+      required: [id, project_id, key, title, status, priority, updated_at, project_key, project_name]
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        key: { type: string, description: "Computed key, e.g. REL-42" }
+        title: { type: string }
+        status: { type: string }
+        priority: { type: string }
+        updated_at: { type: string, format: date-time }
+        project_key: { type: string }
+        project_name: { type: string }
+
+    ActivityMessage:
+      type: object
+      required: [id, body, created_at, conversation_id, conversation_kind, project_id, project_key, project_name, author]
+      properties:
+        id: { type: string, format: uuid }
+        body: { type: string }
+        created_at: { type: string, format: date-time }
+        conversation_id: { type: string, format: uuid }
+        conversation_kind: { type: string, enum: [project, issue, brief, thread] }
+        project_id: { type: string, format: uuid }
+        project_key: { type: string }
+        project_name: { type: string }
+        author:
+          type: object
+          required: [name, kind]
+          properties:
+            name: { type: string }
+            kind: { type: string, enum: [user, agent] }
 
     BriefPolicy:
       type: string

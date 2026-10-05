@@ -132,9 +132,17 @@ func (s *Service) handleList(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
+	// dashboard stats ride along on the list — the projects page sorts by
+	// activity and shows open work without an N+1 of overview calls
+	stats := map[string]db.ListProjectStatsForUserRow{}
+	if srows, err := s.q.ListProjectStatsForUser(c.Request.Context(), auth.CurrentUser(c).ID); err == nil {
+		for _, s := range srows {
+			stats[s.ID.String()] = s
+		}
+	}
 	out := make([]gin.H, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, gin.H{
+		p := gin.H{
 			"id": r.ID.String(), "workspace_id": r.WorkspaceID.String(),
 			"key": r.Key, "name": r.Name, "description": r.Description,
 			"icon": textOrNil(r.Icon), "icon_url": iconURL(r.AvatarKey),
@@ -143,7 +151,14 @@ func (s *Service) handleList(c *gin.Context) {
 			"local_path":   textOrNil(r.LocalPath),
 			"brief_policy": r.BriefPolicy,
 			"created_at":   r.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
-		})
+		}
+		if st, ok := stats[r.ID.String()]; ok {
+			p["last_activity_at"] = st.LastActivityAt.Time.Format("2006-01-02T15:04:05Z07:00")
+			p["open_issues"] = st.OpenIssues
+			p["open_prs"] = st.OpenPrs
+			p["members"] = st.Members
+		}
+		out = append(out, p)
 	}
 	c.JSON(http.StatusOK, gin.H{"projects": out})
 }

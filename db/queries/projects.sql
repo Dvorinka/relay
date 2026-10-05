@@ -14,6 +14,33 @@ join workspace_members wm on wm.workspace_id = p.workspace_id
 where wm.user_id = $1
 order by p.name;
 
+-- name: ListProjectStatsForUser :many
+-- per-project dashboard stats: activity recency + open work counts, one row
+-- per project the user can see. "open" = status outside done/cancelled, the
+-- only closed ids the issues.status check constraint permits.
+select p.id,
+       cast(greatest(
+         coalesce((select max(m.created_at) from messages m
+             join conversations c on c.id = m.conversation_id
+             where c.project_id = p.id and m.deleted_at is null), p.created_at),
+         coalesce((select max(i.updated_at) from issues i
+             where i.project_id = p.id), p.created_at),
+         p.created_at
+       ) as timestamptz) as last_activity_at,
+       (select count(*) from issues i
+          where i.project_id = p.id
+            and i.status not in ('done','cancelled')
+            and i.github_kind = 'issue') as open_issues,
+       (select count(*) from issues i
+          where i.project_id = p.id
+            and i.status not in ('done','cancelled')
+            and i.github_kind = 'pr') as open_prs,
+       (select count(*) from project_members pm
+          where pm.project_id = p.id) as members
+from projects p
+join workspace_members wm on wm.workspace_id = p.workspace_id
+where wm.user_id = $1;
+
 -- name: GetProjectByID :one
 select id, workspace_id, key, name, description, icon, avatar_key, color, statuses, local_path, brief_policy, created_at
 from projects

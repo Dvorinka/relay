@@ -571,7 +571,52 @@ func TestChatSemantics(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	_, _ = http.DefaultClient.Do(req)
 
-	_, env := c.mcp(token, sid, "2", "tools/call",
+	// whoami reports identity + workspace + grants
+	_, env := c.mcp(token, sid, "10", "tools/call",
+		`{"name":"whoami","arguments":{}}`)
+	me := mcpToolResult(t, env)
+	if me["name"] != "Chat Bot" || me["slug"] == "" {
+		t.Fatalf("whoami = %v", me)
+	}
+	if ws, _ := me["workspace"].(map[string]any); ws["name"] != "Chat WS" {
+		t.Fatalf("whoami.workspace = %v", me["workspace"])
+	}
+	if len(me["projects"].([]any)) != 1 {
+		t.Fatalf("whoami.projects = %v", me["projects"])
+	}
+
+	// mentionables resolve the names an agent can @mention or reference
+	_, env = c.mcp(token, sid, "11", "tools/call",
+		fmt.Sprintf(`{"name":"list_mentionables","arguments":{"project_id":%q}}`, projID))
+	ment := mcpToolResult(t, env)
+	if len(ment["users"].([]any)) == 0 {
+		t.Fatalf("mentionables.users = %v", ment["users"])
+	}
+	foundSelf := false
+	for _, a := range ment["agents"].([]any) {
+		if a.(map[string]any)["slug"] == me["slug"] {
+			foundSelf = true
+		}
+	}
+	if !foundSelf {
+		t.Fatalf("agent missing from own mentionables: %v", ment["agents"])
+	}
+
+	// activity surfaces granted-scope work
+	_, env = c.mcp(token, sid, "12", "tools/call",
+		`{"name":"activity","arguments":{}}`)
+	mact := mcpToolResult(t, env)
+	mcpFeedHas := false
+	for _, m := range mact["recent_messages"].([]any) {
+		if m.(map[string]any)["id"] == msg1 {
+			mcpFeedHas = true
+		}
+	}
+	if !mcpFeedHas {
+		t.Fatalf("activity.recent_messages missing %s: %v", msg1, mact)
+	}
+
+	_, env = c.mcp(token, sid, "2", "tools/call",
 		fmt.Sprintf(`{"name":"mark_message_read","arguments":{"message_id":%q}}`, msg1))
 	if env["error"] != nil {
 		t.Fatalf("mark_message_read: %v", env["error"])
@@ -607,6 +652,39 @@ func TestChatSemantics(t *testing.T) {
 		fmt.Sprintf(`{"name":"send_message","arguments":{"conversation_id":%q,"body":"agent says hi"}}`, convID))
 	amsg := mcpToolResult(t, env)
 	amsgID := amsg["id"].(string)
+
+	// the agent's message is unread for the user — surfaces per-conversation
+	_, un := c.call("GET", "/api/me/unread", "")
+	var convRow map[string]any
+	for _, cc := range un["conversations"].([]any) {
+		if r := cc.(map[string]any); r["conversation_id"] == convID {
+			convRow = r
+		}
+	}
+	if convRow == nil {
+		t.Fatalf("no unread conversation row for %s: %v", convID, un)
+	}
+	if convRow["kind"] != "project" || convRow["unread"].(float64) != 1 {
+		t.Fatalf("unread row = %v", convRow)
+	}
+	if convRow["first_unread_id"] != amsgID {
+		t.Fatalf("first_unread_id = %v, want %s", convRow["first_unread_id"], amsgID)
+	}
+
+	// dashboard feed: the agent's message surfaces in recent_messages
+	_, act := c.call("GET", "/api/me/activity", "")
+	feedHas := false
+	for _, m := range act["recent_messages"].([]any) {
+		if m.(map[string]any)["id"] == amsgID {
+			feedHas = true
+		}
+	}
+	if !feedHas {
+		t.Fatalf("recent_messages missing %s: %v", amsgID, act)
+	}
+	if _, ok := act["open_issues"]; !ok {
+		t.Fatalf("activity missing open_issues: %v", act)
+	}
 
 	_, env = c.mcp(token, sid, "4", "tools/call",
 		fmt.Sprintf(`{"name":"mark_message_read","arguments":{"message_id":%q}}`, amsgID))

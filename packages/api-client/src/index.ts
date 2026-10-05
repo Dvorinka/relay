@@ -35,6 +35,24 @@ export interface Mentionables {
   repos: string[];
 }
 export type Reaction = components["schemas"]["Reaction"];
+// One unread conversation: which channel/issue/brief/thread holds unread
+// messages, with the ids needed to deep-link straight to them.
+export interface UnreadConversation {
+  conversation_id: string;
+  project_id: string;
+  kind: "project" | "issue" | "brief" | "thread";
+  unread: number;
+  first_unread_id?: string;
+  issue_id?: string;
+  issue_number?: number;
+  issue_title?: string;
+  brief_id?: string;
+  brief_title?: string;
+  parent_message_id?: string;
+  title?: string;
+}
+export type ActivityIssue = components["schemas"]["ActivityIssue"];
+export type ActivityMessage = components["schemas"]["ActivityMessage"];
 export type Thread = components["schemas"]["Thread"];
 export type ThreadSummary = components["schemas"]["ThreadSummary"];
 export type Attachment = components["schemas"]["Attachment"];
@@ -797,11 +815,20 @@ export function createClient(baseUrl: string, token?: string) {
 
     // Realtime / notifications
     unread: () =>
-      request<{ unread: Record<string, number>; reviews?: Record<string, number> }>(
-        `/api/me/unread`,
-      ),
+      request<{
+        unread: Record<string, number>;
+        reviews?: Record<string, number>;
+        conversations?: UnreadConversation[];
+      }>(`/api/me/unread`),
     mentions: () =>
       request<{ mentions: Mention[] }>(`/api/me/mentions`),
+    // Cross-project dashboard feed: open issues, GitHub PRs, latest messages.
+    myActivity: () =>
+      request<{
+        open_issues: ActivityIssue[];
+        open_prs: ActivityIssue[];
+        recent_messages: ActivityMessage[];
+      }>(`/api/me/activity`),
     userProfile: (userId: string) =>
       request<UserProfile>(`/api/users/${userId}/profile`),
 
