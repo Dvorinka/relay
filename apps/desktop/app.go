@@ -155,8 +155,12 @@ func (a *App) SelfUpdate(tag string) error {
 		}
 	case "linux":
 		tmp := exe + ".new"
+		// Versioned assets shipped from v1.0.36; older releases use the
+		// unversioned name — try both so the transition release updates.
 		if err := downloadFile(tmp, repo+"/"+tag+"/relay-desktop-"+ver+"-linux-amd64"); err != nil {
-			return err
+			if err := downloadFile(tmp, repo+"/"+tag+"/relay-desktop-linux-amd64"); err != nil {
+				return err
+			}
 		}
 		if err := os.Chmod(tmp, 0o755); err != nil {
 			return err
