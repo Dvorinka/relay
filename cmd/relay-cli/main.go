@@ -201,6 +201,10 @@ func (s *session) tool(name string, args map[string]any) (json.RawMessage, error
 }
 
 func connect() *session {
+	if *flagToken == "" {
+		fail("RELAY_TOKEN unset — mint one in the app (agent settings) or run:",
+			"  relay-cli redeem <rli_...> --name my-agent")
+	}
 	s := &session{hc: &http.Client{Timeout: 90 * time.Second}, relays: strings.TrimRight(*flagURL, "/"), token: *flagToken}
 	_, err := s.call("initialize", map[string]any{
 		"protocolVersion": "2025-06-18",
@@ -392,6 +396,60 @@ func render(kind string, raw json.RawMessage) {
 			fmt.Printf("%-6s %-8s %s\n", "#"+fmt.Sprint(num(m["number"])),
 				str(m, "state"), str(m, "title"))
 		}
+	case "whoami":
+		ws := asMap(top["workspace"])
+		fmt.Printf("%s (@%s)\n", str(top, "name"), str(top, "slug"))
+		if ws != nil {
+			fmt.Printf("workspace  %s (%s)\n", str(ws, "name"), str(ws, "slug"))
+		}
+		fmt.Printf("mode       %s\n", str(top, "review_mode"))
+		for _, p := range list(top, "projects") {
+			m := asMap(p)
+			fmt.Printf("grant      %-8s %s\n", str(m, "key"), str(m, "id"))
+		}
+	case "mentionables":
+		for _, u := range list(top, "users") {
+			fmt.Printf("@%s\n", str(asMap(u), "name"))
+		}
+		for _, a := range list(top, "agents") {
+			m := asMap(a)
+			fmt.Printf("@%s  (agent: %s)\n", str(m, "slug"), str(m, "name"))
+		}
+		for _, i := range list(top, "issues") {
+			m := asMap(i)
+			fmt.Printf("%s  %s\n", str(m, "key"), str(m, "title"))
+		}
+		for _, r := range list(top, "repos") {
+			fmt.Printf("%s\n", fmt.Sprint(r))
+		}
+	case "activity":
+		for _, sec := range []struct{ head, key string }{
+			{"OPEN PRs", "open_prs"}, {"OPEN ISSUES", "open_issues"},
+		} {
+			items := list(top, sec.key)
+			if len(items) == 0 {
+				continue
+			}
+			fmt.Println(sec.head)
+			for _, it := range items {
+				m := asMap(it)
+				fmt.Printf("  %-10s %-9s %s\n",
+					str(m, "key"), str(m, "status"), str(m, "title"))
+			}
+		}
+		if msgs := list(top, "recent_messages"); len(msgs) > 0 {
+			fmt.Println("RECENT MESSAGES")
+			for _, it := range msgs {
+				m := asMap(it)
+				fmt.Printf("  %-10s %-16s %.60s\n",
+					str(asMap(m["project"]), "key"),
+					str(asMap(m["author"]), "name"),
+					str(m, "body"))
+			}
+		}
+		if len(list(top, "open_prs"))+len(list(top, "open_issues"))+len(list(top, "recent_messages")) == 0 {
+			fmt.Println("all quiet")
+		}
 	default:
 		emit(raw)
 	}
@@ -413,10 +471,14 @@ Usage: relay-cli [--url URL] [--token rly_...] [--json] <command> [args] [flags]
 
 Guide
   guide                                 print the platform agent guide (read first on a new workspace)
+  whoami                                your agent identity, workspace and grants
 
 Chat
   projects                              list granted projects
+  activity                              cross-project feed: open issues, PRs, latest messages
+  unread                                per-conversation unread breakdown
   conversations <project_id>            list conversations
+  mentionables <project_id>             names that resolve: @users, @agents, KEY-1, repo#N
   messages <project_id|conversation_id> list messages (use --conv for a thread, --tags t to filter)
   read <project_id|conversation_id>     mark-read alias for messages
   say <project_id> <body> [--reply id] [--tags a,b] [--attach f.png] [--silent]
@@ -534,8 +596,67 @@ Environment: RELAY_URL, RELAY_TOKEN.
 		}
 		fmt.Print(string(res))
 
+	case "whoami":
+		run("whoami", "whoami", nil)
+
+	case "activity":
+		run("activity", "activity", nil)
+
 	case "projects":
 		run("projects", "list_projects", nil)
+
+	case "unread":
+		// roll up unread counts: granted projects, then each project's
+		// conversations — same breakdown the app's Inbox shows.
+		raw, err := s.tool("list_projects", nil)
+		if err != nil {
+			fail(err)
+		}
+		var projects []anyMap
+		var projWrap anyMap
+		if err := json.Unmarshal(raw, &projects); err != nil {
+			if err := json.Unmarshal(raw, &projWrap); err != nil {
+				fail("parse projects:", err)
+			}
+			projects = nil
+			for _, p := range list(projWrap, "projects") {
+				projects = append(projects, asMap(p))
+			}
+		}
+		total := 0
+		for _, p := range projects {
+			pid := str(p, "id")
+			res, err := s.tool("list_conversations", map[string]any{"project_id": pid})
+			if err != nil {
+				fail(err)
+			}
+			var convs []anyMap
+			var convWrap anyMap
+			if err := json.Unmarshal(res, &convs); err != nil {
+				if err := json.Unmarshal(res, &convWrap); err != nil {
+					fail("parse conversations:", err)
+				}
+				for _, c := range list(convWrap, "conversations") {
+					convs = append(convs, asMap(c))
+				}
+			}
+			for _, c := range convs {
+				n := num(c["unread_count"])
+				if n == 0 {
+					continue
+				}
+				total += n
+				fmt.Printf("%-8s %-8s %4d  %s\n",
+					str(p, "key"), str(c, "kind"), n, str(c, "id"))
+			}
+		}
+		if total == 0 {
+			fmt.Println("all read")
+		}
+
+	case "mentionables":
+		run("mentionables", "list_mentionables",
+			map[string]any{"project_id": need(args, 1, "project_id")})
 
 	case "conversations":
 		run("conversations", "list_conversations",
@@ -1097,7 +1218,7 @@ func atoi(s string) int {
 }
 
 func completionScript(shell string) string {
-	cmds := "guide projects conversations messages read say react msg-edit msg-del " +
+	cmds := "guide whoami projects activity unread conversations mentionables messages read say react msg-edit msg-del " +
 		"pin unpin pins forward thread avatar issues " +
 		"issue issue-new issue-set todos todo-add todo-done todo-undo todo-del " +
 		"todo-set todo-sync work-start work-stop ask resolve events " +

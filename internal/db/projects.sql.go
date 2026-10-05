@@ -275,6 +275,68 @@ func (q *Queries) ListProjectMemberIDs(ctx context.Context, projectID pgtype.UUI
 	return items, nil
 }
 
+const listProjectStatsForUser = `-- name: ListProjectStatsForUser :many
+select p.id,
+       cast(greatest(
+         coalesce((select max(m.created_at) from messages m
+             join conversations c on c.id = m.conversation_id
+             where c.project_id = p.id and m.deleted_at is null), p.created_at),
+         coalesce((select max(i.updated_at) from issues i
+             where i.project_id = p.id), p.created_at),
+         p.created_at
+       ) as timestamptz) as last_activity_at,
+       (select count(*) from issues i
+          where i.project_id = p.id
+            and i.status not in ('done','cancelled')
+            and i.github_kind = 'issue') as open_issues,
+       (select count(*) from issues i
+          where i.project_id = p.id
+            and i.status not in ('done','cancelled')
+            and i.github_kind = 'pr') as open_prs,
+       (select count(*) from project_members pm
+          where pm.project_id = p.id) as members
+from projects p
+join workspace_members wm on wm.workspace_id = p.workspace_id
+where wm.user_id = $1
+`
+
+type ListProjectStatsForUserRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	LastActivityAt pgtype.Timestamptz `json:"last_activity_at"`
+	OpenIssues     int64              `json:"open_issues"`
+	OpenPrs        int64              `json:"open_prs"`
+	Members        int64              `json:"members"`
+}
+
+// per-project dashboard stats: activity recency + open work counts, one row
+// per project the user can see. "open" = status outside done/cancelled, the
+// only closed ids the issues.status check constraint permits.
+func (q *Queries) ListProjectStatsForUser(ctx context.Context, userID pgtype.UUID) ([]ListProjectStatsForUserRow, error) {
+	rows, err := q.db.Query(ctx, listProjectStatsForUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListProjectStatsForUserRow{}
+	for rows.Next() {
+		var i ListProjectStatsForUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LastActivityAt,
+			&i.OpenIssues,
+			&i.OpenPrs,
+			&i.Members,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProjectsForUser = `-- name: ListProjectsForUser :many
 select p.id, p.workspace_id, p.key, p.name, p.description, p.icon, p.avatar_key, p.color, p.statuses, p.local_path, p.brief_policy, p.created_at
 from projects p

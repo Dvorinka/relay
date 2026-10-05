@@ -1,7 +1,6 @@
 import { Avatar } from "@ark-ui/solid";
 import { A } from "@solidjs/router";
 import {
-  createEffect,
   createResource,
   createSignal,
   For,

@@ -1741,7 +1741,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Per-project unread message counts */
+        /** Per-project unread message counts plus the per-conversation breakdown */
         get: operations["unreadCounts"];
         put?: never;
         post?: never;
@@ -1760,6 +1760,23 @@ export interface paths {
         };
         /** Global full-text search over messages, issues, projects, todos */
         get: operations["search"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Cross-project dashboard feed — open issues, open GitHub PRs, latest messages */
+        get: operations["myActivity"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1931,6 +1948,52 @@ export interface components {
             brief_policy?: components["schemas"]["BriefPolicy"];
             /** Format: date-time */
             created_at: string;
+            /**
+             * Format: date-time
+             * @description Newest message or issue activity; projects list only
+             */
+            last_activity_at?: string;
+            /** @description Issues not in a closed status; projects list only */
+            open_issues?: number;
+            /** @description Open GitHub-linked pull requests; projects list only */
+            open_prs?: number;
+            /** @description Project member count; projects list only */
+            members?: number;
+        };
+        ActivityIssue: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            project_id: string;
+            /** @description Computed key, e.g. REL-42 */
+            key: string;
+            title: string;
+            status: string;
+            priority: string;
+            /** Format: date-time */
+            updated_at: string;
+            project_key: string;
+            project_name: string;
+        };
+        ActivityMessage: {
+            /** Format: uuid */
+            id: string;
+            body: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            conversation_id: string;
+            /** @enum {string} */
+            conversation_kind: "project" | "issue" | "brief" | "thread";
+            /** Format: uuid */
+            project_id: string;
+            project_key: string;
+            project_name: string;
+            author: {
+                name: string;
+                /** @enum {string} */
+                kind: "user" | "agent";
+            };
         };
         /**
          * @description When agents should produce visual briefs. 'never' forbids them,
@@ -6102,12 +6165,42 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description project_id -> count map */
+            /** @description unread: project_id -> count; reviews: project_id -> pending count; conversations: per-conversation unread detail for deep links */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        unread?: {
+                            [key: string]: number;
+                        };
+                        reviews?: {
+                            [key: string]: number;
+                        };
+                        conversations?: {
+                            /** Format: uuid */
+                            conversation_id: string;
+                            /** Format: uuid */
+                            project_id: string;
+                            /** @enum {string} */
+                            kind: "project" | "issue" | "brief" | "thread";
+                            unread: number;
+                            /** Format: uuid */
+                            first_unread_id?: string;
+                            /** Format: uuid */
+                            issue_id?: string;
+                            issue_number?: number;
+                            issue_title?: string;
+                            /** Format: uuid */
+                            brief_id?: string;
+                            brief_title?: string;
+                            /** Format: uuid */
+                            parent_message_id?: string;
+                            title?: string;
+                        }[];
+                    };
+                };
             };
         };
     };
@@ -6128,6 +6221,30 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    myActivity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description open_issues/open_prs: recently-touched open work; recent_messages: newest messages across all visible projects */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        open_issues: components["schemas"]["ActivityIssue"][];
+                        open_prs: components["schemas"]["ActivityIssue"][];
+                        recent_messages: components["schemas"]["ActivityMessage"][];
+                    };
+                };
             };
         };
     };

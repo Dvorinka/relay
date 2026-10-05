@@ -32,6 +32,7 @@ func (s *Service) RegisterRoutes(priv gin.IRoutes) {
 	priv.GET("/events", s.handleStream)
 	priv.GET("/me/unread", s.handleUnread)
 	priv.GET("/me/mentions", s.handleMentions)
+	priv.GET("/me/activity", s.handleActivity)
 	priv.GET("/users/:id/profile", s.handleUserProfile)
 }
 
@@ -93,14 +94,42 @@ func (s *Service) handleStream(c *gin.Context) {
 
 func (s *Service) handleUnread(c *gin.Context) {
 	user := auth.CurrentUser(c)
-	rows, err := s.q.UnreadCounts(c.Request.Context(), user.ID)
+	rows, err := s.q.UnreadConversations(c.Request.Context(), user.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{"code": "internal", "message": "internal error"}})
 		return
 	}
+	// unread stays the per-project badge map; conversations breaks it down so
+	// the UI can answer *where* the unread messages live.
 	out := map[string]int{}
+	convs := make([]gin.H, 0, len(rows))
 	for _, r := range rows {
-		out[r.ProjectID.String()] = int(r.Unread)
+		out[r.ProjectID.String()] += int(r.Unread)
+		item := gin.H{
+			"conversation_id": r.ConversationID.String(),
+			"project_id":      r.ProjectID.String(),
+			"kind":            r.Kind,
+			"unread":          int(r.Unread),
+		}
+		if r.FirstUnreadID.Valid {
+			item["first_unread_id"] = r.FirstUnreadID.String()
+		}
+		if r.IssueID.Valid {
+			item["issue_id"] = r.IssueID.String()
+			item["issue_number"] = r.IssueNumber.Int32
+			item["issue_title"] = r.IssueTitle.String
+		}
+		if r.BriefID.Valid {
+			item["brief_id"] = r.BriefID.String()
+			item["brief_title"] = r.BriefTitle.String
+		}
+		if r.ParentMessageID.Valid {
+			item["parent_message_id"] = r.ParentMessageID.String()
+		}
+		if r.ConversationTitle.Valid && r.ConversationTitle.String != "" {
+			item["title"] = r.ConversationTitle.String
+		}
+		convs = append(convs, item)
 	}
 	pending, err := s.q.PendingReviewCounts(c.Request.Context(), user.ID)
 	if err != nil {
@@ -111,7 +140,7 @@ func (s *Service) handleUnread(c *gin.Context) {
 	for _, r := range pending {
 		rev[r.ProjectID.String()] = int(r.Pending)
 	}
-	c.JSON(http.StatusOK, gin.H{"unread": out, "reviews": rev})
+	c.JSON(http.StatusOK, gin.H{"unread": out, "reviews": rev, "conversations": convs})
 }
 
 // handleAgentStream is the agent-facing SSE stream: Bearer rly_ token in the
@@ -223,6 +252,50 @@ func (s *Service) handleMentions(c *gin.Context) {
 		out = append(out, item)
 	}
 	c.JSON(http.StatusOK, gin.H{"mentions": out})
+}
+
+// handleActivity powers the projects dashboard: open issues and GitHub PRs
+// plus the latest messages across every project the user can see — one call,
+// no per-project fan-out.
+func (s *Service) handleActivity(c *gin.Context) {
+	user := auth.CurrentUser(c)
+	ctx := c.Request.Context()
+
+	issues := []gin.H{}
+	prs := []gin.H{}
+	if rows, err := s.q.ListMyOpenIssues(ctx, user.ID); err == nil {
+		for _, i := range rows {
+			item := gin.H{
+				"id": i.ID.String(), "project_id": i.ProjectID.String(),
+				"key": i.Key, "title": i.Title, "status": i.Status,
+				"priority": i.Priority, "updated_at": i.UpdatedAt.Time,
+				"project_key": i.ProjectKey, "project_name": i.ProjectName,
+			}
+			if i.GithubKind == "pr" {
+				prs = append(prs, item)
+			} else {
+				issues = append(issues, item)
+			}
+		}
+	}
+
+	msgs := []gin.H{}
+	if rows, err := s.q.ListMyRecentMessages(ctx, user.ID); err == nil {
+		for _, m := range rows {
+			msgs = append(msgs, gin.H{
+				"id": m.ID.String(), "body": m.Body,
+				"created_at":        m.CreatedAt.Time,
+				"conversation_id":   m.ConversationID.String(),
+				"conversation_kind": m.ConversationKind,
+				"project_id":        m.ProjectID.String(),
+				"project_key":       m.ProjectKey, "project_name": m.ProjectName,
+				"author": gin.H{"name": m.AuthorName, "kind": m.AuthorKind},
+			})
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"open_issues": issues, "open_prs": prs, "recent_messages": msgs,
+	})
 }
 
 // handleUserProfile returns what the caller may see of another user: profile

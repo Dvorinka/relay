@@ -774,7 +774,12 @@ const impl = {
   listReviews: async () => ({ reviews: [] as AgentReview[], pending: 0 }),
   issueReviews: async () => ({ reviews: [] as AgentReview[] }),
   myReviews: async () => ({ reviews: [] }),
-  unread: async () => ({ unread: {}, reviews: {} }),
+  unread: async () => ({ unread: {}, reviews: {}, conversations: [] }),
+  myActivity: async () => ({
+    open_issues: [],
+    open_prs: [],
+    recent_messages: [],
+  }),
   mentions: async () => ({ mentions: [] }),
   listAgents: async () => ({ agents: [] }),
   listProjectAgents: async () => ({ agents: [] }),

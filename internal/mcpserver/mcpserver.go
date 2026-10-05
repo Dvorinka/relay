@@ -50,11 +50,15 @@ const agentKey ctxKey = iota
 
 // Agent is the authenticated caller carried through the request context.
 type Agent struct {
-	ID         pgtype.UUID
-	TokenID    pgtype.UUID
-	Name       string
-	AvatarKey  pgtype.Text
-	ReviewMode string
+	ID          pgtype.UUID
+	TokenID     pgtype.UUID
+	WorkspaceID pgtype.UUID
+	Name        string
+	Slug        string
+	AvatarKey   pgtype.Text
+	ReviewMode  string
+	GrantAll    bool
+	GrantScopes []string
 }
 
 // Service wires tools to the database and object storage.
@@ -130,8 +134,9 @@ func (s *Service) authenticate(c *gin.Context) (*Agent, error) {
 	if err != nil {
 		return nil, errors.New("invalid or revoked token")
 	}
-	return &Agent{ID: row.ID, TokenID: row.TokenID, Name: row.Name, AvatarKey: row.AvatarKey,
-		ReviewMode: row.ReviewMode}, nil
+	return &Agent{ID: row.ID, TokenID: row.TokenID, WorkspaceID: row.WorkspaceID,
+		Name: row.Name, Slug: row.Slug, AvatarKey: row.AvatarKey,
+		ReviewMode: row.ReviewMode, GrantAll: row.GrantAll, GrantScopes: row.GrantScopes}, nil
 }
 
 // allow implements a fixed 1-minute window per token. Cheap and correct;
@@ -213,6 +218,14 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 	), func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return mcp.NewToolResultText(agentdoc.Guide), nil
 	})
+
+	srv.AddTool(mcp.NewTool("whoami",
+		mcp.WithDescription("This agent's identity: name, slug, workspace, review mode, and granted projects — call first on a new session to learn who you are and what you can reach."),
+	), s.whoami)
+
+	srv.AddTool(mcp.NewTool("activity",
+		mcp.WithDescription("Cross-project work feed across all granted projects: open issues, open GitHub PRs, and the latest messages — what needs attention right now."),
+	), s.activity)
 
 	srv.AddTool(mcp.NewTool("list_projects",
 		mcp.WithDescription("List the projects this agent has been granted access to."),
@@ -443,6 +456,11 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithDescription("Mark a message as read by this agent."),
 		mcp.WithString("message_id", mcp.Required()),
 	), s.markRead)
+
+	srv.AddTool(mcp.NewTool("list_mentionables",
+		mcp.WithDescription("Everything addressable in a project: workspace members (@name), agents (@agent-slug), issues (KEY-1), and linked GitHub repos (owner/repo#N). Check this before @mentioning — request_input's user argument takes a member name from this list."),
+		mcp.WithString("project_id", mcp.Required()),
+	), s.listMentionables)
 
 	// --- work reviews ---
 	// Review payloads follow a fixed schema so the web UI can render a
@@ -1993,6 +2011,115 @@ func (s *Service) markRead(ctx context.Context, req mcp.CallToolRequest) (*mcp.C
 		return errResult(err)
 	}
 	return jsonResult(gin.H{"ok": true})
+}
+
+// whoami reports the calling agent's identity and reach — the equivalent of
+// `relay-cli whoami` for MCP-native clients.
+func (s *Service) whoami(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	a := agent(ctx)
+	out := gin.H{
+		"id": a.ID, "name": a.Name, "slug": a.Slug,
+		"review_mode": a.ReviewMode, "grant_all": a.GrantAll,
+		"grant_scopes": a.GrantScopes,
+	}
+	if ws, err := s.q.GetWorkspaceByID(ctx, a.WorkspaceID); err == nil {
+		out["workspace"] = gin.H{"id": ws.ID, "name": ws.Name, "slug": ws.Slug}
+	}
+	projects, err := s.q.ListGrantedProjects(ctx, a.ID)
+	if err != nil {
+		return errResult(err)
+	}
+	list := make([]gin.H, 0, len(projects))
+	for _, p := range projects {
+		list = append(list, gin.H{"id": p.ID, "key": p.Key, "name": p.Name})
+	}
+	out["projects"] = list
+	return jsonResult(out)
+}
+
+// activity mirrors GET /api/me/activity for agents — open issues, GitHub PRs
+// and fresh messages across every granted project in one call.
+func (s *Service) activity(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	a := agent(ctx)
+	issues := []gin.H{}
+	prs := []gin.H{}
+	if rows, err := s.q.ListGrantedOpenIssues(ctx, a.ID); err == nil {
+		for _, i := range rows {
+			item := gin.H{
+				"id": i.ID, "project_id": i.ProjectID, "key": i.Key,
+				"title": i.Title, "status": i.Status, "priority": i.Priority,
+				"updated_at": i.UpdatedAt.Time,
+				"project":    gin.H{"id": i.ProjectID, "key": i.ProjectKey, "name": i.ProjectName},
+			}
+			if i.GithubKind == "pr" {
+				prs = append(prs, item)
+			} else {
+				issues = append(issues, item)
+			}
+		}
+	}
+	msgs := []gin.H{}
+	if rows, err := s.q.ListGrantedRecentMessages(ctx, a.ID); err == nil {
+		for _, m := range rows {
+			msgs = append(msgs, gin.H{
+				"id": m.ID, "conversation_id": m.ConversationID,
+				"body": m.Body, "created_at": m.CreatedAt.Time,
+				"conversation_kind": m.ConversationKind,
+				"project":           gin.H{"id": m.ProjectID, "key": m.ProjectKey, "name": m.ProjectName},
+				"author":            gin.H{"name": m.AuthorName, "kind": m.AuthorKind},
+			})
+		}
+	}
+	return jsonResult(gin.H{
+		"open_issues": issues, "open_prs": prs, "recent_messages": msgs,
+	})
+}
+
+// listMentionables mirrors GET /api/projects/:id/mentionables for agents —
+// the names that actually resolve in @mentions, KEY- refs and repo# refs.
+func (s *Service) listMentionables(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pid, err := uuidArg(req, "project_id")
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "project:read"); err != nil {
+		return errResult(err)
+	}
+	wsID, _ := s.q.ProjectWorkspaceID(ctx, pid)
+
+	users := []gin.H{}
+	if members, err := s.q.ListWorkspaceMembers(ctx, wsID); err == nil {
+		for _, m := range members {
+			users = append(users, gin.H{"id": m.ID.String(), "name": m.Name})
+		}
+	}
+	agents := []gin.H{}
+	if list, err := s.q.ListAgentsMentionable(ctx, wsID); err == nil {
+		for _, a := range list {
+			agents = append(agents, gin.H{
+				"id": a.ID.String(), "name": a.Name, "slug": a.Slug,
+				"description": a.Description,
+			})
+		}
+	}
+	issues := []gin.H{}
+	if list, err := s.q.ListMentionableIssues(ctx, pid); err == nil {
+		for _, i := range list {
+			issues = append(issues, gin.H{
+				"id": i.ID.String(), "key": i.Key, "title": i.Title,
+				"status": i.Status,
+			})
+		}
+	}
+	repos := []string{}
+	if list, err := s.q.ListProjectRepos(ctx, pid); err == nil {
+		for _, r := range list {
+			repos = append(repos, r.Owner+"/"+r.Name)
+		}
+	}
+	return jsonResult(gin.H{
+		"users": users, "agents": agents, "issues": issues, "repos": repos,
+	})
 }
 
 func (s *Service) recordActivity(ctx context.Context, issueID pgtype.UUID, kind string, payload gin.H) {

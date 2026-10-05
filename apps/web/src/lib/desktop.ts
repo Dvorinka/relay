@@ -1,4 +1,4 @@
-import { ApiClientError } from "@relay/api-client";
+import { ApiClientError, createClient } from "@relay/api-client";
 
 // Desktop-shell bridge: the Wails app serves /~desktop-open on its webview
 // origin and hands the URL to the OS browser. Used for flows that need the
@@ -244,6 +244,64 @@ export async function desktopSelfUpdate(tag: string): Promise<void> {
     throw new Error("this desktop build cannot self-update");
   }
   await app.SelfUpdate(tag);
+}
+
+// Browser sign-in (desktop shell): start mints a code on the target server,
+// the system browser approves it on /connect, and we poll until the token
+// lands. Resolves with the token; cancel() stops polling — callers own the
+// "waiting" UI state.
+export function browserAuth(serverUrl: string): {
+  promise: Promise<string | null>;
+  cancel: () => void;
+} {
+  const url = serverUrl.replace(/\/+$/, "");
+  const client = createClient(url);
+  let timer: number | null = null;
+  // Settled with the token on approval, null on cancel — cancel must settle
+  // the promise or an awaiting caller hangs.
+  let settle: ((t: string | null) => void) | null = null;
+  let done = false;
+  const stop = () => {
+    if (timer !== null) window.clearInterval(timer);
+    timer = null;
+    settle = null;
+  };
+  const cancel = () => {
+    done = true;
+    settle?.(null);
+    stop();
+  };
+  const promise = (async () => {
+    let code: string;
+    try {
+      ({ code } = await client.browserAuthStart());
+    } catch {
+      throw new Error("Could not reach that server");
+    }
+    const opened = await desktopOpen(
+      `${url}/connect?code=${encodeURIComponent(code)}`,
+    );
+    if (!opened) throw new Error("Could not open the system browser");
+    if (done) return null; // cancelled while the browser was opening
+    return await new Promise<string | null>((resolve, reject) => {
+      settle = resolve;
+      timer = window.setInterval(() => {
+        client
+          .browserAuthPoll(code)
+          .then((res) => {
+            if (res.status === "approved" && res.token) {
+              stop();
+              resolve(res.token);
+            }
+          })
+          .catch(() => {
+            stop();
+            reject(new Error("The approval code expired — try again"));
+          });
+      }, 2000);
+    });
+  })();
+  return { promise, cancel };
 }
 
 // relay:// deep links arrive as wails events ("relay:deeplink"). Emitted once

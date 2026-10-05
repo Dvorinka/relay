@@ -299,3 +299,33 @@ body {
   background: transparent;
 }
 
+/* Keep content out from under notches/home indicators. env() resolves to 0
+   on non-notched screens and desktop, so this is free. */
+body {
+  padding-top: env(safe-area-inset-top);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+}
+
+/* No double-tap-zoom delay on taps; pinch zoom still works. Checked along
+   the ancestor chain, so setting it on html covers the whole document. */
+html {
+  touch-action: manipulation;
+}
+
+/* Phone-only adjustments — desktop density stays untouched. */
+@media (max-width: 639.98px) {
+  /* iOS zooms the page when a focused input renders under 16px — bump every
+     text field so focusing the composer/inputs doesn't reflow the screen. */
+  input:not([type="checkbox"]):not([type="radio"]),
+  textarea,
+  select {
+    font-size: 16px;
+  }
+  /* Message bodies and rendered markdown are the main reading surface. */
+  .md {
+    font-size: 15px;
+  }
+}
+

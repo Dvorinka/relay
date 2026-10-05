@@ -29,6 +29,14 @@ test:
     go test ./...
     npm test --prefix apps/web --if-present
 
+# db-backed e2e suite against a real postgres — creates relay_e2e once on the
+# local instance, then runs the full go suite with the DSN so nothing skips.
+# Needs postgres at localhost:5432 (host install, or publish the compose
+# service's port). Without this recipe the suite silently skips.
+e2e:
+    psql "postgres://relay:relay@127.0.0.1:5432/postgres" -qc "CREATE DATABASE relay_e2e" 2>/dev/null; \
+    RELAY_TEST_DATABASE_URL=postgres://relay:relay@127.0.0.1:5432/relay_e2e?sslmode=disable go test ./...
+
 # lint + typecheck, zero warnings expected
 check:
     go vet ./...

@@ -1303,36 +1303,80 @@ func (q *Queries) UnpinMessage(ctx context.Context, id pgtype.UUID) (UnpinMessag
 	return i, err
 }
 
-const unreadCounts = `-- name: UnreadCounts :many
-select p.id as project_id, count(m.id)::int as unread
-from projects p
+const unreadConversations = `-- name: UnreadConversations :many
+select c.id as conversation_id, c.project_id, c.kind,
+       c.issue_id, c.brief_id, c.parent_message_id, c.title as conversation_title,
+       i.number as issue_number, i.title as issue_title,
+       b.title as brief_title,
+       count(m.id)::int as unread,
+       fu.id as first_unread_id
+from conversations c
+join projects p on p.id = c.project_id
 join workspace_members wm on wm.workspace_id = p.workspace_id
   and wm.user_id = $1
-join conversations c on c.project_id = p.id
 join messages m on m.conversation_id = c.id and m.deleted_at is null
+left join issues i on i.id = c.issue_id
+left join briefs b on b.id = c.brief_id
+left join lateral (
+  select m2.id from messages m2
+  where m2.conversation_id = c.id and m2.deleted_at is null
+    and (m2.author_user_id is null or m2.author_user_id <> $1)
+    and not exists (
+      select 1 from message_reads r
+      where r.message_id = m2.id and r.user_id = $1)
+  order by m2.created_at asc, m2.id asc
+  limit 1
+) fu on true
 where (m.author_user_id is null or m.author_user_id <> $1)
   and not exists (
     select 1 from message_reads r
     where r.message_id = m.id and r.user_id = $1)
-group by p.id
+group by c.id, c.project_id, c.kind, c.issue_id, c.brief_id,
+         c.parent_message_id, c.title, i.number, i.title, b.title,
+         fu.id
 `
 
-type UnreadCountsRow struct {
-	ProjectID pgtype.UUID `json:"project_id"`
-	Unread    int32       `json:"unread"`
+type UnreadConversationsRow struct {
+	ConversationID    pgtype.UUID `json:"conversation_id"`
+	ProjectID         pgtype.UUID `json:"project_id"`
+	Kind              string      `json:"kind"`
+	IssueID           pgtype.UUID `json:"issue_id"`
+	BriefID           pgtype.UUID `json:"brief_id"`
+	ParentMessageID   pgtype.UUID `json:"parent_message_id"`
+	ConversationTitle pgtype.Text `json:"conversation_title"`
+	IssueNumber       pgtype.Int4 `json:"issue_number"`
+	IssueTitle        pgtype.Text `json:"issue_title"`
+	BriefTitle        pgtype.Text `json:"brief_title"`
+	Unread            int32       `json:"unread"`
+	FirstUnreadID     pgtype.UUID `json:"first_unread_id"`
 }
 
-// per-project count of messages the user hasn't read, excluding their own
-func (q *Queries) UnreadCounts(ctx context.Context, userID pgtype.UUID) ([]UnreadCountsRow, error) {
-	rows, err := q.db.Query(ctx, unreadCounts, userID)
+// per-conversation unread detail: which channel/issue/brief/thread holds the
+// unread messages. first_unread_id anchors deep links; per-project badge
+// counts are this grouped up in the handler.
+func (q *Queries) UnreadConversations(ctx context.Context, userID pgtype.UUID) ([]UnreadConversationsRow, error) {
+	rows, err := q.db.Query(ctx, unreadConversations, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []UnreadCountsRow{}
+	items := []UnreadConversationsRow{}
 	for rows.Next() {
-		var i UnreadCountsRow
-		if err := rows.Scan(&i.ProjectID, &i.Unread); err != nil {
+		var i UnreadConversationsRow
+		if err := rows.Scan(
+			&i.ConversationID,
+			&i.ProjectID,
+			&i.Kind,
+			&i.IssueID,
+			&i.BriefID,
+			&i.ParentMessageID,
+			&i.ConversationTitle,
+			&i.IssueNumber,
+			&i.IssueTitle,
+			&i.BriefTitle,
+			&i.Unread,
+			&i.FirstUnreadID,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

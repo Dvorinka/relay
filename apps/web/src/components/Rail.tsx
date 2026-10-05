@@ -17,7 +17,9 @@ import {
   loadServerVersion,
   parseTag,
   RELEASES_PAGE,
+  setAutoUpdate,
   updateAvailable,
+  useAutoUpdate,
   useUpdates,
   useVersion,
 } from "../lib/updates";
@@ -48,7 +50,7 @@ import { RepoPicker } from "./RepoPicker";
 import { FormError, inputClass, SubmitButton, Tip } from "./ui";
 
 const navClass =
-  "flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-muted transition-colors hover:bg-hover hover:text-fg";
+  "flex items-center gap-2 rounded-md px-2 py-2 text-[14px] text-muted transition-colors hover:bg-hover hover:text-fg sm:py-1.5 sm:text-[13px]";
 
 function NavItem(props: ParentProps<{ href: string }>) {
   const { closeNav } = useNav();
@@ -286,7 +288,7 @@ function CollapsedRail(props: { onExpand: () => void }) {
   const projects = useProjects();
   const { unread } = useUnread();
   const { pendingReviews } = usePendingReviews();
-  const list = () => projects.projects() ?? [];
+  const list = () => projects.sorted();
   const totalUnread = () =>
     Object.values(unread()).reduce((s, n) => s + n, 0);
   return (
@@ -398,7 +400,7 @@ export function Rail() {
     window.addEventListener("keydown", onKey);
     onCleanup(() => window.removeEventListener("keydown", onKey));
   });
-  const list = () => projects.projects() ?? [];
+  const list = () => projects.sorted();
   const { unread } = useUnread();
   const totalUnread = () =>
     Object.values(unread()).reduce((s, n) => s + n, 0);
@@ -653,6 +655,7 @@ function VersionFooter() {
     installError,
     installUpdate,
   } = useUpdates();
+  const autoUpdate = useAutoUpdate();
   onMount(() => {
     void loadServerVersion();
   });
@@ -752,6 +755,17 @@ function VersionFooter() {
         >
           {checking() ? "Checking…" : "Check for updates"}
         </button>
+      </Show>
+      <Show when={canSelfUpdate()}>
+        <label class="flex cursor-pointer items-center gap-1.5 self-start text-faint transition-colors hover:text-fg">
+          <input
+            type="checkbox"
+            checked={autoUpdate()}
+            onChange={(e) => setAutoUpdate(e.currentTarget.checked)}
+            class="h-3 w-3 accent-accent"
+          />
+          auto-install on launch
+        </label>
       </Show>
     </div>
   );

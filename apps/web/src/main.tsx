@@ -4,6 +4,7 @@ import { render } from "solid-js/web";
 import App from "./App";
 import { deepLinkRoute, desktopOpen, onDeepLink } from "./lib/desktop";
 import { initNotify } from "./lib/notify";
+import { initNavSwipe } from "./stores/nav";
 import ForgotPassword from "./features/auth/ForgotPassword";
 import Login from "./features/auth/Login";
 import Register from "./features/auth/Register";
@@ -39,6 +40,12 @@ function Shell(props: RouteSectionProps) {
     const route = deepLinkRoute(raw);
     if (route) nav(route);
   });
+  // sw.js posts push-navigate when a notification is clicked — land on the
+  // conversation it came from instead of just focusing the window.
+  navigator.serviceWorker?.addEventListener("message", (e) => {
+    const d = e.data as { type?: string; url?: string } | undefined;
+    if (d?.type === "push-navigate" && d.url) nav(d.url);
+  });
   return <>{props.children}</>;
 }
 
@@ -47,6 +54,9 @@ function Shell(props: RouteSectionProps) {
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js").catch(() => {});
 }
+
+// Edge-swipe opens the nav drawer on touch devices.
+initNavSwipe();
 
 // External links can't work inside the desktop webview — no github.com
 // session, no file downloads — so off-origin clicks go through the Wails

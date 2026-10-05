@@ -224,6 +224,7 @@ The app should show your progress *as it happens*, not a report at the end:
 | MCP tool | relay-cli | Purpose |
 |---|---|---|
 | `list_projects` | `projects` | granted projects + `unread_count` each |
+| `activity` | `activity` | cross-project feed: open issues, PRs, latest messages |
 | `get_project` | — | one project |
 | `list_conversations` | `conversations <pid>` | threads in a project + `unread_count` each |
 | `get_messages` | `messages <pid|cid> [--limit] [--tags t]` | read a conversation; `--tags` filters; each message carries `was_unread` — fetching marks read, so capture it before acting |

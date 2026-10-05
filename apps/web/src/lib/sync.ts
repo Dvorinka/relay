@@ -29,15 +29,25 @@ export async function syncToServer(
   password: string,
   onStep?: (label: string) => void,
 ): Promise<SyncResult> {
-  await localReady;
-  const db = dumpLocal();
   const url = serverUrl.replace(/\/+$/, "");
-
   onStep?.("Signing in");
   const session = await createClient(url).login({ email, password });
   if (!session.token) throw new Error("server did not return a token");
-  const remote = createClient(url, session.token);
-  const ws = session.workspaces[0];
+  return syncWithToken(url, session.token, onStep);
+}
+
+// Browser-auth path: the code flow mints a token, no password — resolve the
+// session for the workspace id, then replay the same as a password sign-in.
+export async function syncWithToken(
+  serverUrl: string,
+  token: string,
+  onStep?: (label: string) => void,
+): Promise<SyncResult> {
+  await localReady;
+  const db = dumpLocal();
+  const url = serverUrl.replace(/\/+$/, "");
+  const remote = createClient(url, token);
+  const ws = (await remote.session()).workspaces[0];
   if (!ws) throw new Error("account has no workspace");
 
   const result: SyncResult = {

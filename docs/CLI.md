@@ -30,7 +30,14 @@ a token with `issue:read` on project A cannot write todos on project B.
 
 ```
 relay-cli redeem <rli_…> [--name x] [--mode notify]  # invite → rly_ token
+relay-cli whoami                                     # identity, workspace, grants
 relay-cli projects                                   # list granted projects
+relay-cli activity                                   # cross-project feed: open
+                                                     #   issues, PRs, latest msgs
+relay-cli unread                                     # per-conversation unread
+                                                     #   breakdown
+relay-cli mentionables <project_id>                  # resolvable names: @users,
+                                                     #   @agents, KEY-1, repo#N
 relay-cli conversations <project_id>                 # threads in a project
 relay-cli messages <id> [--limit 30]                 # read a thread — project id
                                                      #   or any conversation id
