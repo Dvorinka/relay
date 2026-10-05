@@ -47,7 +47,7 @@ export default function Connect() {
   }
 
   return (
-    <div class="flex min-h-full items-center justify-center bg-bg p-6">
+    <div class="flex h-full items-center justify-center overflow-y-auto bg-bg p-6">
       <div class="w-full max-w-sm rounded-xl border border-border bg-surface p-6">
         <p class="mb-1 text-[11px] font-medium uppercase tracking-wider text-muted">
           Relay

@@ -399,6 +399,9 @@ export function Rail() {
     onCleanup(() => window.removeEventListener("keydown", onKey));
   });
   const list = () => projects.projects() ?? [];
+  const { unread } = useUnread();
+  const totalUnread = () =>
+    Object.values(unread()).reduce((s, n) => s + n, 0);
 
   // Width + collapse persist; dragging the right edge resizes (left rail, so
   // dragging right grows it). The mobile drawer ignores both and stays w-64.
@@ -509,6 +512,11 @@ export function Rail() {
         <NavItem href="/app/inbox">
           <InboxIcon class="h-3.5 w-3.5" />
           Inbox
+          <Show when={totalUnread() > 0}>
+            <span class="ml-auto rounded-full bg-accent px-1.5 py-px font-mono text-[10px] font-semibold leading-4 text-white">
+              {totalUnread() > 99 ? "99+" : totalUnread()}
+            </span>
+          </Show>
         </NavItem>
       </nav>
 

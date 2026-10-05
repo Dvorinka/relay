@@ -1,4 +1,5 @@
 import { Navigate, Route, Router, useNavigate } from "@solidjs/router";
+import type { RouteSectionProps } from "@solidjs/router";
 import { render } from "solid-js/web";
 import App from "./App";
 import { deepLinkRoute, desktopOpen, onDeepLink } from "./lib/desktop";
@@ -30,14 +31,15 @@ function NotificationsRoot() {
 
 // relay:// links opened while the desktop shell runs arrive here as wails
 // events; translate them into client-side navigation (deepLinkRoute maps the
-// URL to an in-app surface).
-function DeepLinkRoot() {
+// URL to an in-app surface). Mounted as the Router's root layout — router
+// primitives like useNavigate only resolve inside a Route context.
+function Shell(props: RouteSectionProps) {
   const nav = useNavigate();
   onDeepLink((raw) => {
     const route = deepLinkRoute(raw);
     if (route) nav(route);
   });
-  return null;
+  return <>{props.children}</>;
 }
 
 // Push notifications ride this worker; harmless when the server has no
@@ -71,8 +73,7 @@ render(
   () => (
     <SessionProvider>
       <NotificationsRoot />
-      <Router>
-        <DeepLinkRoot />
+      <Router root={Shell}>
         <Route path="/login" component={Login} />
         <Route path="/register" component={Register} />
         <Route path="/forgot" component={ForgotPassword} />

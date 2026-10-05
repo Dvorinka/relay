@@ -7,6 +7,8 @@ import { mediaURL } from "../lib/net";
 import { subscribe } from "../lib/events";
 import { initials, messagePreview } from "../lib/text";
 import { timeAgo } from "../lib/time";
+import { useProjects } from "../stores/projects";
+import { refreshUnread, useUnread } from "../stores/unread";
 
 function PendingReviews() {
   const [reviews, { refetch }] = createResource(() =>
@@ -70,24 +72,93 @@ function PendingReviews() {
   );
 }
 
+// Channels with unread messages — each row jumps to the project, where the
+// "New" divider lands on the oldest unread message.
+function UnreadChannels() {
+  const { unread } = useUnread();
+  const projects = useProjects();
+  const rows = () =>
+    Object.entries(unread())
+      .map(([projectId, count]) => ({
+        count,
+        project: projects.projects()?.find((p) => p.id === projectId),
+      }))
+      .filter((r) => r.count > 0 && r.project);
+
+  return (
+    <Show when={rows().length > 0}>
+      <section class="mb-6">
+        <h2 class="mb-2 flex items-center gap-2 text-[12px] font-semibold uppercase tracking-wider text-muted">
+          Unread
+          <span class="rounded-full bg-accent/15 px-1.5 py-0.5 text-[10px] font-medium text-accent">
+            {rows().reduce((s, r) => s + r.count, 0)}
+          </span>
+        </h2>
+        <ul class="divide-y divide-border overflow-hidden rounded-md border border-border">
+          <For each={rows()}>
+            {(r) => (
+              <li>
+                <A
+                  href={`/app/p/${r.project!.id}`}
+                  class="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-hover"
+                >
+                  <span
+                    class="h-2.5 w-2.5 shrink-0 rounded-full"
+                    style={{
+                      "background-color": r.project!.color ?? "var(--accent)",
+                    }}
+                  />
+                  <span class="truncate text-[13px] font-medium">
+                    {r.project!.name}
+                  </span>
+                  <span class="font-mono text-[11px] text-muted">
+                    {r.project!.key}
+                  </span>
+                  <span class="ml-auto rounded-full bg-accent px-1.5 py-px font-mono text-[10px] font-semibold leading-4 text-white">
+                    {r.count > 99 ? "99+" : r.count}
+                  </span>
+                </A>
+              </li>
+            )}
+          </For>
+        </ul>
+      </section>
+    </Show>
+  );
+}
+
 export default function Inbox() {
   const [mentions, { refetch }] = createResource(() =>
     api.mentions().then((r) => r.mentions),
   );
+  const { unread } = useUnread();
+  const totalUnread = () =>
+    Object.values(unread()).reduce((s, n) => s + n, 0);
   const unsub = subscribe((e) => {
-    if (e.type === "message.created") void refetch();
+    if (e.type === "message.created") {
+      void refetch();
+      void refreshUnread();
+    }
   });
   onCleanup(unsub);
 
   return (
     <div class="flex h-full flex-col">
       <header class="shrink-0 border-b border-border px-6 py-4">
-        <h1 class="text-[15px] font-semibold tracking-tight">Inbox</h1>
+        <h1 class="flex items-center gap-2 text-[15px] font-semibold tracking-tight">
+          Inbox
+          <Show when={totalUnread() > 0}>
+            <span class="rounded-full bg-accent px-1.5 py-px font-mono text-[10.5px] font-semibold leading-4 text-white">
+              {totalUnread() > 99 ? "99+" : totalUnread()}
+            </span>
+          </Show>
+        </h1>
         <p class="mt-0.5 text-[12px] text-muted">
           Reviews awaiting you, mentions and unread activity across your workspaces
         </p>
       </header>
       <div class="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+        <UnreadChannels />
         <PendingReviews />
         <Show
           when={mentions.state === "ready"}

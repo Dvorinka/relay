@@ -623,6 +623,7 @@ function NotificationsSection() {
               [
                 ["mentions", "@mentions — someone needs you specifically"],
                 ["replies", "Replies to your messages"],
+                ["messages", "All new messages in channels"],
                 ["agents", "Agent status updates (progress goes to threads silently)"],
                 ["todos", "Todo list changes"],
                 ["reviews", "Review requests from agents"],

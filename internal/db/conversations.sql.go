@@ -226,6 +226,33 @@ func (q *Queries) CreateThreadAgent(ctx context.Context, arg CreateThreadAgentPa
 	return i, err
 }
 
+const firstUnreadMessageID = `-- name: FirstUnreadMessageID :one
+select m.id
+from messages m
+where m.conversation_id = $1
+  and m.deleted_at is null
+  and (m.author_user_id is null or m.author_user_id <> $2)
+  and not exists (
+    select 1 from message_reads r
+    where r.message_id = m.id and r.user_id = $2)
+order by m.created_at asc, m.id asc
+limit 1
+`
+
+type FirstUnreadMessageIDParams struct {
+	ConversationID pgtype.UUID `json:"conversation_id"`
+	AuthorUserID   pgtype.UUID `json:"author_user_id"`
+}
+
+// oldest message the user hasn't read — the "New" divider boundary.
+// Own messages don't count; result is null when the channel is caught up.
+func (q *Queries) FirstUnreadMessageID(ctx context.Context, arg FirstUnreadMessageIDParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, firstUnreadMessageID, arg.ConversationID, arg.AuthorUserID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getConversationByID = `-- name: GetConversationByID :one
 select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot
 from conversations

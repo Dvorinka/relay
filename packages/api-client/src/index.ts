@@ -417,7 +417,11 @@ export function createClient(baseUrl: string, token?: string) {
         query.set("tag", opts.tag);
       }
       const qs = query.toString();
-      return request<{ messages: Message[]; has_more: boolean }>(
+      return request<{
+        messages: Message[];
+        has_more: boolean;
+        first_unread_id?: string;
+      }>(
         `/api/conversations/${conversationId}/messages${qs ? `?${qs}` : ""}`,
       );
     },

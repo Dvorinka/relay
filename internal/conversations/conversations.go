@@ -189,7 +189,18 @@ func (s *Service) handleListMessages(c *gin.Context) {
 			AgentRead:   read[m.ID.String()],
 		}))
 	}
-	c.JSON(http.StatusOK, gin.H{"messages": msgs, "has_more": hasMore})
+	resp := gin.H{"messages": msgs, "has_more": hasMore}
+	// First page only: the "New" divider boundary — the oldest message this
+	// user hasn't read. The client snapshots it before bulk-marking the
+	// conversation read, so the divider survives the session.
+	if !before.Valid {
+		if uid, err := s.q.FirstUnreadMessageID(c.Request.Context(), db.FirstUnreadMessageIDParams{
+			ConversationID: conv.ID, AuthorUserID: auth.CurrentUser(c).ID,
+		}); err == nil && uid.Valid {
+			resp["first_unread_id"] = uid.String()
+		}
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 func (s *Service) handlePostMessage(c *gin.Context) {

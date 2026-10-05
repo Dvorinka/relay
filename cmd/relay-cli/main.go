@@ -980,6 +980,9 @@ Environment: RELAY_URL, RELAY_TOKEN.
 			fail(err)
 		}
 		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusOK {
+			fail("download:", resp.Status)
+		}
 		f, err := os.Create(*flagOut)
 		if err != nil {
 			fail(err)

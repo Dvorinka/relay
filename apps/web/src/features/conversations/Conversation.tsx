@@ -2008,6 +2008,12 @@ function ConversationThread(props: {
   onCleanup(unsub);
 
   let seededFor = "";
+  // "New" divider boundary — the oldest message this user hadn't read when
+  // the channel opened. Snapshot from the first page before the bulk
+  // mark-read, kept for the session so the divider doesn't flicker away.
+  const [unreadBoundary, setUnreadBoundary] = createSignal<string | null>(
+    null,
+  );
   createEffect(() => {
     const page = firstPage();
     const key = props.conversationId + "|" + tagFilter();
@@ -2019,13 +2025,27 @@ function ConversationThread(props: {
       // with stickToBottom already true.
       stickToBottom = true;
       lastSeenId = undefined;
+      const boundary = page.first_unread_id ?? null;
+      setUnreadBoundary(boundary);
       setMessages(page.messages);
       setHasMore(page.has_more);
       markLatestRead();
       // Fonts/images decode after this paint and can push content taller —
       // two snaps cover the common late-layout cases (RO catches the rest).
       requestAnimationFrame(() => {
-        if (stickToBottom && scrollEl) {
+        const target =
+          boundary &&
+          (document.getElementById("unread-divider") ??
+            document.getElementById(`msg-${boundary}`));
+        if (target) {
+          stickToBottom = false;
+          target.scrollIntoView({ block: "start" });
+        } else if (boundary) {
+          // Boundary older than the loaded window — page history back to it
+          // instead of landing at the bottom.
+          stickToBottom = false;
+          void jumpTo(boundary);
+        } else if (stickToBottom && scrollEl) {
           scrollEl.scrollTop = scrollEl.scrollHeight;
         }
       });
@@ -2750,6 +2770,18 @@ function ConversationThread(props: {
                         {dayLabel(m.created_at)}
                       </span>
                       <span class="h-px flex-1 bg-border" />
+                    </div>
+                  </Show>
+                  <Show when={unreadBoundary() === m.id}>
+                    <div
+                      id="unread-divider"
+                      class="mx-3 mb-1 mt-3 flex items-center gap-3"
+                    >
+                      <span class="h-px flex-1 bg-accent/60" />
+                      <span class="text-[10.5px] font-semibold uppercase tracking-wider text-accent">
+                        New
+                      </span>
+                      <span class="h-px flex-1 bg-accent/60" />
                     </div>
                   </Show>
                   <MessageRow
