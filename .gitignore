@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!.envrc
 
 # Go
 /bin/
@@ -42,6 +43,7 @@ apps/mobile/android/
 apps/desktop/desktop
 .vercel
 .env*
+!.envrc
 
 # local build outputs
 /relay-cli
