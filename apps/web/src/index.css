@@ -69,7 +69,11 @@ body,
   height: 100%;
 }
 
+/* The document never scrolls — every surface scrolls inside its own
+   container (main, chat, sheets). A document-level bar next to an inner
+   one reads as "two scrollbars" on some engines. */
 body {
+  overflow: hidden;
   background-color: var(--bg);
   color: var(--fg);
   font-family: var(--font-sans);

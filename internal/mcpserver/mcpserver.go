@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"path"
@@ -28,6 +29,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	"go.uber.org/zap"
 
+	"github.com/Dvorinka/relay/internal/agentdoc"
 	"github.com/Dvorinka/relay/internal/attachments"
 	"github.com/Dvorinka/relay/internal/avatars"
 	"github.com/Dvorinka/relay/internal/conversations"
@@ -206,6 +208,12 @@ func jsonResult(v any) (*mcp.CallToolResult, error) {
 }
 
 func (s *Service) registerTools(srv *server.MCPServer) {
+	srv.AddTool(mcp.NewTool("get_guide",
+		mcp.WithDescription("The Relay agent onboarding guide — read this before anything else on a new workspace. Covers transports, scopes, the expected workflow, unread/truncation fields, and error handling. Always available here, via `relay-cli guide`, or GET /api/agent-guide."),
+	), func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText(agentdoc.Guide), nil
+	})
+
 	srv.AddTool(mcp.NewTool("list_projects",
 		mcp.WithDescription("List the projects this agent has been granted access to."),
 	), s.listProjects)
@@ -545,16 +553,20 @@ func messageJSON(m db.GetMessageFullRow) gin.H {
 	var parent any
 	if m.ParentID.Valid {
 		preview := m.ParentBody.String
+		truncated := false
 		if m.ParentDeleted.Bool {
 			preview = ""
 		} else if len([]rune(preview)) > 160 {
 			preview = string([]rune(preview)[:160]) + "…"
+			truncated = true
 		}
 		parent = gin.H{
 			"id":      m.ParentID.String(),
 			"author":  m.ParentAuthorName,
 			"preview": preview,
 			"deleted": m.ParentDeleted.Bool,
+			// true when preview was cut — the full body needs get_message on id
+			"truncated": truncated,
 		}
 	}
 	var mrefs any
@@ -677,14 +689,22 @@ func firstValid(ids ...pgtype.UUID) any {
 }
 
 func (s *Service) listProjects(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	rows, err := s.q.ListGrantedProjects(ctx, agent(ctx).ID)
+	a := agent(ctx)
+	rows, err := s.q.ListGrantedProjects(ctx, a.ID)
 	if err != nil {
 		return errResult(err)
+	}
+	unread := make(map[string]int)
+	if urows, err := s.q.AgentProjectUnread(ctx, a.ID); err == nil {
+		for _, u := range urows {
+			unread[u.ProjectID.String()] = int(u.Unread)
+		}
 	}
 	out := make([]gin.H, 0, len(rows))
 	for _, p := range rows {
 		out = append(out, gin.H{
 			"id": p.ID, "key": p.Key, "name": p.Name, "description": p.Description,
+			"unread_count": unread[p.ID.String()],
 		})
 	}
 	return jsonResult(out)
@@ -721,10 +741,19 @@ func (s *Service) listConversations(ctx context.Context, req mcp.CallToolRequest
 	if err != nil {
 		return errResult(err)
 	}
+	unread := make(map[string]int)
+	if urows, err := s.q.AgentConversationUnread(ctx, db.AgentConversationUnreadParams{
+		ProjectID: pid, AgentID: agent(ctx).ID,
+	}); err == nil {
+		for _, u := range urows {
+			unread[u.ConversationID.String()] = int(u.Unread)
+		}
+	}
 	out := make([]gin.H, 0, len(rows))
 	for _, c := range rows {
 		out = append(out, gin.H{
 			"id": c.ID, "kind": c.Kind, "issue_id": c.IssueID, "created_at": c.CreatedAt.Time,
+			"unread_count": unread[c.ID.String()],
 		})
 	}
 	return jsonResult(out)
@@ -785,10 +814,19 @@ func (s *Service) getMessages(ctx context.Context, req mcp.CallToolRequest) (*mc
 	if err != nil {
 		return errResult(err)
 	}
-	// fetching is the agent's read receipt - it is what locks user edits
+	// fetching is the agent's read receipt - it is what locks user edits.
+	// Snapshot what it already read first so was_unread reports what was new.
 	ids := make([]pgtype.UUID, 0, len(rows))
 	for _, r := range rows {
 		ids = append(ids, r.ID)
+	}
+	readBefore := make(map[string]bool, len(rows))
+	if rids, err := s.q.AgentOwnReadMessageIDs(ctx, db.AgentOwnReadMessageIDsParams{
+		AgentID: agent(ctx).ID, Ids: ids,
+	}); err == nil {
+		for _, id := range rids {
+			readBefore[id.String()] = true
+		}
 	}
 	if err := s.q.MarkMessagesReadAgent(ctx, db.MarkMessagesReadAgentParams{
 		AgentID: agent(ctx).ID, Ids: ids,
@@ -797,7 +835,10 @@ func (s *Service) getMessages(ctx context.Context, req mcp.CallToolRequest) (*mc
 	}
 	out := make([]gin.H, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, messageJSON(db.GetMessageFullRow(r)))
+		m := messageJSON(db.GetMessageFullRow(r))
+		// own posts are never "new" to their author
+		m["was_unread"] = !readBefore[r.ID.String()] && r.AuthorAgentID != agent(ctx).ID
+		out = append(out, m)
 	}
 	return jsonResult(out)
 }
@@ -818,10 +859,18 @@ func (s *Service) getMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	if err != nil {
 		return errResult(err)
 	}
+	wasUnread := true
+	if rids, err := s.q.AgentOwnReadMessageIDs(ctx, db.AgentOwnReadMessageIDsParams{
+		AgentID: agent(ctx).ID, Ids: []pgtype.UUID{mid},
+	}); err == nil && len(rids) > 0 {
+		wasUnread = false
+	}
 	_ = s.q.MarkMessageReadAgent(ctx, db.MarkMessageReadAgentParams{
 		MessageID: mid, AgentID: agent(ctx).ID,
 	})
-	return jsonResult(s.messageJSONFull(ctx, m))
+	out := s.messageJSONFull(ctx, m)
+	out["was_unread"] = wasUnread
+	return jsonResult(out)
 }
 
 func (s *Service) getAttachment(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -843,14 +892,34 @@ func (s *Service) getAttachment(ctx context.Context, req mcp.CallToolRequest) (*
 	if s.store == nil {
 		return mcp.NewToolResultError("storage not configured"), nil
 	}
-	url, err := s.store.PresignGet(ctx, a.StorageKey, a.Filename, a.ContentType)
-	if err != nil {
-		return errResult(err)
-	}
-	return jsonResult(gin.H{
+	out := gin.H{
 		"id": a.ID, "filename": a.Filename, "content_type": a.ContentType,
-		"size_bytes": a.SizeBytes, "download_url": url,
-	})
+		"size_bytes": a.SizeBytes,
+	}
+	// Presigned URLs only work when the public storage endpoint is reachable
+	// — often it isn't (dev, NAT, misconfigured deploys). Inline the bytes so
+	// agents always get the file; past the cap fall back to the URL.
+	const inlineMax = 8 << 20
+	if a.SizeBytes <= inlineMax {
+		obj, err := s.store.Get(ctx, a.StorageKey)
+		if err != nil {
+			return errResult(err)
+		}
+		data, err := io.ReadAll(obj)
+		_ = obj.Close()
+		if err != nil {
+			return errResult(err)
+		}
+		out["data_base64"] = base64.StdEncoding.EncodeToString(data)
+	} else {
+		url, err := s.store.PresignGet(ctx, a.StorageKey, a.Filename, a.ContentType)
+		if err != nil {
+			return errResult(err)
+		}
+		out["download_url"] = url
+		out["note"] = "too large to inline — fetch download_url within its expiry"
+	}
+	return jsonResult(out)
 }
 
 // messageJSONFull is messageJSON plus the attachments list — used wherever a

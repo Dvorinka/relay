@@ -1,4 +1,5 @@
 import {
+  ApiClientError,
   type Agent,
   type AgentInvite,
   type AgentScope,
@@ -7,7 +8,13 @@ import {
   type Project,
 } from "@relay/api-client";
 import { A } from "@solidjs/router";
-import { createResource, createSignal, For, Show } from "solid-js";
+import {
+  createResource,
+  createSignal,
+  For,
+  onCleanup,
+  Show,
+} from "solid-js";
 import {
   ConfirmDialog,
   FormError,
@@ -17,6 +24,7 @@ import {
   Tip,
 } from "../../components/ui";
 import { api } from "../../lib/api";
+import { subscribe } from "../../lib/events";
 import { confirmDestructive } from "../../components/Confirm";
 import { mediaURL, net } from "../../lib/net";
 import { timeAgo, timeUntil } from "../../lib/time";
@@ -26,6 +34,7 @@ const ALL_SCOPES: AgentScope[] = [
   "message:read",
   "message:write",
   "attachment:read",
+  "attachment:write",
   "issue:read",
   "issue:write",
   "review:read",
@@ -36,16 +45,7 @@ const ALL_SCOPES: AgentScope[] = [
 ];
 
 // Mirrors agents.DefaultInviteScopes on the server.
-const DEFAULT_INVITE_SCOPES: AgentScope[] = [
-  "project:read",
-  "message:read",
-  "message:write",
-  "attachment:read",
-  "issue:read",
-  "issue:write",
-  "review:read",
-  "review:write",
-];
+const DEFAULT_INVITE_SCOPES: AgentScope[] = [...ALL_SCOPES];
 
 function errorMessage(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
@@ -83,6 +83,23 @@ function AgentRow(props: {
     } catch (err) {
       setError(errorMessage(err, "Something went wrong"));
     }
+  }
+
+  // Delete must not refetch the detail afterwards — the agent is gone, so
+  // getAgent would 404 and surface a bogus "agent not found" error. A 404 on
+  // the delete itself means another client already removed it, which is the
+  // same end state: the row drops from the list either way.
+  async function onDelete() {
+    setError(null);
+    try {
+      await api.deleteAgent(props.agent.id);
+    } catch (err) {
+      if (!(err instanceof ApiClientError && err.status === 404)) {
+        setError(errorMessage(err, "Could not delete agent"));
+        return;
+      }
+    }
+    props.onChanged();
   }
 
   async function onGrant(e: SubmitEvent) {
@@ -174,6 +191,14 @@ function AgentRow(props: {
 
       <Show when={open()}>
         <div class="mt-3 flex flex-col gap-4 border-t border-border pt-3">
+          <Show
+            when={!detail.error}
+            fallback={
+              <p class="text-[13px] text-muted">
+                This agent was removed or is unavailable.
+              </p>
+            }
+          >
           <Show when={detail()} fallback={<p class="text-[13px] text-muted">Loading...</p>}>
             {(d) => (
               <>
@@ -501,6 +526,7 @@ function AgentRow(props: {
               </>
             )}
           </Show>
+          </Show>
           <FormError message={error()} />
         </div>
       </Show>
@@ -512,7 +538,7 @@ function AgentRow(props: {
         confirmLabel="Delete agent"
         onConfirm={() => {
           setDeleteOpen(false);
-          void run(() => api.deleteAgent(props.agent.id));
+          void onDelete();
         }}
       />
     </li>
@@ -561,23 +587,55 @@ function InviteCard(props: {
       ? "every project in this workspace (including ones created later)"
       : `${props.invite.project_ids.length} project(s)`;
 
-  const promptText = () => `You have been invited to a Relay workspace at ${props.apiBase}.
+  const promptText = () => `You have been invited to collaborate on Relay at ${props.apiBase}.
 
-1. Register yourself with this one-shot invite token (pick any name for yourself):
-   curl -sS -X POST ${props.apiBase}/api/agent-invites/redeem \\
-     -H "Content-Type: application/json" \\
-     -d '{"token":"${props.invite.token}","name":"my-agent","review_mode":"notify"}'
-   The response returns a live rly_ MCP token - shown exactly once, keep it secret.
+Relay is a chat platform where humans and AI agents work in shared project conversations. Agents connect over MCP (or the relay-cli terminal client), read and post messages, manage issues and review requests, and upload/download attachments. No console setup is required on the human side — you register yourself with the invite token below.
 
-2. Point your MCP client at Relay using that token:
-   {"mcpServers":{"relay":{"url":"${props.apiBase}/mcp","headers":{"Authorization":"Bearer <token from step 1>"}}}}
-   Or from a terminal instead:
-   export RELAY_URL=${props.apiBase}
-   export RELAY_TOKEN=$(relay-cli redeem ${props.invite.token} --name my-agent)
-   relay-cli projects
+STEP 1 - Register (one-shot invite token, pick any name for yourself):
+  curl -sS -X POST ${props.apiBase}/api/agent-invites/redeem \\
+    -H "Content-Type: application/json" \\
+    -d '{"token":"${props.invite.token}","name":"my-agent","review_mode":"notify"}'
 
-Your scopes: ${props.invite.scopes.join(", ")} on ${scopeText()}.
-You can set your own profile picture with the set_avatar MCP tool.`;
+  Response includes a live rly_ MCP token, shown exactly once - store it somewhere secret (e.g. chmod 600 file). review_mode: "notify" reports results after finishing; "gate" waits for human approval on each review. This invite expires ${timeUntil(props.invite.expires_at)} and is revoked if unused - ask for a fresh one if it fails.
+
+STEP 2 - Connect with that token, either:
+  a) As an MCP server in your client config:
+     {"mcpServers":{"relay":{"url":"${props.apiBase}/mcp","headers":{"Authorization":"Bearer <rly_ token>"}}}}
+  b) Or via relay-cli in a terminal:
+     # install: grab the relay-cli-<os>-<arch> asset from
+     #   https://github.com/Dvorinka/relay/releases/latest
+     # or: go install github.com/Dvorinka/relay/cmd/relay-cli@latest
+     export RELAY_URL=${props.apiBase}
+     export RELAY_TOKEN=<rly_ token>
+     relay-cli projects   # lists what you can see
+
+YOUR ACCESS
+  Scopes: ${props.invite.scopes.join(", ")}
+  Projects: ${scopeText()}
+  Review mode: notify (unless you chose "gate" in step 1)
+
+STEP 3 - Read the platform guide before you act:
+  MCP tool: get_guide  |  CLI: relay-cli guide  |  ${props.apiBase}/api/agent-guide
+  It covers the expected workflow, unread/truncation fields, todos,
+  reviews, and error handling. Re-read it whenever unsure.
+
+WHAT YOU CAN DO (MCP tools)
+  list_projects / list_conversations / get_messages (unread_count and
+  was_unread tell you what is new), send_message / edit_message /
+  delete_message, create_thread, request_input / resolve_input to ask
+  humans, work_start / work_stop / todo_sync for progress tracking,
+  list_issues / create_issue / submit_review / await_review,
+  upload_attachment / get_attachment, search_messages, list_todos,
+  set_avatar for your profile picture. relay-cli mirrors these:
+  projects, conversations, messages, say, issues, todos, work-start,
+  work-stop, todo-sync.
+
+NOTES
+  - get_messages marks fetched messages read for you - use was_unread /
+    unread_count first if you need to know what was new.
+  - Keep the rly_ token secret; it can be revoked at any time.
+  - If the invite token is rejected (invalid, used, or expired), tell the
+    human who invited you - they will issue a fresh one.`;
 
   return (
     <div class="rounded-md border border-accent bg-surface p-3">
@@ -664,6 +722,18 @@ export default function AgentsSection(props: {
   const [inviteScopes, setInviteScopes] = createSignal<AgentScope[]>([
     ...DEFAULT_INVITE_SCOPES,
   ]);
+
+  // Live agent lifecycle: another client creating/editing/deleting an agent
+  // (or an invite being used) updates this list without a manual refresh.
+  const unsub = subscribe((e) => {
+    if (e.type !== "agent.changed") return;
+    void refetch();
+    void refetchInvites();
+    if (e.data?.action === "deleted" && e.data?.agent_id === expandedId()) {
+      setExpandedId(null);
+    }
+  });
+  onCleanup(unsub);
 
   // Prefer the configured server URL over the page origin: the desktop app
   // serves the SPA from wails.localhost while talking to a real server.

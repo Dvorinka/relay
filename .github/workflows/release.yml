@@ -34,14 +34,22 @@ jobs:
       - name: Build relay binaries
         env:
           TAG: ${{ github.ref_name }}
+          VER: ${{ github.ref_name }}
         run: |
           mkdir -p dist
+          VER="${VER#v}"   # artifact names carry the bare version: 1.2.3
           # stamp the tag so /api/health reports it (update checks compare it)
           CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=$TAG" \
-            -o dist/relay-linux-amd64 ./cmd/relay
-          CGO_ENABLED=0 go build -o dist/relay-cli-linux-amd64 ./cmd/relay-cli
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o dist/relay-cli-windows-amd64.exe ./cmd/relay-cli
-          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o dist/relay-cli-darwin-arm64 ./cmd/relay-cli
+            -o "dist/relay-$VER-linux-amd64" ./cmd/relay
+          CGO_ENABLED=0 go build -o "dist/relay-cli-$VER-linux-amd64" ./cmd/relay-cli
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o "dist/relay-cli-$VER-windows-amd64.exe" ./cmd/relay-cli
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o "dist/relay-cli-$VER-darwin-arm64" ./cmd/relay-cli
+          # Unversioned CLI aliases keep releases/latest/download/<name>
+          # scriptable — versioned names are canonical, aliases are the
+          # convenience path.
+          cp "dist/relay-cli-$VER-linux-amd64" dist/relay-cli-linux-amd64
+          cp "dist/relay-cli-$VER-windows-amd64.exe" dist/relay-cli-windows-amd64.exe
+          cp "dist/relay-cli-$VER-darwin-arm64" dist/relay-cli-darwin-arm64
 
       - name: Install desktop toolchain
         run: |
@@ -49,11 +57,23 @@ jobs:
           go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
 
       - name: Build desktop binaries
+        env:
+          TAG: ${{ github.ref_name }}
+          VER: ${{ github.ref_name }}
         run: |
+          VER="${VER#v}"
+          # the desktop embeds the web bundle from its own web/dist — refresh
+          # it from the stamped SPA built above (only a stub is committed)
+          cp -r apps/web/dist/. apps/desktop/web/dist/
           cd apps/desktop
-          ~/go/bin/wails build -platform windows/amd64 -o relay-desktop-windows-amd64.exe
-          ~/go/bin/wails build -platform linux/amd64 -tags webkit2_41 -o relay-desktop-linux-amd64
-          mv build/bin/relay-desktop-* ../../dist/
+          # -X main.version makes App.Version() report the tag so in-app
+          # update checks compare the binary, not the proxied SPA
+          ~/go/bin/wails build -platform windows/amd64 \
+            -ldflags "-X main.version=$TAG" -o relay-desktop-windows-amd64.exe
+          ~/go/bin/wails build -platform linux/amd64 -tags webkit2_41 \
+            -ldflags "-X main.version=$TAG" -o relay-desktop-linux-amd64
+          mv build/bin/relay-desktop-windows-amd64.exe ../../dist/
+          mv build/bin/relay-desktop-linux-amd64 "../../dist/relay-desktop-$VER-linux-amd64"
           rm -f ../../dist/*.o
 
       # Authenticode signing is optional: without SIGNING_CERT_B64 the release
@@ -72,9 +92,10 @@ jobs:
         if: env.SIGNING_CERT_PFX != ''
         env:
           SIGNING_CERT_PASSWORD: ${{ secrets.SIGNING_CERT_PASSWORD }}
+          VER: ${{ github.ref_name }}
         run: |
           ./scripts/sign-windows.sh dist/relay-desktop-windows-amd64.exe
-          ./scripts/sign-windows.sh dist/relay-cli-windows-amd64.exe
+          ./scripts/sign-windows.sh "dist/relay-cli-${VER#v}-windows-amd64.exe"
 
       # makensis File paths resolve relative to the .nsi — pass absolute paths.
       # CLI_EXE adds the optional (default-on) relay-cli component to the
@@ -94,7 +115,7 @@ jobs:
           makensis -DVERSION="$VERSION" -DVI_VERSION="$VI_VERSION" \
             $SIGNCMD_FLAG \
             -DEXE="$GITHUB_WORKSPACE/dist/relay-desktop-windows-amd64.exe" \
-            -DCLI_EXE="$GITHUB_WORKSPACE/dist/relay-cli-windows-amd64.exe" \
+            -DCLI_EXE="$GITHUB_WORKSPACE/dist/relay-cli-$VERSION-windows-amd64.exe" \
             -DOUTFILE="$GITHUB_WORKSPACE/dist/Relay-Setup-$VERSION.exe" \
             apps/desktop/installer/relay.nsi
 
@@ -102,10 +123,13 @@ jobs:
       # CLI exes were build inputs — the installer packs both — and the
       # standalone Windows server binary isn't needed on the client OS.
       - name: Drop standalone Windows binaries
+        env:
+          VER: ${{ github.ref_name }}
         run: |
           rm -f dist/relay-windows-amd64.exe \
                 dist/relay-desktop-windows-amd64.exe \
-                dist/relay-cli-windows-amd64.exe
+                "dist/relay-cli-${VER#v}-windows-amd64.exe"
+          # keep the unversioned CLI alias — scripts curl it from latest
 
       - name: Release
         uses: softprops/action-gh-release@v3
@@ -136,6 +160,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+      - uses: gradle/actions/setup-gradle@v5
       - run: npm ci --prefix apps/mobile
       - name: Generate native android project
         working-directory: apps/mobile
@@ -153,13 +178,18 @@ jobs:
           RELAY_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           RELAY_KEY_ALIAS: relay
           RELAY_VERSION_CODE: ${{ github.run_number }}
+          # one ABI — releases target modern phones; universal builds compile
+          # every ABI's native libs and roughly quadruple the Gradle time
+          ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a
         run: ./gradlew assembleRelease --no-daemon
       - name: Attach APK to release
-        run: |
-          cp apps/mobile/android/app/build/outputs/apk/release/app-release.apk relay-android.apk
-          gh release upload "$GITHUB_REF_NAME" relay-android.apk --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VER: ${{ github.ref_name }}
+        run: |
+          apk="relay-android-${VER#v}.apk"
+          cp apps/mobile/android/app/build/outputs/apk/release/app-release.apk "$apk"
+          gh release upload "$GITHUB_REF_NAME" "$apk" --clobber
 
   # Publish the runtime image to GHCR: ghcr.io/dvorinka/relay:<tag> + :latest
   image:

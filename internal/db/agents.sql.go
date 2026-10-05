@@ -314,6 +314,27 @@ func (q *Queries) GetAgentInviteByHash(ctx context.Context, tokenHash []byte) (A
 	return i, err
 }
 
+const getAgentInviteByID = `-- name: GetAgentInviteByID :one
+select id, workspace_id, token_hash, project_ids, scopes, expires_at, used_by, created_by, created_at from agent_invites where id = $1
+`
+
+func (q *Queries) GetAgentInviteByID(ctx context.Context, id pgtype.UUID) (AgentInvite, error) {
+	row := q.db.QueryRow(ctx, getAgentInviteByID, id)
+	var i AgentInvite
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.TokenHash,
+		&i.ProjectIds,
+		&i.Scopes,
+		&i.ExpiresAt,
+		&i.UsedBy,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getTokenAgent = `-- name: GetTokenAgent :one
 select t.id as token_id, a.id, a.workspace_id, a.name, a.slug, a.description, a.avatar_key, a.created_by, a.created_at, a.updated_at, a.review_mode, a.grant_all, a.grant_scopes from mcp_tokens t
 join agents a on a.id = t.agent_id

@@ -23,11 +23,18 @@ export function setNotifyEnabled(on: boolean) {
 // Agent progress spam rides on silent messages instead of notifications, so
 // the defaults keep directs (mentions/replies/reviews) on and bulk state
 // changes off.
-export type NotifyCategory = "mentions" | "replies" | "agents" | "todos" | "reviews";
+export type NotifyCategory =
+  | "mentions"
+  | "replies"
+  | "messages"
+  | "agents"
+  | "todos"
+  | "reviews";
 
 const CATEGORY_DEFAULTS: Record<NotifyCategory, boolean> = {
   mentions: true,
   replies: true,
+  messages: true,
   agents: false,
   todos: false,
   reviews: true,
@@ -132,6 +139,14 @@ export function initNotify(me: () => Me | null) {
       // non-silent agent broadcasts (work_start status lines, …)
       category = "agents";
       title = `${m.author.name} (agent)`;
+    } else if (
+      !mentioned &&
+      !replyToMe &&
+      m.author.kind !== "agent" &&
+      notifyCategory("messages")
+    ) {
+      category = "messages";
+      title = `${m.author.name}`;
     }
     if (!category) return;
     const body =

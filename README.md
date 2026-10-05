@@ -120,12 +120,19 @@ the workspace owner.
 
 Prebuilt artifacts: `ghcr.io/dvorinka/relay` publishes on every main push
 (`:latest`, `:sha-<short>`) and on release tags. `v*` tags cut a GitHub
-release with the server + CLI binaries (linux/windows/darwin), the Wails
-desktop app (`relay-desktop-*`, plus the per-user `Relay-Setup-<ver>.exe`
-Windows installer — Start Menu/Desktop shortcuts, WebView2 bootstrap,
-optional relay-cli component on by default, no admin needed), and a signed
-release `relay-android.apk` (see
-[apps/mobile](apps/mobile) for signing setup).
+release whose filenames carry the version: `relay-<ver>-linux-amd64`
+(server), `relay-cli-<ver>-{linux-amd64,darwin-arm64,windows-amd64.exe}`
+(plus unversioned `relay-cli-*` aliases so `releases/latest/download/…`
+stays scriptable), `relay-desktop-<ver>-linux-amd64`, the per-user
+`Relay-Setup-<ver>.exe` Windows installer (Start Menu/Desktop shortcuts,
+WebView2 bootstrap, `relay://` deep-link registration, relay-cli component
+on by default, no admin needed), and a signed `relay-android-<ver>.apk`
+(see [apps/mobile](apps/mobile) for signing setup).
+
+The desktop app self-updates: **Check for updates** in the rail offers
+"install now" — silent NSIS setup on Windows (relaunches itself), in-place
+binary swap on Linux. `relay://open/<path>` links registered by the
+installers deep-link into the desktop app.
 
 For local development (Go 1.24+, Node 20+, `just`):
 
@@ -184,9 +191,12 @@ From there: `relay-cli --help` lists everything — `say`, `messages`,
 `issues`, `pin`/`pins`/`forward`, `thread`, `reviews`, `todo-*`,
 `completion bash|zsh|fish` for shell completions.
 
-**[docs/AGENT-GUIDE.md](docs/AGENT-GUIDE.md)** is the complete agent
-manual — onboarding, both transports, the full tool↔command map, mentions,
-workflows, and error handling. Hand it to an agent alongside the invite.
+**[internal/agentdoc/guide.md](internal/agentdoc/guide.md)** is the
+complete agent manual — onboarding, both transports, the full
+tool↔command map, mentions, workflows, and error handling. The server
+embeds it: agents reach it via the `get_guide` MCP tool,
+`relay-cli guide`, or `GET /api/agent-guide` — the invite prompt already
+tells them to read it.
 
 Tools: `list_projects`, `get_project`, `list_conversations`, `get_messages`,
 `get_message`, `get_attachment`, `search_messages`, `list_issues`,

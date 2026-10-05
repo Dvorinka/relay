@@ -11,7 +11,7 @@ export function AuthLayout(
 ) {
   return (
     <RequireAnon>
-      <div class="flex h-full items-center justify-center px-4">
+      <div class="flex h-full items-center justify-center overflow-y-auto px-4 py-6">
         <div class="w-full max-w-[340px]">
           <div class="mb-6 flex items-center justify-center gap-2">
             <RelayMark class="h-6 w-6" />

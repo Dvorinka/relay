@@ -1,39 +1,13 @@
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { ThemeProvider, useTheme } from "../lib/theme";
 
-function Shell() {
-  const C = useTheme();
+// The app is a WebView shell over the server's web UI — one screen, no
+// header (the web app provides its own chrome).
+export default function Layout() {
   return (
     <>
-      <StatusBar style={C.scheme === "dark" ? "light" : "dark"} />
-      <Stack
-        screenOptions={{
-          headerStyle: { backgroundColor: C.surface },
-          headerTintColor: C.text,
-          headerTitleStyle: { fontWeight: "600" },
-          contentStyle: { backgroundColor: C.bg },
-        }}
-      >
-        <Stack.Screen name="index" options={{ headerShown: false }} />
-        <Stack.Screen name="login" options={{ headerShown: false }} />
-        <Stack.Screen name="projects" options={{ title: "Relay" }} />
-        <Stack.Screen name="inbox" options={{ title: "Inbox" }} />
-        <Stack.Screen name="settings" options={{ title: "Settings" }} />
-        <Stack.Screen name="p/[id]/index" options={{ title: "Conversation" }} />
-        <Stack.Screen name="p/[id]/issues" options={{ title: "Issues" }} />
-        <Stack.Screen name="p/[id]/todos" options={{ title: "Work list" }} />
-        <Stack.Screen name="p/[id]/reviews" options={{ title: "Reviews" }} />
-        <Stack.Screen name="p/[id]/briefs" options={{ title: "Briefs" }} />
-      </Stack>
+      <StatusBar style="light" />
+      <Stack screenOptions={{ headerShown: false }} />
     </>
-  );
-}
-
-export default function Root() {
-  return (
-    <ThemeProvider>
-      <Shell />
-    </ThemeProvider>
   );
 }

@@ -399,6 +399,9 @@ export function Rail() {
     onCleanup(() => window.removeEventListener("keydown", onKey));
   });
   const list = () => projects.projects() ?? [];
+  const { unread } = useUnread();
+  const totalUnread = () =>
+    Object.values(unread()).reduce((s, n) => s + n, 0);
 
   // Width + collapse persist; dragging the right edge resizes (left rail, so
   // dragging right grows it). The mobile drawer ignores both and stays w-64.
@@ -509,6 +512,11 @@ export function Rail() {
         <NavItem href="/app/inbox">
           <InboxIcon class="h-3.5 w-3.5" />
           Inbox
+          <Show when={totalUnread() > 0}>
+            <span class="ml-auto rounded-full bg-accent px-1.5 py-px font-mono text-[10px] font-semibold leading-4 text-white">
+              {totalUnread() > 99 ? "99+" : totalUnread()}
+            </span>
+          </Show>
         </NavItem>
       </nav>
 
@@ -634,18 +642,43 @@ function ForeignProjects() {
 // VersionFooter: build + server versions and a manual update check, sitting
 // above Settings at the bottom of the rail.
 function VersionFooter() {
-  const { appVersion, serverVersion } = useVersion();
-  const { latest, checking, checked, checkError } = useUpdates();
+  const { appVersion, serverVersion, clientVersion } = useVersion();
+  const {
+    latest,
+    checking,
+    checked,
+    checkError,
+    canSelfUpdate,
+    installing,
+    installError,
+    installUpdate,
+  } = useUpdates();
   onMount(() => {
     void loadServerVersion();
   });
 
+  const versionLabel = () =>
+    clientVersion().startsWith("v") ? clientVersion() : `v${clientVersion()}`;
+
+  // Secondary line when a component carries a different *stamped* version —
+  // "dev" means unstamped and conveys nothing, so it's filtered out.
+  const versionMismatch = (): string | null => {
+    if (appVersion !== "dev" && clientVersion() !== appVersion) {
+      return `app ${appVersion}`;
+    }
+    const sv = serverVersion();
+    if (sv && sv !== "dev" && sv !== clientVersion()) return `server ${sv}`;
+    return null;
+  };
+
   return (
-    <div class="px-2 py-1 text-[11px] leading-4 text-faint">
-      <div class="flex flex-wrap items-baseline gap-x-1.5">
-        <span>Relay {appVersion}</span>
-        <Show when={serverVersion() && serverVersion() !== appVersion}>
-          <span class="truncate text-faint/80">· server {serverVersion()}</span>
+    <div class="flex flex-col gap-1.5 px-2 py-1.5 text-[11px] leading-4 text-faint">
+      <div class="flex flex-wrap items-center gap-x-1.5">
+        <span class="rounded bg-hover px-1.5 py-px font-mono text-[10.5px] font-medium tracking-tight text-muted">
+          {versionLabel()}
+        </span>
+        <Show when={versionMismatch()}>
+          {(m) => <span class="truncate text-faint/80">{m()}</span>}
         </Show>
       </div>
       <Show
@@ -661,8 +694,13 @@ function VersionFooter() {
                 // dev builds can't be compared — still offer the releases page
                 // so downloads are reachable; release builds show "Up to date".
                 <Show
-                  when={parseTag(appVersion) === null}
-                  fallback={<span class="text-faint/80">Up to date</span>}
+                  when={parseTag(clientVersion()) === null}
+                  fallback={
+                    <span class="inline-flex items-center gap-1 text-faint/80">
+                      <span class="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                      Up to date
+                    </span>
+                  }
                 >
                   <a
                     href={RELEASES_PAGE}
@@ -675,14 +713,33 @@ function VersionFooter() {
                 </Show>
               }
             >
-              <a
-                href={RELEASES_PAGE}
-                class="text-accent hover:underline"
-                target="_blank"
-                rel="noopener"
+              <Show
+                when={canSelfUpdate()}
+                fallback={
+                  <a
+                    href={RELEASES_PAGE}
+                    class="text-accent hover:underline"
+                    target="_blank"
+                    rel="noopener"
+                  >
+                    {latest()} available — download
+                  </a>
+                }
               >
-                {latest()} available — download
-              </a>
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1 rounded bg-accent/15 px-1.5 py-px font-medium text-accent transition-colors hover:bg-accent/25 disabled:opacity-60"
+                  disabled={installing()}
+                  onClick={() => void installUpdate()}
+                >
+                  {installing()
+                    ? `Installing ${latest()}…`
+                    : `${latest()} — install update`}
+                </button>
+              </Show>
+              <Show when={installError()}>
+                {(msg) => <span class="block text-red-500">{msg()}</span>}
+              </Show>
             </Show>
           </Show>
         }
@@ -691,7 +748,7 @@ function VersionFooter() {
           type="button"
           onClick={() => void checkForUpdates()}
           disabled={checking()}
-          class="text-faint transition-colors hover:text-fg disabled:opacity-60"
+          class="self-start text-faint transition-colors hover:text-fg disabled:opacity-60"
         >
           {checking() ? "Checking…" : "Check for updates"}
         </button>

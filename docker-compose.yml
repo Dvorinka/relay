@@ -3,6 +3,9 @@ services:
     build:
       context: .
       dockerfile: deploy/Dockerfile
+      args:
+        # Stamps both the binary and the embedded SPA version footer.
+        RELAY_VERSION: ${RELAY_VERSION:-dev}
     env_file: .env
     environment:
       DATABASE_URL: postgres://relay:relay@postgres:5432/relay?sslmode=disable

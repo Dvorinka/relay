@@ -28,6 +28,120 @@ func (q *Queries) AddReactionAgent(ctx context.Context, arg AddReactionAgentPara
 	return err
 }
 
+const agentConversationUnread = `-- name: AgentConversationUnread :many
+select m.conversation_id, count(*)::int as unread
+from messages m
+join conversations c on c.id = m.conversation_id
+where c.project_id = $1
+  and m.deleted_at is null
+  and (m.author_agent_id is null or m.author_agent_id <> $2)
+  and not exists (
+    select 1 from message_reads r
+    where r.message_id = m.id and r.agent_id = $2)
+group by m.conversation_id
+`
+
+type AgentConversationUnreadParams struct {
+	ProjectID pgtype.UUID `json:"project_id"`
+	AgentID   pgtype.UUID `json:"agent_id"`
+}
+
+type AgentConversationUnreadRow struct {
+	ConversationID pgtype.UUID `json:"conversation_id"`
+	Unread         int32       `json:"unread"`
+}
+
+// unread count per conversation for this agent; own posts don't count
+func (q *Queries) AgentConversationUnread(ctx context.Context, arg AgentConversationUnreadParams) ([]AgentConversationUnreadRow, error) {
+	rows, err := q.db.Query(ctx, agentConversationUnread, arg.ProjectID, arg.AgentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentConversationUnreadRow{}
+	for rows.Next() {
+		var i AgentConversationUnreadRow
+		if err := rows.Scan(&i.ConversationID, &i.Unread); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const agentOwnReadMessageIDs = `-- name: AgentOwnReadMessageIDs :many
+select r.message_id from message_reads r
+where r.agent_id = $1 and r.message_id = any($2::uuid[])
+`
+
+type AgentOwnReadMessageIDsParams struct {
+	AgentID pgtype.UUID   `json:"agent_id"`
+	Ids     []pgtype.UUID `json:"ids"`
+}
+
+// which of the given messages this agent already read — lets get_messages
+// flag what was new before the fetch marks everything read
+func (q *Queries) AgentOwnReadMessageIDs(ctx context.Context, arg AgentOwnReadMessageIDsParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, agentOwnReadMessageIDs, arg.AgentID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var message_id pgtype.UUID
+		if err := rows.Scan(&message_id); err != nil {
+			return nil, err
+		}
+		items = append(items, message_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const agentProjectUnread = `-- name: AgentProjectUnread :many
+select c.project_id, count(*)::int as unread
+from messages m
+join conversations c on c.id = m.conversation_id
+where m.deleted_at is null
+  and (m.author_agent_id is null or m.author_agent_id <> $1)
+  and not exists (
+    select 1 from message_reads r
+    where r.message_id = m.id and r.agent_id = $1)
+group by c.project_id
+`
+
+type AgentProjectUnreadRow struct {
+	ProjectID pgtype.UUID `json:"project_id"`
+	Unread    int32       `json:"unread"`
+}
+
+// unread count per project across all its conversations, for this agent
+func (q *Queries) AgentProjectUnread(ctx context.Context, agentID pgtype.UUID) ([]AgentProjectUnreadRow, error) {
+	rows, err := q.db.Query(ctx, agentProjectUnread, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentProjectUnreadRow{}
+	for rows.Next() {
+		var i AgentProjectUnreadRow
+		if err := rows.Scan(&i.ProjectID, &i.Unread); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const createAgentMessage = `-- name: CreateAgentMessage :one
 insert into messages (conversation_id, author_agent_id, body, parent_id, mentions, forwarded_from, tags, silent)
 values ($1, $2, $3, $4, coalesce($5, '[]'::jsonb), $6, coalesce($7, '{}'::text[]), coalesce($8, false))

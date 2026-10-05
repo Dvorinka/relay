@@ -290,6 +290,20 @@ where m.conversation_id = $1
   and m.deleted_at is null
 on conflict (message_id, user_id) where user_id is not null do nothing;
 
+-- name: FirstUnreadMessageID :one
+-- oldest message the user hasn't read — the "New" divider boundary.
+-- Own messages don't count; result is null when the channel is caught up.
+select m.id
+from messages m
+where m.conversation_id = $1
+  and m.deleted_at is null
+  and (m.author_user_id is null or m.author_user_id <> $2)
+  and not exists (
+    select 1 from message_reads r
+    where r.message_id = m.id and r.user_id = $2)
+order by m.created_at asc, m.id asc
+limit 1;
+
 -- name: ClearConversation :execrows
 -- /clear — soft-delete every message in the conversation at once
 update messages set deleted_at = now()

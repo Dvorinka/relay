@@ -44,6 +44,7 @@ import {
   Tip,
 } from "../../components/ui";
 import { api } from "../../lib/api";
+import { copyText } from "../../lib/clipboard";
 import { confirmDestructive } from "../../components/Confirm";
 import { openProfile } from "../../components/ProfileModal";
 import { mediaURL, net } from "../../lib/net";
@@ -95,6 +96,25 @@ function BoardIcon(props: { class?: string }) {
       <rect x="3" y="3" width="5" height="18" rx="1.5" />
       <rect x="10" y="3" width="5" height="12" rx="1.5" />
       <rect x="17" y="3" width="5" height="8" rx="1.5" />
+    </svg>
+  );
+}
+
+function HashIcon(props: { class?: string }) {
+  return (
+    <svg
+      class={props.class}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.8"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <line x1="4" y1="9" x2="20" y2="9" />
+      <line x1="4" y1="15" x2="20" y2="15" />
+      <line x1="10" y1="3" x2="8" y2="21" />
+      <line x1="16" y1="3" x2="14" y2="21" />
     </svg>
   );
 }
@@ -1463,6 +1483,17 @@ export default function ProjectPage() {
   );
 
   const [briefsOpen, setBriefsOpen] = createSignal(false);
+  const [channelCopied, setChannelCopied] = createSignal(false);
+
+  // The project's own conversation id is the channel id agents address —
+  // copy it so the user can paste it straight into an agent's harness.
+  async function copyChannelId() {
+    const conv = await api.projectConversation(params.projectId);
+    if (await copyText(conv.id)) {
+      setChannelCopied(true);
+      setTimeout(() => setChannelCopied(false), 1500);
+    }
+  }
 
   const project = (): Project | undefined =>
     overview()?.project ??
@@ -1580,6 +1611,18 @@ export default function ProjectPage() {
               }
             >
               <SettingsIcon class="h-4 w-4" />
+            </HeadButton>
+            <HeadButton
+              title={channelCopied() ? "Channel ID copied" : "Copy channel ID"}
+              hint="Copies this channel's conversation id — paste it to an agent's harness to address this channel directly."
+              onClick={() => void copyChannelId()}
+            >
+              <Show
+                when={channelCopied()}
+                fallback={<HashIcon class="h-4 w-4" />}
+              >
+                <CheckIcon class="h-4 w-4" />
+              </Show>
             </HeadButton>
           </div>
         </header>

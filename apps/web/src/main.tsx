@@ -1,7 +1,8 @@
-import { Navigate, Route, Router } from "@solidjs/router";
+import { Navigate, Route, Router, useNavigate } from "@solidjs/router";
+import type { RouteSectionProps } from "@solidjs/router";
 import { render } from "solid-js/web";
 import App from "./App";
-import { desktopOpen } from "./lib/desktop";
+import { deepLinkRoute, desktopOpen, onDeepLink } from "./lib/desktop";
 import { initNotify } from "./lib/notify";
 import ForgotPassword from "./features/auth/ForgotPassword";
 import Login from "./features/auth/Login";
@@ -26,6 +27,19 @@ function NotificationsRoot() {
   const session = useSession();
   initNotify(() => session.user());
   return null;
+}
+
+// relay:// links opened while the desktop shell runs arrive here as wails
+// events; translate them into client-side navigation (deepLinkRoute maps the
+// URL to an in-app surface). Mounted as the Router's root layout — router
+// primitives like useNavigate only resolve inside a Route context.
+function Shell(props: RouteSectionProps) {
+  const nav = useNavigate();
+  onDeepLink((raw) => {
+    const route = deepLinkRoute(raw);
+    if (route) nav(route);
+  });
+  return <>{props.children}</>;
 }
 
 // Push notifications ride this worker; harmless when the server has no
@@ -59,7 +73,7 @@ render(
   () => (
     <SessionProvider>
       <NotificationsRoot />
-      <Router>
+      <Router root={Shell}>
         <Route path="/login" component={Login} />
         <Route path="/register" component={Register} />
         <Route path="/forgot" component={ForgotPassword} />

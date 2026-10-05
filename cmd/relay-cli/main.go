@@ -249,6 +249,14 @@ func asMap(v any) anyMap {
 	return nil
 }
 
+// unreadSuffix renders " (N unread)" when the row carries an unread_count.
+func unreadSuffix(m anyMap) string {
+	if n := num(m["unread_count"]); n > 0 {
+		return fmt.Sprintf("  (%d unread)", n)
+	}
+	return ""
+}
+
 func num(v any) int {
 	switch n := v.(type) {
 	case float64:
@@ -288,12 +296,13 @@ func render(kind string, raw json.RawMessage) {
 	case "projects":
 		for _, p := range rows("projects") {
 			m := asMap(p)
-			fmt.Printf("%-8s %-24s %s\n", str(m, "key"), str(m, "name"), str(m, "id"))
+			fmt.Printf("%-8s %-24s %s%s\n", str(m, "key"), str(m, "name"), str(m, "id"),
+				unreadSuffix(m))
 		}
 	case "conversations":
 		for _, c := range rows("conversations") {
 			m := asMap(c)
-			fmt.Printf("%s  %s\n", str(m, "id"), str(m, "kind"))
+			fmt.Printf("%s  %s%s\n", str(m, "id"), str(m, "kind"), unreadSuffix(m))
 		}
 	case "messages":
 		msgs := rows("messages")
@@ -305,8 +314,12 @@ func render(kind string, raw json.RawMessage) {
 				name += "·agent"
 			}
 			if p := asMap(m["parent"]); p != nil {
-				fmt.Printf("  %s\n  └ reply to %s: %s\n", str(p, "id"),
-					str(p, "author"), truncate(str(p, "preview"), 60))
+				truncNote := ""
+				if p["truncated"] == true {
+					truncNote = " …(truncated — relay-cli read " + str(p, "id") + " for the full message)"
+				}
+				fmt.Printf("  %s\n  └ reply to %s: %s%s\n", str(p, "id"),
+					str(p, "author"), truncate(str(p, "preview"), 60), truncNote)
 			}
 			atts := len(list(asMap(m), "attachments"))
 			suffix := ""
@@ -321,6 +334,9 @@ func render(kind string, raw json.RawMessage) {
 			}
 			for _, t := range list(m, "tags") {
 				suffix += fmt.Sprintf("  #%v", t)
+			}
+			if m["was_unread"] == true {
+				suffix += "  [new]"
 			}
 			fmt.Printf("%s %s  %s\n%s%s\n\n", str(m, "id"), name,
 				fmtTime(m["created_at"]), str(m, "body"), suffix)
@@ -394,6 +410,9 @@ func main() {
 		_, _ = fmt.Fprintf(flag.CommandLine.Output(), `relay-cli — Relay for agents and humans, via MCP.
 
 Usage: relay-cli [--url URL] [--token rly_...] [--json] <command> [args] [flags]
+
+Guide
+  guide                                 print the platform agent guide (read first on a new workspace)
 
 Chat
   projects                              list granted projects
@@ -507,6 +526,14 @@ Environment: RELAY_URL, RELAY_TOKEN.
 	}
 
 	switch args[0] {
+	case "guide":
+		// the embedded platform manual — plain text, not JSON
+		res, err := s.tool("get_guide", nil)
+		if err != nil {
+			fail(err)
+		}
+		fmt.Print(string(res))
+
 	case "projects":
 		run("projects", "list_projects", nil)
 
@@ -907,11 +934,30 @@ Environment: RELAY_URL, RELAY_TOKEN.
 			fail(err)
 		}
 		var meta struct {
-			URL string `json:"download_url"`
+			URL  string `json:"download_url"`
+			Data string `json:"data_base64"`
 		}
 		_ = json.Unmarshal(res, &meta)
+		// Inline bytes don't depend on the public storage endpoint —
+		// prefer them whenever the server shipped them.
+		if meta.Data != "" && *flagOut != "" {
+			raw, err := base64.StdEncoding.DecodeString(meta.Data)
+			if err != nil {
+				fail("decode attachment:", err)
+			}
+			if err := os.WriteFile(*flagOut, raw, 0o644); err != nil {
+				fail(err)
+			}
+			fmt.Println("saved to", *flagOut)
+			return
+		}
 		if meta.URL == "" {
-			emit(res)
+			var m anyMap
+			_ = json.Unmarshal(res, &m)
+			delete(m, "data_base64")
+			m["hint"] = "bytes were inlined — pass --out <file> to save"
+			out, _ := json.Marshal(m)
+			emit(out)
 			return
 		}
 		if *flagOut == "" {
@@ -934,6 +980,9 @@ Environment: RELAY_URL, RELAY_TOKEN.
 			fail(err)
 		}
 		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusOK {
+			fail("download:", resp.Status)
+		}
 		f, err := os.Create(*flagOut)
 		if err != nil {
 			fail(err)
@@ -1048,7 +1097,7 @@ func atoi(s string) int {
 }
 
 func completionScript(shell string) string {
-	cmds := "projects conversations messages read say react msg-edit msg-del " +
+	cmds := "guide projects conversations messages read say react msg-edit msg-del " +
 		"pin unpin pins forward thread avatar issues " +
 		"issue issue-new issue-set todos todo-add todo-done todo-undo todo-del " +
 		"todo-set todo-sync work-start work-stop ask resolve events " +

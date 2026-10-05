@@ -22,6 +22,7 @@ import {
 import { Portal } from "solid-js/web";
 import {
   CheckIcon,
+  DotsIcon,
   FileIcon,
   ForwardIcon,
   IssueIcon,
@@ -47,6 +48,7 @@ import {
   Tip,
 } from "../../components/ui";
 import { api } from "../../lib/api";
+import { copyText } from "../../lib/clipboard";
 import { openProfile } from "../../components/ProfileModal";
 import { subscribe } from "../../lib/events";
 import { loadNameColors, nameColorFor } from "../../lib/namecolors";
@@ -136,28 +138,7 @@ function stamp(iso: string): string {
   return `${dayLabel(iso)} at ${shortTime(iso)}`;
 }
 
-// Clipboard write that never touches window.prompt: async clipboard API
-// first, then the legacy execCommand path for insecure contexts.
-async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    const el = document.createElement("textarea");
-    el.value = text;
-    el.style.cssText = "position:fixed;top:-9999px;opacity:0";
-    document.body.appendChild(el);
-    el.select();
-    let ok = false;
-    try {
-      ok = document.execCommand("copy");
-    } catch {
-      /* unsupported */
-    }
-    el.remove();
-    return ok;
-  }
-}
+
 
 function MessageAvatar(props: { message: Message; small?: boolean; tiny?: boolean }) {
   const m = () => props.message;
@@ -215,10 +196,25 @@ function profileClick(e: MouseEvent, id: string, kind: string) {
 }
 
 // The reply strip above a replied message: curved arrow + parent author +
-// one-line snippet. Deleted parents render a muted placeholder.
-function ReplyStrip(props: { parent: NonNullable<Message["parent"]> }) {
+// one-line snippet. Clicking jumps to the original (pages history until it
+// mounts). Deleted parents render a muted, non-clickable placeholder.
+function ReplyStrip(props: {
+  parent: NonNullable<Message["parent"]>;
+  onJump?: (messageId: string) => void;
+}) {
   return (
-    <div class="mb-0.5 flex min-w-0 items-center gap-1.5 text-[12px] text-muted">
+    <div
+      class={`mb-0.5 flex min-w-0 items-center gap-1.5 text-[12px] text-muted ${
+        !props.parent.deleted && props.onJump
+          ? "-mx-1 w-fit max-w-full cursor-pointer rounded px-1 transition-colors hover:bg-hover"
+          : ""
+      }`}
+      role={!props.parent.deleted && props.onJump ? "button" : undefined}
+      title={!props.parent.deleted ? "Jump to original message" : undefined}
+      onClick={() => {
+        if (!props.parent.deleted) props.onJump?.(props.parent.id);
+      }}
+    >
       <ReplyIcon class="h-3.5 w-3.5 shrink-0 text-faint" />
       <Show
         when={!props.parent.deleted}
@@ -921,6 +917,7 @@ function MessageRow(props: {
   onReply: (m: Message) => void;
   onChanged: (m: Message) => void;
   onDeleted: (id: string) => void;
+  onJumpTo?: (messageId: string) => void;
   onOpenThread?: (t: ThreadSummary) => void;
   onOpenThreads?: () => void;
   onTagClick?: (tag: string) => void;
@@ -992,6 +989,10 @@ function MessageRow(props: {
   function startEdit() {
     setEditDraft(m().body);
     setEditError(null);
+    for (const p of editFiles()) {
+      if (p.previewUrl) URL.revokeObjectURL(p.previewUrl);
+    }
+    setEditFiles([]);
     setEditing(true);
     requestAnimationFrame(() => {
       editEl?.focus();
@@ -1060,6 +1061,33 @@ function MessageRow(props: {
 
   const editFilesReady = () =>
     editFiles().every((p) => p.status !== "uploading");
+
+  // Pasting a screenshot while editing stages it like the composer's flow:
+  // upload starts immediately and an [image N] marker lands at the caret so
+  // the reader can tell which words describe which image.
+  function onEditPaste(e: ClipboardEvent & { currentTarget: HTMLTextAreaElement }) {
+    const files = Array.from(e.clipboardData?.files ?? []);
+    if (files.length === 0) return;
+    e.preventDefault();
+    const el = e.currentTarget;
+    let n = editFiles().filter(
+      (p) => p.file.type.startsWith("image/") && p.status !== "error",
+    ).length;
+    for (const file of files) {
+      addEditFiles([file]);
+      if (!file.type.startsWith("image/")) continue;
+      n += 1;
+      const cur = editDraft();
+      const start = el.selectionStart ?? cur.length;
+      const end = el.selectionEnd ?? cur.length;
+      const pre = start > 0 && !/\s/.test(cur[start - 1]!) ? " " : "";
+      const post = end < cur.length && !/\s/.test(cur[end]!) ? " " : " ";
+      const text = `[image ${n}]`;
+      setEditDraft(cur.slice(0, start) + pre + text + post + cur.slice(end));
+      const pos = start + pre.length + text.length + post.length;
+      el.selectionStart = el.selectionEnd = pos;
+    }
+  }
 
   async function saveEdit() {
     const body = editDraft().trim();
@@ -1138,7 +1166,7 @@ function MessageRow(props: {
           : `group relative flex gap-3 px-4 hover:bg-hover/60 ${
               props.grouped ? "py-[2px]" : "mt-3 py-1"
             }`) +
-        (props.highlighted ? " rounded-xl bg-accent-soft/60 transition-colors" : " transition-colors")
+        (props.highlighted ? " rounded-xl bg-hover transition-colors" : " transition-colors")
       }
       onClick={(e) => {
         if (window.matchMedia("(hover: none)").matches &&
@@ -1264,7 +1292,9 @@ function MessageRow(props: {
             </div>
           )}
         </Show>
-        <Show when={m().parent}>{(p) => <ReplyStrip parent={p()} />}</Show>
+        <Show when={m().parent}>
+          {(p) => <ReplyStrip parent={p()} onJump={props.onJumpTo} />}
+        </Show>
         <Show
           when={editing()}
           fallback={
@@ -1320,6 +1350,7 @@ function MessageRow(props: {
                   setEditing(false);
                 }
               }}
+              onPaste={onEditPaste}
               class="max-h-80 w-full resize-none bg-transparent px-2 py-1.5 text-[14px] leading-6 outline-none"
             />
             <Show when={editFiles().length > 0}>
@@ -1471,6 +1502,19 @@ function MessageRow(props: {
         >
           <ReplyIcon class="h-4 w-4" />
         </button>
+        <Show when={!shiftHeld() && !tapped()}>
+          {/* Always-reachable door into the extended actions — Shift+hover
+              stays the shortcut, this is the discoverable path. */}
+          <button
+            type="button"
+            title="More actions"
+            aria-label="More actions"
+            onClick={() => setTapped(true)}
+            class={toolBtn}
+          >
+            <DotsIcon class="h-4 w-4" />
+          </button>
+        </Show>
         <Show when={shiftHeld() || tapped()}>
           <button
             type="button"
@@ -1978,6 +2022,12 @@ function ConversationThread(props: {
   onCleanup(unsub);
 
   let seededFor = "";
+  // "New" divider boundary — the oldest message this user hadn't read when
+  // the channel opened. Snapshot from the first page before the bulk
+  // mark-read, kept for the session so the divider doesn't flicker away.
+  const [unreadBoundary, setUnreadBoundary] = createSignal<string | null>(
+    null,
+  );
   createEffect(() => {
     const page = firstPage();
     const key = props.conversationId + "|" + tagFilter();
@@ -1989,13 +2039,27 @@ function ConversationThread(props: {
       // with stickToBottom already true.
       stickToBottom = true;
       lastSeenId = undefined;
+      const boundary = page.first_unread_id ?? null;
+      setUnreadBoundary(boundary);
       setMessages(page.messages);
       setHasMore(page.has_more);
       markLatestRead();
       // Fonts/images decode after this paint and can push content taller —
       // two snaps cover the common late-layout cases (RO catches the rest).
       requestAnimationFrame(() => {
-        if (stickToBottom && scrollEl) {
+        const target =
+          boundary &&
+          (document.getElementById("unread-divider") ??
+            document.getElementById(`msg-${boundary}`));
+        if (target) {
+          stickToBottom = false;
+          target.scrollIntoView({ block: "start" });
+        } else if (boundary) {
+          // Boundary older than the loaded window — page history back to it
+          // instead of landing at the bottom.
+          stickToBottom = false;
+          void jumpTo(boundary);
+        } else if (stickToBottom && scrollEl) {
           scrollEl.scrollTop = scrollEl.scrollHeight;
         }
       });
@@ -2522,20 +2586,9 @@ function ConversationThread(props: {
           New messages ↓
         </button>
       </Show>
-      <div
-        ref={(el) => {
-          scrollEl = el;
-        }}
-        onScroll={() => {
-          if (!scrollEl) return;
-          const gap =
-            scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight;
-          stickToBottom = gap < 60;
-          if (stickToBottom) setNewBelow(0);
-        }}
-        class="chat-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden"
-      >
-        <div class="border-b border-border/60 px-4 py-1.5">
+      {/* Pinned header sits outside the scroll container — it must stay
+          visible no matter how far down the user has scrolled. */}
+      <div class="border-b border-border/60 px-4 py-1.5">
           <div class="flex items-center gap-4">
             <button
               type="button"
@@ -2550,6 +2603,28 @@ function ConversationThread(props: {
                 {(pins()?.length ?? 0) > 0 ? `${pins()!.length} pinned` : "Pinned"}
               </span>
             </button>
+            <Show when={!pinsOpen() && pins()?.[0]}>
+              {/* The newest pin is always visible — the toggle hides the list,
+                  not the fact that something important is pinned. */}
+              {(pin) => (
+                <button
+                  type="button"
+                  onClick={() => void jumpTo(pin().id)}
+                  class="flex min-w-0 items-baseline gap-1.5 text-[12px] transition-colors hover:text-fg"
+                  title="Jump to latest pinned message"
+                >
+                  <span
+                    class="shrink-0 font-medium"
+                    style={{ color: authorColor(pin().author.name) }}
+                  >
+                    {pin().author.name}
+                  </span>
+                  <span class="truncate text-muted">
+                    {messagePreview(pin().body).slice(0, 80) || "(attachment)"}
+                  </span>
+                </button>
+              )}
+            </Show>
             <Show when={props.onOpenThread}>
               <button
                 type="button"
@@ -2570,7 +2645,7 @@ function ConversationThread(props: {
                 </p>
               }
             >
-              <div class="mt-1 flex flex-col gap-0.5 pb-1">
+              <div class="mt-1 flex max-h-56 flex-col gap-0.5 overflow-y-auto pb-1">
                 <Show when={pins()!.length > 3}>
                   <input
                     type="text"
@@ -2623,7 +2698,20 @@ function ConversationThread(props: {
               </div>
             </Show>
           </Show>
-        </div>
+      </div>
+      <div
+        ref={(el) => {
+          scrollEl = el;
+        }}
+        onScroll={() => {
+          if (!scrollEl) return;
+          const gap =
+            scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight;
+          stickToBottom = gap < 60;
+          if (stickToBottom) setNewBelow(0);
+        }}
+        class="chat-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden"
+      >
         <Show when={tagFilter() || seenTags().length > 0}>
           <div class="flex flex-wrap items-center gap-1.5 px-1 pb-1 pt-1">
             <TagIcon class="h-3.5 w-3.5 text-faint" />
@@ -2722,6 +2810,18 @@ function ConversationThread(props: {
                       <span class="h-px flex-1 bg-border" />
                     </div>
                   </Show>
+                  <Show when={unreadBoundary() === m.id}>
+                    <div
+                      id="unread-divider"
+                      class="mx-3 mb-1 mt-3 flex items-center gap-3"
+                    >
+                      <span class="h-px flex-1 bg-accent/60" />
+                      <span class="text-[10.5px] font-semibold uppercase tracking-wider text-accent">
+                        New
+                      </span>
+                      <span class="h-px flex-1 bg-accent/60" />
+                    </div>
+                  </Show>
                   <MessageRow
                     projectId={props.projectId}
                     message={m}
@@ -2731,6 +2831,7 @@ function ConversationThread(props: {
                     onReply={startReply}
                     onChanged={replaceMessage}
                     onDeleted={removeMessage}
+                    onJumpTo={jumpTo}
                     onOpenThread={props.onOpenThread}
                     onOpenThreads={() => setThreadsOpen(true)}
                     onTagClick={(t) => setTagFilter(t)}
@@ -3148,6 +3249,7 @@ function ThreadPanel(props: {
 }) {
   const [width, setWidth] = createSignal(threadWidth());
   const [full, setFull] = createSignal(false);
+  const [idCopied, setIdCopied] = createSignal(false);
   let dragging = false;
 
   const clamp = (w: number) =>
@@ -3209,6 +3311,22 @@ function ThreadPanel(props: {
             {props.thread.reply_count === 1 ? "reply" : "replies"}
           </p>
         </div>
+        <button
+          type="button"
+          onClick={async () => {
+            if (await copyText(props.thread.id)) {
+              setIdCopied(true);
+              setTimeout(() => setIdCopied(false), 1500);
+            }
+          }}
+          aria-label="Copy thread ID"
+          title={idCopied() ? "Thread ID copied" : "Copy thread ID"}
+          class="rounded p-1 text-muted transition-colors hover:bg-hover hover:text-fg"
+        >
+          <Show when={idCopied()} fallback={<LinkIcon class="h-4 w-4" />}>
+            <CheckIcon class="h-4 w-4" />
+          </Show>
+        </button>
         <button
           type="button"
           onClick={() => setFull((v) => !v)}
