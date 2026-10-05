@@ -22,6 +22,7 @@ import {
 import { Portal } from "solid-js/web";
 import {
   CheckIcon,
+  DotsIcon,
   FileIcon,
   ForwardIcon,
   IssueIcon,
@@ -1501,6 +1502,19 @@ function MessageRow(props: {
         >
           <ReplyIcon class="h-4 w-4" />
         </button>
+        <Show when={!shiftHeld() && !tapped()}>
+          {/* Always-reachable door into the extended actions — Shift+hover
+              stays the shortcut, this is the discoverable path. */}
+          <button
+            type="button"
+            title="More actions"
+            aria-label="More actions"
+            onClick={() => setTapped(true)}
+            class={toolBtn}
+          >
+            <DotsIcon class="h-4 w-4" />
+          </button>
+        </Show>
         <Show when={shiftHeld() || tapped()}>
           <button
             type="button"
@@ -2600,6 +2614,28 @@ function ConversationThread(props: {
                 {(pins()?.length ?? 0) > 0 ? `${pins()!.length} pinned` : "Pinned"}
               </span>
             </button>
+            <Show when={!pinsOpen() && pins()?.[0]}>
+              {/* The newest pin is always visible — the toggle hides the list,
+                  not the fact that something important is pinned. */}
+              {(pin) => (
+                <button
+                  type="button"
+                  onClick={() => void jumpTo(pin().id)}
+                  class="flex min-w-0 items-baseline gap-1.5 text-[12px] transition-colors hover:text-fg"
+                  title="Jump to latest pinned message"
+                >
+                  <span
+                    class="shrink-0 font-medium"
+                    style={{ color: authorColor(pin().author.name) }}
+                  >
+                    {pin().author.name}
+                  </span>
+                  <span class="truncate text-muted">
+                    {messagePreview(pin().body).slice(0, 80) || "(attachment)"}
+                  </span>
+                </button>
+              )}
+            </Show>
             <Show when={props.onOpenThread}>
               <button
                 type="button"
