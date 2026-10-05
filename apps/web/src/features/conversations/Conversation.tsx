@@ -2586,20 +2586,9 @@ function ConversationThread(props: {
           New messages ↓
         </button>
       </Show>
-      <div
-        ref={(el) => {
-          scrollEl = el;
-        }}
-        onScroll={() => {
-          if (!scrollEl) return;
-          const gap =
-            scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight;
-          stickToBottom = gap < 60;
-          if (stickToBottom) setNewBelow(0);
-        }}
-        class="chat-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden"
-      >
-        <div class="border-b border-border/60 px-4 py-1.5">
+      {/* Pinned header sits outside the scroll container — it must stay
+          visible no matter how far down the user has scrolled. */}
+      <div class="border-b border-border/60 px-4 py-1.5">
           <div class="flex items-center gap-4">
             <button
               type="button"
@@ -2656,7 +2645,7 @@ function ConversationThread(props: {
                 </p>
               }
             >
-              <div class="mt-1 flex flex-col gap-0.5 pb-1">
+              <div class="mt-1 flex max-h-56 flex-col gap-0.5 overflow-y-auto pb-1">
                 <Show when={pins()!.length > 3}>
                   <input
                     type="text"
@@ -2709,7 +2698,20 @@ function ConversationThread(props: {
               </div>
             </Show>
           </Show>
-        </div>
+      </div>
+      <div
+        ref={(el) => {
+          scrollEl = el;
+        }}
+        onScroll={() => {
+          if (!scrollEl) return;
+          const gap =
+            scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight;
+          stickToBottom = gap < 60;
+          if (stickToBottom) setNewBelow(0);
+        }}
+        class="chat-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden"
+      >
         <Show when={tagFilter() || seenTags().length > 0}>
           <div class="flex flex-wrap items-center gap-1.5 px-1 pb-1 pt-1">
             <TagIcon class="h-3.5 w-3.5 text-faint" />
