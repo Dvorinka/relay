@@ -62,6 +62,7 @@ VIAddVersionKey "LegalCopyright"  "Apache-2.0"
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 !include "StrFunc.nsh"
+!include "FileFunc.nsh"
 
 ${StrLoc}
 ${UnStrLoc}
@@ -154,7 +155,24 @@ Section "Install"
   WriteRegStr   HKCU "${UNINST_REG}" "UninstallString" '"$INSTDIR\uninstall.exe"'
   WriteRegDWORD HKCU "${UNINST_REG}" "NoModify" 1
   WriteRegDWORD HKCU "${UNINST_REG}" "NoRepair" 1
+
+  ; relay:// deep links — browser "open in app" actions hand the URL to the
+  ; desktop shell (HKCU registrations are per-user, matching the install).
+  WriteRegStr HKCU "Software\Classes\relay" "" "URL:Relay Protocol"
+  WriteRegStr HKCU "Software\Classes\relay" "URL Protocol" ""
+  WriteRegStr HKCU "Software\Classes\relay\DefaultIcon" "" '"$INSTDIR\${APP_EXE}",0'
+  WriteRegStr HKCU "Software\Classes\relay\shell\open\command" "" '"$INSTDIR\${APP_EXE}" "%1"'
 SectionEnd
+
+; Self-update runs "<setup> /S /SELFUPDATE": silent installs skip the finish
+; page's run checkbox, so relaunch the app ourselves in that case only.
+Function .onInstSuccess
+  ${GetParameters} $0
+  ${StrLoc} $1 $0 "/SELFUPDATE" ">"
+  ${If} $1 != ""
+    Exec '"$INSTDIR\${APP_EXE}"'
+  ${EndIf}
+FunctionEnd
 
 !ifdef CLI_EXE
 ; Checked by default: one setup covers the desktop app and the terminal
@@ -193,6 +211,8 @@ Section "Uninstall"
   RMDir "$SMPROGRAMS\Relay"
   Delete "$DESKTOP\Relay.lnk"
   DeleteRegKey HKCU "${UNINST_REG}"
+  ; relay:// deep-link registration.
+  DeleteRegKey HKCU "Software\Classes\relay"
   ; Launch-at-login entry written by Settings — without this an uninstalled
   ; exe still gets launched (and silently fails) on every sign-in.
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Relay"

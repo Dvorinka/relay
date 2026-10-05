@@ -5,6 +5,7 @@ import (
 	"embed"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -19,6 +20,21 @@ import (
 //
 //go:embed web
 var webFS embed.FS
+
+// version is stamped by release CI (-ldflags "-X main.version=vX.Y.Z"); a
+// plain `go build` reports "dev" and can't be compared for update checks.
+var version = "dev"
+
+// deepLinkArg returns the first relay:// URL in argv, if any — Windows and
+// Linux pass it as the lone argument when the OS opens a registered scheme.
+func deepLinkArg(args []string) string {
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "relay://") {
+			return arg
+		}
+	}
+	return ""
+}
 
 func main() {
 	// WebKitGTK's dmabuf renderer paints a black window on some
@@ -60,12 +76,17 @@ func main() {
 		},
 		SingleInstanceLock: &options.SingleInstanceLock{
 			UniqueId: "dev.tdvorak.relay",
-			OnSecondInstanceLaunch: func(_ options.SecondInstanceData) {
+			OnSecondInstanceLaunch: func(data options.SecondInstanceData) {
 				if app.ctx != nil {
 					wailsruntime.WindowShow(app.ctx)
 					wailsruntime.WindowUnminimise(app.ctx)
 					wailsruntime.WindowSetAlwaysOnTop(app.ctx, true)
 					wailsruntime.WindowSetAlwaysOnTop(app.ctx, false)
+					// A relay:// launch against a running instance delivers
+					// the URL here instead of a fresh argv.
+					if link := deepLinkArg(data.Args); link != "" {
+						app.emitDeepLink(link)
+					}
 				}
 			},
 		},

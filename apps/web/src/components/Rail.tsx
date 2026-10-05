@@ -634,8 +634,17 @@ function ForeignProjects() {
 // VersionFooter: build + server versions and a manual update check, sitting
 // above Settings at the bottom of the rail.
 function VersionFooter() {
-  const { appVersion, serverVersion } = useVersion();
-  const { latest, checking, checked, checkError } = useUpdates();
+  const { appVersion, serverVersion, clientVersion } = useVersion();
+  const {
+    latest,
+    checking,
+    checked,
+    checkError,
+    canSelfUpdate,
+    installing,
+    installError,
+    installUpdate,
+  } = useUpdates();
   onMount(() => {
     void loadServerVersion();
   });
@@ -643,9 +652,17 @@ function VersionFooter() {
   return (
     <div class="px-2 py-1 text-[11px] leading-4 text-faint">
       <div class="flex flex-wrap items-baseline gap-x-1.5">
-        <span>Relay {appVersion}</span>
-        <Show when={serverVersion() && serverVersion() !== appVersion}>
-          <span class="truncate text-faint/80">· server {serverVersion()}</span>
+        <span>Relay {clientVersion()}</span>
+        <Show
+          when={
+            clientVersion() !== appVersion ||
+            (serverVersion() && serverVersion() !== clientVersion())
+          }
+        >
+          <span class="truncate text-faint/80">
+            · {clientVersion() !== appVersion ? "app" : "server"}{" "}
+            {clientVersion() !== appVersion ? appVersion : serverVersion()}
+          </span>
         </Show>
       </div>
       <Show
@@ -661,7 +678,7 @@ function VersionFooter() {
                 // dev builds can't be compared — still offer the releases page
                 // so downloads are reachable; release builds show "Up to date".
                 <Show
-                  when={parseTag(appVersion) === null}
+                  when={parseTag(clientVersion()) === null}
                   fallback={<span class="text-faint/80">Up to date</span>}
                 >
                   <a
@@ -675,14 +692,33 @@ function VersionFooter() {
                 </Show>
               }
             >
-              <a
-                href={RELEASES_PAGE}
-                class="text-accent hover:underline"
-                target="_blank"
-                rel="noopener"
+              <Show
+                when={canSelfUpdate()}
+                fallback={
+                  <a
+                    href={RELEASES_PAGE}
+                    class="text-accent hover:underline"
+                    target="_blank"
+                    rel="noopener"
+                  >
+                    {latest()} available — download
+                  </a>
+                }
               >
-                {latest()} available — download
-              </a>
+                <button
+                  type="button"
+                  class="text-accent hover:underline disabled:opacity-60"
+                  disabled={installing()}
+                  onClick={() => void installUpdate()}
+                >
+                  {installing()
+                    ? `Installing ${latest()}…`
+                    : `${latest()} available — install now`}
+                </button>
+              </Show>
+              <Show when={installError()}>
+                {(msg) => <span class="block text-red-500">{msg()}</span>}
+              </Show>
             </Show>
           </Show>
         }

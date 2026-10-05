@@ -4,6 +4,7 @@
 package agents
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/Dvorinka/relay/internal/auth"
 	"github.com/Dvorinka/relay/internal/db"
+	"github.com/Dvorinka/relay/internal/events"
 	"github.com/Dvorinka/relay/internal/httpx"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -47,6 +49,32 @@ var DefaultInviteScopes = []string{
 type Service struct {
 	q   *db.Queries
 	log *zap.Logger
+	// Bus publishes domain events for SSE subscribers. Optional.
+	Bus *events.Hub
+}
+
+// publishAgentChanged fans an "agent.changed" event out to every project in
+// the workspace — events are project-scoped, and every workspace member is a
+// member of at least its projects, so this reaches the whole settings page.
+func (s *Service) publishAgentChanged(ctx context.Context, wsID pgtype.UUID, agentID pgtype.UUID, action string) {
+	if s.Bus == nil {
+		return
+	}
+	projects, err := s.q.ListWorkspaceProjectIDs(ctx, wsID)
+	if err != nil {
+		s.log.Warn("agent.changed fan-out", zap.Error(err))
+		return
+	}
+	for _, pid := range projects {
+		s.Bus.Publish(events.Event{
+			Type:      "agent.changed",
+			ProjectID: pid.Bytes,
+			Data: map[string]any{
+				"agent_id": agentID.String(),
+				"action":   action,
+			},
+		})
+	}
 }
 
 func NewService(log *zap.Logger, pool *pgxpool.Pool) *Service {
@@ -249,6 +277,7 @@ func (s *Service) handleCreate(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
+	s.publishAgentChanged(c.Request.Context(), wsID, row.ID, "created")
 	c.JSON(http.StatusCreated, agentJSON(row, nil, pgtype.Timestamptz{}))
 }
 
@@ -329,6 +358,7 @@ func (s *Service) handleUpdate(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
+	s.publishAgentChanged(c.Request.Context(), row.WorkspaceID, row.ID, "updated")
 	c.JSON(http.StatusOK, agentJSON(row, s.grantJSONs(c, row.ID), lastSeenFor(c, s.q, row.ID)))
 }
 
@@ -339,6 +369,9 @@ func (s *Service) handleDelete(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
+	// Other open clients drop the row live instead of hitting 404 on a stale
+	// entry (the "agent not found" report).
+	s.publishAgentChanged(c.Request.Context(), a.WorkspaceID, a.ID, "deleted")
 	c.Status(http.StatusNoContent)
 }
 
@@ -378,6 +411,7 @@ func (s *Service) handleGrant(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
+	s.publishAgentChanged(c.Request.Context(), a.WorkspaceID, a.ID, "updated")
 	c.JSON(http.StatusOK, grantJSON(row.AgentID, row.ProjectID, row.ProjectKey, row.ProjectName, row.Scopes, ""))
 }
 
@@ -393,6 +427,7 @@ func (s *Service) handleRevokeGrant(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
+	s.publishAgentChanged(c.Request.Context(), a.WorkspaceID, a.ID, "updated")
 	c.Status(http.StatusNoContent)
 }
 
@@ -547,6 +582,7 @@ func (s *Service) handleCreateInvite(c *gin.Context) {
 	}
 	out := inviteJSON(row, "", "")
 	out["token"] = token
+	s.publishAgentChanged(c.Request.Context(), wsID, pgtype.UUID{}, "invites")
 	c.JSON(http.StatusCreated, out)
 }
 
@@ -573,10 +609,16 @@ func (s *Service) handleDeleteInvite(c *gin.Context) {
 	if !ok {
 		return
 	}
+	inv, err := s.q.GetAgentInviteByID(c.Request.Context(), id)
+	if err != nil {
+		httpx.Error(c, http.StatusNotFound, "not_found", "invite not found")
+		return
+	}
 	if err := s.q.DeleteAgentInvite(c.Request.Context(), id); err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
+	s.publishAgentChanged(c.Request.Context(), inv.WorkspaceID, pgtype.UUID{}, "invites")
 	c.Status(http.StatusNoContent)
 }
 
@@ -677,6 +719,7 @@ func (s *Service) handleRedeemInvite(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
+	s.publishAgentChanged(c.Request.Context(), inv.WorkspaceID, agent.ID, "created")
 	scheme := "http"
 	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
 		scheme = "https"

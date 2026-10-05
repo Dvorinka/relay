@@ -27,15 +27,19 @@ cat > "$apps/relay.desktop" <<EOF
 [Desktop Entry]
 Name=Relay
 Comment=Relay desktop client
-Exec=$bin/relay-desktop
+Exec=$bin/relay-desktop %u
 Icon=relay
 Type=Application
 Categories=Network;Chat;
 StartupWMClass=relay-desktop
+MimeType=x-scheme-handler/relay;
 EOF
 
 command -v update-desktop-database >/dev/null 2>&1 &&
 	update-desktop-database "$apps" || true
+# relay:// deep links — browser "open in app" actions resolve to this entry.
+command -v xdg-mime >/dev/null 2>&1 &&
+	xdg-mime default relay.desktop x-scheme-handler/relay || true
 command -v gtk-update-icon-cache >/dev/null 2>&1 &&
 	gtk-update-icon-cache -q "$data/icons/hicolor" 2>/dev/null || true
 

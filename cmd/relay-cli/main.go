@@ -249,6 +249,14 @@ func asMap(v any) anyMap {
 	return nil
 }
 
+// unreadSuffix renders " (N unread)" when the row carries an unread_count.
+func unreadSuffix(m anyMap) string {
+	if n := num(m["unread_count"]); n > 0 {
+		return fmt.Sprintf("  (%d unread)", n)
+	}
+	return ""
+}
+
 func num(v any) int {
 	switch n := v.(type) {
 	case float64:
@@ -288,12 +296,13 @@ func render(kind string, raw json.RawMessage) {
 	case "projects":
 		for _, p := range rows("projects") {
 			m := asMap(p)
-			fmt.Printf("%-8s %-24s %s\n", str(m, "key"), str(m, "name"), str(m, "id"))
+			fmt.Printf("%-8s %-24s %s%s\n", str(m, "key"), str(m, "name"), str(m, "id"),
+				unreadSuffix(m))
 		}
 	case "conversations":
 		for _, c := range rows("conversations") {
 			m := asMap(c)
-			fmt.Printf("%s  %s\n", str(m, "id"), str(m, "kind"))
+			fmt.Printf("%s  %s%s\n", str(m, "id"), str(m, "kind"), unreadSuffix(m))
 		}
 	case "messages":
 		msgs := rows("messages")
@@ -321,6 +330,9 @@ func render(kind string, raw json.RawMessage) {
 			}
 			for _, t := range list(m, "tags") {
 				suffix += fmt.Sprintf("  #%v", t)
+			}
+			if m["was_unread"] == true {
+				suffix += "  [new]"
 			}
 			fmt.Printf("%s %s  %s\n%s%s\n\n", str(m, "id"), name,
 				fmtTime(m["created_at"]), str(m, "body"), suffix)

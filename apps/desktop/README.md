@@ -50,8 +50,26 @@ makensis -DVERSION=1.0.0 -DVI_VERSION=1.0.0.0 \
   installer/relay.nsi
 ```
 
-The release workflow produces `Relay-Setup-<version>.exe` alongside the raw
-`relay-desktop-windows-amd64.exe` on every `v*` tag.
+The release workflow produces `Relay-Setup-<version>.exe` on every `v*`
+tag (the loose desktop exe is a build input, not shipped). The installer
+also registers the `relay://` URL scheme per-user
+(`HKCU\Software\Classes\relay`) — `relay://open/<path>` launches the app
+on that route, and a second-instance launch forwards the URL to the
+running window as the `relay:deeplink` event. Uninstall removes the key.
+
+## Self-update
+
+"Check for updates" in the rail compares GitHub's latest tag against the
+binary's own stamp (`-ldflags -X main.version=<tag>`, reported through
+`App.Version()`) — not the SPA bundle, which the proxy serves from the
+*server's* build. `App.SelfUpdate(tag)` then:
+
+- **Windows**: downloads `Relay-Setup-<ver>.exe`, runs it `/S /SELFUPDATE`.
+  `.onInit` taskkills the running app, the silent install overwrites it,
+  and `.onInstSuccess` relaunches the new exe.
+- **Linux**: downloads `relay-desktop-<ver>-linux-amd64`, renames it over
+  the running binary, and a detached `sh` waiter re-execs it once this
+  process exits (avoids the single-instance lock eating the relaunch).
 
 ## Sign-in
 
@@ -112,5 +130,3 @@ ignored. The mark renders from `assets/brand/kit/relay-mark-accent-app-icon.svg`
 
 - System tray & global screenshot hotkey — need OS-specific hooks that
   don't fit the thin-shell model; revisit with a tray lib after 1.0.
-- `relay://` deep links — needs platform registration (documented in
-  docs/DESKTOP.md when it lands).

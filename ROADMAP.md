@@ -120,21 +120,24 @@ no admin).
 
 - Wails v2 shell proxying to the configured server — Linux/Windows
   (macOS supported by the same code path via `wails build -platform darwin`)
-- System tray, notifications, deep links, global screenshot shortcut:
-  deferred (see apps/desktop/README.md for the honest why)
+- `relay://` scheme registered by both installers; cold-start argv and
+  second-instance launches reach the SPA as `relay:deeplink` events,
+  routed to `/connect`/`/app`/`/login`/`/register` only
+- In-app self-update (Windows silent NSIS, Linux binary swap + re-exec);
+  update checks compare the binary's stamped version via `App.Version()`
+- System tray, global screenshot shortcut: deferred
+  (see apps/desktop/README.md for the honest why)
 
 ## Phase 10 - Android (Expo) ☑
 
-`apps/mobile` — Expo 57 / React Native + Expo Router, verified live on an
-Android emulator end-to-end: login with configurable server URL, session
-persisted in AsyncStorage across cold starts, projects list, project
-conversation with composer + image attach, issues list with
-tap-to-advance status, agent work list.
+`apps/mobile` — Expo 57 / React Native + Expo Router as a WebView shell
+over the server's web UI: one connect screen, then the full web app with
+cookies/localStorage persisting sign-in, hardware-back navigation, and
+`relay://` deep links routing into web paths. The earlier hand-built
+native screens were retired — parity with the web UI is now structural,
+not a chase. APK filenames carry the version; CI builds arm64-v8a only.
 
-- Session cookie captured from `Set-Cookie` and reattached manually —
-  RN's cookie jar does not persist across force-stops
-- `relay://` scheme, `usesCleartextTraffic` for self-hosted http servers
-- Push notifications, deep-link routes, EAS/iOS builds: deferred
+- Push notifications, EAS/iOS builds: deferred
   (see apps/mobile/README.md)
 
 ## Phase 11 - Hardening & 1.0 ☑

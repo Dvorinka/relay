@@ -16,9 +16,11 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -87,6 +89,125 @@ func (a *App) startup(ctx context.Context) {
 		wailsruntime.WindowSetTitle(ctx, "Relay")
 	}
 	installToastCallback(a)
+	// Cold start from a relay:// link — the SPA listens for this event and
+	// routes to it (registered by the OS scheme handler at install time).
+	if link := deepLinkArg(os.Args[1:]); link != "" {
+		a.emitDeepLink(link)
+	}
+}
+
+// emitDeepLink hands a relay:// URL to the webview. The SPA may not have
+// finished loading, so emit after a short delay as well — listeners attach
+// during boot and wails queues nothing.
+func (a *App) emitDeepLink(raw string) {
+	if a.ctx == nil {
+		return
+	}
+	wailsruntime.EventsEmit(a.ctx, "relay:deeplink", raw)
+	go func() {
+		time.Sleep(1200 * time.Millisecond)
+		wailsruntime.EventsEmit(a.ctx, "relay:deeplink", raw)
+	}()
+}
+
+// Version reports the binary's release tag ("dev" on plain builds). Bound as
+// window.go.main.App.Version so update checks compare the thing that actually
+// gets reinstalled — not the SPA bundle, which can come from the server.
+func (a *App) Version() string {
+	return version
+}
+
+// Platform reports runtime.GOOS — bound so the SPA can offer self-update only
+// where the Go side implements it.
+func (a *App) Platform() string {
+	return runtime.GOOS
+}
+
+// SelfUpdate downloads the release asset for this platform and installs it.
+// Bound as window.go.main.App.SelfUpdate(tag). Windows runs the NSIS setup
+// silent — it taskkills this process, reinstalls, and relaunches via
+// /SELFUPDATE. Linux swaps the binary in place and re-execs. The SPA only
+// offers the button on supported platforms.
+func (a *App) SelfUpdate(tag string) error {
+	tag = strings.TrimSpace(tag)
+	if !tagRe.MatchString(tag) {
+		return errors.New("invalid release tag")
+	}
+	ver := strings.TrimPrefix(tag, "v")
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if exe, err = filepath.EvalSymlinks(exe); err != nil {
+		return err
+	}
+	const repo = "https://github.com/Dvorinka/relay/releases/download"
+	switch runtime.GOOS {
+	case "windows":
+		tmp := filepath.Join(os.TempDir(), "Relay-Setup-"+ver+".exe")
+		if err := downloadFile(tmp, repo+"/"+tag+"/Relay-Setup-"+ver+".exe"); err != nil {
+			return err
+		}
+		// /S silent + /SELFUPDATE: the installer kills this exe, installs, and
+		// its .onInstSuccess relaunches us — fully unattended.
+		if err := exec.Command(tmp, "/S", "/SELFUPDATE").Start(); err != nil {
+			return err
+		}
+	case "linux":
+		tmp := exe + ".new"
+		if err := downloadFile(tmp, repo+"/"+tag+"/relay-desktop-"+ver+"-linux-amd64"); err != nil {
+			return err
+		}
+		if err := os.Chmod(tmp, 0o755); err != nil {
+			return err
+		}
+		// Rename over a running binary is legal on Linux; the old inode stays
+		// mapped until the process exits.
+		if err := os.Rename(tmp, exe); err != nil {
+			return err
+		}
+		// A direct Start() races the single-instance lock: the child sees us
+		// still running, forwards its args to the dying process, and exits —
+		// nothing left running. Wait for our exit before re-execing.
+		wait := fmt.Sprintf(
+			"while kill -0 %d 2>/dev/null; do sleep 0.2; done; exec '%s'",
+			os.Getpid(), strings.ReplaceAll(exe, "'", `'\''`))
+		if err := exec.Command("sh", "-c", wait).Start(); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("self-update not supported on %s", runtime.GOOS)
+	}
+	a.Quit()
+	return nil
+}
+
+var tagRe = regexp.MustCompile(`^v?\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$`)
+
+// downloadFile streams a release asset to disk. GitHub release downloads 302
+// to the CDN — the default client follows redirects.
+func downloadFile(dst, rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Scheme != "https" {
+		return errors.New("refusing non-https download")
+	}
+	resp, err := http.Get(rawURL)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download failed: HTTP %d", resp.StatusCode)
+	}
+	f, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(f, io.LimitReader(resp.Body, 512<<20)); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // Quit is bound on window.go.main.App — the only way out while

@@ -35,6 +35,9 @@ type WailsApp = {
   Notify?: (title: string, body: string) => Promise<void>;
   Quit?: () => Promise<void>;
   ServerConfig?: () => Promise<{ server_url?: string; offline?: boolean }>;
+  Version?: () => Promise<string>;
+  Platform?: () => Promise<string>;
+  SelfUpdate?: (tag: string) => Promise<void>;
 };
 
 function wailsApp(): WailsApp | undefined {
@@ -203,4 +206,76 @@ export async function desktopSetBackground(on: boolean): Promise<void> {
 // window. Bound as window.go.main.App.Quit.
 export function desktopQuit(): void {
   void wailsApp()?.Quit?.();
+}
+
+// The desktop binary's own release tag — what "update available" should be
+// measured against inside the shell. The proxied SPA carries the SERVER's
+// build version, which is a different artifact. null outside the shell or
+// on builds predating the binding.
+export async function desktopVersion(): Promise<string | null> {
+  const app = wailsApp();
+  if (typeof app?.Version !== "function") return null;
+  try {
+    return await app.Version();
+  } catch {
+    return null;
+  }
+}
+
+export type DesktopPlatform = "windows" | "linux" | "darwin" | null;
+
+export async function desktopPlatform(): Promise<DesktopPlatform> {
+  const app = wailsApp();
+  if (typeof app?.Platform !== "function") return null;
+  try {
+    const p = await app.Platform();
+    return p === "windows" || p === "linux" || p === "darwin" ? p : null;
+  } catch {
+    return null;
+  }
+}
+
+// Self-update: download the platform installer/binary for `tag` and swap it
+// in. The shell exits mid-call — the new version relaunches itself. Only
+// resolves on failure; on success the process is already gone.
+export async function desktopSelfUpdate(tag: string): Promise<void> {
+  const app = wailsApp();
+  if (typeof app?.SelfUpdate !== "function") {
+    throw new Error("this desktop build cannot self-update");
+  }
+  await app.SelfUpdate(tag);
+}
+
+// relay:// deep links arrive as wails events ("relay:deeplink"). Emitted once
+// at startup and again ~1.2s later because listeners attach after the webview
+// finishes loading — handlers must be idempotent.
+export function onDeepLink(cb: (url: string) => void): () => void {
+  const rt = (
+    window as unknown as {
+      runtime?: { EventsOn?: (n: string, cb: (d: string) => void) => void };
+    }
+  ).runtime;
+  if (typeof rt?.EventsOn !== "function") return () => {};
+  rt.EventsOn("relay:deeplink", cb);
+  // Wails v2 has no EventsOff return contract here; the listener is
+  // process-lifetime anyway (registered once at module scope).
+  return () => {};
+}
+
+// Map a relay:// URL to an app route. Grammar: relay://open/<path> or
+// relay://open?to=<path> — anything else (host-shaped URLs from the OS) is
+// folded to /connect for safety instead of navigating blind.
+export function deepLinkRoute(raw: string): string | null {
+  const m = /^relay:\/\/(?:open\/)?(.*)$/.exec(raw.trim());
+  if (!m) return null;
+  let rest = m[1] ?? "";
+  if (rest.startsWith("open?to=")) rest = decodeURIComponent(rest.slice(8));
+  rest = rest.replace(/^\/+/, "");
+  const path = "/" + rest.split("?")[0];
+  const query = rest.includes("?") ? "?" + rest.split("?").slice(1).join("?") : "";
+  // Only in-app surfaces — never let a link jump us to /login-ish or API paths.
+  const allowed = ["/connect", "/app", "/login", "/register"];
+  return allowed.some((p) => path === p || path.startsWith(p + "/"))
+    ? path + query
+    : "/connect";
 }

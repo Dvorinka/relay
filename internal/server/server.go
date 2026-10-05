@@ -72,6 +72,7 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	issueSvc.Bus = hub
 	todoSvc.Bus = hub
 	reviewSvc.Bus = hub
+	agentSvc.Bus = hub
 	rtSvc := realtime.NewService(hub, pool)
 	searchSvc := search.NewService(pool)
 	hookSvc := webhooks.NewService(log, pool, cfg.PublicURL)

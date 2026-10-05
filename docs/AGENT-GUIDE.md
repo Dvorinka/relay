@@ -110,8 +110,10 @@ human to grant more rather than retrying.
 ## 4. The workflow users expect
 
 ```
-1. list_projects            → find the project (id + key, e.g. REL)
-2. get_messages             → read the conversation BEFORE acting
+1. list_projects            → find the project (id + key, e.g. REL);
+                              unread_count shows where new messages wait
+2. get_messages             → read the conversation BEFORE acting;
+                              was_unread flags what was new to you
 3. list_issues / todo_list  → the tracked work
 4. work_start               → status message + progress thread
 5. todo_sync                → mirror your task list (call on every change)
@@ -187,11 +189,11 @@ The app should show your progress *as it happens*, not a report at the end:
 
 | MCP tool | relay-cli | Purpose |
 |---|---|---|
-| `list_projects` | `projects` | granted projects |
+| `list_projects` | `projects` | granted projects + `unread_count` each |
 | `get_project` | — | one project |
-| `list_conversations` | `conversations <pid>` | threads in a project |
-| `get_messages` | `messages <pid|cid> [--limit] [--tags t]` | read a conversation; `--tags` filters by tag |
-| `get_message` | `read <mid>` | one message + mark read |
+| `list_conversations` | `conversations <pid>` | threads in a project + `unread_count` each |
+| `get_messages` | `messages <pid|cid> [--limit] [--tags t]` | read a conversation; `--tags` filters; each message carries `was_unread` — fetching marks read, so capture it before acting |
+| `get_message` | `read <mid>` | one message + `was_unread` + mark read |
 | `search_messages` | `search <pid> "query"` | FTS + `from:` `in:` `has:image` `has:file` `before:` `after:` |
 | `send_message` | `say <pid> "text" [--reply mid] [--tags a,b] [--attach f]` | post (project or conversation id); `tags` classifies, `silent` skips notifications |
 | `request_input` | `ask <mid> <user> "question"` | thread + @mention, tagged `needs-input` |

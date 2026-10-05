@@ -120,6 +120,37 @@ select m.id, sqlc.arg(agent_id) from messages m
 where m.id = any(sqlc.arg(ids)::uuid[]) and m.deleted_at is null
 on conflict (message_id, agent_id) where agent_id is not null do nothing;
 
+-- name: AgentOwnReadMessageIDs :many
+-- which of the given messages this agent already read — lets get_messages
+-- flag what was new before the fetch marks everything read
+select r.message_id from message_reads r
+where r.agent_id = sqlc.arg(agent_id) and r.message_id = any(sqlc.arg(ids)::uuid[]);
+
+-- name: AgentConversationUnread :many
+-- unread count per conversation for this agent; own posts don't count
+select m.conversation_id, count(*)::int as unread
+from messages m
+join conversations c on c.id = m.conversation_id
+where c.project_id = sqlc.arg(project_id)
+  and m.deleted_at is null
+  and (m.author_agent_id is null or m.author_agent_id <> sqlc.arg(agent_id))
+  and not exists (
+    select 1 from message_reads r
+    where r.message_id = m.id and r.agent_id = sqlc.arg(agent_id))
+group by m.conversation_id;
+
+-- name: AgentProjectUnread :many
+-- unread count per project across all its conversations, for this agent
+select c.project_id, count(*)::int as unread
+from messages m
+join conversations c on c.id = m.conversation_id
+where m.deleted_at is null
+  and (m.author_agent_id is null or m.author_agent_id <> sqlc.arg(agent_id))
+  and not exists (
+    select 1 from message_reads r
+    where r.message_id = m.id and r.agent_id = sqlc.arg(agent_id))
+group by c.project_id;
+
 -- name: MessageInConversation :one
 select id from messages
 where id = sqlc.arg(id) and conversation_id = sqlc.arg(conversation_id)

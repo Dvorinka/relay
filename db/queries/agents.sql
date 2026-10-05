@@ -169,6 +169,9 @@ update agent_invites set used_by = sqlc.arg(used_by)
 where id = sqlc.arg(id) and used_by is null
 returning *;
 
+-- name: GetAgentInviteByID :one
+select * from agent_invites where id = sqlc.arg(id);
+
 -- name: DeleteAgentInvite :exec
 delete from agent_invites where id = sqlc.arg(id);
 

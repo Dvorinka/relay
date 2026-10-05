@@ -120,12 +120,19 @@ the workspace owner.
 
 Prebuilt artifacts: `ghcr.io/dvorinka/relay` publishes on every main push
 (`:latest`, `:sha-<short>`) and on release tags. `v*` tags cut a GitHub
-release with the server + CLI binaries (linux/windows/darwin), the Wails
-desktop app (`relay-desktop-*`, plus the per-user `Relay-Setup-<ver>.exe`
-Windows installer — Start Menu/Desktop shortcuts, WebView2 bootstrap,
-optional relay-cli component on by default, no admin needed), and a signed
-release `relay-android.apk` (see
-[apps/mobile](apps/mobile) for signing setup).
+release whose filenames carry the version: `relay-<ver>-linux-amd64`
+(server), `relay-cli-<ver>-{linux-amd64,darwin-arm64,windows-amd64.exe}`
+(plus unversioned `relay-cli-*` aliases so `releases/latest/download/…`
+stays scriptable), `relay-desktop-<ver>-linux-amd64`, the per-user
+`Relay-Setup-<ver>.exe` Windows installer (Start Menu/Desktop shortcuts,
+WebView2 bootstrap, `relay://` deep-link registration, relay-cli component
+on by default, no admin needed), and a signed `relay-android-<ver>.apk`
+(see [apps/mobile](apps/mobile) for signing setup).
+
+The desktop app self-updates: **Check for updates** in the rail offers
+"install now" — silent NSIS setup on Windows (relaunches itself), in-place
+binary swap on Linux. `relay://open/<path>` links registered by the
+installers deep-link into the desktop app.
 
 For local development (Go 1.24+, Node 20+, `just`):
 

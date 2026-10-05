@@ -3,6 +3,12 @@
 // server reports its own via /health. Update checks hit the GitHub releases
 // API and are cached briefly to stay under rate limits.
 import { createSignal } from "solid-js";
+import {
+  desktopPlatform,
+  desktopSelfUpdate,
+  desktopVersion,
+  isDesktop,
+} from "./desktop";
 import { net } from "./net";
 
 export const appVersion: string =
@@ -14,6 +20,22 @@ const [checking, setChecking] = createSignal(false);
 const [checked, setChecked] = createSignal(false);
 const [checkError, setCheckError] = createSignal(false);
 
+// What update checks compare against: inside the desktop shell the binary's
+// own tag (the thing the installer replaces); in a plain browser the SPA's
+// stamped version, which IS the server build.
+const [clientVersion, setClientVersion] = createSignal(appVersion);
+const [platform, setPlatform] = createSignal<DesktopPlatformLike>(null);
+const [installing, setInstalling] = createSignal(false);
+const [installError, setInstallError] = createSignal<string | null>(null);
+type DesktopPlatformLike = "windows" | "linux" | "darwin" | null;
+
+if (isDesktop()) {
+  void desktopVersion().then((v) => {
+    if (v) setClientVersion(v);
+  });
+  void desktopPlatform().then(setPlatform);
+}
+
 const RELEASES_URL =
   "https://api.github.com/repos/Dvorinka/relay/releases/latest";
 export const RELEASES_PAGE = "https://github.com/Dvorinka/relay/releases/latest";
@@ -21,11 +43,44 @@ const CACHE_KEY = "relay.latestRelease";
 const CACHE_MS = 5 * 60 * 1000;
 
 export function useVersion() {
-  return { appVersion, serverVersion };
+  return { appVersion, serverVersion, clientVersion };
 }
 
 export function useUpdates() {
-  return { latest, checking, checked, checkError, updateAvailable };
+  return {
+    latest,
+    checking,
+    checked,
+    checkError,
+    updateAvailable,
+    canSelfUpdate,
+    installing,
+    installError,
+    installUpdate,
+  };
+}
+
+// Self-update exists where the Go side implements it: Windows (silent NSIS)
+// and Linux (binary swap). macOS isn't shipped.
+export function canSelfUpdate(): boolean {
+  const p = platform();
+  return p === "windows" || p === "linux";
+}
+
+// installUpdate runs the shell's self-update. It never resolves on success —
+// the process exits and the new version relaunches — so callers just reflect
+// "installing" until the window vanishes.
+export async function installUpdate() {
+  const tag = latest();
+  if (!tag || installing() || !canSelfUpdate()) return;
+  setInstalling(true);
+  setInstallError(null);
+  try {
+    await desktopSelfUpdate(tag);
+  } catch (e) {
+    setInstalling(false);
+    setInstallError(e instanceof Error ? e.message : "update failed");
+  }
 }
 
 /** Fetch the connected server's build version. No-op in local mode. */
@@ -49,11 +104,11 @@ export function parseTag(v: string): number[] | null {
   return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
 }
 
-/** True when the fetched latest release is newer than this build. */
+/** True when the fetched latest release is newer than the client build. */
 export function updateAvailable(): boolean {
   const l = latest();
   if (!l) return false;
-  const a = parseTag(appVersion);
+  const a = parseTag(clientVersion());
   const b = parseTag(l);
   if (!a || !b) return false; // dev builds can't be compared
   for (let i = 0; i < 3; i++) {
