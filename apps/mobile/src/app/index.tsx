@@ -96,7 +96,19 @@ export default function Shell() {
 
   // relay:// links (registered in app.json) open routes inside the web UI.
   // relay://server is the escape hatch back to the connect screen now that
-  // the shell has no visible chrome.
+  // the shell has no visible chrome. A link arriving before the WebView has
+  // loaded is queued — injectJavaScript into a blank page is discarded.
+  const webReady = useRef(false);
+  const pendingLink = useRef<string | null>(null);
+  const applyDeepLink = useCallback(
+    (raw: string) => {
+      if (!server) return;
+      web.current?.injectJavaScript(
+        `location.href=${JSON.stringify(server + deepLinkPath(raw))};true;`,
+      );
+    },
+    [server],
+  );
   const openDeepLink = useCallback(
     (raw: string | null) => {
       if (!raw) return;
@@ -108,11 +120,10 @@ export default function Shell() {
         return;
       }
       if (!server) return;
-      web.current?.injectJavaScript(
-        `location.href=${JSON.stringify(server + deepLinkPath(raw))};true;`,
-      );
+      if (webReady.current) applyDeepLink(raw);
+      else pendingLink.current = raw;
     },
-    [server],
+    [server, applyDeepLink],
   );
   useEffect(() => {
     void Linking.getInitialURL().then(openDeepLink);
@@ -150,6 +161,15 @@ export default function Shell() {
         setSupportMultipleWindows={false}
         sharedCookiesEnabled
         onNavigationStateChange={(nav) => setCanGoBack(nav.canGoBack)}
+        onLoadStart={() => {
+          webReady.current = false;
+        }}
+        onLoadEnd={() => {
+          webReady.current = true;
+          const raw = pendingLink.current;
+          pendingLink.current = null;
+          if (raw) applyDeepLink(raw);
+        }}
         onShouldStartLoadWithRequest={(req) => {
           // Same-origin stays inside; anything else goes to the real
           // browser (auth providers, downloads, external links).
