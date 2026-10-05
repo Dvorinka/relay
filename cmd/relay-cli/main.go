@@ -934,11 +934,30 @@ Environment: RELAY_URL, RELAY_TOKEN.
 			fail(err)
 		}
 		var meta struct {
-			URL string `json:"download_url"`
+			URL  string `json:"download_url"`
+			Data string `json:"data_base64"`
 		}
 		_ = json.Unmarshal(res, &meta)
+		// Inline bytes don't depend on the public storage endpoint —
+		// prefer them whenever the server shipped them.
+		if meta.Data != "" && *flagOut != "" {
+			raw, err := base64.StdEncoding.DecodeString(meta.Data)
+			if err != nil {
+				fail("decode attachment:", err)
+			}
+			if err := os.WriteFile(*flagOut, raw, 0o644); err != nil {
+				fail(err)
+			}
+			fmt.Println("saved to", *flagOut)
+			return
+		}
 		if meta.URL == "" {
-			emit(res)
+			var m anyMap
+			_ = json.Unmarshal(res, &m)
+			delete(m, "data_base64")
+			m["hint"] = "bytes were inlined — pass --out <file> to save"
+			out, _ := json.Marshal(m)
+			emit(out)
 			return
 		}
 		if *flagOut == "" {

@@ -173,8 +173,11 @@ Rules of engagement:
 - **File the review.** `submit_review` is how humans approve work —
   see the schema in [docs/CLI.md](../../docs/CLI.md#reviews). In `gate` mode, call
   `await_review` afterwards and act on the verdict.
-- **Images count.** `get_attachment` downloads attachment bytes — read
-  screenshots and pasted images, don't guess at them. Users mark pasted
+- **Images count.** `get_attachment` returns the bytes inline as
+  `data_base64` (a presigned `download_url` is included for files too
+  large to inline — it expires within minutes and may be unreachable on
+  some deployments, so always prefer the inline data). Read screenshots
+  and pasted images, don't guess at them. Users mark pasted
   images `[image 1]`, `[image 2]`, … in the text — the number maps to the
   image attachment's position. Send images back the same way:
   `upload_attachment` (base64) returns an id — pass it to `send_message`

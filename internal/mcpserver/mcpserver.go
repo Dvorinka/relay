@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"path"
@@ -891,14 +892,34 @@ func (s *Service) getAttachment(ctx context.Context, req mcp.CallToolRequest) (*
 	if s.store == nil {
 		return mcp.NewToolResultError("storage not configured"), nil
 	}
-	url, err := s.store.PresignGet(ctx, a.StorageKey, a.Filename, a.ContentType)
-	if err != nil {
-		return errResult(err)
-	}
-	return jsonResult(gin.H{
+	out := gin.H{
 		"id": a.ID, "filename": a.Filename, "content_type": a.ContentType,
-		"size_bytes": a.SizeBytes, "download_url": url,
-	})
+		"size_bytes": a.SizeBytes,
+	}
+	// Presigned URLs only work when the public storage endpoint is reachable
+	// — often it isn't (dev, NAT, misconfigured deploys). Inline the bytes so
+	// agents always get the file; past the cap fall back to the URL.
+	const inlineMax = 8 << 20
+	if a.SizeBytes <= inlineMax {
+		obj, err := s.store.Get(ctx, a.StorageKey)
+		if err != nil {
+			return errResult(err)
+		}
+		data, err := io.ReadAll(obj)
+		_ = obj.Close()
+		if err != nil {
+			return errResult(err)
+		}
+		out["data_base64"] = base64.StdEncoding.EncodeToString(data)
+	} else {
+		url, err := s.store.PresignGet(ctx, a.StorageKey, a.Filename, a.ContentType)
+		if err != nil {
+			return errResult(err)
+		}
+		out["download_url"] = url
+		out["note"] = "too large to inline — fetch download_url within its expiry"
+	}
+	return jsonResult(out)
 }
 
 // messageJSONFull is messageJSON plus the attachments list — used wherever a
