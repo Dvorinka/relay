@@ -195,10 +195,25 @@ function profileClick(e: MouseEvent, id: string, kind: string) {
 }
 
 // The reply strip above a replied message: curved arrow + parent author +
-// one-line snippet. Deleted parents render a muted placeholder.
-function ReplyStrip(props: { parent: NonNullable<Message["parent"]> }) {
+// one-line snippet. Clicking jumps to the original (pages history until it
+// mounts). Deleted parents render a muted, non-clickable placeholder.
+function ReplyStrip(props: {
+  parent: NonNullable<Message["parent"]>;
+  onJump?: (messageId: string) => void;
+}) {
   return (
-    <div class="mb-0.5 flex min-w-0 items-center gap-1.5 text-[12px] text-muted">
+    <div
+      class={`mb-0.5 flex min-w-0 items-center gap-1.5 text-[12px] text-muted ${
+        !props.parent.deleted && props.onJump
+          ? "-mx-1 w-fit max-w-full cursor-pointer rounded px-1 transition-colors hover:bg-hover"
+          : ""
+      }`}
+      role={!props.parent.deleted && props.onJump ? "button" : undefined}
+      title={!props.parent.deleted ? "Jump to original message" : undefined}
+      onClick={() => {
+        if (!props.parent.deleted) props.onJump?.(props.parent.id);
+      }}
+    >
       <ReplyIcon class="h-3.5 w-3.5 shrink-0 text-faint" />
       <Show
         when={!props.parent.deleted}
@@ -901,6 +916,7 @@ function MessageRow(props: {
   onReply: (m: Message) => void;
   onChanged: (m: Message) => void;
   onDeleted: (id: string) => void;
+  onJumpTo?: (messageId: string) => void;
   onOpenThread?: (t: ThreadSummary) => void;
   onOpenThreads?: () => void;
   onTagClick?: (tag: string) => void;
@@ -1149,7 +1165,7 @@ function MessageRow(props: {
           : `group relative flex gap-3 px-4 hover:bg-hover/60 ${
               props.grouped ? "py-[2px]" : "mt-3 py-1"
             }`) +
-        (props.highlighted ? " rounded-xl bg-accent-soft/60 transition-colors" : " transition-colors")
+        (props.highlighted ? " rounded-xl bg-hover transition-colors" : " transition-colors")
       }
       onClick={(e) => {
         if (window.matchMedia("(hover: none)").matches &&
@@ -1275,7 +1291,9 @@ function MessageRow(props: {
             </div>
           )}
         </Show>
-        <Show when={m().parent}>{(p) => <ReplyStrip parent={p()} />}</Show>
+        <Show when={m().parent}>
+          {(p) => <ReplyStrip parent={p()} onJump={props.onJumpTo} />}
+        </Show>
         <Show
           when={editing()}
           fallback={
@@ -2743,6 +2761,7 @@ function ConversationThread(props: {
                     onReply={startReply}
                     onChanged={replaceMessage}
                     onDeleted={removeMessage}
+                    onJumpTo={jumpTo}
                     onOpenThread={props.onOpenThread}
                     onOpenThreads={() => setThreadsOpen(true)}
                     onTagClick={(t) => setTagFilter(t)}
