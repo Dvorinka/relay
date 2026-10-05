@@ -12,7 +12,6 @@
     },
     "android": {
       "package": "dev.tdvorak.relay",
-      "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "backgroundColor": "#0a0a0b",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -26,7 +25,15 @@
     },
     "plugins": [
       "expo-router",
-      "./plugins/withReleaseSigning"
+      "./plugins/withReleaseSigning",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
     ]
   }
 }
