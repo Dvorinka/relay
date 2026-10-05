@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Dvorinka/relay/internal/agentdoc"
@@ -181,9 +182,19 @@ func mountStatic(r *gin.Engine, dir string) {
 	if _, err := os.Stat(index); err != nil {
 		return // no bundle (dev mode serves the SPA via Vite)
 	}
+	// Hashed assets are immutable — a year of cache is safe. Everything else
+	// (index.html fallbacks) must revalidate so a deploy can't leave clients
+	// on a stale bundle.
+	r.Use(func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/assets/") {
+			c.Header("Cache-Control", "public, max-age=31536000, immutable")
+		}
+		c.Next()
+	})
 	r.Static("/assets", filepath.Join(dir, "assets"))
 	r.StaticFile("/favicon.svg", filepath.Join(dir, "favicon.svg"))
 	r.NoRoute(func(c *gin.Context) {
+		c.Header("Cache-Control", "no-cache")
 		name := path.Clean("/" + c.Request.URL.Path)
 		if info, err := os.Stat(filepath.Join(dir, name)); err == nil && info.Mode().IsRegular() {
 			c.File(filepath.Join(dir, name))
