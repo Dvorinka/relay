@@ -431,12 +431,14 @@ export function createClient(baseUrl: string, token?: string) {
       attachmentIds?: string[],
       parentId?: string,
       tags?: string[],
+      silent?: boolean,
     ) =>
       post<Message>(`/api/conversations/${conversationId}/messages`, {
         body,
         attachment_ids: attachmentIds,
         parent_id: parentId,
         ...(tags && tags.length ? { tags } : {}),
+        ...(silent ? { silent } : {}),
       }),
     editMessage: (messageId: string, body: string, attachmentIds?: string[]) =>
       patch<Message>(`/api/messages/${messageId}`, {

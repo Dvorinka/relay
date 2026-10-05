@@ -177,8 +177,8 @@ where id = sqlc.arg(id) and deleted_at is null
 returning id, conversation_id;
 
 -- name: CreateMessage :one
-insert into messages (conversation_id, author_user_id, body, parent_id, mentions, forwarded_from, tags)
-values ($1, $2, $3, sqlc.narg(parent_id), coalesce(sqlc.narg(mentions), '[]'::jsonb), sqlc.narg(forwarded_from), coalesce(sqlc.narg(tags), '{}'::text[]))
+insert into messages (conversation_id, author_user_id, body, parent_id, mentions, forwarded_from, tags, silent)
+values ($1, $2, $3, sqlc.narg(parent_id), coalesce(sqlc.narg(mentions), '[]'::jsonb), sqlc.narg(forwarded_from), coalesce(sqlc.narg(tags), '{}'::text[]), coalesce(sqlc.narg(silent), false))
 returning id;
 
 -- name: CopyMessageAttachments :exec

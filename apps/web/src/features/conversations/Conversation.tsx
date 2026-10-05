@@ -69,6 +69,23 @@ const MAX_ATTACHMENTS = 20;
 // Quick-react set on the hover toolbar.
 const QUICK_REACTIONS = ["👀", "✅", "❤️", "🎉"];
 
+// Slash commands typed at the start of a draft. `args` marks commands that
+// need a tail ("/todo buy milk"); the composer suggests these when the text
+// starts with "/" and dispatches them in send().
+const SLASH_COMMANDS: { name: string; desc: string; args?: string }[] = [
+  { name: "todo", desc: "add a task to this project", args: "<task>" },
+  { name: "issue", desc: "create an issue and link it here", args: "<title>" },
+  { name: "silent", desc: "post without notifying anyone", args: "<message>" },
+  { name: "me", desc: "post an action line — /me waves", args: "<action>" },
+  { name: "tag", desc: "tag your next message", args: "<tag>" },
+  { name: "inbox", desc: "jump to your inbox" },
+  { name: "board", desc: "open this project's board" },
+  { name: "settings", desc: "open settings" },
+  { name: "projects", desc: "back to the project list" },
+  { name: "clear", desc: "wipe the channel (asks first)" },
+  { name: "new", desc: "fresh start — wipe the channel" },
+];
+
 // Shift+hover expands the toolbar with the heavy actions (pin / copy link /
 // forward), Discord-style. Listeners attach once, lazily.
 const [shiftHeld, setShiftHeld] = createSignal(false);
@@ -1797,6 +1814,7 @@ function ConversationThread(props: {
   onOpenThread?: (t: ThreadSummary) => void;
 }) {
   const session = useSession();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [messages, setMessages] = createSignal<Message[]>([]);
   const [highlightId, setHighlightId] = createSignal<string | null>(null);
@@ -1916,7 +1934,7 @@ function ConversationThread(props: {
   const [localPaths, setLocalPaths] = createSignal<string[] | null>(null);
   const [ghPaths, setGhPaths] = createSignal<string[] | null>(null);
   const [mention, setMention] = createSignal<{
-    kind: "all" | "issue" | "file" | "gh";
+    kind: "all" | "issue" | "file" | "gh" | "cmd";
     part: string;
     start: number;
   } | null>(null);
@@ -2206,6 +2224,14 @@ function ConversationThread(props: {
   // start of a word — emails and prose don't open the menu.
   function detectMention(text: string, caret: number) {
     const before = text.slice(0, caret);
+    // "/" only opens the command menu at the very start of the draft — a
+    // slash mid-sentence (and/or, /usr/bin) is just text.
+    const c = before.match(/^\/([\w-]*)$/);
+    if (c) {
+      setMention({ kind: "cmd", part: c[1] ?? "", start: 0 });
+      setMentionIdx(0);
+      return;
+    }
     const m = before.match(/(?:^|\s)([@#])([\w:./-]*)$/);
     if (!m) {
       setMention(null);
@@ -2235,7 +2261,7 @@ function ConversationThread(props: {
   }
 
   interface MentionItem {
-    icon: "user" | "agent" | "issue" | "pr" | "file";
+    icon: "user" | "agent" | "issue" | "pr" | "file" | "cmd";
     label: string;
     sub?: string;
     insert: string;
@@ -2247,6 +2273,16 @@ function ConversationThread(props: {
     const needle = m.part.toLowerCase();
     const fit = (...hay: (string | undefined)[]) =>
       !needle || hay.some((h) => h?.toLowerCase().includes(needle));
+    if (m.kind === "cmd") {
+      return SLASH_COMMANDS.filter(
+        (c) => !needle || c.name.startsWith(needle),
+      ).map((c) => ({
+        icon: "cmd" as const,
+        label: `/${c.name}${c.args ? " " + c.args : ""}`,
+        sub: c.desc,
+        insert: `/${c.name}`,
+      }));
+    }
     if (m.kind === "file" || m.kind === "gh") {
       const src = m.kind === "file" ? (localPaths() ?? []) : (ghPaths() ?? []);
       return src
@@ -2463,41 +2499,121 @@ function ConversationThread(props: {
     !hasUploading() &&
     (draft().trim().length > 0 || readyIds().length > 0);
 
+  function clearDraft() {
+    setDraft("");
+    setMention(null);
+    if (inputEl) inputEl.style.height = "auto";
+  }
+
   async function send() {
     const body = draft().trim();
     if (!canSend()) {
       return;
     }
-    // Slash commands run locally — never posted as messages. /clear and /new
-    // wipe the channel; /todo adds to the project's work list.
-    const cmd = body.toLowerCase();
-    if (cmd === "/clear" || cmd === "/new") {
-      setDraft("");
-      if (inputEl) inputEl.style.height = "auto";
-      setConfirmClear(cmd === "/new");
-      return;
-    }
-    if (cmd === "/todo" || cmd.startsWith("/todo ")) {
-      const content = body.slice(5).trim();
-      if (!content) {
-        setSendError("Usage: /todo <task>");
-        return;
+    // Slash commands run locally or hit other endpoints — never posted as
+    // plain messages. Unknown "/…" text falls through and posts as-is.
+    if (body.startsWith("/")) {
+      const sp = body.indexOf(" ");
+      const cmd = (sp === -1 ? body : body.slice(0, sp)).toLowerCase();
+      const arg = sp === -1 ? "" : body.slice(sp + 1).trim();
+      const needArg = (usage: string) => {
+        setSendError(`Usage: ${usage}`);
+        return true;
+      };
+      switch (cmd) {
+        case "/clear":
+        case "/new": {
+          clearDraft();
+          setConfirmClear(cmd === "/new");
+          return;
+        }
+        case "/todo": {
+          if (!arg && needArg("/todo <task>")) return;
+          setSending(true);
+          setSendError(null);
+          try {
+            await api.createTodo(props.projectId, arg);
+            clearDraft();
+          } catch (err) {
+            setSendError(
+              err instanceof Error ? err.message : "Could not add todo",
+            );
+          } finally {
+            setSending(false);
+          }
+          return;
+        }
+        case "/issue": {
+          if (!arg && needArg("/issue <title>")) return;
+          setSending(true);
+          setSendError(null);
+          try {
+            const issue = await api.createIssue(props.projectId, {
+              title: arg,
+              status: "backlog",
+              priority: "none",
+            });
+            // Silent provenance line — links the issue without pinging.
+            await api.postMessage(
+              props.conversationId,
+              `created issue [${issue.key} — ${issue.title}](/app/p/${props.projectId}/i/${issue.id})`,
+              undefined,
+              undefined,
+              undefined,
+              true,
+            );
+            clearDraft();
+          } catch (err) {
+            setSendError(
+              err instanceof Error ? err.message : "Could not create issue",
+            );
+          } finally {
+            setSending(false);
+          }
+          return;
+        }
+        case "/silent": {
+          if (!arg && needArg("/silent <message>")) return;
+          await postBody(arg, true);
+          return;
+        }
+        case "/me": {
+          if (!arg && needArg("/me <action>")) return;
+          await postBody(`_${arg}_`, false);
+          return;
+        }
+        case "/tag": {
+          const t = normalizeTag(arg);
+          if (!t) {
+            needArg("/tag <slug>");
+            return;
+          }
+          toggleDraftTag(t);
+          clearDraft();
+          return;
+        }
+        case "/inbox":
+          clearDraft();
+          navigate("/app/inbox");
+          return;
+        case "/board":
+          clearDraft();
+          navigate(`/app/p/${props.projectId}/board`);
+          return;
+        case "/settings":
+          clearDraft();
+          navigate("/app/settings");
+          return;
+        case "/projects":
+          clearDraft();
+          navigate("/app");
+          return;
       }
-      setSending(true);
-      setSendError(null);
-      try {
-        await api.createTodo(props.projectId, content);
-        setDraft("");
-        if (inputEl) inputEl.style.height = "auto";
-      } catch (err) {
-        setSendError(
-          err instanceof Error ? err.message : "Could not add todo",
-        );
-      } finally {
-        setSending(false);
-      }
-      return;
     }
+    await postBody(body, false);
+  }
+
+  async function postBody(body: string, silent: boolean) {
     const ids = readyIds();
     setSendError(null);
     setSending(true);
@@ -2508,6 +2624,7 @@ function ConversationThread(props: {
         ids,
         replyTo()?.id,
         draftTags(),
+        silent,
       );
       // The SSE message.created frame can land before this POST resolves;
       // skip the local append when it already arrived.
@@ -2895,7 +3012,9 @@ function ConversationThread(props: {
                           ? "⑃"
                           : item.icon === "issue"
                             ? "#"
-                            : "◻"}
+                            : item.icon === "cmd"
+                              ? "/"
+                              : "◻"}
                   </span>
                   <span class="truncate font-medium">{item.label}</span>
                   <Show when={item.sub}>
@@ -3009,7 +3128,12 @@ function ConversationThread(props: {
               title="Attach files"
               class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-muted transition-colors hover:bg-hover hover:text-fg"
             >
-              <PaperclipIcon class="h-4.5 w-4.5" />
+              <Show
+                when={hasUploading()}
+                fallback={<PaperclipIcon class="h-4.5 w-4.5" />}
+              >
+                <Spinner class="h-4 w-4 text-accent-ink" />
+              </Show>
             </button>
             <button
               type="button"
@@ -3030,7 +3154,7 @@ function ConversationThread(props: {
               }}
               rows={1}
               value={draft()}
-              placeholder="Message — **bold**, `code`, ``` blocks, or Ctrl+V an image"
+              placeholder="Message"
               aria-label="Message"
               disabled={sending()}
               onInput={(e) => {
@@ -3102,18 +3226,6 @@ function ConversationThread(props: {
             >
               Send
             </button>
-          </div>
-          <div class="flex items-center gap-3 border-t border-border/60 px-3 py-1.5 text-[10.5px] text-faint">
-            <span>Enter send</span>
-            <span>Shift+Enter newline</span>
-            <span>/todo adds a task</span>
-            <span>/clear resets the chat</span>
-            <span>Ctrl+V pastes an image</span>
-            <Show when={hasUploading()}>
-              <span class="ml-auto flex items-center gap-1.5 text-accent-ink">
-                <Spinner class="h-2.5 w-2.5" /> uploading…
-              </span>
-            </Show>
           </div>
         </div>
         <input

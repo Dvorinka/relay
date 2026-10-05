@@ -210,6 +210,7 @@ func (s *Service) handlePostMessage(c *gin.Context) {
 		AttachmentIDs []string `json:"attachment_ids"`
 		ParentID      string   `json:"parent_id"`
 		Tags          []string `json:"tags"`
+		Silent        bool     `json:"silent"`
 	}
 	if !httpx.BindJSON(c, &req) {
 		return
@@ -257,7 +258,7 @@ func (s *Service) handlePostMessage(c *gin.Context) {
 	mj, _ := json.Marshal(refs)
 	id, err := s.q.CreateMessage(c.Request.Context(), db.CreateMessageParams{
 		ConversationID: conv.ID, AuthorUserID: user.ID, Body: req.Body,
-		ParentID: parent, Mentions: mj, Tags: tags,
+		ParentID: parent, Mentions: mj, Tags: tags, Silent: req.Silent,
 	})
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")

@@ -95,9 +95,19 @@ export default function Shell() {
   }, [canGoBack]);
 
   // relay:// links (registered in app.json) open routes inside the web UI.
+  // relay://server is the escape hatch back to the connect screen now that
+  // the shell has no visible chrome.
   const openDeepLink = useCallback(
     (raw: string | null) => {
-      if (!raw || !server) return;
+      if (!raw) return;
+      if (raw.trim().toLowerCase() === "relay://server") {
+        void AsyncStorage.removeItem(STORE_KEY).then(() => {
+          setServer(null);
+          setFailed(false);
+        });
+        return;
+      }
+      if (!server) return;
       web.current?.injectJavaScript(
         `location.href=${JSON.stringify(server + deepLinkPath(raw))};true;`,
       );
@@ -125,31 +135,12 @@ export default function Shell() {
   const host = new URL(server).host;
 
   return (
-    <View style={[styles.fill, { paddingTop: insets.top }]}>
-      <View style={styles.topbar}>
-        <Text style={styles.topbarText} numberOfLines={1}>
-          {host}
-        </Text>
-        <Pressable
-          onPress={() => web.current?.reload()}
-          hitSlop={8}
-          style={styles.topbarBtn}
-        >
-          <Text style={styles.topbarBtnText}>Reload</Text>
-        </Pressable>
-        <Pressable
-          onPress={() =>
-            AsyncStorage.removeItem(STORE_KEY).then(() => {
-              setServer(null);
-              setFailed(false);
-            })
-          }
-          hitSlop={8}
-          style={styles.topbarBtn}
-        >
-          <Text style={styles.topbarBtnText}>Server</Text>
-        </Pressable>
-      </View>
+    <View
+      style={[
+        styles.fill,
+        { paddingTop: insets.top, paddingBottom: insets.bottom },
+      ]}
+    >
       <WebView
         ref={web}
         source={{ uri: server }}
@@ -264,24 +255,6 @@ function ConnectScreen(props: {
 const styles = StyleSheet.create({
   fill: { flex: 1, backgroundColor: C.bg },
   center: { alignItems: "center", justifyContent: "center" },
-  topbar: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: C.border,
-    backgroundColor: C.surface,
-  },
-  topbarText: {
-    flex: 1,
-    color: C.muted,
-    fontSize: 12,
-    fontFamily: Platform.OS === "android" ? "monospace" : undefined,
-  },
-  topbarBtn: { paddingHorizontal: 6, paddingVertical: 2 },
-  topbarBtnText: { color: C.accent, fontSize: 12 },
   overlay: {
     position: "absolute",
     top: 0,

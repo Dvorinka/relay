@@ -3822,6 +3822,8 @@ export interface operations {
                     parent_id?: string;
                     /** @description Lowercase slugs (frontend, backend, visual, mcp, …); invalid entries are dropped, more than 8 is a 400 */
                     tags?: string[];
+                    /** @description Post without notifications (the /silent command) — lands in history and unread lists but toasts and push are suppressed unless the body mentions the recipient */
+                    silent?: boolean;
                 };
             };
         };

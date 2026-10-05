@@ -472,6 +472,7 @@ const impl = {
     attachmentIds?: string[],
     parentId?: string,
     tags?: string[],
+    silent?: boolean,
   ): Promise<Message> => {
     const m: Message = {
       id: uuid(),
@@ -479,6 +480,7 @@ const impl = {
       author: me(),
       body,
       tags: tags ?? [],
+      ...(silent ? { silent } : {}),
       parent: parentPreview(parentId),
       attachments: (attachmentIds ?? [])
         .map((id) => db.attachments[id])

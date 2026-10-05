@@ -12,6 +12,7 @@
     },
     "android": {
       "package": "dev.tdvorak.relay",
+      "edgeToEdgeEnabled": true,
       "adaptiveIcon": {
         "backgroundColor": "#0a0a0b",
         "foregroundImage": "./assets/android-icon-foreground.png",

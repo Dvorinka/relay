@@ -91,8 +91,8 @@ func (q *Queries) CopyMessageAttachments(ctx context.Context, arg CopyMessageAtt
 }
 
 const createMessage = `-- name: CreateMessage :one
-insert into messages (conversation_id, author_user_id, body, parent_id, mentions, forwarded_from, tags)
-values ($1, $2, $3, $4, coalesce($5, '[]'::jsonb), $6, coalesce($7, '{}'::text[]))
+insert into messages (conversation_id, author_user_id, body, parent_id, mentions, forwarded_from, tags, silent)
+values ($1, $2, $3, $4, coalesce($5, '[]'::jsonb), $6, coalesce($7, '{}'::text[]), coalesce($8, false))
 returning id
 `
 
@@ -104,6 +104,7 @@ type CreateMessageParams struct {
 	Mentions       interface{} `json:"mentions"`
 	ForwardedFrom  pgtype.UUID `json:"forwarded_from"`
 	Tags           interface{} `json:"tags"`
+	Silent         interface{} `json:"silent"`
 }
 
 func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (pgtype.UUID, error) {
@@ -115,6 +116,7 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (p
 		arg.Mentions,
 		arg.ForwardedFrom,
 		arg.Tags,
+		arg.Silent,
 	)
 	var id pgtype.UUID
 	err := row.Scan(&id)
