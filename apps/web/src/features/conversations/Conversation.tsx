@@ -5,6 +5,7 @@ import {
   type Conversation as ApiConversation,
   type Message,
   type Reaction,
+  type ReadReceipt,
   type Thread,
   type ThreadSummary,
 } from "@relay/api-client";
@@ -289,6 +290,53 @@ function ReactionRow(props: {
             </button>
           )}
         </For>
+      </div>
+    </Show>
+  );
+}
+
+// Named agent read receipts — "seen by" row under a message. Only agents
+// appear (the author's own receipt is excluded server-side); hovering shows
+// who read it and when. Users' own reads stay private.
+function ReadByRow(props: { readBy: ReadReceipt[] }) {
+  const names = () =>
+    props.readBy
+      .map((r) => `${r.name} · ${timeAgo(r.read_at)}`)
+      .join("\n");
+  return (
+    <Show when={props.readBy.length > 0}>
+      <div
+        class="mt-1 flex items-center gap-1.5 text-[11px] text-faint"
+        title={names()}
+      >
+        <span>Seen by</span>
+        <div class="flex -space-x-1">
+          <For each={props.readBy.slice(0, 6)}>
+            {(r) => (
+              <Avatar.Root
+                class="flex h-4.5 w-4.5 items-center justify-center rounded-full border border-bg"
+              >
+                <Avatar.Fallback
+                  class="text-[7px] font-semibold"
+                  style={{
+                    color: authorColor(r.name),
+                    "background-color": `color-mix(in srgb, ${authorColor(r.name)} 18%, var(--color-surface))`,
+                  }}
+                >
+                  {initials(r.name)}
+                </Avatar.Fallback>
+                <Avatar.Image
+                  src={mediaURL(r.avatar_url)}
+                  alt={r.name}
+                  class="h-full w-full rounded-full object-cover"
+                />
+              </Avatar.Root>
+            )}
+          </For>
+        </div>
+        <span class="truncate">
+          {props.readBy.map((r) => r.name).join(", ")}
+        </span>
       </div>
     </Show>
   );
@@ -1434,6 +1482,7 @@ function MessageRow(props: {
           reactions={m().reactions}
           onChange={(reactions) => props.onChanged({ ...m(), reactions })}
         />
+        <ReadByRow readBy={m().read_by ?? []} />
         <Show when={m().thread} keyed>
           {(t) => (
             <button
@@ -2050,6 +2099,26 @@ function ConversationThread(props: {
       setMessages((cur) =>
         cur.map((x) => (x.id === mid ? { ...x, reactions } : x)),
       );
+    } else if (e.type === "message.read") {
+      // Named agent receipt — merge the reader into each affected message.
+      const ids = (data.message_ids ?? []) as string[];
+      const agent = data.agent as ReadReceipt | undefined;
+      if (ids.length && agent) {
+        const receipt: ReadReceipt = {
+          id: agent.id,
+          name: agent.name,
+          avatar_url: agent.avatar_url ?? null,
+          read_at: new Date().toISOString(),
+        };
+        setMessages((cur) =>
+          cur.map((x) =>
+            ids.includes(x.id) &&
+            !(x.read_by ?? []).some((r) => r.id === receipt.id)
+              ? { ...x, read_by: [...(x.read_by ?? []), receipt], agent_read: true }
+              : x,
+          ),
+        );
+      }
     } else if (e.type === "thread.created" || e.type === "thread.updated") {
       // Events are keyed to the parent conversation — patch the chip on the
       // parent message live (create shows it, replies bump the count).

@@ -276,6 +276,18 @@ where r.agent_id is not null
   and r.message_id = any(sqlc.arg(ids)::uuid[])
 group by r.message_id;
 
+-- name: AgentReadersForMessages :many
+-- named read receipts: which agents (other than the author) have read each
+-- message — name, avatar and timestamp feed the "seen by" row
+select r.message_id, a.id as agent_id, a.name, a.avatar_key, r.read_at
+from message_reads r
+join messages m on m.id = r.message_id
+join agents a on a.id = r.agent_id
+where r.agent_id is not null
+  and (m.author_agent_id is null or r.agent_id <> m.author_agent_id)
+  and r.message_id = any(sqlc.arg(ids)::uuid[])
+order by r.read_at asc;
+
 -- name: MarkMessageRead :exec
 insert into message_reads (message_id, user_id)
 values ($1, $2)

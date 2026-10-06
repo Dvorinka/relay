@@ -58,6 +58,53 @@ func (q *Queries) AgentReadMessageIDs(ctx context.Context, ids []pgtype.UUID) ([
 	return items, nil
 }
 
+const agentReadersForMessages = `-- name: AgentReadersForMessages :many
+select r.message_id, a.id as agent_id, a.name, a.avatar_key, r.read_at
+from message_reads r
+join messages m on m.id = r.message_id
+join agents a on a.id = r.agent_id
+where r.agent_id is not null
+  and (m.author_agent_id is null or r.agent_id <> m.author_agent_id)
+  and r.message_id = any($1::uuid[])
+order by r.read_at asc
+`
+
+type AgentReadersForMessagesRow struct {
+	MessageID pgtype.UUID        `json:"message_id"`
+	AgentID   pgtype.UUID        `json:"agent_id"`
+	Name      string             `json:"name"`
+	AvatarKey pgtype.Text        `json:"avatar_key"`
+	ReadAt    pgtype.Timestamptz `json:"read_at"`
+}
+
+// named read receipts: which agents (other than the author) have read each
+// message — name, avatar and timestamp feed the "seen by" row
+func (q *Queries) AgentReadersForMessages(ctx context.Context, ids []pgtype.UUID) ([]AgentReadersForMessagesRow, error) {
+	rows, err := q.db.Query(ctx, agentReadersForMessages, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentReadersForMessagesRow{}
+	for rows.Next() {
+		var i AgentReadersForMessagesRow
+		if err := rows.Scan(
+			&i.MessageID,
+			&i.AgentID,
+			&i.Name,
+			&i.AvatarKey,
+			&i.ReadAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const clearConversation = `-- name: ClearConversation :execrows
 update messages set deleted_at = now()
 where conversation_id = $1 and deleted_at is null

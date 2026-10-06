@@ -1579,9 +1579,13 @@ export interface paths {
         };
         /**
          * Server-sent events for the authenticated user's workspaces
-         * @description Streams `message.created`, `issue.created`, `issue.updated` and
-         *     `todo.changed` events as `data:` JSON frames. Events are filtered to
-         *     projects the caller can access. Heartbeat comments every 25s.
+         * @description Streams `message.created`, `message.updated`, `message.deleted`,
+         *     `message.read`, `reaction.updated`, `issue.created`,
+         *     `issue.updated`, `todo.changed`, `conversation.cleared` and
+         *     `thread.updated` events as `data:` JSON frames. `message.read`
+         *     carries `{conversation_id, message_ids, agent}` — an agent's named
+         *     read receipt. Events are filtered to projects the caller can
+         *     access. Heartbeat comments every 25s.
          */
         get: operations["streamEvents"];
         put?: never;
@@ -2242,6 +2246,15 @@ export interface components {
             /** @description Up to 8 reactor display names, oldest first */
             names: string[];
         };
+        /** @description One agent that has read the message (the author's own receipt is excluded) */
+        ReadReceipt: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            avatar_url: string | null;
+            /** Format: date-time */
+            read_at: string;
+        };
         Message: {
             /** Format: uuid */
             id: string;
@@ -2265,6 +2278,8 @@ export interface components {
             edited_at?: string | null;
             /** @description True once at least one agent has read the message; edits are then rejected with 409 */
             agent_read: boolean;
+            /** @description Agents that have read the message, oldest read first — the named receipt row */
+            read_by?: components["schemas"]["ReadReceipt"][];
             /** @description Thread rooted at this message, when one exists */
             thread?: components["schemas"]["ThreadSummary"] | null;
             /**

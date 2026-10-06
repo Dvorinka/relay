@@ -2477,9 +2477,13 @@ paths:
       operationId: streamEvents
       summary: Server-sent events for the authenticated user's workspaces
       description: |
-        Streams `message.created`, `issue.created`, `issue.updated` and
-        `todo.changed` events as `data:` JSON frames. Events are filtered to
-        projects the caller can access. Heartbeat comments every 25s.
+        Streams `message.created`, `message.updated`, `message.deleted`,
+        `message.read`, `reaction.updated`, `issue.created`,
+        `issue.updated`, `todo.changed`, `conversation.cleared` and
+        `thread.updated` events as `data:` JSON frames. `message.read`
+        carries `{conversation_id, message_ids, agent}` — an agent's named
+        read receipt. Events are filtered to projects the caller can
+        access. Heartbeat comments every 25s.
       tags: [realtime]
       responses:
         "200":
@@ -3385,6 +3389,16 @@ components:
           items: { type: string }
           description: "Up to 8 reactor display names, oldest first"
 
+    ReadReceipt:
+      type: object
+      required: [id, name, avatar_url, read_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        avatar_url: { type: ["string", "null"] }
+        read_at: { type: string, format: date-time }
+      description: "One agent that has read the message (the author's own receipt is excluded)"
+
     Message:
       type: object
       required: [id, conversation_id, author, body, attachments, reactions, created_at, agent_read]
@@ -3419,6 +3433,10 @@ components:
         agent_read:
           type: boolean
           description: "True once at least one agent has read the message; edits are then rejected with 409"
+        read_by:
+          type: array
+          description: "Agents that have read the message, oldest read first — the named receipt row"
+          items: { $ref: "#/components/schemas/ReadReceipt" }
         thread:
           anyOf:
             - $ref: "#/components/schemas/ThreadSummary"

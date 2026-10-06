@@ -903,6 +903,13 @@ func (s *Service) getMessages(ctx context.Context, req mcp.CallToolRequest) (*mc
 	}); err != nil {
 		s.log.Warn("mark agent read", zap.Error(err))
 	}
+	newlyRead := make([]pgtype.UUID, 0, len(ids))
+	for _, id := range ids {
+		if !readBefore[id.String()] {
+			newlyRead = append(newlyRead, id)
+		}
+	}
+	s.publishRead(ctx, cid, newlyRead)
 	out := make([]gin.H, 0, len(rows))
 	for _, r := range rows {
 		m := messageJSON(db.GetMessageFullRow(r))
@@ -938,6 +945,9 @@ func (s *Service) getMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	_ = s.q.MarkMessageReadAgent(ctx, db.MarkMessageReadAgentParams{
 		MessageID: mid, AgentID: agent(ctx).ID,
 	})
+	if wasUnread {
+		s.publishRead(ctx, m.ConversationID, []pgtype.UUID{mid})
+	}
 	out := s.messageJSONFull(ctx, m)
 	out["was_unread"] = wasUnread
 	return jsonResult(out)
@@ -2059,6 +2069,9 @@ func (s *Service) markRead(ctx context.Context, req mcp.CallToolRequest) (*mcp.C
 	if err != nil {
 		return errResult(err)
 	}
+	if conv, cerr := s.q.GetMessageConversation(ctx, mid); cerr == nil {
+		s.publishRead(ctx, conv, []pgtype.UUID{mid})
+	}
 	return jsonResult(gin.H{"ok": true})
 }
 
@@ -2594,6 +2607,31 @@ func (s *Service) publishPID(pid pgtype.UUID, typ string, data map[string]any) {
 	}
 	id, _ := uuid.FromBytes(pid.Bytes[:])
 	s.Bus.Publish(events.Event{Type: typ, ProjectID: id, Data: data})
+}
+
+// publishRead emits a message.read frame so open clients can show the
+// named agent read receipt live instead of on next fetch.
+func (s *Service) publishRead(ctx context.Context, conversationID pgtype.UUID, messageIDs []pgtype.UUID) {
+	if len(messageIDs) == 0 {
+		return
+	}
+	a := agent(ctx)
+	var avatar *string
+	if a.AvatarKey.Valid {
+		v := "/api/files/" + a.AvatarKey.String
+		avatar = &v
+	}
+	ids := make([]string, 0, len(messageIDs))
+	for _, id := range messageIDs {
+		ids = append(ids, id.String())
+	}
+	s.publish(ctx, conversationID, "message.read", map[string]any{
+		"conversation_id": conversationID.String(),
+		"message_ids":     ids,
+		"agent": gin.H{
+			"id": a.ID.String(), "name": a.Name, "avatar_url": avatar,
+		},
+	})
 }
 
 // --- work review tools ---

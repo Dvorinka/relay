@@ -416,6 +416,7 @@ const impl = {
         created_at: now(),
         edited_at: null,
         agent_read: false,
+        read_by: [],
         forwarded: null,
       });
       save();
@@ -493,6 +494,7 @@ const impl = {
       created_at: now(),
       edited_at: null,
       agent_read: false,
+      read_by: [],
     };
     db.messages.push(m);
     save();
@@ -587,6 +589,7 @@ const impl = {
       created_at: now(),
       edited_at: null,
       agent_read: false,
+      read_by: [],
       forwarded: { ...root },
     };
     db.messages.push(m);

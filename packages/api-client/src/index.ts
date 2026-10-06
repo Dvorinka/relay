@@ -35,6 +35,7 @@ export interface Mentionables {
   repos: string[];
 }
 export type Reaction = components["schemas"]["Reaction"];
+export type ReadReceipt = components["schemas"]["ReadReceipt"];
 // One unread conversation: which channel/issue/brief/thread holds unread
 // messages, with the ids needed to deep-link straight to them.
 export interface UnreadConversation {
