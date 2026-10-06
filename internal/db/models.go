@@ -155,6 +155,19 @@ type GithubInstallation struct {
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
+type Idea struct {
+	ID             pgtype.UUID        `json:"id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	Title          string             `json:"title"`
+	Summary        string             `json:"summary"`
+	Scene          []byte             `json:"scene"`
+	Status         string             `json:"status"`
+	CreatedByUser  pgtype.UUID        `json:"created_by_user"`
+	CreatedByAgent pgtype.UUID        `json:"created_by_agent"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Issue struct {
 	ID           pgtype.UUID        `json:"id"`
 	ProjectID    pgtype.UUID        `json:"project_id"`

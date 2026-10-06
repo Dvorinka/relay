@@ -77,14 +77,20 @@ func (c *Config) save() error {
 
 // App is the Wails-bound application object.
 type App struct {
-	cfg      *Config
-	ctx      context.Context
-	handler  atomic.Value // stores http.Handler; swapped when a URL is saved
-	quitting atomic.Bool  // set by Quit — lets OnBeforeClose distinguish "close window" from "exit app"
+	cfg         *Config
+	ctx         context.Context
+	handler     atomic.Value // stores http.Handler; swapped when a URL is saved
+	quitting    atomic.Bool  // set by Quit — lets OnBeforeClose distinguish "close window" from "exit app"
+	trayStarted atomic.Bool  // guards systray.Register — it can only run once
 }
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	// With close-to-background on, the tray icon is the only handle back to
+	// a hidden window — it must exist before the first close.
+	if a.cfg.RunInBackground {
+		a.startTray()
+	}
 	if a.cfg.ServerURL != "" {
 		wailsruntime.WindowSetTitle(ctx, "Relay")
 	}
@@ -326,6 +332,12 @@ func (a *App) background(w http.ResponseWriter, r *http.Request) {
 		if err := a.cfg.save(); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
+		}
+		// Toggling at runtime grows/removes the tray icon with the mode.
+		if a.cfg.RunInBackground {
+			a.startTray()
+		} else {
+			a.stopTray()
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")

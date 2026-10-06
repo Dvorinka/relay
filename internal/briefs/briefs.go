@@ -38,6 +38,7 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
 	g.POST("/projects/:id/brief-policy", s.projectGate, s.handlePolicy)
 	g.GET("/briefs/:id", s.briefGate, s.handleGet)
 	g.PATCH("/briefs/:id", s.briefGate, s.handleUpdate)
+	g.DELETE("/briefs/:id", s.briefGate, s.handleDelete)
 	g.GET("/briefs/:id/conversation", s.briefGate, s.handleConversation)
 }
 
@@ -245,6 +246,22 @@ func (s *Service) handleUpdate(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, briefJSON(updated, b.AuthorName))
+}
+
+// handleDelete removes the brief and its comment conversation. The FK
+// direction (conversations.brief_id -> briefs on delete set null) means the
+// conversation row must be deleted first or it survives as an orphan.
+func (s *Service) handleDelete(c *gin.Context) {
+	b := c.MustGet(ctxBriefKey).(db.GetBriefRow)
+	if err := s.q.DeleteBriefConversation(c.Request.Context(), b.ID); err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "could not delete brief")
+		return
+	}
+	if err := s.q.DeleteBrief(c.Request.Context(), b.ID); err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "could not delete brief")
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 func (s *Service) handlePolicy(c *gin.Context) {

@@ -103,6 +103,26 @@ func (q *Queries) CreateBriefConversation(ctx context.Context, arg CreateBriefCo
 	return i, err
 }
 
+const deleteBrief = `-- name: DeleteBrief :exec
+delete from briefs where id = $1
+`
+
+func (q *Queries) DeleteBrief(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteBrief, id)
+	return err
+}
+
+const deleteBriefConversation = `-- name: DeleteBriefConversation :exec
+delete from conversations where brief_id = $1
+`
+
+// removing a brief drops its comment thread too; conversations.brief_id is
+// 'on delete set null' so the conversation must go first
+func (q *Queries) DeleteBriefConversation(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteBriefConversation, id)
+	return err
+}
+
 const getBrief = `-- name: GetBrief :one
 select b.id, b.project_id, b.issue_id, b.conversation_id, b.title, b.summary, b.scene, b.status, b.created_by_user, b.created_by_agent, b.created_at, b.updated_at, b.creator_name_snapshot,
        coalesce(u.name, a.name, nullif(b.creator_name_snapshot, ''), '') as author_name,

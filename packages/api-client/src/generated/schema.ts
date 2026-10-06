@@ -520,11 +520,83 @@ export interface paths {
         get: operations["getBrief"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** Delete a brief and its comment conversation */
+        delete: operations["deleteBrief"];
         options?: never;
         head?: never;
         /** Update a brief's title, summary, scene, or status */
         patch: operations["updateBrief"];
+        trace?: never;
+    };
+    "/api/projects/{projectId}/ideas": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List brainstorm ideas in this project */
+        get: operations["listIdeas"];
+        put?: never;
+        /** Create a brainstorm idea (title + optional Excalidraw scene) */
+        post: operations["createIdea"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspaceId}/ideas": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every idea across the workspace's projects — the Ideas page feed */
+        get: operations["listWorkspaceIdeas"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ideas/{ideaId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one idea with its scene */
+        get: operations["getIdea"];
+        put?: never;
+        post?: never;
+        /** Delete an idea */
+        delete: operations["deleteIdea"];
+        options?: never;
+        head?: never;
+        /** Update an idea's title, summary, scene, or status */
+        patch: operations["updateIdea"];
+        trace?: never;
+    };
+    "/api/ideas/{ideaId}/convert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Turn an idea into a backlog issue or a new project in the same workspace */
+        post: operations["convertIdea"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/briefs/{briefId}/conversation": {
@@ -1430,6 +1502,23 @@ export interface paths {
         patch: operations["updateTodo"];
         trace?: never;
     };
+    "/api/projects/{projectId}/todos/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Bulk delete todos in this project (one request, one change event) */
+        post: operations["deleteTodos"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{projectId}/reviews": {
         parameters: {
             query?: never;
@@ -1490,9 +1579,13 @@ export interface paths {
         };
         /**
          * Server-sent events for the authenticated user's workspaces
-         * @description Streams `message.created`, `issue.created`, `issue.updated` and
-         *     `todo.changed` events as `data:` JSON frames. Events are filtered to
-         *     projects the caller can access. Heartbeat comments every 25s.
+         * @description Streams `message.created`, `message.updated`, `message.deleted`,
+         *     `message.read`, `reaction.updated`, `issue.created`,
+         *     `issue.updated`, `todo.changed`, `conversation.cleared` and
+         *     `thread.updated` events as `data:` JSON frames. `message.read`
+         *     carries `{conversation_id, message_ids, agent}` — an agent's named
+         *     read receipt. Events are filtered to projects the caller can
+         *     access. Heartbeat comments every 25s.
          */
         get: operations["streamEvents"];
         put?: never;
@@ -1995,6 +2088,27 @@ export interface components {
                 kind: "user" | "agent";
             };
         };
+        Idea: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            project_id: string;
+            project_key?: string;
+            project_name?: string;
+            title: string;
+            summary: string;
+            /** @description Excalidraw-compatible scene JSON */
+            scene: {
+                [key: string]: unknown;
+            };
+            /** @enum {string} */
+            status: "open" | "converted" | "archived";
+            author_name?: string;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
+        };
         /**
          * @description When agents should produce visual briefs. 'never' forbids them,
          *     'on_request' creates only when asked, 'pre_merge' expects one before
@@ -2132,6 +2246,15 @@ export interface components {
             /** @description Up to 8 reactor display names, oldest first */
             names: string[];
         };
+        /** @description One agent that has read the message (the author's own receipt is excluded) */
+        ReadReceipt: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            avatar_url: string | null;
+            /** Format: date-time */
+            read_at: string;
+        };
         Message: {
             /** Format: uuid */
             id: string;
@@ -2155,6 +2278,8 @@ export interface components {
             edited_at?: string | null;
             /** @description True once at least one agent has read the message; edits are then rejected with 409 */
             agent_read: boolean;
+            /** @description Agents that have read the message, oldest read first — the named receipt row */
+            read_by?: components["schemas"]["ReadReceipt"][];
             /** @description Thread rooted at this message, when one exists */
             thread?: components["schemas"]["ThreadSummary"] | null;
             /**
@@ -3540,6 +3665,27 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    deleteBrief: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                briefId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
     updateBrief: {
         parameters: {
             query?: never;
@@ -3570,6 +3716,214 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Brief"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listIdeas: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ideas */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        ideas?: components["schemas"]["Idea"][];
+                    };
+                };
+            };
+        };
+    };
+    createIdea: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    title: string;
+                    summary?: string;
+                    /** @description Excalidraw-compatible scene */
+                    scene?: {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Created idea */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Idea"];
+                };
+            };
+        };
+    };
+    listWorkspaceIdeas: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ideas */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        ideas?: components["schemas"]["Idea"][];
+                    };
+                };
+            };
+        };
+    };
+    getIdea: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                ideaId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Idea */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Idea"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteIdea: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                ideaId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateIdea: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                ideaId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    title?: string;
+                    summary?: string;
+                    /** @enum {string} */
+                    status?: "open" | "converted" | "archived";
+                    scene?: {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Updated idea */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Idea"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    convertIdea: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                ideaId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    kind: "issue" | "project";
+                    /** @description Defaults to the idea title */
+                    title?: string;
+                    /** @description Defaults to the idea summary */
+                    description?: string;
+                    /** @description Required for kind=project */
+                    key?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Created issue or project */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        issue?: {
+                            /** Format: uuid */
+                            id?: string;
+                            number?: number;
+                        };
+                        project?: {
+                            /** Format: uuid */
+                            id?: string;
+                            key?: string;
+                            name?: string;
+                        };
+                    };
                 };
             };
             404: components["responses"]["NotFound"];
@@ -5528,6 +5882,36 @@ export interface operations {
             };
         };
     };
+    deleteTodos: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    ids: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description How many rows were deleted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        deleted?: number;
+                    };
+                };
+            };
+        };
+    };
     listReviews: {
         parameters: {
             query?: {
@@ -6198,6 +6582,11 @@ export interface operations {
                             /** Format: uuid */
                             parent_message_id?: string;
                             title?: string;
+                            /** @description Preview of the oldest unread message (<=140 chars) */
+                            snippet?: string;
+                            author_name?: string;
+                            /** Format: date-time */
+                            first_unread_at?: string;
                         }[];
                     };
                 };

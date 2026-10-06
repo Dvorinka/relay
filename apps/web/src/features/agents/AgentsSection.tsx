@@ -287,25 +287,26 @@ function AgentRow(props: {
                 <div>
                   <h3 class="mb-2 text-[12px] font-semibold">Project access</h3>
                   <Show when={d().agent.grant_all}>
-                    <div class="mb-2 flex items-center gap-2 rounded-md border border-accent/40 bg-accent-soft/50 px-2 py-1.5 text-[13px]">
+                    <div class="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-accent/40 bg-accent-soft/50 px-2 py-1.5 text-[13px]">
                       <span class="font-medium text-accent-ink">
                         Every project
                       </span>
-                      <span class="text-[11px] text-muted">
+                      <span class="min-w-0 flex-1 text-[11px] text-muted">
                         including ones created later
                       </span>
-                      <span class="flex-1" />
-                      <For each={d().agent.grant_scopes ?? []}>
-                        {(s) => (
-                          <span class="rounded border border-border px-1 font-mono text-[10px] text-muted">
-                            {s}
-                          </span>
-                        )}
-                      </For>
+                      <span class="flex flex-wrap items-center gap-1">
+                        <For each={d().agent.grant_scopes ?? []}>
+                          {(s) => (
+                            <span class="rounded border border-border px-1 font-mono text-[10px] text-muted">
+                              {s}
+                            </span>
+                          )}
+                        </For>
+                      </span>
                       <Show when={props.canManage}>
                         <button
                           type="button"
-                          class="text-[11px] text-muted hover:text-red-600 dark:hover:text-red-400"
+                          class="shrink-0 text-[11px] text-muted hover:text-red-600 dark:hover:text-red-400"
                           onClick={() =>
                             run(() =>
                               api.updateAgent(props.agent.id, {
@@ -322,19 +323,22 @@ function AgentRow(props: {
                   <ul class="mb-2 flex flex-col gap-1.5">
                     <For each={d().agent.grants}>
                       {(g) => (
-                        <li class="flex items-center gap-2 text-[13px]">
-                          <span class="font-mono text-[12px]">
+                        <li class="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md px-1 py-0.5 text-[13px]">
+                          <span class="shrink-0 font-mono text-[12px]">
                             {g.project_key}
                           </span>
-                          <span class="text-muted">{g.project_name}</span>
-                          <span class="flex-1" />
-                          <For each={g.scopes}>
-                            {(s) => (
-                              <span class="rounded border border-border px-1 font-mono text-[10px] text-muted">
-                                {s}
-                              </span>
-                            )}
-                          </For>
+                          <span class="min-w-0 flex-1 break-words text-muted">
+                            {g.project_name}
+                          </span>
+                          <span class="flex flex-wrap items-center gap-1">
+                            <For each={g.scopes}>
+                              {(s) => (
+                                <span class="rounded border border-border px-1 font-mono text-[10px] text-muted">
+                                  {s}
+                                </span>
+                              )}
+                            </For>
+                          </span>
                           <Show when={props.canManage}>
                             <button
                               type="button"

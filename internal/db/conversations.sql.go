@@ -58,6 +58,53 @@ func (q *Queries) AgentReadMessageIDs(ctx context.Context, ids []pgtype.UUID) ([
 	return items, nil
 }
 
+const agentReadersForMessages = `-- name: AgentReadersForMessages :many
+select r.message_id, a.id as agent_id, a.name, a.avatar_key, r.read_at
+from message_reads r
+join messages m on m.id = r.message_id
+join agents a on a.id = r.agent_id
+where r.agent_id is not null
+  and (m.author_agent_id is null or r.agent_id <> m.author_agent_id)
+  and r.message_id = any($1::uuid[])
+order by r.read_at asc
+`
+
+type AgentReadersForMessagesRow struct {
+	MessageID pgtype.UUID        `json:"message_id"`
+	AgentID   pgtype.UUID        `json:"agent_id"`
+	Name      string             `json:"name"`
+	AvatarKey pgtype.Text        `json:"avatar_key"`
+	ReadAt    pgtype.Timestamptz `json:"read_at"`
+}
+
+// named read receipts: which agents (other than the author) have read each
+// message — name, avatar and timestamp feed the "seen by" row
+func (q *Queries) AgentReadersForMessages(ctx context.Context, ids []pgtype.UUID) ([]AgentReadersForMessagesRow, error) {
+	rows, err := q.db.Query(ctx, agentReadersForMessages, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentReadersForMessagesRow{}
+	for rows.Next() {
+		var i AgentReadersForMessagesRow
+		if err := rows.Scan(
+			&i.MessageID,
+			&i.AgentID,
+			&i.Name,
+			&i.AvatarKey,
+			&i.ReadAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const clearConversation = `-- name: ClearConversation :execrows
 update messages set deleted_at = now()
 where conversation_id = $1 and deleted_at is null
@@ -70,6 +117,49 @@ func (q *Queries) ClearConversation(ctx context.Context, conversationID pgtype.U
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const clearReadStateAgents = `-- name: ClearReadStateAgents :exec
+insert into message_reads (message_id, agent_id)
+select m.id, a.id
+from conversations c
+join messages m on m.conversation_id = c.id
+join projects p on p.id = c.project_id
+join agents a on a.workspace_id = p.workspace_id
+left join agent_project_permissions g
+  on g.agent_id = a.id and g.project_id = p.id
+where (c.id = $1
+       or c.parent_message_id in
+         (select id from messages where conversation_id = $1))
+  and (a.grant_all or g.agent_id is not null)
+on conflict (message_id, agent_id) where agent_id is not null do nothing
+`
+
+// same reset for agents granted this project (or every project)
+func (q *Queries) ClearReadStateAgents(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, clearReadStateAgents, id)
+	return err
+}
+
+const clearReadStateUsers = `-- name: ClearReadStateUsers :exec
+insert into message_reads (message_id, user_id)
+select m.id, wm.user_id
+from conversations c
+join messages m on m.conversation_id = c.id
+join projects p on p.id = c.project_id
+join workspace_members wm on wm.workspace_id = p.workspace_id
+where c.id = $1
+   or c.parent_message_id in
+      (select id from messages where conversation_id = $1)
+on conflict (message_id, user_id) where user_id is not null do nothing
+`
+
+// /clear wipes unread markers for every workspace member — on the channel
+// itself and on threads rooted at its messages (threads survive /clear but
+// shouldn't keep badging the inbox)
+func (q *Queries) ClearReadStateUsers(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, clearReadStateUsers, id)
+	return err
 }
 
 const copyMessageAttachments = `-- name: CopyMessageAttachments :exec
@@ -1309,7 +1399,10 @@ select c.id as conversation_id, c.project_id, c.kind,
        i.number as issue_number, i.title as issue_title,
        b.title as brief_title,
        count(m.id)::int as unread,
-       fu.id as first_unread_id
+       fu.id as first_unread_id,
+       fu.body as first_unread_body,
+       fu.created_at as first_unread_at,
+       fu.author_name as first_unread_author
 from conversations c
 join projects p on p.id = c.project_id
 join workspace_members wm on wm.workspace_id = p.workspace_id
@@ -1318,7 +1411,11 @@ join messages m on m.conversation_id = c.id and m.deleted_at is null
 left join issues i on i.id = c.issue_id
 left join briefs b on b.id = c.brief_id
 left join lateral (
-  select m2.id from messages m2
+  select m2.id, m2.body, m2.created_at,
+         coalesce(u2.name, a2.name, nullif(m2.author_name_snapshot, ''), '') as author_name
+  from messages m2
+  left join users u2 on u2.id = m2.author_user_id
+  left join agents a2 on a2.id = m2.author_agent_id
   where m2.conversation_id = c.id and m2.deleted_at is null
     and (m2.author_user_id is null or m2.author_user_id <> $1)
     and not exists (
@@ -1333,22 +1430,25 @@ where (m.author_user_id is null or m.author_user_id <> $1)
     where r.message_id = m.id and r.user_id = $1)
 group by c.id, c.project_id, c.kind, c.issue_id, c.brief_id,
          c.parent_message_id, c.title, i.number, i.title, b.title,
-         fu.id
+         fu.id, fu.body, fu.created_at, fu.author_name
 `
 
 type UnreadConversationsRow struct {
-	ConversationID    pgtype.UUID `json:"conversation_id"`
-	ProjectID         pgtype.UUID `json:"project_id"`
-	Kind              string      `json:"kind"`
-	IssueID           pgtype.UUID `json:"issue_id"`
-	BriefID           pgtype.UUID `json:"brief_id"`
-	ParentMessageID   pgtype.UUID `json:"parent_message_id"`
-	ConversationTitle pgtype.Text `json:"conversation_title"`
-	IssueNumber       pgtype.Int4 `json:"issue_number"`
-	IssueTitle        pgtype.Text `json:"issue_title"`
-	BriefTitle        pgtype.Text `json:"brief_title"`
-	Unread            int32       `json:"unread"`
-	FirstUnreadID     pgtype.UUID `json:"first_unread_id"`
+	ConversationID    pgtype.UUID        `json:"conversation_id"`
+	ProjectID         pgtype.UUID        `json:"project_id"`
+	Kind              string             `json:"kind"`
+	IssueID           pgtype.UUID        `json:"issue_id"`
+	BriefID           pgtype.UUID        `json:"brief_id"`
+	ParentMessageID   pgtype.UUID        `json:"parent_message_id"`
+	ConversationTitle pgtype.Text        `json:"conversation_title"`
+	IssueNumber       pgtype.Int4        `json:"issue_number"`
+	IssueTitle        pgtype.Text        `json:"issue_title"`
+	BriefTitle        pgtype.Text        `json:"brief_title"`
+	Unread            int32              `json:"unread"`
+	FirstUnreadID     pgtype.UUID        `json:"first_unread_id"`
+	FirstUnreadBody   string             `json:"first_unread_body"`
+	FirstUnreadAt     pgtype.Timestamptz `json:"first_unread_at"`
+	FirstUnreadAuthor string             `json:"first_unread_author"`
 }
 
 // per-conversation unread detail: which channel/issue/brief/thread holds the
@@ -1376,6 +1476,9 @@ func (q *Queries) UnreadConversations(ctx context.Context, userID pgtype.UUID) (
 			&i.BriefTitle,
 			&i.Unread,
 			&i.FirstUnreadID,
+			&i.FirstUnreadBody,
+			&i.FirstUnreadAt,
+			&i.FirstUnreadAuthor,
 		); err != nil {
 			return nil, err
 		}
