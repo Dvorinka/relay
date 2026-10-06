@@ -50,6 +50,9 @@ export interface UnreadConversation {
   brief_title?: string;
   parent_message_id?: string;
   title?: string;
+  snippet?: string;
+  author_name?: string;
+  first_unread_at?: string;
 }
 export type ActivityIssue = components["schemas"]["ActivityIssue"];
 export type ActivityMessage = components["schemas"]["ActivityMessage"];
@@ -78,6 +81,7 @@ export type StatusDef = components["schemas"]["StatusDef"];
 export type SavedFilter = components["schemas"]["SavedFilter"];
 export type Brief = components["schemas"]["Brief"];
 export type BriefPolicy = components["schemas"]["BriefPolicy"];
+export type Idea = components["schemas"]["Idea"];
 export type Board = components["schemas"]["Board"];
 export type FileEntry = components["schemas"]["FileEntry"];
 export type WebhookDelivery = components["schemas"]["WebhookDelivery"];
@@ -705,6 +709,10 @@ export function createClient(baseUrl: string, token?: string) {
       patch<Todo>(`/api/todos/${todoId}`, body),
     deleteTodo: (todoId: string) =>
       request<void>(`/api/todos/${todoId}`, { method: "DELETE" }),
+    deleteTodos: (projectId: string, ids: string[]) =>
+      post<{ deleted: number }>(`/api/projects/${projectId}/todos/delete`, {
+        ids,
+      }),
     issueByKey: (projectId: string, key: string) =>
       request<{ id: string; key: string }>(
         `/api/projects/${projectId}/issues/key/${encodeURIComponent(key)}`,
@@ -901,6 +909,8 @@ export function createClient(baseUrl: string, token?: string) {
         scene?: Record<string, unknown>;
       },
     ) => patch<Brief>(`/api/briefs/${briefId}`, input),
+    deleteBrief: (briefId: string) =>
+      request<void>(`/api/briefs/${briefId}`, { method: "DELETE" }),
     briefConversation: (briefId: string) =>
       request<{ id: string }>(`/api/briefs/${briefId}/conversation`),
     setBriefPolicy: (projectId: string, policy: BriefPolicy) =>
@@ -908,6 +918,45 @@ export function createClient(baseUrl: string, token?: string) {
         `/api/projects/${projectId}/brief-policy`,
         { policy },
       ),
+
+    // Ideas (brainstorm/mindmap docs, Excalidraw scenes)
+    listIdeas: (projectId: string) =>
+      request<{ ideas: Idea[] }>(`/api/projects/${projectId}/ideas`),
+    listWorkspaceIdeas: (workspaceId: string) =>
+      request<{ ideas: Idea[] }>(`/api/workspaces/${workspaceId}/ideas`),
+    createIdea: (
+      projectId: string,
+      input: {
+        title: string;
+        summary?: string;
+        scene?: Record<string, unknown>;
+      },
+    ) => post<Idea>(`/api/projects/${projectId}/ideas`, input),
+    getIdea: (ideaId: string) => request<Idea>(`/api/ideas/${ideaId}`),
+    updateIdea: (
+      ideaId: string,
+      input: {
+        title?: string;
+        summary?: string;
+        status?: "open" | "converted" | "archived";
+        scene?: Record<string, unknown>;
+      },
+    ) => patch<Idea>(`/api/ideas/${ideaId}`, input),
+    deleteIdea: (ideaId: string) =>
+      request<void>(`/api/ideas/${ideaId}`, { method: "DELETE" }),
+    convertIdea: (
+      ideaId: string,
+      input: {
+        kind: "issue" | "project";
+        title?: string;
+        description?: string;
+        key?: string;
+      },
+    ) =>
+      post<{
+        issue?: { id: string; number: number };
+        project?: { id: string; key: string; name: string };
+      }>(`/api/ideas/${ideaId}/convert`, input),
 
     // Linked-repo file browsing (file mentions)
     repoFileTree: (projectId: string, repo: string) =>

@@ -1,5 +1,5 @@
 -- name: ListTodos :many
-select t.*, coalesce(a.name, nullif(t.agent_name_snapshot, '')) as agent_name, i.number as issue_number, p.key as issue_key
+select t.*, coalesce(a.name, nullif(t.agent_name_snapshot, ''), '') as agent_name, i.number as issue_number, p.key as issue_key
 from agent_todos t
 left join agents a on a.id = t.agent_id
 left join issues i on i.id = t.issue_id
@@ -20,7 +20,7 @@ returning *;
 select * from agent_todos where id = sqlc.arg(id);
 
 -- name: GetTodoJoined :one
-select t.*, coalesce(a.name, nullif(t.agent_name_snapshot, '')) as agent_name, i.number as issue_number, p.key as issue_key
+select t.*, coalesce(a.name, nullif(t.agent_name_snapshot, ''), '') as agent_name, i.number as issue_number, p.key as issue_key
 from agent_todos t
 left join agents a on a.id = t.agent_id
 left join issues i on i.id = t.issue_id
@@ -46,6 +46,11 @@ returning *;
 
 -- name: DeleteTodo :exec
 delete from agent_todos where id = sqlc.arg(id);
+
+-- name: DeleteTodos :execrows
+-- bulk delete, project-scoped so a caller can only drop its own rows
+delete from agent_todos
+where project_id = sqlc.arg(project_id) and id = any(sqlc.arg(ids)::uuid[]);
 
 -- name: TodoProject :one
 select project_id from agent_todos where id = sqlc.arg(id);

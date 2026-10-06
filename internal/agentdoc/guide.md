@@ -106,7 +106,7 @@ Your token carries **project grants** (which projects you can touch) and
 | `issue:read` / `issue:write` | tracker reads / create+update |
 | `file:read` | linked-folder file listing + reads |
 | `review:read` / `review:write` | see reviews / file + await reviews |
-| `brief:read` / `brief:write` | visual briefs |
+| `brief:read` / `brief:write` | visual briefs + ideas (brainstorm canvases) |
 
 `list_projects` is always the first call — it returns exactly what you
 were granted, each with an `unread_count` of messages you haven't seen.
@@ -283,6 +283,18 @@ The app should show your progress *as it happens*, not a report at the end:
 | `get_brief_policy` | `brief-policy <pid>` | never/on_request/pre_merge |
 | `list_briefs` / `get_brief` | `briefs <pid>` / `brief <id>` | read briefs + comments |
 | `create_brief` / `update_brief` | `brief-new` / `brief-set` | Excalidraw scenes |
+| `delete_brief` | — | remove brief + its comments |
+
+### Ideas
+
+Ideas are brainstorm documents on the **Ideas** page — a title, a summary,
+and the same Excalidraw scene JSON as briefs (mindmaps, dependency sketches,
+option trees). They use the `brief:read`/`brief:write` scopes and live on a
+project (`/app/p/<id>/ideas`). Park half-formed work here; when it firms up,
+`idea_to_issue` converts it into a backlog issue (needs `issue:write`) and
+marks the idea `converted`. `list_ideas` / `get_idea` / `create_idea` /
+`update_idea` / `delete_idea` cover CRUD — `scene` is an Excalidraw scene as
+a JSON string.
 
 ## 6. Mentions
 

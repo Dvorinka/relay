@@ -309,6 +309,37 @@ limit 1;
 update messages set deleted_at = now()
 where conversation_id = $1 and deleted_at is null;
 
+-- name: ClearReadStateUsers :exec
+-- /clear wipes unread markers for every workspace member — on the channel
+-- itself and on threads rooted at its messages (threads survive /clear but
+-- shouldn't keep badging the inbox)
+insert into message_reads (message_id, user_id)
+select m.id, wm.user_id
+from conversations c
+join messages m on m.conversation_id = c.id
+join projects p on p.id = c.project_id
+join workspace_members wm on wm.workspace_id = p.workspace_id
+where c.id = $1
+   or c.parent_message_id in
+      (select id from messages where conversation_id = $1)
+on conflict (message_id, user_id) where user_id is not null do nothing;
+
+-- name: ClearReadStateAgents :exec
+-- same reset for agents granted this project (or every project)
+insert into message_reads (message_id, agent_id)
+select m.id, a.id
+from conversations c
+join messages m on m.conversation_id = c.id
+join projects p on p.id = c.project_id
+join agents a on a.workspace_id = p.workspace_id
+left join agent_project_permissions g
+  on g.agent_id = a.id and g.project_id = p.id
+where (c.id = $1
+       or c.parent_message_id in
+         (select id from messages where conversation_id = $1))
+  and (a.grant_all or g.agent_id is not null)
+on conflict (message_id, agent_id) where agent_id is not null do nothing;
+
 -- name: AddReactionUser :exec
 insert into message_reactions (message_id, user_id, emoji)
 values ($1, $2, $3)
@@ -355,7 +386,10 @@ select c.id as conversation_id, c.project_id, c.kind,
        i.number as issue_number, i.title as issue_title,
        b.title as brief_title,
        count(m.id)::int as unread,
-       fu.id as first_unread_id
+       fu.id as first_unread_id,
+       fu.body as first_unread_body,
+       fu.created_at as first_unread_at,
+       fu.author_name as first_unread_author
 from conversations c
 join projects p on p.id = c.project_id
 join workspace_members wm on wm.workspace_id = p.workspace_id
@@ -364,7 +398,11 @@ join messages m on m.conversation_id = c.id and m.deleted_at is null
 left join issues i on i.id = c.issue_id
 left join briefs b on b.id = c.brief_id
 left join lateral (
-  select m2.id from messages m2
+  select m2.id, m2.body, m2.created_at,
+         coalesce(u2.name, a2.name, nullif(m2.author_name_snapshot, ''), '') as author_name
+  from messages m2
+  left join users u2 on u2.id = m2.author_user_id
+  left join agents a2 on a2.id = m2.author_agent_id
   where m2.conversation_id = c.id and m2.deleted_at is null
     and (m2.author_user_id is null or m2.author_user_id <> $1)
     and not exists (
@@ -379,7 +417,7 @@ where (m.author_user_id is null or m.author_user_id <> $1)
     where r.message_id = m.id and r.user_id = $1)
 group by c.id, c.project_id, c.kind, c.issue_id, c.brief_id,
          c.parent_message_id, c.title, i.number, i.title, b.title,
-         fu.id;
+         fu.id, fu.body, fu.created_at, fu.author_name;
 
 -- name: MentionsForUser :many
 -- messages mentioning the user (@<name>), newest first

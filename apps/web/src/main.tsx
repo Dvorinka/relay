@@ -14,6 +14,7 @@ import IssueKeyRedirect from "./features/issues/IssueKeyRedirect";
 import IssuePage from "./features/issues/IssuePage";
 import BoardPage from "./features/issues/BoardPage";
 import ProjectPage from "./features/projects/ProjectPage";
+import IdeasPage from "./features/ideas/IdeasPage";
 import "./index.css";
 import Home from "./pages/Home";
 import Inbox from "./pages/Inbox";
@@ -97,6 +98,7 @@ render(
           <Route path="/p/:projectId/board" component={BoardPage} />
           <Route path="/p/:projectId/i/:issueId" component={IssuePage} />
           <Route path="/p/:projectId/k/:key" component={IssueKeyRedirect} />
+          <Route path="/p/:projectId/ideas" component={IdeasPage} />
           <Route path="/u/:userId" component={UserProfile} />
           <Route path="/ag/:agentId" component={AgentProfile} />
           <Route path="/settings" component={Settings} />

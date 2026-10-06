@@ -994,6 +994,14 @@ func (s *Service) handleClearConversation(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
+	// Threads rooted at wiped messages keep their unread rows — reset read
+	// state for everyone so /clear actually clears the inbox badge too.
+	if err := s.q.ClearReadStateUsers(c.Request.Context(), conv.ID); err != nil {
+		s.log.Error("clear read state (users)", zap.Error(err))
+	}
+	if err := s.q.ClearReadStateAgents(c.Request.Context(), conv.ID); err != nil {
+		s.log.Error("clear read state (agents)", zap.Error(err))
+	}
 	if s.Bus != nil {
 		p, _ := uuid.FromBytes(pid.Bytes[:])
 		s.Bus.Publish(events.Event{Type: "conversation.cleared", ProjectID: p,

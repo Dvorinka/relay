@@ -181,23 +181,47 @@ function UnreadChannels() {
               <li class="group relative">
                 <A
                   href={r.href}
-                  class="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-hover"
+                  class="flex items-start gap-3 px-4 py-2.5 transition-colors hover:bg-hover"
                 >
                   <span
-                    class="h-2.5 w-2.5 shrink-0 rounded-full"
+                    class="mt-1 h-2.5 w-2.5 shrink-0 rounded-full"
                     style={{
                       "background-color": r.project.color ?? "var(--accent)",
                     }}
                   />
-                  <span class="shrink-0 truncate text-[14px] font-medium sm:text-[13px]">
-                    {r.project.name}
-                  </span>
-                  <span class="min-w-0 flex-1 truncate text-[13px] text-muted sm:text-[12px]">
-                    {r.where ?? r.project.key}
-                  </span>
-                  <span class="ml-auto rounded-full bg-accent px-1.5 py-px font-mono text-[10px] font-semibold leading-4 text-white">
-                    {r.count > 99 ? "99+" : r.count}
-                  </span>
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-baseline gap-2">
+                      <span class="truncate text-[13px] font-medium">
+                        {r.project.name}
+                      </span>
+                      <span class="min-w-0 flex-1 truncate text-[12px] text-muted">
+                        {r.where ?? r.project.key}
+                      </span>
+                      <Show when={r.conv?.first_unread_at}>
+                        {(t) => (
+                          <span class="shrink-0 text-[11px] text-faint">
+                            {timeAgo(t())}
+                          </span>
+                        )}
+                      </Show>
+                      <span class="ml-auto shrink-0 rounded-full bg-accent px-1.5 py-px font-mono text-[10px] font-semibold leading-4 text-white">
+                        {r.count > 99 ? "99+" : r.count}
+                      </span>
+                    </div>
+                    <Show when={r.conv?.snippet}>
+                      {(s) => (
+                        <p class="mt-0.5 truncate text-[12px] text-muted">
+                          <Show when={r.conv?.author_name}>
+                            <span class="text-fg/70">
+                              {r.conv!.author_name}
+                            </span>
+                            {": "}
+                          </Show>
+                          {messagePreview(s())}
+                        </p>
+                      )}
+                    </Show>
+                  </div>
                 </A>
                 <Show when={r.conv}>
                   {(c) => (
