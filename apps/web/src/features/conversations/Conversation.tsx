@@ -2222,22 +2222,45 @@ function ConversationThread(props: {
 
   async function loadEarlier() {
     const first = messages()[0];
-    if (!first || loadingMore()) {
+    if (!first || loadingMore() || !hasMore()) {
       return;
     }
     setLoadingMore(true);
     try {
+      // Anchor to the first visible message row, not a raw scrollHeight delta:
+      // attachments settling above it during the fetch would still shift a
+      // delta-based restore. Solid applies DOM updates synchronously, so the
+      // post-render rect read below forces layout with the new rows mounted.
+      let anchorEl: HTMLElement | undefined;
+      let anchorOffset = 0;
+      if (scrollEl) {
+        const boxTop = scrollEl.getBoundingClientRect().top;
+        for (const el of scrollEl.querySelectorAll<HTMLElement>(
+          '[id^="msg-"]',
+        )) {
+          const r = el.getBoundingClientRect();
+          if (r.bottom > boxTop) {
+            anchorEl = el;
+            anchorOffset = r.top - boxTop;
+            break;
+          }
+        }
+      }
       const page = await api.listMessages(props.conversationId, {
         limit: PAGE_SIZE,
         before: first.id,
         tag: tagFilter() || undefined,
       });
-      const heightBefore = scrollEl?.scrollHeight ?? 0;
-      setMessages((cur) => [...page.messages, ...cur]);
+      if (page.messages.length > 0) {
+        setMessages((cur) => [...page.messages, ...cur]);
+      }
       setHasMore(page.has_more);
-      if (scrollEl) {
-        // Solid applies DOM updates synchronously; keep the viewport anchored.
-        scrollEl.scrollTop += scrollEl.scrollHeight - heightBefore;
+      if (scrollEl && anchorEl?.isConnected) {
+        const drift =
+          anchorEl.getBoundingClientRect().top -
+          scrollEl.getBoundingClientRect().top -
+          anchorOffset;
+        if (drift !== 0) scrollEl.scrollTop += drift;
       }
     } finally {
       setLoadingMore(false);
@@ -2936,6 +2959,13 @@ function ConversationThread(props: {
             stickToBottom = true;
             setNewBelow(0);
           }
+          // Infinite history: an upward scroll near the top pulls the previous
+          // page. `loadingMore` dedupes bursts; the anchor restore inside
+          // loadEarlier shifts scrollTop downward, so our own correction can't
+          // re-trigger this branch.
+          if (wentUp && scrollEl.scrollTop < 320) {
+            void loadEarlier();
+          }
         }}
         class="chat-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden"
       >
@@ -2970,15 +3000,19 @@ function ConversationThread(props: {
             </Show>
           </div>
         </Show>
-        <Show when={hasMore()}>
+        <Show when={loadingMore()}>
+          <div class="flex justify-center py-2" aria-live="polite">
+            <Spinner class="h-4 w-4" />
+          </div>
+        </Show>
+        <Show when={hasMore() && !loadingMore()}>
           <div class="flex justify-center py-2">
             <button
               type="button"
-              disabled={loadingMore()}
               onClick={() => void loadEarlier()}
-              class="rounded-md px-2.5 py-1 text-[13px] text-muted transition-colors hover:bg-hover hover:text-fg disabled:opacity-50"
+              class="rounded-md px-2.5 py-1 text-[13px] text-muted transition-colors hover:bg-hover hover:text-fg"
             >
-              {loadingMore() ? "Loading..." : "Load earlier"}
+              Load earlier
             </button>
           </div>
         </Show>

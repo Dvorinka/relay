@@ -38,6 +38,8 @@ type WailsApp = {
   Version?: () => Promise<string>;
   Platform?: () => Promise<string>;
   SelfUpdate?: (tag: string) => Promise<void>;
+  SubscribeEvents?: (token: string) => Promise<void>;
+  StopEvents?: () => Promise<void>;
 };
 
 function wailsApp(): WailsApp | undefined {
@@ -302,6 +304,23 @@ export function browserAuth(serverUrl: string): {
     });
   })();
   return { promise, cancel };
+}
+
+// SSE bridge: EventSource through the shell's asset-server proxy never
+// dispatches — the proxied response is buffered until close, and an SSE
+// stream never closes. The Go side pumps /api/events itself and re-emits
+// each data frame as the "relay:sse" runtime event; events.ts subscribes to
+// that instead. null in a normal browser or a shell predating the binding.
+export function desktopEventPump(): {
+  subscribe: (token: string) => void;
+  stop: () => void;
+} | null {
+  const app = wailsApp();
+  if (typeof app?.SubscribeEvents !== "function") return null;
+  return {
+    subscribe: (token) => void app.SubscribeEvents!(token),
+    stop: () => void app.StopEvents?.(),
+  };
 }
 
 // relay:// deep links arrive as wails events ("relay:deeplink"). Emitted once
