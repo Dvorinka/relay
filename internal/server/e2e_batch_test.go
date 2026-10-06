@@ -284,4 +284,40 @@ func TestBatchFixes(t *testing.T) {
 	if un := unreadConvIDs(t, c); len(un) != 0 {
 		t.Fatalf("/clear left phantom unread rows: %v", un)
 	}
+
+	// --- named agent read receipts --------------------------------------
+	code, um := c.call("POST", "/api/conversations/"+convID+"/messages",
+		`{"body":"receipt me"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("user message: %d %v", code, um)
+	}
+	umID := um["id"].(string)
+
+	// the agent fetching the conversation is its read receipt — the call
+	// returns a list, only the marking side effect matters here
+	_, _ = c.mcp(token, sid, "4", "tools/call",
+		fmt.Sprintf(`{"name":"get_messages","arguments":{"conversation_id":%q}}`, convID))
+
+	code, page := c.call("GET", "/api/conversations/"+convID+"/messages", "")
+	if code != 200 {
+		t.Fatalf("messages: %d %v", code, page)
+	}
+	found := false
+	for _, raw := range page["messages"].([]any) {
+		mm := raw.(map[string]any)
+		if mm["id"] != umID {
+			continue
+		}
+		for _, rb := range mm["read_by"].([]any) {
+			if rb.(map[string]any)["name"] == "Clear Bot" {
+				found = true
+			}
+		}
+		if !mm["agent_read"].(bool) {
+			t.Fatalf("agent_read flag missing on %s", umID)
+		}
+	}
+	if !found {
+		t.Fatalf("expected Clear Bot in read_by for %s", umID)
+	}
 }
