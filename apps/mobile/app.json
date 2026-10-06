@@ -13,6 +13,8 @@
     "android": {
       "package": "dev.tdvorak.relay",
       "edgeToEdgeEnabled": true,
+      "softwareKeyboardLayoutMode": "resize",
+      "permissions": ["POST_NOTIFICATIONS"],
       "adaptiveIcon": {
         "backgroundColor": "#0a0a0b",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -27,6 +29,12 @@
     "plugins": [
       "expo-router",
       "./plugins/withReleaseSigning",
+      [
+        "expo-notifications",
+        {
+          "color": "#06b6d4"
+        }
+      ],
       [
         "expo-build-properties",
         {

@@ -88,13 +88,19 @@ func (s *Store) Get(ctx context.Context, key string) (*minio.Object, error) {
 	return s.put.GetObject(ctx, s.bucket, key, minio.GetObjectOptions{})
 }
 
-// PresignGet mints a short-lived GET URL. Images are dispositioned inline
-// so <img src> renders; everything else downloads as an attachment. The
-// content-type allowlist in internal/attachments keeps stored HTML/SVG out,
-// so inline images are safe.
+// InlineSafe reports whether a stored file may be served inline. Only
+// inert raster images qualify — SVG is excluded since it can carry script.
+// Everything else downloads with attachment disposition.
+func InlineSafe(contentType string) bool {
+	return strings.HasPrefix(contentType, "image/") && contentType != "image/svg+xml"
+}
+
+// PresignGet mints a short-lived GET URL. Safe images are dispositioned
+// inline so <img src> renders; everything else (including HTML/SVG, which
+// can execute markup) downloads as an attachment.
 func (s *Store) PresignGet(ctx context.Context, key, filename, contentType string) (string, error) {
 	kind := "attachment"
-	if strings.HasPrefix(contentType, "image/") {
+	if InlineSafe(contentType) {
 		kind = "inline"
 	}
 	safe := strings.NewReplacer("\\", "_", "\"", "_").Replace(filename)

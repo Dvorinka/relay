@@ -225,9 +225,9 @@ misbehaving agent.
   5/hour/IP; reset 5/hour/IP. Fixed-window counters in Postgres (no cache dep).
 - MCP tokens: `rly_` + 32-byte random, SHA-256 stored, shown once,
   revocable, optional expiry.
-- Uploads: MIME sniffed via `http.DetectContentType`, extension allowlist
-  (images, pdf, text, archives), 25 MiB default cap, keys are
-  `uploads/<ulid>` - user filenames stored as metadata only.
+- Uploads: MIME sniffed via `http.DetectContentType`, all types accepted,
+  markup-capable types (HTML/SVG) served attachment-only, 25 MiB default
+  cap, keys are `uploads/<ulid>` - user filenames stored as metadata only.
 - Markdown: rendered server-side through a sanitized subset (no raw HTML,
   no `javascript:` URLs) and client-side with a DOMPurify-equivalent pass.
 - CSRF: cookie auth + custom-header check (`X-Relay-Client`) on mutations;

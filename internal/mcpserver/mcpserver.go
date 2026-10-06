@@ -1043,10 +1043,7 @@ func (s *Service) uploadAttachment(ctx context.Context, req mcp.CallToolRequest)
 	if int64(len(data)) > s.maxUpload {
 		return mcp.NewToolResultError("file exceeds the upload size cap"), nil
 	}
-	contentType, ok := attachments.SniffType(data, req.GetString("content_type", ""))
-	if !ok {
-		return mcp.NewToolResultError("file type not allowed; images, pdf, text and zip are accepted"), nil
-	}
+	contentType := attachments.SniffType(data, req.GetString("content_type", ""))
 	name = path.Base(name)
 	if name == "." || name == "/" || name == "" {
 		name = "file"
