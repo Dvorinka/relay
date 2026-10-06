@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Notifications from "expo-notifications";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -24,6 +25,58 @@ import { WebView } from "react-native-webview";
 // Login persists on its own — the WebView keeps cookies + localStorage.
 
 const STORE_KEY = "relay.serverUrl";
+
+// Web notifications inside a WebView: Android's WebView has no Notification
+// API, so inject a shim that relays `new Notification(...)` and
+// requestPermission() to the native layer over postMessage. OS permission
+// is asked only when the page requests it (the web app's Enable button).
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
+});
+
+const NOTIFY_BRIDGE = `
+(function () {
+  if (window.Notification) return;
+  var pending = {};
+  function N(title, opts) {
+    opts = opts || {};
+    window.ReactNativeWebView.postMessage(JSON.stringify({
+      type: "notify", title: String(title), body: String(opts.body || "")
+    }));
+  }
+  N.permission = window.__RN_NOTIFY_GRANTED__ ? "granted" : "default";
+  N.requestPermission = function (cb) {
+    var id = "p" + (N.__seq = (N.__seq || 0) + 1);
+    var p = new Promise(function (res) {
+      pending[id] = res;
+      window.ReactNativeWebView.postMessage(
+        JSON.stringify({ type: "notify-permission", id: id }));
+    });
+    p.then(function (r) { if (cb) cb(r); });
+    return p;
+  };
+  window.__rnNotifyResolve = function (id, result) {
+    N.permission = result;
+    var r = pending[id];
+    delete pending[id];
+    if (r) r(result);
+  };
+  Object.defineProperty(window, "Notification", { value: N });
+})();
+true;
+`;
+
+function notifyBridge(granted: boolean): string {
+  return (
+    "window.__RN_NOTIFY_GRANTED__ = " + (granted ? "true" : "false") + ";" +
+    NOTIFY_BRIDGE
+  );
+}
 
 const C = {
   bg: "#0a0a0b",
@@ -75,12 +128,46 @@ export default function Shell() {
   const [ready, setReady] = useState(false);
   const [canGoBack, setCanGoBack] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [notifyGranted, setNotifyGranted] = useState(false);
 
   useEffect(() => {
     AsyncStorage.getItem(STORE_KEY).then((v) => {
       setServer(v ? normalizeServer(v) : null);
       setReady(true);
     });
+    void Notifications.getPermissionsAsync().then((p) =>
+      setNotifyGranted(p.granted),
+    );
+    if (Platform.OS === "android") {
+      void Notifications.setNotificationChannelAsync("default", {
+        name: "Messages",
+        importance: Notifications.AndroidImportance.HIGH,
+      });
+    }
+  }, []);
+
+  const onWebMessage = useCallback((e: { nativeEvent: { data: string } }) => {
+    let m: { type?: string; title?: string; body?: string; id?: string };
+    try {
+      m = JSON.parse(e.nativeEvent.data);
+    } catch {
+      return;
+    }
+    if (m.type === "notify" && m.title) {
+      void Notifications.scheduleNotificationAsync({
+        content: { title: m.title, body: m.body },
+        trigger: null,
+      });
+    } else if (m.type === "notify-permission" && m.id) {
+      const id = m.id;
+      void Notifications.requestPermissionsAsync().then((p) => {
+        setNotifyGranted(p.granted);
+        web.current?.injectJavaScript(
+          `window.__rnNotifyResolve(${JSON.stringify(id)},` +
+            `${JSON.stringify(p.granted ? "granted" : "denied")});true;`,
+        );
+      });
+    }
   }, []);
 
   // Hardware back walks the WebView history before exiting.
@@ -164,6 +251,8 @@ export default function Shell() {
         setDisplayZoomControls={false}
         scalesPageToFit={false}
         sharedCookiesEnabled
+        injectedJavaScriptBeforeContentLoaded={notifyBridge(notifyGranted)}
+        onMessage={onWebMessage}
         onNavigationStateChange={(nav) => setCanGoBack(nav.canGoBack)}
         onLoadStart={() => {
           webReady.current = false;

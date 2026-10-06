@@ -20,6 +20,7 @@ import { Avatar } from "@ark-ui/solid";
 import {
   BotIcon,
   BriefsIcon,
+  BulbIcon,
   CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -174,6 +175,9 @@ function TodoList(props: {
 }) {
   const [text, setText] = createSignal("");
   const [err, setErr] = createSignal("");
+  // Bulk-delete mode: a selection set plus a confirming flag.
+  const [selecting, setSelecting] = createSignal(false);
+  const [selected, setSelected] = createSignal<ReadonlySet<string>>(new Set());
   // in_progress floats to the top — that's what an agent is doing right now.
   const order = (t: Todo) =>
     t.status === "in_progress" ? 0 : t.done ? 2 : 1;
@@ -224,6 +228,39 @@ function TodoList(props: {
     }
   }
 
+  function toggleSelected(id: string) {
+    setSelected((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function endSelecting() {
+    setSelecting(false);
+    setSelected(new Set<string>());
+  }
+
+  async function removeSelected() {
+    const ids = [...selected()];
+    if (ids.length === 0) return;
+    try {
+      if (
+        !(await confirmDestructive({
+          title: "Delete todos",
+          body: `Delete ${ids.length} ${ids.length === 1 ? "todo" : "todos"}? This cannot be undone.`,
+        }))
+      )
+        return;
+      await api.deleteTodos(props.projectId, ids);
+      endSelecting();
+      props.onChanged();
+    } catch (ex) {
+      setErr(ex instanceof Error ? ex.message : "could not delete todos");
+    }
+  }
+
   return (
     <div class="flex flex-col gap-1">
       <Show when={working().length > 0}>
@@ -254,18 +291,78 @@ function TodoList(props: {
           <PlusIcon class="h-3.5 w-3.5" />
         </button>
       </form>
+      <Show when={props.todos.length > 0}>
+        <div class="flex items-center gap-2 pt-0.5">
+          <button
+            type="button"
+            onClick={() => (selecting() ? endSelecting() : setSelecting(true))}
+            class="text-[11px] font-medium text-muted transition-colors hover:text-accent"
+          >
+            {selecting() ? "Done" : "Select"}
+          </button>
+          <Show when={selecting()}>
+            <button
+              type="button"
+              onClick={() =>
+                setSelected((cur) =>
+                  cur.size === props.todos.length
+                    ? new Set<string>()
+                    : new Set(props.todos.map((t) => t.id)),
+                )
+              }
+              class="text-[11px] font-medium text-muted transition-colors hover:text-accent"
+            >
+              {selected().size === props.todos.length
+                ? "Select none"
+                : "Select all"}
+            </button>
+            <button
+              type="button"
+              disabled={selected().size === 0}
+              onClick={() => void removeSelected()}
+              class="ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-red-500 transition-colors hover:bg-red-500/10 disabled:opacity-40"
+            >
+              <TrashIcon class="h-3 w-3" />
+              Delete
+              {selected().size > 0 ? ` ${selected().size}` : ""}
+            </button>
+          </Show>
+        </div>
+      </Show>
       <For
         each={sorted()}
         fallback={<p class="text-[12px] text-muted">Nothing tracked yet.</p>}
       >
         {(t) => (
-          <div class="group flex items-start gap-2 rounded-md px-1 py-1 transition-colors hover:bg-hover">
+          <div
+            class={`group flex items-start gap-2 rounded-md px-1 py-1 transition-colors hover:bg-hover ${
+              selecting() ? "cursor-pointer" : ""
+            } ${selecting() && selected().has(t.id) ? "bg-accent/5" : ""}`}
+            onClick={() => {
+              if (selecting()) toggleSelected(t.id);
+            }}
+          >
+            <Show when={selecting()}>
+              <span
+                aria-hidden="true"
+                class={`mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border transition-colors ${
+                  selected().has(t.id)
+                    ? "border-accent bg-accent text-white"
+                    : "border-muted/60 text-transparent"
+                }`}
+              >
+                <CheckIcon class="h-2.5 w-2.5" />
+              </span>
+            </Show>
             <button
               type="button"
               role="checkbox"
               aria-checked={t.done}
               aria-label={t.done ? "Mark not done" : "Mark done"}
-              onClick={() => void toggle(t)}
+              onClick={(e) => {
+                e.stopPropagation();
+                void toggle(t);
+              }}
               class={`mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border transition-colors ${
                 t.done
                   ? "border-accent bg-accent text-white"
@@ -299,7 +396,10 @@ function TodoList(props: {
             </span>
             <button
               type="button"
-              onClick={() => void remove(t)}
+              onClick={(e) => {
+                e.stopPropagation();
+                void remove(t);
+              }}
               aria-label="Delete todo"
               class="invisible shrink-0 rounded p-0.5 text-muted transition-colors hover:text-red-500 group-hover:visible"
             >
@@ -906,6 +1006,21 @@ function ContextRail(props: {
               : `${briefs.latest?.length ?? 0} brief${(briefs.latest?.length ?? 0) === 1 ? "" : "s"} · ${(props.project.brief_policy ?? "on_request") === "on_request" ? "On request — only when asked" : props.project.brief_policy}`}
           </span>
         </button>
+      </RailSection>
+
+      <RailSection label="Ideas">
+        <A
+          href={`/app/p/${props.project.id}/ideas`}
+          class="block w-full rounded-lg border border-border bg-surface px-3 py-2 text-left transition-colors hover:border-muted/60"
+        >
+          <span class="flex items-center gap-2 text-[12.5px] font-medium">
+            <BulbIcon class="h-3.5 w-3.5 text-muted" />
+            Brainstorm boards for this project.
+          </span>
+          <span class="mt-1 block text-[11px] text-muted">
+            Sketch a mindmap, then convert it into an issue or a new project.
+          </span>
+        </A>
       </RailSection>
 
       <RailSection label="Development">

@@ -63,6 +63,7 @@ thread, thread becomes an issue, issue tracks GitHub state.
 - **Offline-first local mode** - no server required: pick "Work locally" on the sign-in screen and the whole app (projects, chat, issues, board, search) runs against IndexedDB on-device storage — attachments included as real blobs, far beyond the old ~5 MB localStorage ceiling. Point it at a server later and **Sync to server** replays local data onto it.
 - **Any-server clients** - sign in to any reachable Relay server from the login screen; the API accepts bearer tokens cross-origin (CORS `*`), so the web build works hosted anywhere.
 - **Visual briefs** - agents can attach Excalidraw diagrams explaining their work, and you can draw right back: every brief opens in a real embedded Excalidraw editor (full shape/tool vocabulary, images, bindings) while agents read and revise the identical scene JSON through MCP (`create_brief` / `update_brief`). Each brief has its own comment thread so you can iterate on the picture. Per-project policy: never, on request, or expected pre-merge (Settings → Project settings → Visual briefs).
+- **Ideas** - a per-project brainstorm shelf (context rail → Ideas, or `/app/p/<id>/ideas`): mindmaps and sketches on the same embedded Excalidraw canvas, editable by agents over MCP (`create_idea` / `update_idea`). When a sketch firms up, convert it into a backlog issue or spin it out as a new project — the idea is kept, marked converted.
 - **GitHub** - connect repositories three ways: a GitHub App (one-click register + install from workspace settings), a `GITHUB_TOKEN`, or the machine's own `gh` CLI login — Relay picks it up automatically when no app is registered. Issues, PRs, and commits mirror into the project with signature-verified webhooks.
 - **Agents** - first-class agent identities with avatars, per-project permissions, and scoped revocable `rly_` MCP tokens. "Last seen" is real MCP activity - never fabricated presence.
 - **Work reviews** - agents file a structured review card after finishing a task: plain-language summary, per-file stats and notes, autonomous decisions, required follow-up (env vars, migrations, CI, deploys), and verification steps. Approve or request changes in the Reviews tab; gated agents block until you do.
@@ -208,7 +209,8 @@ Tools: `list_projects`, `get_project`, `list_conversations`, `get_messages`,
 `github_list_issues`, `github_get_issue`, `github_list_prs`,
 `github_get_pr`, `submit_review`, `list_reviews`, `get_review`,
 `await_review`, `get_brief_policy`, `list_briefs`, `get_brief`,
-`create_brief`, `update_brief`.
+`create_brief`, `update_brief`, `delete_brief`, `list_ideas`, `get_idea`,
+`create_idea`, `update_idea`, `delete_idea`, `idea_to_issue`.
 
 ### Agent work reviews
 
@@ -243,7 +245,7 @@ SSE updates, and avatars on both sides of the card.
 
 - **[apps/web](apps/web)** - SolidJS + Vite + Tailwind + Ark UI frontend.
 - **[packages/api-client](packages/api-client)** - OpenAPI-generated TS client shared by all clients.
-- **[apps/desktop](apps/desktop)** - Wails shell for Linux/macOS/Windows proxying your Relay server (phase 9; tray/deep links deferred - see its README).
+- **[apps/desktop](apps/desktop)** - Wails shell for Linux/macOS/Windows proxying your Relay server. Optional close-to-tray (Windows notification area) keeps it connected for alerts while hidden.
 - **[apps/mobile](apps/mobile)** - React Native + Expo app for Android: login, conversations, issues, work list, attachments (phase 10; push/iOS deferred - see its README).
 - **MCP server** - built into the `relay` binary at `/mcp`.
 

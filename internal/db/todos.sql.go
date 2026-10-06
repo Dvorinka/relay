@@ -63,6 +63,25 @@ func (q *Queries) DeleteTodo(ctx context.Context, id pgtype.UUID) error {
 	return err
 }
 
+const deleteTodos = `-- name: DeleteTodos :execrows
+delete from agent_todos
+where project_id = $1 and id = any($2::uuid[])
+`
+
+type DeleteTodosParams struct {
+	ProjectID pgtype.UUID   `json:"project_id"`
+	Ids       []pgtype.UUID `json:"ids"`
+}
+
+// bulk delete, project-scoped so a caller can only drop its own rows
+func (q *Queries) DeleteTodos(ctx context.Context, arg DeleteTodosParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteTodos, arg.ProjectID, arg.Ids)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getIssueByKey = `-- name: GetIssueByKey :one
 select i.id, i.number, i.project_id, p.key as project_key
 from issues i join projects p on p.id = i.project_id
@@ -117,7 +136,7 @@ func (q *Queries) GetTodo(ctx context.Context, id pgtype.UUID) (AgentTodo, error
 }
 
 const getTodoJoined = `-- name: GetTodoJoined :one
-select t.id, t.project_id, t.agent_id, t.issue_id, t.content, t.done, t.position, t.created_at, t.updated_at, t.agent_name_snapshot, t.status, coalesce(a.name, nullif(t.agent_name_snapshot, '')) as agent_name, i.number as issue_number, p.key as issue_key
+select t.id, t.project_id, t.agent_id, t.issue_id, t.content, t.done, t.position, t.created_at, t.updated_at, t.agent_name_snapshot, t.status, coalesce(a.name, nullif(t.agent_name_snapshot, ''), '') as agent_name, i.number as issue_number, p.key as issue_key
 from agent_todos t
 left join agents a on a.id = t.agent_id
 left join issues i on i.id = t.issue_id
@@ -165,7 +184,7 @@ func (q *Queries) GetTodoJoined(ctx context.Context, id pgtype.UUID) (GetTodoJoi
 }
 
 const listTodos = `-- name: ListTodos :many
-select t.id, t.project_id, t.agent_id, t.issue_id, t.content, t.done, t.position, t.created_at, t.updated_at, t.agent_name_snapshot, t.status, coalesce(a.name, nullif(t.agent_name_snapshot, '')) as agent_name, i.number as issue_number, p.key as issue_key
+select t.id, t.project_id, t.agent_id, t.issue_id, t.content, t.done, t.position, t.created_at, t.updated_at, t.agent_name_snapshot, t.status, coalesce(a.name, nullif(t.agent_name_snapshot, ''), '') as agent_name, i.number as issue_number, p.key as issue_key
 from agent_todos t
 left join agents a on a.id = t.agent_id
 left join issues i on i.id = t.issue_id

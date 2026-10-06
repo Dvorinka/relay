@@ -26,20 +26,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// allowlist holds sniffed MIME types we accept. HTML/SVG are deliberately
-// absent: stored files must stay inert when viewed.
-var allowlist = map[string]bool{
-	"image/png":       true,
-	"image/jpeg":      true,
-	"image/gif":       true,
-	"image/webp":      true,
-	"image/avif":      true,
-	"image/bmp":       true,
-	"image/x-icon":    true,
-	"application/pdf": true,
-	"text/plain":      true,
-	"application/zip": true,
-}
+// All file types are accepted for upload. Markup-capable types (HTML,
+// SVG, XML, script) stay inert because both download paths serve them
+// with Content-Disposition: attachment — see storage.InlineSafe.
 
 type Service struct {
 	q     *db.Queries
@@ -138,12 +127,7 @@ func (s *Service) handleUpload(c *gin.Context) {
 		}
 		filename, declaredType = fh.Filename, fh.Header.Get("Content-Type")
 	}
-	contentType, ok := SniffType(data, declaredType)
-	if !ok {
-		httpx.Error(c, http.StatusBadRequest, "unsupported_type",
-			"file type not allowed; images, pdf, text and zip are accepted")
-		return
-	}
+	contentType := SniffType(data, declaredType)
 	filename = path.Base(filename)
 	if filename == "." || filename == "/" || filename == "" {
 		filename = "file"
@@ -232,7 +216,7 @@ func (s *Service) handleDownload(c *gin.Context) {
 		return
 	}
 	kind := "attachment"
-	if strings.HasPrefix(a.ContentType, "image/") {
+	if storage.InlineSafe(a.ContentType) {
 		kind = "inline"
 	}
 	safe := strings.NewReplacer("\\", "_", "\"", "_").Replace(a.Filename)
@@ -246,9 +230,10 @@ func (s *Service) handleDownload(c *gin.Context) {
 // --- helpers ---
 
 // SniffType resolves the effective content type for an upload: the
-// detected type wins, falling back to the declared one, and is checked
-// against the allowlist. Exported for the MCP upload path.
-func SniffType(data []byte, declared string) (string, bool) {
+// detected type wins, falling back to the declared one. Every type is
+// accepted; active markup (HTML/SVG) is kept inert by attachment
+// disposition on both download paths. Exported for the MCP upload path.
+func SniffType(data []byte, declared string) string {
 	sniffed := avatars.SniffImageType(data)
 	ct, _, _ := strings.Cut(sniffed, ";")
 	ct = strings.TrimSpace(ct)
@@ -256,7 +241,10 @@ func SniffType(data []byte, declared string) (string, bool) {
 		ct, _, _ = strings.Cut(declared, ";")
 		ct = strings.TrimSpace(ct)
 	}
-	return ct, allowlist[ct]
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	return ct
 }
 
 // JSON renders one attachment for the API.

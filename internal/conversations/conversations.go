@@ -166,11 +166,12 @@ func (s *Service) handleListMessages(c *gin.Context) {
 	}
 	atts := s.attachmentsFor(c, ids)
 	rxns := s.reactionsFor(c, ids)
-	read := s.agentReadSet(c, ids)
+	readBy := s.readByFor(c, ids)
 	msgs := make([]gin.H, 0, len(rows))
 	// newest-first page -> reverse for chronological order
 	for i := len(rows) - 1; i >= 0; i-- {
 		m := rows[i]
+		readers := readBy[m.ID.String()]
 		msgs = append(msgs, MessageJSON(MessageView{
 			ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
 			Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Silent: m.Silent, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
@@ -186,7 +187,8 @@ func (s *Service) handleListMessages(c *gin.Context) {
 			FwdProjectID: m.FwdProjectID, FwdAuthorName: m.FwdAuthorName,
 			Attachments: atts[m.ID.String()],
 			Reactions:   rxns[m.ID.String()],
-			AgentRead:   read[m.ID.String()],
+			AgentRead:   len(readers) > 0,
+			ReadBy:      readers,
 		}))
 	}
 	resp := gin.H{"messages": msgs, "has_more": hasMore}
@@ -475,7 +477,7 @@ func (s *Service) messagePayload(c *gin.Context, id pgtype.UUID) (gin.H, bool) {
 	}
 	atts := s.attachmentsFor(c, []pgtype.UUID{m.ID})
 	rxns := s.reactionsFor(c, []pgtype.UUID{m.ID})
-	read := s.agentReadSet(c, []pgtype.UUID{m.ID})
+	readers := s.readByFor(c, []pgtype.UUID{m.ID})[m.ID.String()]
 	return MessageJSON(MessageView{
 		ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
 		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Silent: m.Silent, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
@@ -491,7 +493,8 @@ func (s *Service) messagePayload(c *gin.Context, id pgtype.UUID) (gin.H, bool) {
 		FwdProjectID: m.FwdProjectID, FwdAuthorName: m.FwdAuthorName,
 		Attachments: atts[m.ID.String()],
 		Reactions:   rxns[m.ID.String()],
-		AgentRead:   read[m.ID.String()],
+		AgentRead:   len(readers) > 0,
+		ReadBy:      readers,
 	}), true
 }
 
@@ -559,9 +562,10 @@ func (s *Service) handleListPins(c *gin.Context) {
 	}
 	atts := s.attachmentsFor(c, ids)
 	rxns := s.reactionsFor(c, ids)
-	read := s.agentReadSet(c, ids)
+	readBy := s.readByFor(c, ids)
 	msgs := make([]gin.H, 0, len(rows))
 	for _, m := range rows {
+		readers := readBy[m.ID.String()]
 		msgs = append(msgs, MessageJSON(MessageView{
 			ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
 			Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Silent: m.Silent, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
@@ -577,7 +581,8 @@ func (s *Service) handleListPins(c *gin.Context) {
 			FwdProjectID: m.FwdProjectID, FwdAuthorName: m.FwdAuthorName,
 			Attachments: atts[m.ID.String()],
 			Reactions:   rxns[m.ID.String()],
-			AgentRead:   read[m.ID.String()],
+			AgentRead:   len(readers) > 0,
+			ReadBy:      readers,
 		}))
 	}
 	c.JSON(http.StatusOK, gin.H{"messages": msgs})
@@ -994,6 +999,14 @@ func (s *Service) handleClearConversation(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
+	// Threads rooted at wiped messages keep their unread rows — reset read
+	// state for everyone so /clear actually clears the inbox badge too.
+	if err := s.q.ClearReadStateUsers(c.Request.Context(), conv.ID); err != nil {
+		s.log.Error("clear read state (users)", zap.Error(err))
+	}
+	if err := s.q.ClearReadStateAgents(c.Request.Context(), conv.ID); err != nil {
+		s.log.Error("clear read state (agents)", zap.Error(err))
+	}
 	if s.Bus != nil {
 		p, _ := uuid.FromBytes(pid.Bytes[:])
 		s.Bus.Publish(events.Event{Type: "conversation.cleared", ProjectID: p,
@@ -1091,19 +1104,30 @@ func (s *Service) reactionsFor(c *gin.Context, ids []pgtype.UUID) map[string][]g
 	return out
 }
 
-// agentReadSet returns the subset of ids at least one agent has read -
-// those messages are edit-locked.
-func (s *Service) agentReadSet(c *gin.Context, ids []pgtype.UUID) map[string]bool {
-	out := make(map[string]bool, len(ids))
+// readByFor batches named agent read receipts for a page of messages,
+// keyed by message id. Non-empty read_by implies agent_read (the edit
+// lock uses the same author exclusion), so callers drop agentReadSet.
+func (s *Service) readByFor(c *gin.Context, ids []pgtype.UUID) map[string][]gin.H {
+	out := make(map[string][]gin.H, len(ids))
 	if len(ids) == 0 {
 		return out
 	}
-	rows, err := s.q.AgentReadMessageIDs(c.Request.Context(), ids)
+	rows, err := s.q.AgentReadersForMessages(c.Request.Context(), ids)
 	if err != nil {
 		return out
 	}
-	for _, id := range rows {
-		out[id.String()] = true
+	for _, r := range rows {
+		var avatar *string
+		if r.AvatarKey.Valid {
+			a := "/api/files/" + r.AvatarKey.String
+			avatar = &a
+		}
+		mid := r.MessageID.String()
+		out[mid] = append(out[mid], gin.H{
+			"id": r.AgentID.String(), "name": r.Name,
+			"avatar_url": avatar,
+			"read_at":    r.ReadAt.Time.Format("2006-01-02T15:04:05Z07:00"),
+		})
 	}
 	return out
 }
@@ -1155,6 +1179,7 @@ type MessageView struct {
 	Attachments                  []gin.H
 	Reactions                    []gin.H
 	AgentRead                    bool
+	ReadBy                       []gin.H
 }
 
 // MessageJSON renders one message for the API. Author is a user/agent pair;
@@ -1251,6 +1276,7 @@ func MessageJSON(v MessageView) gin.H {
 		"created_at":  v.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
 		"edited_at":   edited,
 		"agent_read":  v.AgentRead,
+		"read_by":     nonEmpty(v.ReadBy),
 	}
 }
 

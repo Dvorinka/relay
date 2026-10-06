@@ -5,7 +5,8 @@ import { net } from "../../lib/net";
 import { SceneView } from "./SceneView";
 import { ExcalidrawEditor } from "./ExcalidrawEditor";
 import { Markdown } from "../../lib/markdown";
-import { XIcon, PlusIcon, CheckIcon, PencilIcon } from "../../components/icons";
+import { XIcon, PlusIcon, CheckIcon, PencilIcon, TrashIcon } from "../../components/icons";
+import { confirmDestructive } from "../../components/Confirm";
 import { inputClass, primaryButtonClass } from "../../components/ui";
 
 const POLICY_LABEL: Record<BriefPolicy, string> = {
@@ -259,6 +260,19 @@ function BriefView(props: {
     props.onChanged();
   };
 
+  const remove = async () => {
+    if (
+      !(await confirmDestructive({
+        title: "Delete brief",
+        body: `Delete "${brief().title}" and its comment thread? This cannot be undone.`,
+      }))
+    )
+      return;
+    await api.deleteBrief(brief().id);
+    props.onChanged();
+    props.onClose();
+  };
+
   return (
     <div
       class="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4"
@@ -301,6 +315,15 @@ function BriefView(props: {
                 Reopen
               </button>
             </Show>
+            <button
+              type="button"
+              onClick={() => void remove()}
+              title="Delete brief"
+              aria-label="Delete brief"
+              class="rounded-md border border-border p-1.5 text-muted transition-colors hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-500"
+            >
+              <TrashIcon class="h-3.5 w-3.5" />
+            </button>
             <button
               type="button"
               onClick={props.onClose}

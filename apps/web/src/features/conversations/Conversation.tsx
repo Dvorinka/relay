@@ -5,6 +5,7 @@ import {
   type Conversation as ApiConversation,
   type Message,
   type Reaction,
+  type ReadReceipt,
   type Thread,
   type ThreadSummary,
 } from "@relay/api-client";
@@ -24,6 +25,7 @@ import {
   CheckIcon,
   DotsIcon,
   FileIcon,
+  FolderIcon,
   ForwardIcon,
   IssueIcon,
   LinkIcon,
@@ -111,6 +113,12 @@ type PendingAttachment = {
   attachmentId?: string;
   error?: string;
 };
+
+// Staged attachments live outside the component, keyed by conversation, so
+// navigating to Inbox and back keeps them — File objects can't survive
+// localStorage. Entries (and their object URLs) live until the chip is
+// removed, the message sends, or the app reloads.
+const pendingDrafts = new Map<string, PendingAttachment[]>();
 
 // Author palette: deterministic hue per name, Element-style. Token-safe in
 // both themes because these stay readable on bg/surface.
@@ -282,6 +290,53 @@ function ReactionRow(props: {
             </button>
           )}
         </For>
+      </div>
+    </Show>
+  );
+}
+
+// Named agent read receipts — "seen by" row under a message. Only agents
+// appear (the author's own receipt is excluded server-side); hovering shows
+// who read it and when. Users' own reads stay private.
+function ReadByRow(props: { readBy: ReadReceipt[] }) {
+  const names = () =>
+    props.readBy
+      .map((r) => `${r.name} · ${timeAgo(r.read_at)}`)
+      .join("\n");
+  return (
+    <Show when={props.readBy.length > 0}>
+      <div
+        class="mt-1 flex items-center gap-1.5 text-[11px] text-faint"
+        title={names()}
+      >
+        <span>Seen by</span>
+        <div class="flex -space-x-1">
+          <For each={props.readBy.slice(0, 6)}>
+            {(r) => (
+              <Avatar.Root
+                class="flex h-4.5 w-4.5 items-center justify-center rounded-full border border-bg"
+              >
+                <Avatar.Fallback
+                  class="text-[7px] font-semibold"
+                  style={{
+                    color: authorColor(r.name),
+                    "background-color": `color-mix(in srgb, ${authorColor(r.name)} 18%, var(--color-surface))`,
+                  }}
+                >
+                  {initials(r.name)}
+                </Avatar.Fallback>
+                <Avatar.Image
+                  src={mediaURL(r.avatar_url)}
+                  alt={r.name}
+                  class="h-full w-full rounded-full object-cover"
+                />
+              </Avatar.Root>
+            )}
+          </For>
+        </div>
+        <span class="truncate">
+          {props.readBy.map((r) => r.name).join(", ")}
+        </span>
       </div>
     </Show>
   );
@@ -1427,6 +1482,7 @@ function MessageRow(props: {
           reactions={m().reactions}
           onChange={(reactions) => props.onChanged({ ...m(), reactions })}
         />
+        <ReadByRow readBy={m().read_by ?? []} />
         <Show when={m().thread} keyed>
           {(t) => (
             <button
@@ -1660,6 +1716,7 @@ function MessageRow(props: {
 function PendingChip(props: {
   item: PendingAttachment;
   onRemove: () => void;
+  onPreview?: () => void;
 }) {
   const item = () => props.item;
   const meta = () => {
@@ -1670,7 +1727,7 @@ function PendingChip(props: {
     const size = formatBytes(item().file.size);
     return item().status === "uploading"
       ? "uploading…"
-      : `pasted from clipboard · ${size} · ${ext} · will upload on send`;
+      : `${size} · ${ext} · will upload on send`;
   };
   return (
     <li
@@ -1687,11 +1744,18 @@ function PendingChip(props: {
         }
       >
         {(url) => (
-          <img
-            src={url()}
-            alt=""
-            class="h-[52px] w-[52px] shrink-0 rounded-lg border border-border object-cover"
-          />
+          <button
+            type="button"
+            onClick={props.onPreview}
+            aria-label={`Preview ${item().file.name}`}
+            class="shrink-0 rounded-lg transition-opacity hover:opacity-80"
+          >
+            <img
+              src={url()}
+              alt=""
+              class="h-[52px] w-[52px] rounded-lg border border-border object-cover"
+            />
+          </button>
         )}
       </Show>
       <div class="min-w-0">
@@ -1898,7 +1962,21 @@ function ConversationThread(props: {
   // Messages that arrived while the reader was scrolled up — drives the
   // Discord-style "New messages" jump pill above the composer.
   const [newBelow, setNewBelow] = createSignal(0);
-  const [pending, setPending] = createSignal<PendingAttachment[]>([]);
+  // Restore staged attachments for this conversation (survives navigation).
+  const [pending, setPending] = createSignal<PendingAttachment[]>(
+    pendingDrafts.get(props.conversationId) ?? [],
+  );
+  createEffect(() => {
+    const list = pending();
+    if (list.length > 0) pendingDrafts.set(props.conversationId, list);
+    else pendingDrafts.delete(props.conversationId);
+  });
+  // Lightbox for a staged image chip (pending files aren't on the server
+  // yet, so FilePreview's repo read can't show them).
+  const [pendingPreview, setPendingPreview] = createSignal<{
+    url: string;
+    name: string;
+  } | null>(null);
   const [dragging, setDragging] = createSignal(false);
   const [replyTo, setReplyTo] = createSignal<Message | null>(null);
   // /clear and /new both wipe the channel — confirmClear records which
@@ -1947,6 +2025,7 @@ function ConversationThread(props: {
   let scrollEl: HTMLDivElement | undefined;
   let inputEl: HTMLTextAreaElement | undefined;
   let fileEl: HTMLInputElement | undefined;
+  let dirEl: HTMLInputElement | undefined;
 
   const [firstPage] = createResource(
     () => ({ id: props.conversationId, tag: tagFilter() }),
@@ -2020,6 +2099,26 @@ function ConversationThread(props: {
       setMessages((cur) =>
         cur.map((x) => (x.id === mid ? { ...x, reactions } : x)),
       );
+    } else if (e.type === "message.read") {
+      // Named agent receipt — merge the reader into each affected message.
+      const ids = (data.message_ids ?? []) as string[];
+      const agent = data.agent as ReadReceipt | undefined;
+      if (ids.length && agent) {
+        const receipt: ReadReceipt = {
+          id: agent.id,
+          name: agent.name,
+          avatar_url: agent.avatar_url ?? null,
+          read_at: new Date().toISOString(),
+        };
+        setMessages((cur) =>
+          cur.map((x) =>
+            ids.includes(x.id) &&
+            !(x.read_by ?? []).some((r) => r.id === receipt.id)
+              ? { ...x, read_by: [...(x.read_by ?? []), receipt], agent_read: true }
+              : x,
+          ),
+        );
+      }
     } else if (e.type === "thread.created" || e.type === "thread.updated") {
       // Events are keyed to the parent conversation — patch the chip on the
       // parent message live (create shows it, replies bump the count).
@@ -2077,14 +2176,12 @@ function ConversationThread(props: {
           // instead of landing at the bottom.
           stickToBottom = false;
           void jumpTo(boundary);
-        } else if (stickToBottom && scrollEl) {
-          scrollEl.scrollTop = scrollEl.scrollHeight;
+        } else if (stickToBottom) {
+          snapToBottom();
         }
       });
       setTimeout(() => {
-        if (stickToBottom && scrollEl) {
-          scrollEl.scrollTop = scrollEl.scrollHeight;
-        }
+        if (stickToBottom) snapToBottom();
       }, 120);
     }
   });
@@ -2094,32 +2191,34 @@ function ConversationThread(props: {
   // prepends keep the viewport anchored instead of jumping.
   let stickToBottom = true;
   let lastSeenId: string | undefined;
+  let lastScrollTop = 0;
+  // Programmatic snaps fire scroll events that look exactly like user
+  // scrolls; while a snap is in flight the handler must not read them as
+  // "user scrolled away" (this broke autoscroll in non-maximized windows,
+  // where resize churn emits extra scroll events).
+  let snapping = false;
+  function snapToBottom() {
+    if (!scrollEl) return;
+    snapping = true;
+    scrollEl.scrollTop = scrollEl.scrollHeight;
+  }
   createEffect(() => {
     const lastId = messages().at(-1)?.id;
     if (lastId && lastId !== lastSeenId) {
       lastSeenId = lastId;
-      if (stickToBottom) {
-        scrollEl?.scrollTo({ top: scrollEl.scrollHeight });
-      }
+      if (stickToBottom) snapToBottom();
     }
   });
 
   // Late layout shifts (avatars, images arriving after first paint) grow the
   // column — snap back down while the reader is pinned to the bottom.
   const ro = new ResizeObserver(() => {
-    if (stickToBottom && scrollEl) {
-      scrollEl.scrollTop = scrollEl.scrollHeight;
-    }
+    if (stickToBottom) snapToBottom();
   });
   onCleanup(() => ro.disconnect());
 
-  onCleanup(() => {
-    for (const p of pending()) {
-      if (p.previewUrl) {
-        URL.revokeObjectURL(p.previewUrl);
-      }
-    }
-  });
+  // NOTE: pending preview URLs are intentionally NOT revoked on unmount —
+  // pendingDrafts retains them so a navigation round-trip keeps the chips.
 
   async function loadEarlier() {
     const first = messages()[0];
@@ -2638,9 +2737,7 @@ function ConversationThread(props: {
       // out of view, which reads as "send did nothing".
       stickToBottom = true;
       setNewBelow(0);
-      requestAnimationFrame(() => {
-        if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
-      });
+      requestAnimationFrame(snapToBottom);
       setDraft("");
       setDraftTags([]);
       setReplyTo(null);
@@ -2824,8 +2921,21 @@ function ConversationThread(props: {
           if (!scrollEl) return;
           const gap =
             scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight;
-          stickToBottom = gap < 60;
-          if (stickToBottom) setNewBelow(0);
+          const wentUp = scrollEl.scrollTop < lastScrollTop;
+          lastScrollTop = scrollEl.scrollTop;
+          if (snapping) {
+            // A programmatic snap is still landing — its intermediate events
+            // carry a big gap that must not unpin the reader.
+            if (gap > 1) return;
+            snapping = false;
+          }
+          // Only an upward move unpins; downward clamps, layout shifts, and
+          // resizes leave the pin alone.
+          if (wentUp) stickToBottom = false;
+          if (gap < 60) {
+            stickToBottom = true;
+            setNewBelow(0);
+          }
         }}
         class="chat-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden"
       >
@@ -3071,6 +3181,13 @@ function ConversationThread(props: {
                   <PendingChip
                     item={p}
                     onRemove={() => removePending(p.localId)}
+                    onPreview={() =>
+                      p.previewUrl &&
+                      setPendingPreview({
+                        url: p.previewUrl,
+                        name: p.file.name,
+                      })
+                    }
                   />
                 )}
               </For>
@@ -3134,6 +3251,15 @@ function ConversationThread(props: {
               >
                 <Spinner class="h-4 w-4 text-accent-ink" />
               </Show>
+            </button>
+            <button
+              type="button"
+              onClick={() => dirEl?.click()}
+              aria-label="Attach a folder"
+              title="Attach a folder"
+              class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-muted transition-colors hover:bg-hover hover:text-fg"
+            >
+              <FolderIcon class="h-4.5 w-4.5" />
             </button>
             <button
               type="button"
@@ -3241,7 +3367,57 @@ function ConversationThread(props: {
             addFiles(files);
           }}
         />
+        <input
+          ref={(el) => {
+            dirEl = el;
+            // webkitdirectory has no DOM property — setAttribute is the
+            // reliable way to turn this into a directory picker.
+            el.setAttribute("webkitdirectory", "");
+          }}
+          type="file"
+          multiple
+          class="hidden"
+          onChange={(e) => {
+            const files = Array.from(e.currentTarget.files ?? []);
+            e.currentTarget.value = "";
+            addFiles(files);
+          }}
+        />
       </div>
+      <Show when={pendingPreview()} keyed>
+        {(pp) => (
+          <div
+            class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setPendingPreview(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setPendingPreview(null);
+            }}
+          >
+            <div class="flex max-h-full max-w-4xl flex-col gap-2">
+              <div class="flex items-center justify-between gap-3">
+                <span class="min-w-0 truncate text-[13px] text-white/90">
+                  {pp.name}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPendingPreview(null)}
+                  aria-label="Close preview"
+                  class="rounded-md p-1.5 text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+                >
+                  <XIcon class="h-5 w-5" />
+                </button>
+              </div>
+              <img
+                src={pp.url}
+                alt={pp.name}
+                class="max-h-[80vh] max-w-full rounded-lg object-contain"
+              />
+            </div>
+          </div>
+        )}
+      </Show>
       <Show when={preview()} keyed>
         {(pv) => (
           <FilePreview

@@ -36,6 +36,7 @@ func NewService(log *zap.Logger, pool *pgxpool.Pool) *Service {
 func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
 	g.GET("/projects/:id/todos", s.memberOnly, s.handleList)
 	g.POST("/projects/:id/todos", s.memberOnly, s.handleCreate)
+	g.POST("/projects/:id/todos/delete", s.memberOnly, s.handleBulkDelete)
 	g.PATCH("/todos/:id", s.todoGate, s.handleUpdate)
 	g.DELETE("/todos/:id", s.todoGate, s.handleDelete)
 	// key-based issue resolution for message linkification (/app/p/:id/k/KEY-N)
@@ -217,6 +218,41 @@ func (s *Service) handleDelete(c *gin.Context) {
 	}
 	s.publish(t.ProjectID, "todo.changed")
 	c.Status(http.StatusNoContent)
+}
+
+// handleBulkDelete drops many todos in one call — one query, one event. The
+// DELETE verb can't carry a JSON body through every proxy, so this is a POST.
+func (s *Service) handleBulkDelete(c *gin.Context) {
+	p := c.MustGet(ctxProject).(db.GetProjectForUserRow)
+	var req struct {
+		IDs []string `json:"ids" binding:"required"`
+	}
+	if !httpx.BindJSON(c, &req) {
+		return
+	}
+	if len(req.IDs) == 0 || len(req.IDs) > 200 {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "ids must contain 1-200 items")
+		return
+	}
+	ids := make([]pgtype.UUID, 0, len(req.IDs))
+	for _, raw := range req.IDs {
+		var id pgtype.UUID
+		if err := id.Scan(raw); err != nil {
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "invalid todo id")
+			return
+		}
+		ids = append(ids, id)
+	}
+	n, err := s.q.DeleteTodos(c.Request.Context(), db.DeleteTodosParams{
+		ProjectID: p.ID,
+		Ids:       ids,
+	})
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	s.publish(p.ID, "todo.changed")
+	c.JSON(http.StatusOK, gin.H{"deleted": n})
 }
 
 // handleIssueByKey resolves KEY-42 -> the issue id for linkification.

@@ -23,6 +23,7 @@ import {
   type StatusDef,
   type AuthSession,
   type Conversation,
+  type Idea,
   type Issue,
   type Label,
   type Message,
@@ -66,6 +67,7 @@ interface LocalDB {
   savedFilters: Record<string, SavedFilter[]>; // project_id -> views
   boards: Record<string, Board[]>; // project_id -> named boards
   briefs: Brief[]; // visual briefs incl. their scene JSON
+  ideas: Idea[]; // brainstorm/mindmap docs
   synced_at?: string;
 }
 
@@ -102,6 +104,7 @@ function emptyDB(): LocalDB {
     savedFilters: {},
     boards: {},
     briefs: [],
+    ideas: [],
   };
 }
 
@@ -413,6 +416,7 @@ const impl = {
         created_at: now(),
         edited_at: null,
         agent_read: false,
+        read_by: [],
         forwarded: null,
       });
       save();
@@ -490,6 +494,7 @@ const impl = {
       created_at: now(),
       edited_at: null,
       agent_read: false,
+      read_by: [],
     };
     db.messages.push(m);
     save();
@@ -584,6 +589,7 @@ const impl = {
       created_at: now(),
       edited_at: null,
       agent_read: false,
+      read_by: [],
       forwarded: { ...root },
     };
     db.messages.push(m);
@@ -767,6 +773,14 @@ const impl = {
   deleteTodo: async (todoId: string) => {
     db.todos = db.todos.filter((t) => t.id !== todoId);
     save();
+  },
+  deleteTodos: async (projectId: string, ids: string[]) => {
+    const before = db.todos.length;
+    db.todos = db.todos.filter(
+      (t) => !(ids.includes(t.id) && projectOf(t) === projectId),
+    );
+    save();
+    return { deleted: before - db.todos.length };
   },
 
   // No agents/reviews/GitHub off-server — the surfaces render empty rather
@@ -1024,12 +1038,125 @@ const impl = {
     save();
     return conv;
   },
+  deleteBrief: async (briefId: string) => {
+    const b = db.briefs.find((x) => x.id === briefId);
+    if (!b) notFound();
+    db.briefs = db.briefs.filter((x) => x.id !== briefId);
+    // The comment conversation goes with it (mirrors the server).
+    if (b.conversation_id) {
+      db.conversations = db.conversations.filter(
+        (c) => c.id !== b.conversation_id,
+      );
+      db.messages = db.messages.filter(
+        (m) => m.conversation_id !== b.conversation_id,
+      );
+    }
+    save();
+  },
   setBriefPolicy: async (projectId: string, policy: BriefPolicy) => {
     const p = db.projects.find((x) => x.id === projectId);
     if (!p) notFound();
     p.brief_policy = policy;
     save();
     return { policy };
+  },
+
+  // Ideas — brainstorm docs work fully offline, same as briefs.
+  listIdeas: async (projectId: string) => ({
+    ideas: db.ideas
+      .filter((i) => i.project_id === projectId)
+      .sort((a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? "")),
+  }),
+  listWorkspaceIdeas: async () => ({
+    ideas: [...db.ideas].sort((a, b) =>
+      (b.updated_at ?? "").localeCompare(a.updated_at ?? ""),
+    ),
+  }),
+  createIdea: async (
+    projectId: string,
+    input: {
+      title: string;
+      summary?: string;
+      scene?: Record<string, unknown>;
+    },
+  ): Promise<Idea> => {
+    const p = db.projects.find((x) => x.id === projectId);
+    if (!p) notFound();
+    const i: Idea = {
+      id: uuid(),
+      project_id: projectId,
+      project_key: p.key,
+      project_name: p.name,
+      title: input.title,
+      summary: input.summary ?? "",
+      scene: input.scene ?? {},
+      status: "open",
+      author_name: db.user.name,
+      created_at: now(),
+      updated_at: now(),
+    };
+    db.ideas.push(i);
+    save();
+    return i;
+  },
+  getIdea: async (ideaId: string) => {
+    const i = db.ideas.find((x) => x.id === ideaId);
+    if (!i) notFound();
+    return i;
+  },
+  updateIdea: async (
+    ideaId: string,
+    input: {
+      title?: string;
+      summary?: string;
+      status?: "open" | "converted" | "archived";
+      scene?: Record<string, unknown>;
+    },
+  ) => {
+    const i = db.ideas.find((x) => x.id === ideaId);
+    if (!i) notFound();
+    if (input.title != null) i.title = input.title;
+    if (input.summary != null) i.summary = input.summary;
+    if (input.status != null) i.status = input.status;
+    if (input.scene != null) i.scene = input.scene;
+    i.updated_at = now();
+    save();
+    return i;
+  },
+  deleteIdea: async (ideaId: string) => {
+    db.ideas = db.ideas.filter((x) => x.id !== ideaId);
+    save();
+  },
+  convertIdea: async (
+    ideaId: string,
+    input: {
+      kind: "issue" | "project";
+      title?: string;
+      description?: string;
+      key?: string;
+    },
+  ) => {
+    const i = db.ideas.find((x) => x.id === ideaId);
+    if (!i) notFound();
+    const title = input.title?.trim() || i.title;
+    const desc = input.description?.trim() || i.summary;
+    i.status = "converted";
+    i.updated_at = now();
+    if (input.kind === "issue") {
+      const issue = await local.createIssue(i.project_id, {
+        title,
+        description: desc,
+      });
+      save();
+      return { issue: { id: issue.id, number: issue.number } };
+    }
+    const project = await local.createProject({
+      name: title,
+      key: input.key,
+      description: desc,
+    });
+    save();
+    return { project: { id: project.id, key: project.key, name: project.name } };
   },
 
   pushVapid: async () => ({ enabled: false }),

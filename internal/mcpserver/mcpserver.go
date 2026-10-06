@@ -557,6 +557,58 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithString("status", mcp.Description("open|resolved|archived")),
 		mcp.WithString("scene", mcp.Description("Replacement Excalidraw scene JSON")),
 	), s.updateBrief)
+
+	srv.AddTool(mcp.NewTool("delete_brief",
+		mcp.WithDescription("Delete a brief and its comment conversation. Irreversible."),
+		mcp.WithString("brief_id", mcp.Required()),
+	), s.deleteBrief)
+
+	// --- ideas ---
+	// Ideas are brainstorm docs (Excalidraw scenes: mindmaps, sketches) a human
+	// or agent drafts before real work exists. They reuse the brief scopes —
+	// same visual-doc family — and convert into issues via idea_to_issue.
+
+	srv.AddTool(mcp.NewTool("list_ideas",
+		mcp.WithDescription("List brainstorm ideas in a granted project, recently updated first."),
+		mcp.WithString("project_id", mcp.Required()),
+	), s.listIdeas)
+
+	srv.AddTool(mcp.NewTool("get_idea",
+		mcp.WithDescription("Get one idea including its Excalidraw scene JSON."),
+		mcp.WithString("idea_id", mcp.Required()),
+	), s.getIdea)
+
+	srv.AddTool(mcp.NewTool("create_idea",
+		mcp.WithDescription("Create a brainstorm idea on a granted project: title, plain-language summary, "+
+			"and an optional Excalidraw scene ({elements: [...]}) for mindmaps/sketches. Use this to park "+
+			"half-formed work on the Ideas page until it's worth an issue."),
+		mcp.WithString("project_id", mcp.Required()),
+		mcp.WithString("title", mcp.Required(), mcp.Description("One-line title, <= 200 chars")),
+		mcp.WithString("summary", mcp.Description("What the idea is about")),
+		mcp.WithString("scene", mcp.Description("Excalidraw scene as a JSON string")),
+	), s.createIdea)
+
+	srv.AddTool(mcp.NewTool("update_idea",
+		mcp.WithDescription("Update an idea's title, summary, status (open|converted|archived), or scene JSON."),
+		mcp.WithString("idea_id", mcp.Required()),
+		mcp.WithString("title"),
+		mcp.WithString("summary"),
+		mcp.WithString("status", mcp.Description("open|converted|archived")),
+		mcp.WithString("scene", mcp.Description("Replacement Excalidraw scene JSON")),
+	), s.updateIdea)
+
+	srv.AddTool(mcp.NewTool("delete_idea",
+		mcp.WithDescription("Delete an idea. Irreversible."),
+		mcp.WithString("idea_id", mcp.Required()),
+	), s.deleteIdea)
+
+	srv.AddTool(mcp.NewTool("idea_to_issue",
+		mcp.WithDescription("Convert an idea into a backlog issue on its project (requires issue:write). "+
+			"The idea is kept, marked 'converted'."),
+		mcp.WithString("idea_id", mcp.Required()),
+		mcp.WithString("title", mcp.Description("Issue title — defaults to the idea's title")),
+		mcp.WithString("description", mcp.Description("Issue body — defaults to the idea's summary")),
+	), s.ideaToIssue)
 }
 
 func messageJSON(m db.GetMessageFullRow) gin.H {
@@ -851,6 +903,13 @@ func (s *Service) getMessages(ctx context.Context, req mcp.CallToolRequest) (*mc
 	}); err != nil {
 		s.log.Warn("mark agent read", zap.Error(err))
 	}
+	newlyRead := make([]pgtype.UUID, 0, len(ids))
+	for _, id := range ids {
+		if !readBefore[id.String()] {
+			newlyRead = append(newlyRead, id)
+		}
+	}
+	s.publishRead(ctx, cid, newlyRead)
 	out := make([]gin.H, 0, len(rows))
 	for _, r := range rows {
 		m := messageJSON(db.GetMessageFullRow(r))
@@ -886,6 +945,9 @@ func (s *Service) getMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	_ = s.q.MarkMessageReadAgent(ctx, db.MarkMessageReadAgentParams{
 		MessageID: mid, AgentID: agent(ctx).ID,
 	})
+	if wasUnread {
+		s.publishRead(ctx, m.ConversationID, []pgtype.UUID{mid})
+	}
 	out := s.messageJSONFull(ctx, m)
 	out["was_unread"] = wasUnread
 	return jsonResult(out)
@@ -991,10 +1053,7 @@ func (s *Service) uploadAttachment(ctx context.Context, req mcp.CallToolRequest)
 	if int64(len(data)) > s.maxUpload {
 		return mcp.NewToolResultError("file exceeds the upload size cap"), nil
 	}
-	contentType, ok := attachments.SniffType(data, req.GetString("content_type", ""))
-	if !ok {
-		return mcp.NewToolResultError("file type not allowed; images, pdf, text and zip are accepted"), nil
-	}
+	contentType := attachments.SniffType(data, req.GetString("content_type", ""))
 	name = path.Base(name)
 	if name == "." || name == "/" || name == "" {
 		name = "file"
@@ -2010,6 +2069,9 @@ func (s *Service) markRead(ctx context.Context, req mcp.CallToolRequest) (*mcp.C
 	if err != nil {
 		return errResult(err)
 	}
+	if conv, cerr := s.q.GetMessageConversation(ctx, mid); cerr == nil {
+		s.publishRead(ctx, conv, []pgtype.UUID{mid})
+	}
 	return jsonResult(gin.H{"ok": true})
 }
 
@@ -2547,6 +2609,31 @@ func (s *Service) publishPID(pid pgtype.UUID, typ string, data map[string]any) {
 	s.Bus.Publish(events.Event{Type: typ, ProjectID: id, Data: data})
 }
 
+// publishRead emits a message.read frame so open clients can show the
+// named agent read receipt live instead of on next fetch.
+func (s *Service) publishRead(ctx context.Context, conversationID pgtype.UUID, messageIDs []pgtype.UUID) {
+	if len(messageIDs) == 0 {
+		return
+	}
+	a := agent(ctx)
+	var avatar *string
+	if a.AvatarKey.Valid {
+		v := "/api/files/" + a.AvatarKey.String
+		avatar = &v
+	}
+	ids := make([]string, 0, len(messageIDs))
+	for _, id := range messageIDs {
+		ids = append(ids, id.String())
+	}
+	s.publish(ctx, conversationID, "message.read", map[string]any{
+		"conversation_id": conversationID.String(),
+		"message_ids":     ids,
+		"agent": gin.H{
+			"id": a.ID.String(), "name": a.Name, "avatar_url": avatar,
+		},
+	})
+}
+
 // --- work review tools ---
 
 // maxReviewJSON caps each structured field so a runaway agent cannot
@@ -3073,4 +3160,224 @@ func issueKey(projectKey string, number pgtype.Int4) string {
 		return ""
 	}
 	return projectKey + "-" + strconv.Itoa(int(number.Int32))
+}
+
+func (s *Service) deleteBrief(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	bid, err := uuidArg(req, "brief_id")
+	if err != nil {
+		return errResult(err)
+	}
+	b, err := s.q.GetBrief(ctx, bid)
+	if err != nil {
+		return mcp.NewToolResultError("brief not found"), nil
+	}
+	if err := s.scope(ctx, b.ProjectID, "brief:write"); err != nil {
+		return errResult(err)
+	}
+	// The comment conversation references briefs via on-delete-set-null, so
+	// it must go first or it survives orphaned.
+	if err := s.q.DeleteBriefConversation(ctx, bid); err != nil {
+		return errResult(err)
+	}
+	if err := s.q.DeleteBrief(ctx, bid); err != nil {
+		return errResult(err)
+	}
+	return jsonResult(gin.H{"deleted": bid})
+}
+
+// --- ideas ---
+// Brainstorm docs; same visual family as briefs, so they share the
+// brief:read / brief:write grant scopes.
+
+func ideaJSONMCP(i db.Idea, projectKey, authorName string) gin.H {
+	return gin.H{
+		"id": i.ID, "project_id": i.ProjectID, "project_key": projectKey,
+		"title": i.Title, "summary": i.Summary,
+		"scene": json.RawMessage(i.Scene), "status": i.Status,
+		"author_name": authorName,
+		"created_at":  i.CreatedAt.Time, "updated_at": i.UpdatedAt.Time,
+	}
+}
+
+func (s *Service) listIdeas(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pid, err := uuidArg(req, "project_id")
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "brief:read"); err != nil {
+		return errResult(err)
+	}
+	rows, err := s.q.ListProjectIdeas(ctx, pid)
+	if err != nil {
+		return errResult(err)
+	}
+	out := make([]gin.H, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, ideaJSONMCP(db.Idea{
+			ID: r.ID, ProjectID: r.ProjectID, Title: r.Title, Summary: r.Summary,
+			Scene: r.Scene, Status: r.Status, CreatedByUser: r.CreatedByUser,
+			CreatedByAgent: r.CreatedByAgent, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		}, r.ProjectKey, r.AuthorName))
+	}
+	return jsonResult(gin.H{"ideas": out})
+}
+
+func (s *Service) getIdea(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	id, err := uuidArg(req, "idea_id")
+	if err != nil {
+		return errResult(err)
+	}
+	i, err := s.q.GetIdea(ctx, id)
+	if err != nil {
+		return mcp.NewToolResultError("idea not found"), nil
+	}
+	if err := s.scope(ctx, i.ProjectID, "brief:read"); err != nil {
+		return errResult(err)
+	}
+	return jsonResult(ideaJSONMCP(db.Idea{
+		ID: i.ID, ProjectID: i.ProjectID, Title: i.Title, Summary: i.Summary,
+		Scene: i.Scene, Status: i.Status, CreatedByUser: i.CreatedByUser,
+		CreatedByAgent: i.CreatedByAgent, CreatedAt: i.CreatedAt, UpdatedAt: i.UpdatedAt,
+	}, i.ProjectKey, i.AuthorName))
+}
+
+func (s *Service) createIdea(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pid, err := uuidArg(req, "project_id")
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "brief:write"); err != nil {
+		return errResult(err)
+	}
+	title, err := req.RequireString("title")
+	if err != nil {
+		return errResult(err)
+	}
+	if t := strings.TrimSpace(title); t == "" || len(t) > 200 {
+		return mcp.NewToolResultError("title must be 1..200 chars"), nil
+	} else {
+		title = t
+	}
+	scene := []byte("{}")
+	if v := req.GetString("scene", ""); v != "" {
+		var probe any
+		if json.Unmarshal([]byte(v), &probe) != nil {
+			return mcp.NewToolResultError("scene must be a JSON string containing the Excalidraw scene"), nil
+		}
+		scene = []byte(v)
+	}
+	agentID := agent(ctx).ID
+	i, err := s.q.CreateIdea(ctx, db.CreateIdeaParams{
+		ProjectID: pid, Title: title,
+		Summary: req.GetString("summary", ""), Scene: scene,
+		CreatedByAgent: agentID,
+	})
+	if err != nil {
+		return errResult(err)
+	}
+	return jsonResult(ideaJSONMCP(i, "", agent(ctx).Name))
+}
+
+func (s *Service) updateIdea(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	id, err := uuidArg(req, "idea_id")
+	if err != nil {
+		return errResult(err)
+	}
+	i, err := s.q.GetIdea(ctx, id)
+	if err != nil {
+		return mcp.NewToolResultError("idea not found"), nil
+	}
+	if err := s.scope(ctx, i.ProjectID, "brief:write"); err != nil {
+		return errResult(err)
+	}
+	var title, summary, status pgtype.Text
+	var scene []byte
+	if v := req.GetString("title", ""); v != "" {
+		title = pgtype.Text{String: strings.TrimSpace(v), Valid: true}
+	}
+	if v := req.GetString("summary", ""); v != "" {
+		summary = pgtype.Text{String: v, Valid: true}
+	}
+	if v := req.GetString("status", ""); v != "" {
+		if v != "open" && v != "converted" && v != "archived" {
+			return mcp.NewToolResultError("status must be open|converted|archived"), nil
+		}
+		status = pgtype.Text{String: v, Valid: true}
+	}
+	if v := req.GetString("scene", ""); v != "" {
+		var probe any
+		if json.Unmarshal([]byte(v), &probe) != nil {
+			return mcp.NewToolResultError("scene must be valid JSON"), nil
+		}
+		scene = []byte(v)
+	}
+	updated, err := s.q.UpdateIdea(ctx, db.UpdateIdeaParams{
+		ID: id, Title: title, Summary: summary, Status: status, Scene: scene,
+	})
+	if err != nil {
+		return errResult(err)
+	}
+	return jsonResult(ideaJSONMCP(updated, i.ProjectKey, i.AuthorName))
+}
+
+func (s *Service) deleteIdea(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	id, err := uuidArg(req, "idea_id")
+	if err != nil {
+		return errResult(err)
+	}
+	i, err := s.q.GetIdea(ctx, id)
+	if err != nil {
+		return mcp.NewToolResultError("idea not found"), nil
+	}
+	if err := s.scope(ctx, i.ProjectID, "brief:write"); err != nil {
+		return errResult(err)
+	}
+	if err := s.q.DeleteIdea(ctx, id); err != nil {
+		return errResult(err)
+	}
+	return jsonResult(gin.H{"deleted": id})
+}
+
+func (s *Service) ideaToIssue(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	id, err := uuidArg(req, "idea_id")
+	if err != nil {
+		return errResult(err)
+	}
+	i, err := s.q.GetIdea(ctx, id)
+	if err != nil {
+		return mcp.NewToolResultError("idea not found"), nil
+	}
+	if err := s.scope(ctx, i.ProjectID, "issue:write"); err != nil {
+		return errResult(err)
+	}
+	title := strings.TrimSpace(req.GetString("title", ""))
+	if title == "" {
+		title = i.Title
+	}
+	desc := strings.TrimSpace(req.GetString("description", ""))
+	if desc == "" {
+		desc = i.Summary
+	}
+	num, err := s.q.NextIssueNumber(ctx, i.ProjectID)
+	if err != nil {
+		return errResult(err)
+	}
+	issue, err := s.q.CreateIssueForAgent(ctx, db.CreateIssueForAgentParams{
+		ProjectID: i.ProjectID, Number: num, Title: title,
+		Description: desc, Priority: "medium",
+		AgentID: agent(ctx).ID,
+	})
+	if err != nil {
+		return errResult(err)
+	}
+	_, _ = s.q.CreateIssueConversation(ctx, db.CreateIssueConversationParams{
+		ProjectID: i.ProjectID, IssueID: issue.ID,
+	})
+	_, _ = s.q.UpdateIdea(ctx, db.UpdateIdeaParams{
+		ID:     id,
+		Status: pgtype.Text{String: "converted", Valid: true},
+	})
+	return jsonResult(gin.H{
+		"issue": gin.H{"id": issue.ID, "number": issue.Number},
+	})
 }

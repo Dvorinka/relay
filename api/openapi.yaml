@@ -24,6 +24,8 @@ tags:
   - name: mcp
   - name: github
   - name: todos
+  - name: ideas
+  - name: briefs
   - name: reviews
   - name: webhooks
   - name: realtime
@@ -783,6 +785,164 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Brief" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: deleteBrief
+      summary: Delete a brief and its comment conversation
+      tags: [briefs]
+      parameters:
+        - { name: briefId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: "Deleted" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/projects/{projectId}/ideas:
+    get:
+      operationId: listIdeas
+      summary: List brainstorm ideas in this project
+      tags: [ideas]
+      parameters:
+        - { $ref: "#/components/parameters/ProjectId" }
+      responses:
+        "200":
+          description: Ideas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ideas:
+                    type: array
+                    items: { $ref: "#/components/schemas/Idea" }
+    post:
+      operationId: createIdea
+      summary: Create a brainstorm idea (title + optional Excalidraw scene)
+      tags: [ideas]
+      parameters:
+        - { $ref: "#/components/parameters/ProjectId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string, minLength: 1, maxLength: 200 }
+                summary: { type: string }
+                scene: { type: object, additionalProperties: true, description: "Excalidraw-compatible scene" }
+      responses:
+        "201":
+          description: Created idea
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Idea" }
+
+  /api/workspaces/{workspaceId}/ideas:
+    get:
+      operationId: listWorkspaceIdeas
+      summary: Every idea across the workspace's projects — the Ideas page feed
+      tags: [ideas]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+      responses:
+        "200":
+          description: Ideas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ideas:
+                    type: array
+                    items: { $ref: "#/components/schemas/Idea" }
+
+  /api/ideas/{ideaId}:
+    get:
+      operationId: getIdea
+      summary: Get one idea with its scene
+      tags: [ideas]
+      parameters:
+        - { name: ideaId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Idea
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Idea" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: updateIdea
+      summary: Update an idea's title, summary, scene, or status
+      tags: [ideas]
+      parameters:
+        - { name: ideaId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string, minLength: 1, maxLength: 200 }
+                summary: { type: string }
+                status: { type: string, enum: [open, converted, archived] }
+                scene: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: Updated idea
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Idea" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: deleteIdea
+      summary: Delete an idea
+      tags: [ideas]
+      parameters:
+        - { name: ideaId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: "Deleted" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/ideas/{ideaId}/convert:
+    post:
+      operationId: convertIdea
+      summary: Turn an idea into a backlog issue or a new project in the same workspace
+      tags: [ideas]
+      parameters:
+        - { name: ideaId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind]
+              properties:
+                kind: { type: string, enum: [issue, project] }
+                title: { type: string, description: "Defaults to the idea title" }
+                description: { type: string, description: "Defaults to the idea summary" }
+                key: { type: string, pattern: "^[A-Z0-9]{2,6}$", description: "Required for kind=project" }
+      responses:
+        "201":
+          description: Created issue or project
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  issue:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      number: { type: integer }
+                  project:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      key: { type: string }
+                      name: { type: string }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /api/briefs/{briefId}/conversation:
@@ -2218,6 +2378,36 @@ paths:
       responses:
         "204": { description: "Deleted" }
 
+  /api/projects/{projectId}/todos/delete:
+    post:
+      operationId: deleteTodos
+      summary: Bulk delete todos in this project (one request, one change event)
+      tags: [todos]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 200
+                  items: { type: string, format: uuid }
+      responses:
+        "200":
+          description: How many rows were deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { type: integer }
+
   /api/projects/{projectId}/reviews:
     get:
       operationId: listReviews
@@ -2287,9 +2477,13 @@ paths:
       operationId: streamEvents
       summary: Server-sent events for the authenticated user's workspaces
       description: |
-        Streams `message.created`, `issue.created`, `issue.updated` and
-        `todo.changed` events as `data:` JSON frames. Events are filtered to
-        projects the caller can access. Heartbeat comments every 25s.
+        Streams `message.created`, `message.updated`, `message.deleted`,
+        `message.read`, `reaction.updated`, `issue.created`,
+        `issue.updated`, `todo.changed`, `conversation.cleared` and
+        `thread.updated` events as `data:` JSON frames. `message.read`
+        carries `{conversation_id, message_ids, agent}` — an agent's named
+        read receipt. Events are filtered to projects the caller can
+        access. Heartbeat comments every 25s.
       tags: [realtime]
       responses:
         "200":
@@ -2660,6 +2854,9 @@ paths:
                         brief_title: { type: string }
                         parent_message_id: { type: string, format: uuid }
                         title: { type: string }
+                        snippet: { type: string, description: "Preview of the oldest unread message (<=140 chars)" }
+                        author_name: { type: string }
+                        first_unread_at: { type: string, format: date-time }
                       required: [conversation_id, project_id, kind, unread]
 
   /api/search:
@@ -3034,6 +3231,22 @@ components:
             name: { type: string }
             kind: { type: string, enum: [user, agent] }
 
+    Idea:
+      type: object
+      required: [id, project_id, title, summary, scene, status]
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        project_key: { type: string }
+        project_name: { type: string }
+        title: { type: string }
+        summary: { type: string }
+        scene: { type: object, additionalProperties: true, description: "Excalidraw-compatible scene JSON" }
+        status: { type: string, enum: [open, converted, archived] }
+        author_name: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
     BriefPolicy:
       type: string
       enum: [never, on_request, pre_merge]
@@ -3176,6 +3389,16 @@ components:
           items: { type: string }
           description: "Up to 8 reactor display names, oldest first"
 
+    ReadReceipt:
+      type: object
+      required: [id, name, avatar_url, read_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        avatar_url: { type: ["string", "null"] }
+        read_at: { type: string, format: date-time }
+      description: "One agent that has read the message (the author's own receipt is excluded)"
+
     Message:
       type: object
       required: [id, conversation_id, author, body, attachments, reactions, created_at, agent_read]
@@ -3210,6 +3433,10 @@ components:
         agent_read:
           type: boolean
           description: "True once at least one agent has read the message; edits are then rejected with 409"
+        read_by:
+          type: array
+          description: "Agents that have read the message, oldest read first — the named receipt row"
+          items: { $ref: "#/components/schemas/ReadReceipt" }
         thread:
           anyOf:
             - $ref: "#/components/schemas/ThreadSummary"

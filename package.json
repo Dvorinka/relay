@@ -27,6 +27,8 @@
     },
     "@excalidraw/mermaid-to-excalidraw": {
       "nanoid": "^5.1.16"
-    }
+    },
+    "seroval": "^1.6.8",
+    "seroval-plugins": "^1.6.8"
   }
 }

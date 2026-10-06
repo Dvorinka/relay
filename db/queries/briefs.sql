@@ -51,6 +51,14 @@ update briefs set
 where id = sqlc.arg(id)
 returning *;
 
+-- name: DeleteBriefConversation :exec
+-- removing a brief drops its comment thread too; conversations.brief_id is
+-- 'on delete set null' so the conversation must go first
+delete from conversations where brief_id = sqlc.arg(id);
+
+-- name: DeleteBrief :exec
+delete from briefs where id = sqlc.arg(id);
+
 -- name: SetBriefPolicy :one
 update projects set brief_policy = sqlc.arg(policy)
 where id = sqlc.arg(project_id)

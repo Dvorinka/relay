@@ -106,7 +106,7 @@ Your token carries **project grants** (which projects you can touch) and
 | `issue:read` / `issue:write` | tracker reads / create+update |
 | `file:read` | linked-folder file listing + reads |
 | `review:read` / `review:write` | see reviews / file + await reviews |
-| `brief:read` / `brief:write` | visual briefs |
+| `brief:read` / `brief:write` | visual briefs + ideas (brainstorm canvases) |
 
 `list_projects` is always the first call — it returns exactly what you
 were granted, each with an `unread_count` of messages you haven't seen.
@@ -186,7 +186,8 @@ Rules of engagement:
 
 ## 4b. Live sync — both ends stay current while you work
 
-The app should show your progress *as it happens*, not a report at the end:
+The app should show your progress *as it happens*, not a report at the
+end. This is not optional polish — a silent agent looks dead to the user.
 
 - **`todo_sync`** is the mirror primitive. Whenever your harness task list
   changes — created, started, finished — call it once with the full list:
@@ -194,6 +195,14 @@ The app should show your progress *as it happens*, not a report at the end:
   `todo|in_progress|done`. Relay creates/updates/reorders/deletes your rows
   to match and returns the ids; echo them back next sync for stable rows.
   The UI shows `in_progress` items live with a "working" indicator.
+  **Mark items `done`/`in_progress` the moment their state flips** — not
+  in a batch at the end of the run. A task list that only updates at
+  completion is the same as no task list.
+- **Post into the progress thread while you work.** After each completed
+  todo or meaningful milestone, drop one `send_message` with
+  `silent: true` into the `work_start` thread: what you did, what's next,
+  anything surprising. Start and end alone is not enough — the thread
+  should tell the story of the work while it runs.
 - **`work_start` + `work_stop`** bracket a work session. `work_start`
   posts ONE status message (`Working on: …`, tagged `work-in-progress`)
   and opens a progress thread on it — the returned `thread` id is your
@@ -211,6 +220,14 @@ The app should show your progress *as it happens*, not a report at the end:
   `needs-input`. If they answer in your harness (CLI/IDE) instead of
   Relay, call `resolve_input` with the note so the thread shows it was
   handled — the question stops nagging.
+- **Re-check for new messages while you work.** Users reply mid-run. Poll
+  `get_messages` between steps, or better, subscribe to
+  `/api/agent/events` for the whole session — don't surface requests that
+  arrived while you worked only after `work_stop`.
+- **Your reads are visible.** Fetching a message marks it read and the
+  app shows the user *which* agent read it (named receipts with your
+  avatar). Don't claim you haven't seen something after fetching it —
+  the user can see the receipt.
 - **`GET /api/agent/events`** is your live feed: SSE with your `rly_`
   bearer (or `?access_token=`), filtered to your granted projects. A
   `todo.changed` means a human edited the list — re-read `todo_list`
@@ -283,6 +300,18 @@ The app should show your progress *as it happens*, not a report at the end:
 | `get_brief_policy` | `brief-policy <pid>` | never/on_request/pre_merge |
 | `list_briefs` / `get_brief` | `briefs <pid>` / `brief <id>` | read briefs + comments |
 | `create_brief` / `update_brief` | `brief-new` / `brief-set` | Excalidraw scenes |
+| `delete_brief` | — | remove brief + its comments |
+
+### Ideas
+
+Ideas are brainstorm documents on the **Ideas** page — a title, a summary,
+and the same Excalidraw scene JSON as briefs (mindmaps, dependency sketches,
+option trees). They use the `brief:read`/`brief:write` scopes and live on a
+project (`/app/p/<id>/ideas`). Park half-formed work here; when it firms up,
+`idea_to_issue` converts it into a backlog issue (needs `issue:write`) and
+marks the idea `converted`. `list_ideas` / `get_idea` / `create_idea` /
+`update_idea` / `delete_idea` cover CRUD — `scene` is an Excalidraw scene as
+a JSON string.
 
 ## 6. Mentions
 

@@ -113,6 +113,16 @@ func (s *Service) handleUnread(c *gin.Context) {
 		}
 		if r.FirstUnreadID.Valid {
 			item["first_unread_id"] = r.FirstUnreadID.String()
+			// Inbox row detail: who wrote the oldest unread + a short preview.
+			if r.FirstUnreadBody != "" {
+				snip := r.FirstUnreadBody
+				if len([]rune(snip)) > 140 {
+					snip = string([]rune(snip)[:140])
+				}
+				item["snippet"] = snip
+				item["author_name"] = r.FirstUnreadAuthor
+				item["first_unread_at"] = r.FirstUnreadAt.Time.Format("2006-01-02T15:04:05Z07:00")
+			}
 		}
 		if r.IssueID.Valid {
 			item["issue_id"] = r.IssueID.String()

@@ -128,5 +128,6 @@ ignored. The mark renders from `assets/brand/kit/relay-mark-accent-app-icon.svg`
 
 ## Deferred
 
-- System tray & global screenshot hotkey — need OS-specific hooks that
-  don't fit the thin-shell model; revisit with a tray lib after 1.0.
+- Global screenshot hotkey — needs an OS-specific hook that doesn't fit the
+  thin-shell model. (The Windows system tray landed with getlantern/systray;
+  Linux/macOS tray icons remain deferred.)

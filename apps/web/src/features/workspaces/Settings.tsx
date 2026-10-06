@@ -361,8 +361,8 @@ function DesktopSection() {
           </label>
           <p class="mt-0.5 text-[11.5px] text-faint">
             Closing the window keeps Relay connected — @mention alerts still
-            arrive as system notifications. Reopening the app shows the window
-            again.
+            arrive as system notifications. The window returns from the system
+            tray icon (in the hidden-icons overflow) or by relaunching the app.
           </p>
         </div>
         <Show when={bg()!.enabled}>
