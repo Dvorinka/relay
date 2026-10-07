@@ -1596,6 +1596,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent/attachments/{attachmentId}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream attachment bytes to an agent token
+         * @description Same-origin download authenticated with an `rly_` bearer token (Authorization header or `access_token` query). Requires the `attachment:read` scope on the attachment's project. The MCP `get_attachment` tool returns this path as `download_url` so agents can fetch bytes straight to disk instead of decoding base64.
+         */
+        get: operations["downloadAgentAttachment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent/events": {
         parameters: {
             query?: never;
@@ -6019,6 +6039,38 @@ export interface operations {
                 content: {
                     "text/event-stream": unknown;
                 };
+            };
+        };
+    };
+    downloadAgentAttachment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                attachmentId: components["parameters"]["AttachmentId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Attachment bytes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Object storage not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

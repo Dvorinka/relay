@@ -1700,6 +1700,155 @@ func TestInviteLifecycleKeepsToken(t *testing.T) {
 	}
 }
 
+// Agent attachment download: /api/agent/attachments/:id/download takes a
+// bearer rly_ token and the attachment:read scope — never a session cookie.
+// The fixture has no object storage, so the deepest reachable verdict is
+// storage_disabled; the auth gates are what this pins down.
+func TestAgentAttachmentDownload(t *testing.T) {
+	dsn := os.Getenv("RELAY_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("RELAY_TEST_DATABASE_URL unset")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	goose.SetBaseFS(relaydb.MigrationsFS)
+	if err := goose.SetDialect("postgres"); err != nil {
+		t.Fatal(err)
+	}
+	if err := goose.UpContext(ctx, stdlib.OpenDBFromPool(pool), "migrations"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "delete from rate_limits"); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Config{
+		DatabaseURL:     dsn,
+		AuthSecret:      "test-secret-test-secret-test-secret",
+		InsecureDev:     true,
+		SessionTTLHours: 1,
+	}
+	srv := httptest.NewServer(New(cfg, zap.NewNop(), pool, "test"))
+	defer srv.Close()
+	c := &e2eClient{t: t, base: srv.URL}
+
+	code, reg := c.call("POST", "/api/auth/register",
+		fmt.Sprintf(`{"email":"att-%d@relay.dev","password":"attpass12345","name":"Att"}`,
+			time.Now().UnixNano()))
+	if code != 201 && code != 200 {
+		t.Fatalf("register: %d %v", code, reg)
+	}
+	userID := reg["user"].(map[string]any)["id"].(string)
+	code, ws := c.call("POST", "/api/workspaces", `{"name":"Att WS"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("workspace: %d %v", code, ws)
+	}
+	wsID := ws["id"].(string)
+	code, proj := c.call("POST", "/api/projects",
+		fmt.Sprintf(`{"workspace_id":%q,"key":"ATT","name":"Att Lab"}`, wsID))
+	if code != 201 && code != 200 {
+		t.Fatalf("project: %d %v", code, proj)
+	}
+	projID := proj["id"].(string)
+
+	// attachment row straight into the table — uploads need object storage
+	// which this fixture intentionally lacks
+	var attID string
+	if err := pool.QueryRow(ctx,
+		`insert into attachments (project_id, uploader_id, storage_key, filename, content_type, size_bytes, status)
+		 values ($1, $2, $3, 'shot.png', 'image/png', 3, 'ready') returning id`,
+		projID, userID, projID+"/test-att").Scan(&attID); err != nil {
+		t.Fatalf("insert attachment: %v", err)
+	}
+
+	code, agent := c.call("POST", "/api/workspaces/"+wsID+"/agents",
+		`{"name":"Att Bot","review_mode":"gate"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("agent: %d %v", code, agent)
+	}
+	agentID := agent["id"].(string)
+	code, tok := c.call("POST", fmt.Sprintf("/api/agents/%s/tokens", agentID), `{"name":"att"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("mint: %d %v", code, tok)
+	}
+	token := tok["token"].(string)
+
+	get := func(auth string) int {
+		req, err := http.NewRequest("GET",
+			srv.URL+"/api/agent/attachments/"+attID+"/download", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if auth != "" {
+			req.Header.Set("Authorization", "Bearer "+auth)
+		}
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = res.Body.Close()
+		return res.StatusCode
+	}
+
+	if s := get(""); s != http.StatusUnauthorized {
+		t.Fatalf("no token: %d", s)
+	}
+	if s := get("rly_bogus"); s != http.StatusUnauthorized {
+		t.Fatalf("bad token: %d", s)
+	}
+	// valid agent, no grant on the project
+	if s := get(token); s != http.StatusForbidden {
+		t.Fatalf("unscoped token: %d", s)
+	}
+	// session cookies must not work on this route
+	req, err := http.NewRequest("GET",
+		srv.URL+"/api/agent/attachments/"+attID+"/download", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Cookie", "relay_session="+c.cookie)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("cookie auth accepted: %d", res.StatusCode)
+	}
+
+	// grant attachment:read — storage is unconfigured so the furthest the
+	// request can get is the 503 storage_disabled verdict
+	code, _ = c.call("PUT", fmt.Sprintf("/api/agents/%s/projects/%s", agentID, projID),
+		`{"scopes":["project:read","attachment:read"]}`)
+	if code != 200 {
+		t.Fatalf("grant: %d", code)
+	}
+	if s := get(token); s != http.StatusServiceUnavailable {
+		t.Fatalf("scoped token: %d (want 503 storage_disabled)", s)
+	}
+
+	// unknown attachment id -> 404 before the scope or storage checks
+	req, err = http.NewRequest("GET",
+		srv.URL+"/api/agent/attachments/00000000-0000-0000-0000-000000000000/download", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	res, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown attachment: %d", res.StatusCode)
+	}
+}
+
 // mcpToolResultNoFail mirrors mcpToolResult but returns nil instead of
 // failing the test, so callers can probe expected failures.
 func mcpToolResultNoFail(env map[string]any) map[string]any {
