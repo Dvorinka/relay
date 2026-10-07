@@ -1,8 +1,14 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { fetch } from "expo/fetch";
+import { Directory, File, Paths } from "expo-file-system";
+import * as MediaLibrary from "expo-media-library";
 import * as Notifications from "expo-notifications";
+import * as Sharing from "expo-sharing";
+import { useShareIntent } from "expo-share-intent";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   BackHandler,
   Image,
   KeyboardAvoidingView,
@@ -12,10 +18,19 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  ToastAndroid,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
+import type { FileDownloadEvent } from "react-native-webview/lib/WebViewTypes";
+
+import { ShareSheet } from "../ShareSheet";
+import {
+  filenameFromDisposition,
+  loadSessionToken,
+  saveSessionToken,
+} from "../lib/relay";
 
 // Relay on mobile is the server's web UI in a WebView — same screens, same
 // fixes, zero duplicated client code. This file is only a shell: remember
@@ -78,6 +93,23 @@ function notifyBridge(granted: boolean): string {
   );
 }
 
+// Every page load pushes the web session token to native so the share sheet
+// and download fallback can call REST endpoints with the same auth the SPA
+// uses. Empty after sign-out — stored accordingly.
+const TOKEN_BRIDGE = `
+try {
+  window.ReactNativeWebView.postMessage(JSON.stringify({
+    type: "token", token: localStorage.getItem("relay.token") || ""
+  }));
+} catch (e) {}
+true;
+`;
+
+function toast(msg: string) {
+  if (Platform.OS === "android") ToastAndroid.show(msg, ToastAndroid.SHORT);
+  else Alert.alert(msg);
+}
+
 const C = {
   bg: "#0a0a0b",
   surface: "#131416",
@@ -129,6 +161,7 @@ export default function Shell() {
   const [canGoBack, setCanGoBack] = useState(false);
   const [failed, setFailed] = useState(false);
   const [notifyGranted, setNotifyGranted] = useState(false);
+  const { hasShareIntent, shareIntent, resetShareIntent } = useShareIntent();
 
   useEffect(() => {
     AsyncStorage.getItem(STORE_KEY).then((v) => {
@@ -147,10 +180,20 @@ export default function Shell() {
   }, []);
 
   const onWebMessage = useCallback((e: { nativeEvent: { data: string } }) => {
-    let m: { type?: string; title?: string; body?: string; id?: string };
+    let m: {
+      type?: string;
+      title?: string;
+      body?: string;
+      id?: string;
+      token?: string;
+    };
     try {
       m = JSON.parse(e.nativeEvent.data);
     } catch {
+      return;
+    }
+    if (m.type === "token") {
+      void saveSessionToken(m.token || null);
       return;
     }
     if (m.type === "notify" && m.title) {
@@ -219,6 +262,49 @@ export default function Shell() {
     return () => sub.remove();
   }, [openDeepLink]);
 
+  // The Android WebView has no download path — the OS DownloadManager call
+  // drops the auth headers/cookies Relay's attachment route needs, so the
+  // transfer is done here with the bridged session token. Images and video
+  // land in the gallery; everything else opens the system share/open-with
+  // sheet so the file is never stranded in app storage.
+  const onFileDownload = useCallback(async (e: FileDownloadEvent) => {
+    const url = e.nativeEvent.downloadUrl;
+    try {
+      const token = await loadSessionToken();
+      const res = await fetch(url, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error("http_" + res.status);
+      const mime = res.headers.get("content-type") ?? "";
+      const name = filenameFromDisposition(
+        res.headers.get("content-disposition"),
+        url.split("?")[0].split("/").pop() || "download",
+      );
+      const dir = new Directory(Paths.cache, "downloads");
+      if (!dir.exists) dir.create();
+      const file = new File(dir, name);
+      if (file.exists) file.delete();
+      file.write(await res.bytes());
+
+      if (mime.startsWith("image/") || mime.startsWith("video/")) {
+        const perm = await MediaLibrary.requestPermissionsAsync();
+        if (perm.granted) {
+          await MediaLibrary.saveToLibraryAsync(file.uri);
+          toast("Saved to gallery");
+          return;
+        }
+      }
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(file.uri, { mimeType: mime || undefined });
+      } else {
+        toast("Saved to app storage");
+      }
+    } catch (err) {
+      if (__DEV__) console.warn("download failed", err);
+      toast("Download failed");
+    }
+  }, []);
+
   if (!ready) {
     return (
       <View style={[styles.fill, styles.center]}>
@@ -251,14 +337,17 @@ export default function Shell() {
         setDisplayZoomControls={false}
         scalesPageToFit={false}
         sharedCookiesEnabled
+        textZoom={100}
         injectedJavaScriptBeforeContentLoaded={notifyBridge(notifyGranted)}
         onMessage={onWebMessage}
+        onFileDownload={onFileDownload}
         onNavigationStateChange={(nav) => setCanGoBack(nav.canGoBack)}
         onLoadStart={() => {
           webReady.current = false;
         }}
         onLoadEnd={() => {
           webReady.current = true;
+          web.current?.injectJavaScript(TOKEN_BRIDGE);
           const raw = pendingLink.current;
           pendingLink.current = null;
           if (raw) applyDeepLink(raw);
@@ -305,6 +394,21 @@ export default function Shell() {
             <Text style={styles.errBtnText}>Change server</Text>
           </Pressable>
         </View>
+      )}
+      {hasShareIntent && (
+        <ShareSheet
+          server={server}
+          files={shareIntent.files ?? []}
+          text={shareIntent.text ?? shareIntent.webUrl}
+          onDone={(projectId) => {
+            resetShareIntent();
+            if (projectId && webReady.current) {
+              web.current?.injectJavaScript(
+                `location.href=${JSON.stringify(server + "/app/p/" + projectId)};true;`,
+              );
+            }
+          }}
+        />
       )}
     </View>
   );
