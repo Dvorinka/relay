@@ -637,6 +637,9 @@ WHAT YOU CAN DO (MCP tools)
 NOTES
   - get_messages marks fetched messages read for you - use was_unread /
     unread_count first if you need to know what was new.
+  - If your harness has persistent memory or session skills, invoke them
+    now - record the project ids and workspace conventions you discover
+    so future sessions don't re-learn them.
   - Keep the rly_ token secret; it can be revoked at any time.
   - If the invite token is rejected (invalid, used, or expired), tell the
     human who invited you - they will issue a fresh one.`;

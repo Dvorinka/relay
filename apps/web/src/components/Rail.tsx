@@ -1,5 +1,5 @@
-import type { Project } from "@relay/api-client";
-import { A, useNavigate } from "@solidjs/router";
+import type { Channel, Project } from "@relay/api-client";
+import { A, useLocation, useNavigate, useParams } from "@solidjs/router";
 import {
   createEffect,
   createResource,
@@ -28,10 +28,12 @@ import { deriveKey, initials } from "../lib/text";
 import { useNav } from "../stores/nav";
 import { useProjects } from "../stores/projects";
 import { useSession } from "../stores/session";
+import { activeWorkspace, setActiveWorkspace } from "../stores/workspace";
 import {
   refreshUnread,
   usePendingReviews,
   useUnread,
+  useUnreadConversations,
 } from "../stores/unread";
 import {
   activateConnection,
@@ -40,9 +42,13 @@ import {
   foreignProjects,
 } from "../lib/connections";
 import {
+  CheckIcon,
+  ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   InboxIcon,
+  IssueIcon,
+  LockIcon,
   PlusIcon,
   SettingsIcon,
 } from "./icons";
@@ -69,52 +75,185 @@ function NavItem(props: ParentProps<{ href: string }>) {
 function ProjectRow(props: { project: Project }) {
   const { unread } = useUnread();
   const { pendingReviews } = usePendingReviews();
+  const location = useLocation();
   const n = () => unread()[props.project.id] ?? 0;
   const pending = () => pendingReviews()[props.project.id] ?? 0;
+  // Channels nest under the project Discord-style. The viewed project is
+  // always open; others expand on demand so the rail stays quiet.
+  const active = () =>
+    location.pathname.startsWith(`/app/p/${props.project.id}`);
+  const [open, setOpen] = createSignal(false);
   return (
-    <NavItem href={`/app/p/${props.project.id}`}>
-      <span
-        class="h-2 w-2 shrink-0 rounded-full"
-        style={{
-          "background-color": props.project.color ?? "var(--accent)",
-        }}
-      />
+    <div>
+      <div class="flex items-center">
+        <button
+          type="button"
+          aria-label={open() || active() ? "Hide channels" : "Show channels"}
+          aria-expanded={open() || active()}
+          onClick={() => setOpen((v) => !v)}
+          class="hidden shrink-0 rounded p-0.5 text-faint transition-colors hover:text-fg sm:block"
+        >
+          <ChevronDownIcon
+            class={`h-3 w-3 transition-transform ${open() || active() ? "" : "-rotate-90"}`}
+          />
+        </button>
+        <div class="min-w-0 flex-1">
+        <NavItem href={`/app/p/${props.project.id}`}>
+          <span
+            class="h-2 w-2 shrink-0 rounded-full"
+            style={{
+              "background-color": props.project.color ?? "var(--accent)",
+            }}
+          />
+          <Show
+            when={props.project.icon_url}
+            fallback={
+              <span class="shrink-0 text-[11px] font-medium text-muted">
+                {initials(props.project.name)}
+              </span>
+            }
+          >
+            {(url) => (
+              <img
+                src={mediaURL(url())}
+                alt=""
+                class="h-4.5 w-4.5 shrink-0 rounded-md object-cover"
+              />
+            )}
+          </Show>
+          <span class="truncate">{props.project.name}</span>
+          <Show when={pending() > 0}>
+            <Tip
+              text="Pending reviews"
+              hint={`${pending()} agent review(s) awaiting a verdict`}
+              class="ml-auto"
+            >
+              <span class="ml-auto rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-medium leading-none text-amber-600 dark:text-amber-400">
+                {pending()}
+              </span>
+            </Tip>
+          </Show>
+          <Show when={n() > 0}>
+            <span
+              class={`rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-medium leading-none text-white ${pending() > 0 ? "" : "ml-auto"}`}
+            >
+              {n() > 99 ? "99+" : n()}
+            </span>
+          </Show>
+        </NavItem>
+        </div>
+      </div>
+      <Show when={open() || active()}>
+        <ChannelList project={props.project} />
+      </Show>
+    </div>
+  );
+}
+
+// ChannelList: the project's persistent side channels nested under its rail
+// row, plus an inline create field. Refetches on channel.* SSE frames.
+function ChannelList(props: { project: Project }) {
+  const { unreadConversations } = useUnreadConversations();
+  const navigate = useNavigate();
+  const params = useParams<{ channelId?: string }>();
+  const [channels, { refetch }] = createResource(
+    () => props.project.id,
+    (id) => api.listChannels(id).then((r) => r.channels),
+  );
+  const [adding, setAdding] = createSignal(false);
+  const [name, setName] = createSignal("");
+  const [error, setError] = createSignal("");
+  const unsub = subscribe((e) => {
+    if (e.project_id === props.project.id && e.type.startsWith("channel.")) {
+      refetch();
+    }
+  });
+  onCleanup(unsub);
+
+  const unreadFor = (id: string) =>
+    unreadConversations().find((c) => c.conversation_id === id)?.unread ?? 0;
+
+  async function add(e: SubmitEvent) {
+    e.preventDefault();
+    const n = name().trim();
+    if (!n) return;
+    try {
+      const res = await api.createChannel(props.project.id, n);
+      setName("");
+      setAdding(false);
+      setError("");
+      refetch();
+      navigate(`/app/p/${props.project.id}/c/${res.channel.id}`);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Could not create channel",
+      );
+    }
+  }
+
+  return (
+    <div class="ml-4 flex flex-col gap-0.5 border-l border-border pl-1.5">
+      <For each={channels.latest}>
+        {(ch: Channel) => (
+          <A
+            href={`/app/p/${props.project.id}/c/${ch.id}`}
+            class={`flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] transition-colors hover:bg-hover ${
+              params.channelId === ch.id
+                ? "bg-hover text-fg"
+                : "text-muted hover:text-fg"
+            }`}
+          >
+            <span class="text-faint">#</span>
+            <span class="min-w-0 flex-1 truncate">{ch.name}</span>
+            <Show when={ch.agents_blocked}>
+              <Tip
+                text="Agents blocked"
+                hint="Agents can't see or post in this channel"
+                class="shrink-0"
+              >
+                <LockIcon class="h-3 w-3 shrink-0 text-faint" />
+              </Tip>
+            </Show>
+            <Show when={unreadFor(ch.id) > 0}>
+              <span class="rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-medium leading-none text-white">
+                {unreadFor(ch.id)}
+              </span>
+            </Show>
+          </A>
+        )}
+      </For>
       <Show
-        when={props.project.icon_url}
+        when={adding()}
         fallback={
-          <span class="shrink-0 text-[11px] font-medium text-muted">
-            {initials(props.project.name)}
-          </span>
+          <button
+            type="button"
+            onClick={() => setAdding(true)}
+            class="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] text-faint transition-colors hover:bg-hover hover:text-fg"
+          >
+            <PlusIcon class="h-3 w-3" />
+            New channel
+          </button>
         }
       >
-        {(url) => (
-          <img
-            src={mediaURL(url())}
-            alt=""
-            class="h-4.5 w-4.5 shrink-0 rounded-md object-cover"
+        <form onSubmit={add} class="px-2 py-1">
+          <input
+            ref={(el) => queueMicrotask(() => el.focus())}
+            value={name()}
+            onInput={(e) => setName(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                setAdding(false);
+                setName("");
+              }
+            }}
+            placeholder="channel-name"
+            maxLength={60}
+            class={inputClass + " h-6 px-1.5 text-[12px]"}
           />
-        )}
+          <FormError message={error()} />
+        </form>
       </Show>
-      <span class="truncate">{props.project.name}</span>
-      <Show when={pending() > 0}>
-        <Tip
-          text="Pending reviews"
-          hint={`${pending()} agent review(s) awaiting a verdict`}
-          class="ml-auto"
-        >
-          <span class="ml-auto rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-medium leading-none text-amber-600 dark:text-amber-400">
-            {pending()}
-          </span>
-        </Tip>
-      </Show>
-      <Show when={n() > 0}>
-        <span
-          class={`rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-medium leading-none text-white ${pending() > 0 ? "" : "ml-auto"}`}
-        >
-          {n() > 99 ? "99+" : n()}
-        </span>
-      </Show>
-    </NavItem>
+    </div>
   );
 }
 
@@ -132,15 +271,16 @@ function NewProjectForm(props: { onDone: () => void }) {
   const [pending, setPending] = createSignal(false);
   const [repo, setRepo] = createSignal("");
   // null = GitHub not connected (API 400s); resolved list = app installed
+  const active = activeWorkspace(session.workspaces);
   const [repos] = createResource(
-    () => session.workspaces()[0]?.id,
+    () => active()?.id,
     (ws) => api.listAvailableRepos(ws).catch(() => null),
   );
   const repoList = () => repos()?.repos ?? [];
 
   async function onSubmit(e: SubmitEvent) {
     e.preventDefault();
-    const workspace = session.workspaces()[0];
+    const workspace = active();
     if (!workspace) {
       setError("No workspace available");
       return;
@@ -286,9 +426,14 @@ function NewProjectForm(props: { onDone: () => void }) {
 // the "icons with numbers" minimized look. Clicks navigate as usual.
 function CollapsedRail(props: { onExpand: () => void }) {
   const projects = useProjects();
+  const session = useSession();
   const { unread } = useUnread();
   const { pendingReviews } = usePendingReviews();
-  const list = () => projects.sorted();
+  const active = activeWorkspace(session.workspaces);
+  const list = () =>
+    projects
+      .sorted()
+      .filter((p) => !active() || p.workspace_id === active()!.id);
   const totalUnread = () =>
     Object.values(unread()).reduce((s, n) => s + n, 0);
   return (
@@ -400,7 +545,13 @@ export function Rail() {
     window.addEventListener("keydown", onKey);
     onCleanup(() => window.removeEventListener("keydown", onKey));
   });
-  const list = () => projects.sorted();
+  const active = activeWorkspace(session.workspaces);
+  // The rail shows one workspace at a time — workspaces are separate
+  // namespaces, so switching swaps the whole project list.
+  const list = () =>
+    projects
+      .sorted()
+      .filter((p) => !active() || p.workspace_id === active()!.id);
   const { unread } = useUnread();
   const totalUnread = () =>
     Object.values(unread()).reduce((s, n) => s + n, 0);
@@ -486,29 +637,7 @@ export function Rail() {
         when={!collapsed() || navOpen()}
         fallback={<CollapsedRail onExpand={toggleCollapsed} />}
       >
-      <Show when={session.workspaces()[0]}>
-        {(ws) => (
-          <div class="border-b border-border px-4 py-2.5 pr-8">
-            <p class="flex items-center gap-2 truncate text-[13px] font-medium">
-              <Show when={ws().avatar_url}>
-                {(url) => (
-                  <img
-                    src={mediaURL(url())}
-                    alt=""
-                    class="h-4.5 w-4.5 shrink-0 rounded-md object-cover"
-                  />
-                )}
-              </Show>
-              <span class="truncate">{ws().name}</span>
-              <Show when={net.isLocal()}>
-                <span class="shrink-0 rounded border border-border px-1 py-px font-mono text-[9.5px] uppercase tracking-wide text-muted">
-                  local
-                </span>
-              </Show>
-            </p>
-          </div>
-        )}
-      </Show>
+      <WorkspaceSwitcher />
 
       <nav class="flex flex-col gap-0.5 p-2">
         <NavItem href="/app/inbox">
@@ -519,6 +648,10 @@ export function Rail() {
               {totalUnread() > 99 ? "99+" : totalUnread()}
             </span>
           </Show>
+        </NavItem>
+        <NavItem href="/app/overview">
+          <IssueIcon class="h-3.5 w-3.5" />
+          Overview
         </NavItem>
       </nav>
 
@@ -542,26 +675,11 @@ export function Rail() {
           <NewProjectForm onDone={() => setCreating(false)} />
         </Show>
 
-        <For each={session.workspaces()}>
-          {(ws) => {
-            const wsProjects = () =>
-              list().filter((p) => p.workspace_id === ws.id);
-            return (
-              <Show when={wsProjects().length > 0}>
-                <Show when={session.workspaces().length > 1}>
-                  <div class="truncate px-2 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wider text-muted">
-                    {ws.name}
-                  </div>
-                </Show>
-                <div class="flex flex-col gap-0.5">
-                  <For each={wsProjects()}>
-                    {(p) => <ProjectRow project={p} />}
-                  </For>
-                </div>
-              </Show>
-            );
-          }}
-        </For>
+        <div class="flex flex-col gap-0.5">
+          <For each={list()}>
+            {(p) => <ProjectRow project={p} />}
+          </For>
+        </div>
 
         <Show when={list().length === 0 && !projects.loading()}>
           <p class="px-2 py-1.5 text-[13px] text-muted/60">No projects yet</p>
@@ -580,6 +698,169 @@ export function Rail() {
       </Show>
       </aside>
     </>
+  );
+}
+
+// Workspace switcher: the rail header shows the active workspace and opens
+// a dropdown with every workspace plus an inline "new workspace" form.
+// Switching is client-side only — the project list filters to the pick.
+function WorkspaceSwitcher() {
+  const session = useSession();
+  const active = activeWorkspace(session.workspaces);
+  const [open, setOpen] = createSignal(false);
+  const [creatingWs, setCreatingWs] = createSignal(false);
+  const [wsName, setWsName] = createSignal("");
+  const [pending, setPending] = createSignal(false);
+  const [err, setErr] = createSignal<string | null>(null);
+  let rootEl: HTMLDivElement | undefined;
+
+  createEffect(() => {
+    if (!open()) return;
+    const onDown = (e: PointerEvent) => {
+      if (rootEl && !rootEl.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("pointerdown", onDown);
+    window.addEventListener("keydown", onKey);
+    onCleanup(() => {
+      window.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("keydown", onKey);
+    });
+  });
+
+  async function createWs(e: SubmitEvent) {
+    e.preventDefault();
+    const name = wsName().trim();
+    if (!name) return;
+    setErr(null);
+    setPending(true);
+    try {
+      const ws = await api.createWorkspace({ name });
+      await session.refresh();
+      setActiveWorkspace(ws.id);
+      setWsName("");
+      setCreatingWs(false);
+      setOpen(false);
+    } catch (ex) {
+      setErr(ex instanceof Error ? ex.message : "Could not create workspace");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <Show when={active()}>
+      {(ws) => (
+        <div class="relative border-b border-border" ref={(el) => (rootEl = el)}>
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open()}
+            aria-label="Switch workspace"
+            class="flex w-full items-center gap-2 px-4 py-2.5 pr-8 text-left transition-colors hover:bg-hover"
+          >
+            <Show when={ws().avatar_url}>
+              {(url) => (
+                <img
+                  src={mediaURL(url())}
+                  alt=""
+                  class="h-4.5 w-4.5 shrink-0 rounded-md object-cover"
+                />
+              )}
+            </Show>
+            <span class="min-w-0 flex-1 truncate text-[13px] font-medium">
+              {ws().name}
+            </span>
+            <Show when={net.isLocal()}>
+              <span class="shrink-0 rounded border border-border px-1 py-px font-mono text-[9.5px] uppercase tracking-wide text-muted">
+                local
+              </span>
+            </Show>
+            <ChevronDownIcon class="h-3 w-3 shrink-0 text-faint" />
+          </button>
+          <Show when={open()}>
+            <div class="absolute left-2 right-2 top-full z-40 mt-1 overflow-hidden rounded-xl border border-border bg-surface p-1 shadow-xl">
+              <For each={session.workspaces()}>
+                {(w) => (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveWorkspace(w.id);
+                      setOpen(false);
+                    }}
+                    class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] transition-colors hover:bg-hover"
+                  >
+                    <Show when={w.avatar_url}>
+                      {(url) => (
+                        <img
+                          src={mediaURL(url())}
+                          alt=""
+                          class="h-4 w-4 shrink-0 rounded object-cover"
+                        />
+                      )}
+                    </Show>
+                    <span
+                      class={`min-w-0 flex-1 truncate ${w.id === ws().id ? "font-medium text-fg" : "text-muted"}`}
+                    >
+                      {w.name}
+                    </span>
+                    <Show when={w.id === ws().id}>
+                      <CheckIcon class="h-3.5 w-3.5 shrink-0 text-accent" />
+                    </Show>
+                  </button>
+                )}
+              </For>
+              <div class="mt-1 border-t border-border pt-1">
+                <Show
+                  when={creatingWs()}
+                  fallback={
+                    <button
+                      type="button"
+                      onClick={() => setCreatingWs(true)}
+                      class="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] text-muted transition-colors hover:bg-hover hover:text-fg"
+                    >
+                      <PlusIcon class="h-3.5 w-3.5" />
+                      New workspace
+                    </button>
+                  }
+                >
+                  <form onSubmit={createWs} class="flex flex-col gap-1.5 p-1.5">
+                    <input
+                      ref={(el) => el.focus()}
+                      type="text"
+                      required
+                      value={wsName()}
+                      onInput={(e) => setWsName(e.currentTarget.value)}
+                      placeholder="Workspace name"
+                      aria-label="Workspace name"
+                      class={inputClass}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") setCreatingWs(false);
+                      }}
+                    />
+                    <FormError message={err()} />
+                    <div class="flex gap-1.5">
+                      <SubmitButton pending={pending()} class="h-7 px-2.5">
+                        {pending() ? "Creating..." : "Create"}
+                      </SubmitButton>
+                      <button
+                        type="button"
+                        onClick={() => setCreatingWs(false)}
+                        class="inline-flex h-7 items-center justify-center rounded-md px-2.5 text-[13px] text-muted transition-colors hover:bg-hover hover:text-fg"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                </Show>
+              </div>
+            </div>
+          </Show>
+        </div>
+      )}
+    </Show>
   );
 }
 

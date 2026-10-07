@@ -59,6 +59,7 @@ export type ActivityIssue = components["schemas"]["ActivityIssue"];
 export type ActivityMessage = components["schemas"]["ActivityMessage"];
 export type Thread = components["schemas"]["Thread"];
 export type ThreadSummary = components["schemas"]["ThreadSummary"];
+export type Channel = components["schemas"]["Channel"];
 export type Attachment = components["schemas"]["Attachment"];
 export type Issue = components["schemas"]["Issue"];
 export type IssueStatus = components["schemas"]["IssueStatus"];
@@ -179,6 +180,7 @@ export interface DevRepoPanel {
     author: string;
     head: string;
     base: string;
+    updated_at?: string;
   }[];
   commits: {
     sha: string;
@@ -483,12 +485,29 @@ export function createClient(baseUrl: string, token?: string) {
         `/api/conversations/${conversationId}/messages`,
         { method: "DELETE" },
       ),
-    createThread: (messageId: string, title?: string) =>
+    createThread: (messageId: string, title?: string, ttlHours?: number) =>
       post<{ thread: Thread }>(`/api/messages/${messageId}/thread`, {
         ...(title ? { title } : {}),
+        ...(ttlHours !== undefined ? { ttl_hours: ttlHours } : {}),
+      }),
+    setThreadExpiry: (conversationId: string, expiresAt: string | null) =>
+      patch<{ thread: Thread }>(`/api/conversations/${conversationId}/expiry`, {
+        expires_at: expiresAt,
       }),
     listThreads: (projectId: string) =>
       request<{ threads: Thread[] }>(`/api/projects/${projectId}/threads`),
+    listChannels: (projectId: string) =>
+      request<{ channels: Channel[] }>(`/api/projects/${projectId}/channels`),
+    createChannel: (projectId: string, name: string) =>
+      post<{ channel: Channel }>(`/api/projects/${projectId}/channels`, {
+        name,
+      }),
+    updateChannel: (
+      channelId: string,
+      input: { name?: string; agents_blocked?: boolean },
+    ) => patch<{ channel: Channel }>(`/api/channels/${channelId}`, input),
+    deleteChannel: (channelId: string) =>
+      request<void>(`/api/channels/${channelId}`, { method: "DELETE" }),
     pinMessage: (messageId: string, pinned: boolean) =>
       request<Message>(`/api/messages/${messageId}/pin`, {
         method: pinned ? "PUT" : "DELETE",
@@ -670,6 +689,16 @@ export function createClient(baseUrl: string, token?: string) {
     pullDetail: (projectId: string, repo: string, number: number) =>
       request<PullDetail>(
         `/api/projects/${projectId}/github/pull?repo=${encodeURIComponent(repo)}&number=${number}`,
+      ),
+    mergePullRequest: (
+      projectId: string,
+      repo: string,
+      number: number,
+      method: "merge" | "squash" | "rebase" = "merge",
+    ) =>
+      post<{ merged: boolean; sha: string }>(
+        `/api/projects/${projectId}/github/pull/merge?repo=${encodeURIComponent(repo)}`,
+        { number, method },
       ),
     repoCommits: (projectId: string, repo: string, branch?: string) =>
       request<{ commits: RepoCommit[]; branch: string }>(

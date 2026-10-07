@@ -787,13 +787,33 @@ export interface paths {
         put?: never;
         /**
          * Create (or fetch) the thread rooted at this message
-         * @description One thread per message. Title optional - defaults to an excerpt of the parent body. Threads cannot nest; calls on a message inside a thread return 400.
+         * @description One thread per message. Title optional - defaults to an excerpt of the parent body. Threads cannot nest; calls on a message inside a thread return 400. Threads expire after ttl_hours (default 120 = 5 days; a negative value means never).
          */
         post: operations["createThread"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/conversations/{conversationId}/expiry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Change when a thread expires
+         * @description Sets the thread's expires_at. Pass null to keep the thread forever.
+         */
+        patch: operations["setThreadExpiry"];
         trace?: never;
     };
     "/api/projects/{projectId}/threads": {
@@ -811,6 +831,51 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/channels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List a project's persistent side channels
+         * @description Channels are named conversations living beside the project's main chat. The main chat itself is the project conversation, not a channel.
+         */
+        get: operations["listChannels"];
+        put?: never;
+        /**
+         * Create a channel under a project
+         * @description Names are unique per project, case-insensitive; 1-60 characters.
+         */
+        post: operations["createChannel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/channels/{channelId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a channel and its messages */
+        delete: operations["deleteChannel"];
+        options?: never;
+        head?: never;
+        /**
+         * Rename a channel or toggle agent access
+         * @description agents_blocked=true hides the channel from MCP agents entirely - its messages no longer appear in list_conversations, get_messages, send_message or search.
+         */
+        patch: operations["updateChannel"];
         trace?: never;
     };
     "/api/messages/{messageId}/pin": {
@@ -1432,6 +1497,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{projectId}/github/pull/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Merge a pull request through the GitHub App installation
+         * @description Runs GitHub's own merge (merge|squash|rebase). Requires the app's pull_requests:write permission — installations created while the manifest asked for read must be updated on GitHub first. GitHub enforces branch protection, required checks and reviews; Relay returns whatever GitHub decided.
+         */
+        post: operations["mergePullRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{projectId}/github/commits": {
         parameters: {
             query?: never;
@@ -1588,6 +1673,26 @@ export interface paths {
          *     access. Heartbeat comments every 25s.
          */
         get: operations["streamEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent/attachments/{attachmentId}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream attachment bytes to an agent token
+         * @description Same-origin download authenticated with an `rly_` bearer token (Authorization header or `access_token` query). Requires the `attachment:read` scope on the attachment's project. The MCP `get_attachment` tool returns this path as `download_url` so agents can fetch bytes straight to disk instead of decoding base64.
+         */
+        get: operations["downloadAgentAttachment"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2063,6 +2168,11 @@ export interface components {
             title: string;
             status: string;
             priority: string;
+            /**
+             * @description pr when the row mirrors a GitHub pull request
+             * @enum {string}
+             */
+            github_kind?: "issue" | "pr";
             /** Format: date-time */
             updated_at: string;
             project_key: string;
@@ -2077,7 +2187,7 @@ export interface components {
             /** Format: uuid */
             conversation_id: string;
             /** @enum {string} */
-            conversation_kind: "project" | "issue" | "brief" | "thread";
+            conversation_kind: "project" | "issue" | "brief" | "thread" | "channel";
             /** Format: uuid */
             project_id: string;
             project_key: string;
@@ -2187,7 +2297,7 @@ export interface components {
             /** Format: uuid */
             project_id: string;
             /** @enum {string} */
-            kind: "project" | "issue" | "brief" | "thread";
+            kind: "project" | "issue" | "brief" | "thread" | "channel";
             /** Format: uuid */
             issue_id?: string | null;
             /** Format: uuid */
@@ -2329,6 +2439,24 @@ export interface components {
             };
             /** Format: date-time */
             last_reply_at?: string | null;
+            /**
+             * Format: date-time
+             * @description When the thread expires; null means it never does
+             */
+            expires_at?: string | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        Channel: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            project_id: string;
+            /** @enum {string} */
+            kind: "channel";
+            name?: string | null;
+            /** @description True hides the channel from MCP agents entirely */
+            agents_blocked?: boolean;
             /** Format: date-time */
             created_at: string;
         };
@@ -4385,6 +4513,8 @@ export interface operations {
             content: {
                 "application/json": {
                     title?: string;
+                    /** @description Hours until the thread expires. Absent → 120 (5 days); negative → never expires. */
+                    ttl_hours?: number;
                 };
             };
         };
@@ -4402,6 +4532,40 @@ export interface operations {
             };
             /** @description Thread created */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        thread: components["schemas"]["Thread"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setThreadExpiry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversationId: components["parameters"]["ConversationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: date-time */
+                    expires_at?: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated thread */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4439,6 +4603,128 @@ export interface operations {
                 };
             };
             403: components["responses"]["Forbidden"];
+        };
+    };
+    listChannels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Channel list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        channels: components["schemas"]["Channel"][];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    name: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Channel created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        channel: components["schemas"]["Channel"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            /** @description A channel with that name already exists */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                channelId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                channelId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    name?: string;
+                    agents_blocked?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated channel */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        channel: components["schemas"]["Channel"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     pinMessage: {
@@ -5694,6 +5980,65 @@ export interface operations {
             };
         };
     };
+    mergePullRequest: {
+        parameters: {
+            query?: {
+                /** @description owner/name or repo id; optional when only one repo is linked */
+                repo?: string;
+            };
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    number: number;
+                    /**
+                     * @default merge
+                     * @enum {string}
+                     */
+                    method?: "merge" | "squash" | "rebase";
+                    /** @description optional merge commit title */
+                    title?: string;
+                    /** @description optional merge commit message */
+                    body?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Merged */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        merged?: boolean;
+                        sha?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            /** @description GitHub refused the merge (not mergeable, head changed) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description GitHub upstream error — e.g. app lacks pull_requests:write */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     gitCommits: {
         parameters: {
             query?: {
@@ -6019,6 +6364,38 @@ export interface operations {
                 content: {
                     "text/event-stream": unknown;
                 };
+            };
+        };
+    };
+    downloadAgentAttachment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                attachmentId: components["parameters"]["AttachmentId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Attachment bytes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Object storage not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -6568,7 +6945,7 @@ export interface operations {
                             /** Format: uuid */
                             project_id: string;
                             /** @enum {string} */
-                            kind: "project" | "issue" | "brief" | "thread";
+                            kind: "project" | "issue" | "brief" | "thread" | "channel";
                             unread: number;
                             /** Format: uuid */
                             first_unread_id?: string;

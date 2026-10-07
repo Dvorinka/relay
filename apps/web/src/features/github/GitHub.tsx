@@ -270,6 +270,103 @@ function CommitRow(props: DevRepoPanel["commits"][number]) {
   );
 }
 
+// Branches + README render in-app so "Development" never sends the user
+// out to GitHub; file content arrives through the GitHub files proxy.
+function RepoExtras(props: { projectId: string; repo: string }) {
+  const [branches] = createResource(
+    () => props.repo,
+    (r) => api.repoBranches(props.projectId, r).catch(() => undefined),
+  );
+  const [readme] = createResource(
+    () => props.repo,
+    async (r) => {
+      for (const path of ["README.md", "README", "readme.md"]) {
+        try {
+          const f = await api.repoFileRead(props.projectId, r, path);
+          if (f.content) return f;
+        } catch {
+          /* try the next common filename */
+        }
+      }
+      return undefined;
+    },
+  );
+  const [readmeOpen, setReadmeOpen] = createSignal(false);
+
+  return (
+    <>
+      <Section title={`Branches (${branches()?.branches.length ?? 0})`}>
+        <Show
+          when={branches() && branches()!.branches.length > 0}
+          fallback={
+            <li class="px-3 py-2 text-[12px] text-muted">
+              {branches() === undefined ? "Loading…" : "No branches"}
+            </li>
+          }
+        >
+          <For each={branches()!.branches.slice(0, 12)}>
+            {(b) => (
+              <li class="flex items-center gap-2.5 px-3 py-1.5">
+                <svg
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  class="h-3.5 w-3.5 shrink-0 text-muted"
+                  aria-hidden="true"
+                >
+                  <circle cx="4.5" cy="3.5" r="1.8" />
+                  <circle cx="4.5" cy="12.5" r="1.8" />
+                  <circle cx="11.5" cy="6.5" r="1.8" />
+                  <path d="M4.5 5.3v5.4" />
+                  <path d="M11.5 8.3c0 1.7-1.4 2.7-3.2 2.7H6.3" />
+                </svg>
+                <span class="min-w-0 flex-1 truncate font-mono text-[12.5px]">
+                  {b.name}
+                </span>
+                <Show when={b.name === branches()!.default_branch}>
+                  <span class="shrink-0 rounded border border-border px-1 text-[10px] text-muted">
+                    default
+                  </span>
+                </Show>
+                <Show when={b.protected}>
+                  <span class="shrink-0 text-[10px] text-muted">protected</span>
+                </Show>
+              </li>
+            )}
+          </For>
+          <Show when={(branches()?.branches.length ?? 0) > 12}>
+            <li class="px-3 py-1.5 text-[11px] text-muted">
+              +{(branches()!.branches.length ?? 0) - 12} more
+            </li>
+          </Show>
+        </Show>
+      </Section>
+
+      <Show when={readme()}>
+        {(f) => (
+          <Section title={f().path}>
+            <li class="px-3 py-2">
+              <button
+                type="button"
+                onClick={() => setReadmeOpen((v) => !v)}
+                class="text-[12px] text-accent hover:underline"
+              >
+                {readmeOpen() ? "Hide README" : "Show README"}
+              </button>
+              <Show when={readmeOpen()}>
+                <pre class="mt-2 max-h-96 overflow-auto whitespace-pre-wrap rounded-md bg-surface p-3 font-mono text-[11.5px] leading-relaxed">
+                  {f().content.slice(0, 20000)}
+                </pre>
+              </Show>
+            </li>
+          </Section>
+        )}
+      </Show>
+    </>
+  );
+}
+
 function Section(props: { title: string; children: JSX.Element }) {
   return (
     <div class="mt-4">
@@ -471,6 +568,10 @@ export function DevelopmentPanel(props: {
                           {(c) => <CommitRow {...c} />}
                         </For>
                       </Section>
+                      <RepoExtras
+                        projectId={props.projectId}
+                        repo={rp.repo.full_name}
+                      />
                     </div>
                   )}
                 </For>

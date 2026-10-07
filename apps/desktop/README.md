@@ -129,5 +129,5 @@ ignored. The mark renders from `assets/brand/kit/relay-mark-accent-app-icon.svg`
 ## Deferred
 
 - Global screenshot hotkey — needs an OS-specific hook that doesn't fit the
-  thin-shell model. (The Windows system tray landed with getlantern/systray;
-  Linux/macOS tray icons remain deferred.)
+  thin-shell model. (The Windows system tray uses fyne.io/systray for its
+  click callbacks; Linux/macOS tray icons remain deferred.)

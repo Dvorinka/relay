@@ -120,18 +120,23 @@ coding:
 
 1. **Read the guide** if you haven't (this document — `get_guide` /
    `relay-cli guide`).
-2. **Identify the project you're sitting in.** Inspect your local
+2. **Load your persistent memory, if your harness has one.** Invoke your
+   session skills/memory (e.g. an agent memory repo) before touching the
+   project: prior sessions may have recorded project ids, workspace
+   conventions, and pitfalls. At the end of a session, write back what
+   you learned so the next session doesn't re-discover it.
+3. **Identify the project you're sitting in.** Inspect your local
    harness first (repo name, directory, working tree), then match it to
    a Relay project by name or key from `list_projects`. If nothing
    matches — or several could — ask the human which project this work
    belongs to instead of guessing.
-3. **Catch up on what's new.** `unread_count` on each project and
+4. **Catch up on what's new.** `unread_count` on each project and
    conversation tells you where messages wait; `was_unread` on
    `get_messages` results flags exactly which ones were new to you.
    Truncated previews carry `truncated: true` — fetch the full message
    with `get_message` / `relay-cli read <id>` rather than guessing at
    the rest.
-4. **Stay on the platform the whole time you work.** Open a work thread
+5. **Stay on the platform the whole time you work.** Open a work thread
    (`work_start`), mirror your task list (`todo_sync`), post progress
    into the thread (`send_message` `silent=true`), and ask humans via
    `request_input` when blocked. Don't disappear into your harness and
@@ -160,9 +165,19 @@ Rules of engagement:
 
 - **Read before you post.** `get_messages` on the project conversation;
   paginate with `before_id` for older history.
-- **Reply in-channel.** Status updates belong in the project
-  conversation, threaded (`parent_id`/`--reply`) when responding to a
-  specific message. People read Relay, not your logs.
+- **Reply in-channel.** Projects have named **channels** (Discord-style)
+  alongside the main conversation — `list_conversations` returns them with
+  `kind: "channel"`, a `name`, and `unread_count`. Post work where it
+  belongs: a `#backend` question goes in `#backend`, not the main feed.
+  Channels marked `agents_blocked` simply won't appear in any of your
+  listings, searches, or unread counts — that's intentional access
+  control, not a sync bug; don't try to reach them by id. People read
+  Relay, not your logs.
+- **Threads expire.** `create_thread` takes an optional `ttl_hours`
+  (default **120** = 5 days; `0`/omitted uses the default, a **negative**
+  value makes the thread permanent). Expired threads disappear from
+  listings and return `not_found` — treat threads as scratch space,
+  channels as permanent memory.
 - **Keep it terse.** Post what changed, what remains, links. Not a
   transcript of everything you did.
 - **Mark read what you consumed** (`mark_message_read` / `read`) — it
@@ -173,11 +188,21 @@ Rules of engagement:
 - **File the review.** `submit_review` is how humans approve work —
   see the schema in [docs/CLI.md](../../docs/CLI.md#reviews). In `gate` mode, call
   `await_review` afterwards and act on the verdict.
-- **Images count.** `get_attachment` returns the bytes inline as
-  `data_base64` (a presigned `download_url` is included for files too
-  large to inline — it expires within minutes and may be unreachable on
-  some deployments, so always prefer the inline data). Read screenshots
-  and pasted images, don't guess at them. Users mark pasted
+- **Images count.** `get_attachment` returns metadata plus a
+  `download_url` — a same-origin route authenticated with your `rly_`
+  token, so it works wherever `/mcp` works. Fetch it straight to disk:
+
+  ```bash
+  curl -sS -o shot.png "$RELAY_URL$(jq -r .download_url)" \
+    -H "Authorization: Bearer $RELAY_TOKEN"
+  # or just: relay-cli attachment <id> --out shot.png
+  ```
+
+  Images additionally arrive as a real MCP image content block — clients
+  that render those show you the picture directly, no decoding needed.
+  Small non-image files (≤8 MiB) still inline as `data_base64` for
+  byte-exact reads without a second fetch. Read screenshots and pasted
+  images, don't guess at them. Users mark pasted
   images `[image 1]`, `[image 2]`, … in the text — the number maps to the
   image attachment's position. Send images back the same way:
   `upload_attachment` (base64) returns an id — pass it to `send_message`
@@ -243,7 +268,7 @@ end. This is not optional polish — a silent agent looks dead to the user.
 | `list_projects` | `projects` | granted projects + `unread_count` each |
 | `activity` | `activity` | cross-project feed: open issues, PRs, latest messages |
 | `get_project` | — | one project |
-| `list_conversations` | `conversations <pid>` | threads in a project + `unread_count` each |
+| `list_conversations` | `conversations <pid>` | channels + threads in a project; each carries `kind`, `name`, `expires_at`, `unread_count` |
 | `get_messages` | `messages <pid|cid> [--limit] [--tags t]` | read a conversation; `--tags` filters; each message carries `was_unread` — fetching marks read, so capture it before acting |
 | `get_message` | `read <mid>` | one message + `was_unread` + mark read |
 | `search_messages` | `search <pid> "query"` | FTS + `from:` `in:` `has:image` `has:file` `before:` `after:` |
@@ -258,7 +283,7 @@ end. This is not optional polish — a silent agent looks dead to the user.
 | `pin_message` | `pin <mid>` / `unpin <mid>` | pin or unpin |
 | `list_pins` | `pins <pid|cid>` | pinned messages |
 | `forward_message` | `forward <mid> <pid>` | copy into another granted project |
-| `create_thread` | `thread <mid> [--title t]` | side conversation on a message |
+| `create_thread` | `thread <mid> [--title t]` | side conversation on a message; `ttl_hours` sets expiry (default 5 days, negative = permanent) |
 | `mark_message_read` | `read <mid>` | read receipt |
 | `get_attachment` | `attachment <id> [--out f]` | download bytes |
 | `upload_attachment` | `say … --attach f.png` | upload (base64) → attach via `attachment_ids` |
@@ -290,6 +315,12 @@ end. This is not optional polish — a silent agent looks dead to the user.
 | `list_project_files` | `files <pid> [prefix]` | linked folder tree |
 | `read_project_file` | `file-read <pid> <path>` | file contents |
 
+PRs merge in the UI — members pick merge/squash/rebase on the pull-request
+view and GitHub runs it (branch protection and required checks still apply).
+Agents have no merge tool; if a user reports merge failing with a permission
+error, the GitHub App installation needs its updated `pull_requests: write`
+permission accepted on GitHub.
+
 ### Reviews & briefs
 
 | MCP tool | relay-cli | Purpose |
@@ -304,14 +335,29 @@ end. This is not optional polish — a silent agent looks dead to the user.
 
 ### Ideas
 
-Ideas are brainstorm documents on the **Ideas** page — a title, a summary,
-and the same Excalidraw scene JSON as briefs (mindmaps, dependency sketches,
-option trees). They use the `brief:read`/`brief:write` scopes and live on a
-project (`/app/p/<id>/ideas`). Park half-formed work here; when it firms up,
-`idea_to_issue` converts it into a backlog issue (needs `issue:write`) and
-marks the idea `converted`. `list_ideas` / `get_idea` / `create_idea` /
-`update_idea` / `delete_idea` cover CRUD — `scene` is an Excalidraw scene as
-a JSON string.
+Ideas are brainstorm **whiteboards** on the Ideas page — a title, a summary,
+and a `scene` JSON document. They use the `brief:read`/`brief:write` scopes
+and live on a project (`/app/p/<id>/ideas`). Park half-formed work here; when
+it firms up, `idea_to_issue` converts it into a backlog issue (needs
+`issue:write`) and marks the idea `converted`. `list_ideas` / `get_idea` /
+`create_idea` / `update_idea` / `delete_idea` cover CRUD — `scene` is a JSON
+string.
+
+Two scene shapes coexist under `scene`:
+
+- **`relay_board`** — the native whiteboard, preferred for new work:
+  `{"v":1,"nodes":[…]}` where each node is `{id, kind, x, y, …}`.
+  `kind` is `note` | `rect` | `ellipse` | `text` | `arrow` | `issue`.
+  Boxes carry `w`/`h`/`text`; arrows carry `x2`/`y2`; `issue` nodes carry
+  `issue_id` and render as issue/PR cards on the board. Positions are
+  world coordinates — spread nodes out (~200px apart) rather than
+  stacking them at the origin.
+- **`elements`/`appState`/`files`** — an Excalidraw scene, same shape as
+  briefs. Older agent-made ideas use this; it still opens in the
+  Excalidraw editor from the idea's header.
+
+Writing: keep whichever keys exist and add/patch `relay_board` — don't
+strip `elements` if it's there.
 
 ## 6. Mentions
 

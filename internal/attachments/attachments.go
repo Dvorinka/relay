@@ -5,6 +5,7 @@ package attachments
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -45,6 +46,14 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
 	g.POST("/projects/:id/attachments", s.projectMemberOnly, s.handleUpload)
 	g.GET("/projects/:id/attachments/:attachmentId/url", s.projectMemberOnly, s.handleURL)
 	g.GET("/projects/:id/attachments/:attachmentId/download", s.projectMemberOnly, s.handleDownload)
+}
+
+// RegisterAgentRoutes mounts the bearer-token download endpoint for MCP
+// agents. It resolves rly_ tokens itself — session auth never touches it.
+// get_attachment hands this path back as download_url so agents can fetch
+// bytes straight to disk instead of decoding base64 out of a tool result.
+func (s *Service) RegisterAgentRoutes(g *gin.RouterGroup) {
+	g.GET("/agent/attachments/:id/download", s.handleAgentDownload)
 }
 
 // --- access gate ---
@@ -205,7 +214,72 @@ func (s *Service) handleDownload(c *gin.Context) {
 		httpx.Error(c, http.StatusNotFound, "not_found", "attachment not found")
 		return
 	}
-	obj, err := s.store.Get(c.Request.Context(), a.StorageKey)
+	s.streamObject(c, a.StorageKey, a.Filename, a.ContentType)
+}
+
+// handleAgentDownload streams an attachment to an MCP agent. Bearer rly_
+// token (Authorization header or access_token query — EventSource-style
+// clients cannot set headers), then the attachment:read scope on the
+// attachment's project. Same origin as /mcp, so it works wherever the
+// agent's transport works — unlike presigned storage URLs.
+func (s *Service) handleAgentDownload(c *gin.Context) {
+	// Authenticate before the storage check — an unauthenticated caller
+	// shouldn't learn whether storage is configured.
+	raw := c.GetHeader("Authorization")
+	if strings.HasPrefix(raw, "Bearer ") {
+		raw = strings.TrimPrefix(raw, "Bearer ")
+	} else if q := c.Query("access_token"); q != "" {
+		raw = q
+	}
+	if !strings.HasPrefix(raw, "rly_") {
+		httpx.Error(c, http.StatusUnauthorized, "unauthorized", "agent bearer token required")
+		return
+	}
+	sum := sha256.Sum256([]byte(raw))
+	ag, err := s.q.GetTokenAgent(c.Request.Context(), sum[:])
+	if err != nil {
+		httpx.Error(c, http.StatusUnauthorized, "unauthorized", "invalid or revoked token")
+		return
+	}
+	aid, ok := httpx.PathUUID(c, "id")
+	if !ok {
+		return
+	}
+	ctx := c.Request.Context()
+	pid, err := s.q.ResolveAttachmentProject(ctx, aid)
+	if err != nil {
+		httpx.Error(c, http.StatusNotFound, "not_found", "attachment not found")
+		return
+	}
+	scopes, err := s.q.AgentScopeForProject(ctx, db.AgentScopeForProjectParams{
+		ProjectID: pid, AgentID: ag.ID,
+	})
+	has := false
+	for _, sc := range scopes {
+		if sc == "attachment:read" {
+			has = true
+		}
+	}
+	if err != nil || !has {
+		httpx.Error(c, http.StatusForbidden, "forbidden", "missing scope: attachment:read")
+		return
+	}
+	a, err := s.q.GetAttachmentByID(ctx, aid)
+	if err != nil {
+		httpx.Error(c, http.StatusNotFound, "not_found", "attachment not found")
+		return
+	}
+	if s.store == nil {
+		httpx.Error(c, http.StatusServiceUnavailable, "storage_disabled", "object storage is not configured")
+		return
+	}
+	s.streamObject(c, a.StorageKey, a.Filename, a.ContentType)
+}
+
+// streamObject serves one stored object with a download disposition — or
+// inline for inert raster images — shared by the session and agent routes.
+func (s *Service) streamObject(c *gin.Context, key, filename, contentType string) {
+	obj, err := s.store.Get(c.Request.Context(), key)
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
@@ -216,11 +290,11 @@ func (s *Service) handleDownload(c *gin.Context) {
 		return
 	}
 	kind := "attachment"
-	if storage.InlineSafe(a.ContentType) {
+	if storage.InlineSafe(contentType) {
 		kind = "inline"
 	}
-	safe := strings.NewReplacer("\\", "_", "\"", "_").Replace(a.Filename)
-	c.Header("Content-Type", a.ContentType)
+	safe := strings.NewReplacer("\\", "_", "\"", "_").Replace(filename)
+	c.Header("Content-Type", contentType)
 	c.Header("Content-Disposition", kind+"; filename=\""+safe+"\"")
 	c.Header("Cache-Control", "private, max-age=60")
 	c.Status(http.StatusOK)

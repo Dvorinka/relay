@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Dvorinka/relay/internal/attachments"
 	"github.com/Dvorinka/relay/internal/auth"
@@ -49,7 +50,12 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
 	g.PATCH("/messages/:id", s.handleEditMessage)
 	g.DELETE("/messages/:id", s.handleDeleteMessage)
 	g.POST("/messages/:id/thread", s.handleCreateThread)
+	g.PATCH("/conversations/:id/expiry", s.memberOnly, s.handleSetExpiry)
 	g.GET("/projects/:id/threads", s.projectMemberOnly, s.handleListThreads)
+	g.GET("/projects/:id/channels", s.projectMemberOnly, s.handleListChannels)
+	g.POST("/projects/:id/channels", s.projectMemberOnly, s.handleCreateChannel)
+	g.PATCH("/channels/:id", s.memberOnly, s.handleUpdateChannel)
+	g.DELETE("/channels/:id", s.memberOnly, s.handleDeleteChannel)
 	g.POST("/messages/:id/forward", s.handleForwardMessage)
 	g.PUT("/messages/:id/pin", s.handlePinMessage)
 	g.DELETE("/messages/:id/pin", s.handlePinMessage)
@@ -85,6 +91,11 @@ func (s *Service) memberOnly(c *gin.Context) {
 		} else {
 			httpx.Error(c, http.StatusNotFound, "not_found", "conversation not found")
 		}
+		return
+	}
+	// expired threads are gone as far as clients are concerned
+	if conv.ExpiresAt.Valid && !conv.ExpiresAt.Time.After(time.Now()) {
+		httpx.Error(c, http.StatusNotFound, "not_found", "conversation expired")
 		return
 	}
 	c.Set(ctxConversation, conv)
@@ -677,11 +688,17 @@ func (s *Service) handleCreateThread(c *gin.Context) {
 	user := auth.CurrentUser(c)
 	var req struct {
 		Title string `json:"title"`
+		// ttl_hours: absent → 5-day default, negative → never expires.
+		TTLHours *float64 `json:"ttl_hours"`
 	}
 	if c.Request.Body != nil && c.Request.ContentLength > 0 {
 		if !httpx.BindJSON(c, &req) {
 			return
 		}
+	}
+	expiresAt, ok := threadTTL(c, req.TTLHours)
+	if !ok {
+		return
 	}
 	title := strings.TrimSpace(req.Title)
 	if len([]rune(title)) > 120 {
@@ -731,6 +748,7 @@ func (s *Service) handleCreateThread(c *gin.Context) {
 		ParentMessageID: id,
 		Title:           pgtype.Text{String: title, Valid: title != ""},
 		CreatedByUser:   user.ID,
+		ExpiresAt:       expiresAt,
 	})
 	if err != nil {
 		// lost the create race - the other writer's row is the answer
@@ -754,9 +772,70 @@ func (s *Service) handleCreateThread(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"thread": threadJSON(tr)})
 }
 
+// defaultThreadTTL is the lifetime applied when the caller doesn't specify
+// ttl_hours. Negative ttl → permanent; the cap is one year.
+const defaultThreadTTL = 5 * 24 * time.Hour
+
+// threadTTL maps the caller's ttl_hours to an expires_at: nil → default,
+// negative → never (invalid value → false). It writes the error itself.
+func threadTTL(c *gin.Context, ttl *float64) (pgtype.Timestamptz, bool) {
+	if ttl == nil {
+		t := time.Now().Add(defaultThreadTTL)
+		return pgtype.Timestamptz{Time: t, Valid: true}, true
+	}
+	if *ttl < 0 {
+		return pgtype.Timestamptz{}, true
+	}
+	if *ttl == 0 || *ttl > 24*365 {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "ttl_hours must be > 0 (or negative for never)")
+		return pgtype.Timestamptz{}, false
+	}
+	t := time.Now().Add(time.Duration(*ttl * float64(time.Hour)))
+	return pgtype.Timestamptz{Time: t, Valid: true}, true
+}
+
+// handleSetExpiry changes when a thread dies. {"expires_at": "..."} sets an
+// absolute instant; null (or "never": true) keeps the thread forever.
+func (s *Service) handleSetExpiry(c *gin.Context) {
+	conv := c.MustGet(ctxConversation).(db.Conversation)
+	if conv.Kind != "thread" {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "only threads expire")
+		return
+	}
+	var req struct {
+		ExpiresAt *time.Time `json:"expires_at"`
+	}
+	if !httpx.BindJSON(c, &req) {
+		return
+	}
+	var at pgtype.Timestamptz
+	if req.ExpiresAt != nil {
+		at = pgtype.Timestamptz{Time: *req.ExpiresAt, Valid: true}
+	}
+	if _, err := s.q.SetThreadExpiry(c.Request.Context(), db.SetThreadExpiryParams{
+		ID: conv.ID, ExpiresAt: at,
+	}); err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	tr, err := s.q.GetThread(c.Request.Context(), conv.ID)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"thread": threadJSON(tr)})
+}
+
 // handleListThreads returns a project's thread index for the Threads view.
+// The list doubles as the lazy sweep: expired rows are deleted here so they
+// can't accumulate between reads.
 func (s *Service) handleListThreads(c *gin.Context) {
 	p := c.MustGet(ctxProjectRow).(db.GetProjectForUserRow)
+	if n, err := s.q.DeleteExpiredThreads(c.Request.Context()); err != nil {
+		s.log.Warn("thread sweep failed", zap.Error(err))
+	} else if n > 0 {
+		s.log.Debug("swept expired threads", zap.Int64("count", n))
+	}
 	rows, err := s.q.ListProjectThreads(c.Request.Context(), p.ID)
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
@@ -776,10 +855,147 @@ func (s *Service) handleListThreads(c *gin.Context) {
 			},
 			"reply_count":   r.ReplyCount,
 			"last_reply_at": nullTime(r.LastReplyAt),
+			"expires_at":    nullTime(r.ExpiresAt),
 			"created_at":    r.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"threads": out})
+}
+
+// --- channels ---
+// Channels are persistent named conversations (kind='channel') living beside
+// the project's main chat. They ride the generic message routes — membership
+// is workspace-wide, matching threads.
+
+func channelJSON(conv db.Conversation) gin.H {
+	m := conversationJSON(conv)
+	m["name"] = nullText(conv.Title)
+	m["agents_blocked"] = conv.AgentsBlocked
+	return m
+}
+
+// channelName validates the wire name: trimmed, collapsed whitespace,
+// 1-60 runes. Returns "" on violation.
+func channelName(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.Join(strings.Fields(s), " ")
+	if len([]rune(s)) < 1 || len([]rune(s)) > 60 {
+		return ""
+	}
+	return s
+}
+
+func (s *Service) handleListChannels(c *gin.Context) {
+	p := c.MustGet(ctxProjectRow).(db.GetProjectForUserRow)
+	rows, err := s.q.ListChannels(c.Request.Context(), p.ID)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	out := make([]gin.H, 0, len(rows))
+	for _, ch := range rows {
+		out = append(out, channelJSON(ch))
+	}
+	c.JSON(http.StatusOK, gin.H{"channels": out})
+}
+
+func (s *Service) handleCreateChannel(c *gin.Context) {
+	p := c.MustGet(ctxProjectRow).(db.GetProjectForUserRow)
+	var req struct {
+		Name string `json:"name"`
+	}
+	if !httpx.BindJSON(c, &req) {
+		return
+	}
+	name := channelName(req.Name)
+	if name == "" {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "channel name must be 1-60 characters")
+		return
+	}
+	conv, err := s.q.CreateChannel(c.Request.Context(), db.CreateChannelParams{
+		ProjectID:     p.ID,
+		Title:         pgtype.Text{String: name, Valid: true},
+		CreatedByUser: auth.CurrentUser(c).ID,
+	})
+	if err != nil {
+		// unique index on (project_id, lower(title)) — conflict reads as a
+		// duplicate name rather than a generic failure
+		httpx.Error(c, http.StatusConflict, "conflict", "a channel with that name already exists")
+		return
+	}
+	if s.Bus != nil {
+		pid, _ := uuid.FromBytes(p.ID.Bytes[:])
+		s.Bus.Publish(events.Event{Type: "channel.created", ProjectID: pid,
+			Data: map[string]any{"channel": channelJSON(conv)}})
+	}
+	c.JSON(http.StatusCreated, gin.H{"channel": channelJSON(conv)})
+}
+
+// handleUpdateChannel renames a channel and/or toggles agent visibility.
+// {"name": "...", "agents_blocked": bool} — either field optional.
+func (s *Service) handleUpdateChannel(c *gin.Context) {
+	conv := c.MustGet(ctxConversation).(db.Conversation)
+	if conv.Kind != "channel" {
+		httpx.Error(c, http.StatusNotFound, "not_found", "channel not found")
+		return
+	}
+	var req struct {
+		Name          *string `json:"name"`
+		AgentsBlocked *bool   `json:"agents_blocked"`
+	}
+	if !httpx.BindJSON(c, &req) {
+		return
+	}
+	if req.Name != nil {
+		name := channelName(*req.Name)
+		if name == "" {
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "channel name must be 1-60 characters")
+			return
+		}
+		if _, err := s.q.RenameChannel(c.Request.Context(), db.RenameChannelParams{
+			ID: conv.ID, Title: pgtype.Text{String: name, Valid: true},
+		}); err != nil {
+			httpx.Error(c, http.StatusConflict, "conflict", "a channel with that name already exists")
+			return
+		}
+	}
+	if req.AgentsBlocked != nil {
+		if _, err := s.q.SetChannelAgentsBlocked(c.Request.Context(), db.SetChannelAgentsBlockedParams{
+			ID: conv.ID, AgentsBlocked: *req.AgentsBlocked,
+		}); err != nil {
+			httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
+	}
+	updated, err := s.q.GetConversationByID(c.Request.Context(), conv.ID)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	if s.Bus != nil {
+		pid, _ := uuid.FromBytes(conv.ProjectID.Bytes[:])
+		s.Bus.Publish(events.Event{Type: "channel.updated", ProjectID: pid,
+			Data: map[string]any{"channel": channelJSON(updated)}})
+	}
+	c.JSON(http.StatusOK, gin.H{"channel": channelJSON(updated)})
+}
+
+func (s *Service) handleDeleteChannel(c *gin.Context) {
+	conv := c.MustGet(ctxConversation).(db.Conversation)
+	if conv.Kind != "channel" {
+		httpx.Error(c, http.StatusNotFound, "not_found", "channel not found")
+		return
+	}
+	if _, err := s.q.DeleteChannel(c.Request.Context(), conv.ID); err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	if s.Bus != nil {
+		pid, _ := uuid.FromBytes(conv.ProjectID.Bytes[:])
+		s.Bus.Publish(events.Event{Type: "channel.deleted", ProjectID: pid,
+			Data: map[string]any{"channel_id": conv.ID.String()}})
+	}
+	c.Status(http.StatusNoContent)
 }
 
 // postThreadNotice drops a "started a thread" row into the parent channel so
@@ -858,6 +1074,7 @@ func threadJSON(tr db.GetThreadRow) gin.H {
 		},
 		"created_by": tr.CreatorName,
 		"created_at": tr.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
+		"expires_at": nullTime(tr.ExpiresAt),
 	}
 }
 

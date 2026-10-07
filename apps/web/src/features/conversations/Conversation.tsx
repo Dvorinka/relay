@@ -23,6 +23,7 @@ import {
 import { Portal } from "solid-js/web";
 import {
   CheckIcon,
+  ClockIcon,
   DotsIcon,
   FileIcon,
   FolderIcon,
@@ -60,7 +61,7 @@ import { formatBytes, initials, messagePreview } from "../../lib/text";
 import { useProjects } from "../../stores/projects";
 import { useSession } from "../../stores/session";
 import { useChatStyle, useClock } from "../../stores/theme";
-import { timeAgo } from "../../lib/time";
+import { timeAgo, timeUntil } from "../../lib/time";
 import { refreshUnread } from "../../stores/unread";
 
 const PAGE_SIZE = 50;
@@ -1856,6 +1857,9 @@ function ThreadsModal(props: {
                       <p class="mt-0.5 truncate text-[12px] text-muted">
                         {t.reply_count}{" "}
                         {t.reply_count === 1 ? "reply" : "replies"}
+                        {t.expires_at
+                          ? ` · expires ${timeUntil(t.expires_at)}`
+                          : ""}
                         {t.parent?.preview
                           ? ` · ${t.parent?.author ?? ""}: ${t.parent?.preview}`
                           : ""}
@@ -1982,6 +1986,27 @@ function ConversationThread(props: {
   // /clear and /new both wipe the channel — confirmClear records which
   // command was typed (false = /clear, true = /new) or null when closed.
   const [confirmClear, setConfirmClear] = createSignal<boolean | null>(null);
+  // One attach button opens a small menu: file picker or folder picker —
+  // <input type=file> can't offer both modes at once.
+  const [attachOpen, setAttachOpen] = createSignal(false);
+  let attachWrapEl: HTMLDivElement | undefined;
+  createEffect(() => {
+    if (!attachOpen()) return;
+    const onDown = (e: PointerEvent) => {
+      if (attachWrapEl && !attachWrapEl.contains(e.target as Node)) {
+        setAttachOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setAttachOpen(false);
+    };
+    window.addEventListener("pointerdown", onDown);
+    window.addEventListener("keydown", onKey);
+    onCleanup(() => {
+      window.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("keydown", onKey);
+    });
+  });
 
   // Custom name colors come from the workspace member list, loaded once.
   createResource(() => props.projectId, async (id) => {
@@ -2510,6 +2535,11 @@ function ConversationThread(props: {
     window.addEventListener("relay:open-file", onOpenFile);
     // A restored draft needs the composer sized to its content.
     requestAnimationFrame(autogrow);
+    // Entering a chat puts the caret in the composer — pointer:fine only,
+    // so touch devices don't get a surprise keyboard.
+    if (window.matchMedia("(pointer: fine)").matches) {
+      requestAnimationFrame(() => inputEl?.focus());
+    }
   });
   onCleanup(() => window.removeEventListener("relay:open-file", onOpenFile));
 
@@ -3271,30 +3301,53 @@ function ConversationThread(props: {
               </Show>
             </div>
           </Show>
-          <div class="flex items-end gap-1 p-1.5">
-            <button
-              type="button"
-              onClick={() => fileEl?.click()}
-              aria-label="Attach files"
-              title="Attach files"
-              class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-muted transition-colors hover:bg-hover hover:text-fg"
+          <div class="flex items-center gap-1 p-1.5">
+            <div
+              class="relative shrink-0"
+              ref={(el) => (attachWrapEl = el)}
             >
-              <Show
-                when={hasUploading()}
-                fallback={<PaperclipIcon class="h-4.5 w-4.5" />}
+              <button
+                type="button"
+                onClick={() => setAttachOpen((v) => !v)}
+                aria-label="Attach"
+                title="Attach files or a folder"
+                aria-expanded={attachOpen()}
+                class="flex h-10 w-10 items-center justify-center rounded-xl text-muted transition-colors hover:bg-hover hover:text-fg"
               >
-                <Spinner class="h-4 w-4 text-accent-ink" />
+                <Show
+                  when={hasUploading()}
+                  fallback={<PaperclipIcon class="h-4.5 w-4.5" />}
+                >
+                  <Spinner class="h-4 w-4 text-accent-ink" />
+                </Show>
+              </button>
+              <Show when={attachOpen()}>
+                <div class="absolute bottom-full left-0 z-40 mb-1.5 w-44 overflow-hidden rounded-xl border border-border bg-surface p-1 shadow-xl">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAttachOpen(false);
+                      fileEl?.click();
+                    }}
+                    class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] text-fg transition-colors hover:bg-hover"
+                  >
+                    <PaperclipIcon class="h-4 w-4 text-faint" />
+                    Files
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAttachOpen(false);
+                      dirEl?.click();
+                    }}
+                    class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] text-fg transition-colors hover:bg-hover"
+                  >
+                    <FolderIcon class="h-4 w-4 text-faint" />
+                    Folder
+                  </button>
+                </div>
               </Show>
-            </button>
-            <button
-              type="button"
-              onClick={() => dirEl?.click()}
-              aria-label="Attach a folder"
-              title="Attach a folder"
-              class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-muted transition-colors hover:bg-hover hover:text-fg"
-            >
-              <FolderIcon class="h-4.5 w-4.5" />
-            </button>
+            </div>
             <button
               type="button"
               onClick={() => setTagPickerOpen((o) => !o)}
@@ -3572,7 +3625,51 @@ function ThreadPanel(props: {
   const [width, setWidth] = createSignal(threadWidth());
   const [full, setFull] = createSignal(false);
   const [idCopied, setIdCopied] = createSignal(false);
+  const [expiryOpen, setExpiryOpen] = createSignal(false);
+  const [expiresAt, setExpiresAt] = createSignal<string | null | undefined>(
+    undefined,
+  );
+  let expiryWrapEl: HTMLDivElement | undefined;
   let dragging = false;
+
+  createEffect(() => {
+    if (!expiryOpen()) return;
+    // read current expiry once per open — the index endpoint already lists it
+    void api
+      .listThreads(props.projectId)
+      .then((r) =>
+        setExpiresAt(
+          r.threads.find((t) => t.id === props.thread.id)?.expires_at ?? null,
+        ),
+      )
+      .catch(() => setExpiresAt(null));
+    const onDown = (e: PointerEvent) => {
+      if (expiryWrapEl && !expiryWrapEl.contains(e.target as Node)) {
+        setExpiryOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setExpiryOpen(false);
+    };
+    window.addEventListener("pointerdown", onDown);
+    window.addEventListener("keydown", onKey);
+    onCleanup(() => {
+      window.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("keydown", onKey);
+    });
+  });
+
+  async function setExpiry(hours: number | null) {
+    setExpiryOpen(false);
+    const at =
+      hours === null
+        ? null
+        : new Date(Date.now() + hours * 3600_000).toISOString();
+    const res = await api
+      .setThreadExpiry(props.thread.id, at)
+      .catch(() => undefined);
+    if (res) setExpiresAt(res.thread.expires_at ?? null);
+  }
 
   const clamp = (w: number) =>
     Math.min(
@@ -3632,6 +3729,47 @@ function ThreadPanel(props: {
             {props.thread.reply_count}{" "}
             {props.thread.reply_count === 1 ? "reply" : "replies"}
           </p>
+        </div>
+        <div class="relative" ref={(el) => (expiryWrapEl = el)}>
+          <button
+            type="button"
+            onClick={() => setExpiryOpen((v) => !v)}
+            aria-label="Thread expiry"
+            aria-expanded={expiryOpen()}
+            title="Set when this thread expires"
+            class="rounded p-1 text-muted transition-colors hover:bg-hover hover:text-fg"
+          >
+            <ClockIcon class="h-4 w-4" />
+          </button>
+          <Show when={expiryOpen()}>
+            <div class="absolute right-0 top-full z-50 mt-1 w-48 overflow-hidden rounded-xl border border-border bg-surface p-1 shadow-xl">
+              <p class="px-2.5 pb-1 pt-1.5 text-[10.5px] uppercase tracking-wider text-faint">
+                Expires
+                {expiresAt() === undefined
+                  ? ""
+                  : expiresAt()
+                    ? ` ${timeUntil(expiresAt()!)}`
+                    : " — never"}
+              </p>
+              <For
+                each={[
+                  { label: "In 24 hours", hours: 24 },
+                  { label: "In 5 days (default)", hours: 120 },
+                  { label: "Never", hours: null },
+                ]}
+              >
+                {(opt) => (
+                  <button
+                    type="button"
+                    onClick={() => void setExpiry(opt.hours)}
+                    class="flex w-full items-center rounded-lg px-2.5 py-2 text-[13px] text-fg transition-colors hover:bg-hover"
+                  >
+                    {opt.label}
+                  </button>
+                )}
+              </For>
+            </div>
+          </Show>
         </div>
         <button
           type="button"

@@ -418,6 +418,24 @@ export function ThreadIcon(props: IconProps): JSX.Element {
   );
 }
 
+export function ClockIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <circle cx="8" cy="8" r="5.5" />
+      <path d="M8 5v3l2 1.5" />
+    </svg>
+  );
+}
+
 export function PinIcon(props: IconProps): JSX.Element {
   return (
     <svg
@@ -557,6 +575,24 @@ export function GitBranchIcon(props: IconProps): JSX.Element {
       <circle cx="11.5" cy="6.5" r="1.8" />
       <path d="M4.5 5.3v5.4" />
       <path d="M11.5 8.3c0 1.7-1.4 2.7-3.2 2.7H6.3" />
+    </svg>
+  );
+}
+
+export function CommitIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <circle cx="8" cy="8" r="2.2" />
+      <path d="M1.5 8h4.3M10.2 8h4.3" />
     </svg>
   );
 }

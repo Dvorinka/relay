@@ -298,6 +298,24 @@ export default function Inbox() {
             </div>
           }
         >
+          <Show
+            when={(mentions() ?? []).some((m) => !m.is_read)}
+          >
+            <div class="mb-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  const unread = (mentions() ?? []).filter((m) => !m.is_read);
+                  void Promise.allSettled(
+                    unread.map((m) => api.markMessageRead(m.id)),
+                  ).then(refetch);
+                }}
+                class="text-[11px] font-medium text-muted transition-colors hover:text-accent"
+              >
+                mark all mentions read
+              </button>
+            </div>
+          </Show>
           <ul class="divide-y divide-border overflow-hidden rounded-md border border-border">
             <For
               each={mentions()}

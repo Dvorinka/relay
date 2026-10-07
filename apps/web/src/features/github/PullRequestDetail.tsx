@@ -1,5 +1,5 @@
 import type { PullDetail } from "@relay/api-client";
-import { createResource, For, Show } from "solid-js";
+import { createResource, createSignal, For, Show } from "solid-js";
 import { api } from "../../lib/api";
 import { Markdown } from "../../lib/markdown";
 import { timeAgo } from "../../lib/time";
@@ -16,7 +16,7 @@ export function PullRequestDetail(props: {
   number: number;
   onBack: () => void;
 }) {
-  const [detail] = createResource(
+  const [detail, { refetch }] = createResource(
     () => `${props.repo}#${props.number}`,
     () => api.pullDetail(props.projectId, props.repo, props.number),
   );
@@ -71,7 +71,12 @@ export function PullRequestDetail(props: {
       >
         {(d) => (
           <div class="min-h-0 flex-1 overflow-y-auto">
-            <PRBody detail={d()} projectId={props.projectId} />
+            <PRBody
+              detail={d()}
+              projectId={props.projectId}
+              repo={props.repo}
+              onMerged={() => void refetch()}
+            />
             <PRChecks checks={d().checks} />
             <PRCommits commits={d().commits} />
             <PRFiles files={d().files} />
@@ -82,8 +87,39 @@ export function PullRequestDetail(props: {
   );
 }
 
-function PRBody(props: { detail: PullDetail; projectId: string }) {
+function PRBody(props: {
+  detail: PullDetail;
+  projectId: string;
+  repo: string;
+  onMerged: () => void;
+}) {
   const pr = () => props.detail.pull;
+  const [confirming, setConfirming] = createSignal(false);
+  const [method, setMethod] = createSignal<"merge" | "squash" | "rebase">(
+    "merge",
+  );
+  const [merging, setMerging] = createSignal(false);
+  const [mergeError, setMergeError] = createSignal("");
+  const canMerge = () =>
+    state() === "open" && !pr().draft && !merging();
+  const doMerge = async () => {
+    setMerging(true);
+    setMergeError("");
+    try {
+      await api.mergePullRequest(
+        props.projectId,
+        props.repo,
+        pr().number,
+        method(),
+      );
+      props.onMerged();
+    } catch (e) {
+      setMergeError(e instanceof Error ? e.message : "Merge failed");
+      setConfirming(false);
+    } finally {
+      setMerging(false);
+    }
+  };
   const state = () =>
     pr().merged ? "merged" : pr().draft ? "draft" : pr().state;
   const badge = () =>
@@ -141,6 +177,63 @@ function PRBody(props: { detail: PullDetail; projectId: string }) {
           )}
         </For>
       </div>
+      <Show when={state() === "open" && !pr().draft}>
+        <div class="mt-3 flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
+          <Show
+            when={!confirming()}
+            fallback={
+              <>
+                <select
+                  value={method()}
+                  onChange={(e) =>
+                    setMethod(
+                      e.currentTarget.value as "merge" | "squash" | "rebase",
+                    )
+                  }
+                  class="rounded border border-border bg-transparent px-2 py-1 text-[12px]"
+                >
+                  <option value="merge">Merge commit</option>
+                  <option value="squash">Squash and merge</option>
+                  <option value="rebase">Rebase and merge</option>
+                </select>
+                <button
+                  type="button"
+                  disabled={!canMerge()}
+                  onClick={() => void doMerge()}
+                  class="rounded bg-emerald-600 px-2.5 py-1 text-[12px] font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
+                >
+                  {merging() ? "Merging…" : "Confirm merge"}
+                </button>
+                <button
+                  type="button"
+                  disabled={merging()}
+                  onClick={() => setConfirming(false)}
+                  class="rounded px-2 py-1 text-[12px] text-muted transition-colors hover:bg-hover hover:text-fg"
+                >
+                  Cancel
+                </button>
+              </>
+            }
+          >
+            <button
+              type="button"
+              disabled={!canMerge()}
+              onClick={() => setConfirming(true)}
+              class="rounded bg-emerald-600 px-2.5 py-1 text-[12px] font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
+            >
+              Merge pull request
+            </button>
+            <span class="text-[11.5px] text-muted">
+              {pr().mergeable === "conflicting"
+                ? "GitHub reports conflicts — merge may be refused"
+                : "GitHub enforces checks and reviews before merging"}
+            </span>
+          </Show>
+        </div>
+        <Show when={mergeError()}>
+          {(msg) => <div class="mt-2"><FormError message={msg()} /></div>}
+        </Show>
+      </Show>
       <Show when={pr().body.trim()}>
         <div class="markdown mt-3 border-t border-border/60 pt-3">
           <Markdown body={pr().body} projectId={props.projectId} />

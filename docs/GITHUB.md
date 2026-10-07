@@ -20,6 +20,10 @@ personal access tokens are needed in production.
   imported with their colors. Re-runs refresh in place — no duplicates.
 - **MCP tools** — `github_list_issues`, `github_get_issue`,
   `github_list_prs`, `github_get_pr` under the `issue:read` scope.
+- **In-app PR merge** — the pull-request view offers merge, squash, or
+  rebase (`POST /api/projects/:id/github/pull/merge`). GitHub runs the
+  merge itself and enforces branch protection, required checks, and
+  reviews; Relay reports back whatever GitHub decided.
 
 ## Setup (once per instance)
 
@@ -27,10 +31,17 @@ personal access tokens are needed in production.
    Relay POSTs an app manifest to GitHub; you confirm the name and
    permissions there, and GitHub redirects back. The app id, private key,
    and webhook secret are stored AES-256-GCM-encrypted under `AUTH_SECRET`.
+   The manifest asks for `issues: write`, `pull_requests: write`
+   (in-app merge), `contents: read`, `metadata: read`.
 2. Click **Install on GitHub** and pick the repositories to expose.
    The `installation` webhook event registers the installation in the
    workspace automatically.
 3. Project → **Development** tab → link repositories.
+
+> Existing installations created while the app asked for `pull_requests:
+> read` must accept the updated permissions: GitHub → Settings →
+> Applications/Installations → the Relay app → "Review request". Until
+> then, in-app merge returns GitHub's 403/404.
 
 ## Webhook endpoint
 

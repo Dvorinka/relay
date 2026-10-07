@@ -238,8 +238,14 @@ function FeedPanel(props: {
     act()!.recent_messages.length === 0;
   return (
     <aside class="w-full shrink-0 lg:w-80 xl:w-[22rem]">
-      <h2 class="mb-2 text-[12px] font-semibold uppercase tracking-wider text-muted">
+      <h2 class="mb-2 flex items-center gap-2 text-[12px] font-semibold uppercase tracking-wider text-muted">
         Across projects
+        <A
+          href="/app/overview"
+          class="ml-auto text-[11px] font-medium normal-case tracking-normal text-muted transition-colors hover:text-accent"
+        >
+          view all
+        </A>
       </h2>
       <Show when={empty()}>
         <p class="text-[12px] text-muted">Nothing in flight — all caught up.</p>

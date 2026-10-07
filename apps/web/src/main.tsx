@@ -14,10 +14,12 @@ import IssueKeyRedirect from "./features/issues/IssueKeyRedirect";
 import IssuePage from "./features/issues/IssuePage";
 import BoardPage from "./features/issues/BoardPage";
 import ProjectPage from "./features/projects/ProjectPage";
+import ChannelPage from "./features/projects/ChannelPage";
 import IdeasPage from "./features/ideas/IdeasPage";
 import "./index.css";
 import Home from "./pages/Home";
 import Inbox from "./pages/Inbox";
+import Overview from "./pages/Overview";
 import AgentProfile from "./pages/AgentProfile";
 import Connect from "./pages/Connect";
 import UserProfile from "./pages/UserProfile";
@@ -94,7 +96,9 @@ render(
         <Route path="/app" component={App}>
           <Route path="/" component={Home} />
           <Route path="/inbox" component={Inbox} />
+          <Route path="/overview" component={Overview} />
           <Route path="/p/:projectId" component={ProjectPage} />
+          <Route path="/p/:projectId/c/:channelId" component={ChannelPage} />
           <Route path="/p/:projectId/board" component={BoardPage} />
           <Route path="/p/:projectId/i/:issueId" component={IssuePage} />
           <Route path="/p/:projectId/k/:key" component={IssueKeyRedirect} />

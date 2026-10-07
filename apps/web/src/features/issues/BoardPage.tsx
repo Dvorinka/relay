@@ -1,10 +1,12 @@
 import { A, useParams } from "@solidjs/router";
-import { createResource, createSignal, For, Show } from "solid-js";
+import { createResource, createSignal, For, Match, Show, Switch } from "solid-js";
 import { api } from "../../lib/api";
 import { confirmDestructive } from "../../components/Confirm";
 import { Spinner, Tip } from "../../components/ui";
 import { IssueIcon, PlusIcon, SettingsIcon, XIcon } from "../../components/icons";
 import { Board } from "./Board";
+import { Timeline } from "./Timeline";
+import { Calendar } from "./Calendar";
 import type { IssueFilters } from "@relay/api-client";
 
 // Standalone kanban page — the chat header's Board button lands here so the
@@ -22,6 +24,17 @@ export default function BoardPage() {
   );
   const [activeBoard, setActiveBoard] = createSignal<string | null>(null);
   const [saving, setSaving] = createSignal(false);
+  // Board|Timeline|Calendar pick — persisted so the page reopens where it left.
+  type ViewMode = "board" | "timeline" | "calendar";
+  const [view, setView] = createSignal<ViewMode>(
+    (["board", "timeline", "calendar"] as const).find(
+      (v) => v === localStorage.getItem("relay.boardView"),
+    ) ?? "board",
+  );
+  const setViewMode = (v: ViewMode) => {
+    localStorage.setItem("relay.boardView", v);
+    setView(v);
+  };
   let nameEl: HTMLInputElement | undefined;
 
   const active = () => boards()?.find((b) => b.id === activeBoard());
@@ -65,23 +78,51 @@ export default function BoardPage() {
           <span class="text-[12.5px] text-muted">·</span>
           <button
             type="button"
-            onClick={() => setActiveBoard(null)}
+            onClick={() => {
+              setActiveBoard(null);
+              setViewMode("board");
+            }}
             class={`rounded px-2 py-1 text-[12.5px] transition-colors ${
-              activeBoard() === null
+              activeBoard() === null && view() === "board"
                 ? "bg-hover font-medium text-fg"
                 : "text-muted hover:text-fg"
             }`}
           >
             Board
           </button>
+          <button
+            type="button"
+            onClick={() => setViewMode("timeline")}
+            class={`rounded px-2 py-1 text-[12.5px] transition-colors ${
+              view() === "timeline"
+                ? "bg-hover font-medium text-fg"
+                : "text-muted hover:text-fg"
+            }`}
+          >
+            Timeline
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode("calendar")}
+            class={`rounded px-2 py-1 text-[12.5px] transition-colors ${
+              view() === "calendar"
+                ? "bg-hover font-medium text-fg"
+                : "text-muted hover:text-fg"
+            }`}
+          >
+            Calendar
+          </button>
           <For each={boards() ?? []}>
             {(b) => (
               <span class="inline-flex items-center rounded border border-transparent">
                 <button
                   type="button"
-                  onClick={() => setActiveBoard(b.id)}
+                  onClick={() => {
+                    setActiveBoard(b.id);
+                    setViewMode("board");
+                  }}
                   class={`rounded px-2 py-1 text-[12.5px] transition-colors ${
-                    activeBoard() === b.id
+                    activeBoard() === b.id && view() === "board"
                       ? "bg-hover font-medium text-fg"
                       : "text-muted hover:text-fg"
                   }`}
@@ -110,6 +151,7 @@ export default function BoardPage() {
               </span>
             )}
           </For>
+          <Show when={view() === "board"}>
           <Show
             when={saving()}
             fallback={
@@ -146,6 +188,7 @@ export default function BoardPage() {
               </button>
             </span>
           </Show>
+          </Show>
         </div>
         <div class="flex-1" />
         <Tip
@@ -172,10 +215,21 @@ export default function BoardPage() {
           }
         >
           {(p) => (
-            <Board
-              project={p()}
-              filters={active()?.filters as IssueFilters | undefined}
-            />
+            <Switch
+              fallback={
+                <Board
+                  project={p()}
+                  filters={active()?.filters as IssueFilters | undefined}
+                />
+              }
+            >
+              <Match when={view() === "timeline"}>
+                <Timeline project={p()} />
+              </Match>
+              <Match when={view() === "calendar"}>
+                <Calendar project={p()} />
+              </Match>
+            </Switch>
           )}
         </Show>
       </div>

@@ -11,12 +11,12 @@ import {
   PencilIcon,
   PlusIcon,
   TrashIcon,
-  XIcon,
 } from "../../components/icons";
 import { inputClass, primaryButtonClass, Spinner } from "../../components/ui";
 import { SceneEditor } from "../briefs/SceneEditor";
-import { SceneView } from "../briefs/SceneView";
+import { BoardCanvas, type BoardDoc } from "./BoardCanvas";
 import { Markdown } from "../../lib/markdown";
+import { useProjects } from "../../stores/projects";
 
 const STATUS_STYLE: Record<string, string> = {
   open: "bg-accent/15 text-accent",
@@ -221,18 +221,34 @@ function NewIdea(props: {
   );
 }
 
-// IdeaView: canvas preview + summary + convert/delete actions. Conversion
-// lands the user on the created issue or project.
+// IdeaView: a full-page native whiteboard — the canvas is the document.
+// Issue/PR cards, sticky notes, shapes and arrows autosave into
+// idea.scene.relay_board; the legacy Excalidraw editor stays reachable for
+// agent-drawn scenes that predate the board.
 function IdeaView(props: {
   idea: Idea;
   onClose: () => void;
   onChanged: () => void;
 }) {
   const navigate = useNavigate();
+  const projects = useProjects();
+  const project = () =>
+    projects.projects()?.find((p) => p.id === props.idea.project_id);
   const [idea, setIdea] = createSignal(props.idea);
   const [editing, setEditing] = createSignal(false);
   const [convertOpen, setConvertOpen] = createSignal(false);
+  const [detailsOpen, setDetailsOpen] = createSignal(false);
   const [err, setErr] = createSignal("");
+
+  const hasLegacyScene = () =>
+    Array.isArray((idea().scene as Record<string, unknown>)?.elements) &&
+    ((idea().scene as { elements?: unknown[] }).elements?.length ?? 0) > 0;
+
+  const saveBoard = async (board: BoardDoc) => {
+    const scene = { ...idea().scene, relay_board: board };
+    const i = await api.updateIdea(idea().id, { scene });
+    setIdea(i);
+  };
 
   const setStatus = async (status: "open" | "archived") => {
     const i = await api.updateIdea(idea().id, { status });
@@ -252,14 +268,17 @@ function IdeaView(props: {
   };
 
   return (
-    <div
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) props.onClose();
-      }}
-    >
-      <div class="flex max-h-[90vh] w-full max-w-4xl flex-col rounded-xl border border-border bg-surface shadow-2xl">
-        <div class="flex items-center justify-between gap-3 border-b border-border px-5 py-3.5">
+    <div class="fixed inset-0 z-50 flex flex-col bg-bg">
+      <div class="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-surface px-5 py-2.5">
+        <div class="flex min-w-0 items-center gap-3">
+          <button
+            type="button"
+            onClick={props.onClose}
+            aria-label="Back to ideas"
+            class="rounded-md p-1 text-muted transition-colors hover:bg-hover hover:text-fg"
+          >
+            <ChevronLeftIcon class="h-4 w-4" />
+          </button>
           <div class="min-w-0">
             <h3 class="truncate text-[14px] font-semibold">{idea().title}</h3>
             <p class="text-[11px] text-muted">
@@ -271,63 +290,67 @@ function IdeaView(props: {
               </span>
             </p>
           </div>
-          <div class="flex shrink-0 items-center gap-2">
+        </div>
+        <div class="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setDetailsOpen((o) => !o)}
+            aria-expanded={detailsOpen()}
+            class="rounded-md border border-border px-2 py-1 text-[12px] text-muted hover:bg-hover hover:text-fg"
+          >
+            Details
+          </button>
+          <Show when={hasLegacyScene()}>
             <button
               type="button"
               onClick={() => setEditing(true)}
-              title="Open in the Excalidraw editor"
+              title="This idea also has an Excalidraw scene — open it in the legacy editor"
               class="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[12px] text-muted hover:bg-hover hover:text-fg"
             >
-              <PencilIcon class="h-3 w-3" /> Edit canvas
+              <PencilIcon class="h-3 w-3" /> Excalidraw
             </button>
-            <Show when={idea().status !== "converted"}>
-              <button
-                type="button"
-                onClick={() => setConvertOpen((o) => !o)}
-                class="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[12px] text-muted hover:bg-hover hover:text-fg"
-              >
-                <CheckIcon class="h-3 w-3" /> Convert
-              </button>
-            </Show>
-            <Show when={idea().status === "open"}>
-              <button
-                type="button"
-                onClick={() => setStatus("archived")}
-                class="rounded-md border border-border px-2 py-1 text-[12px] text-muted hover:bg-hover hover:text-fg"
-              >
-                Archive
-              </button>
-            </Show>
-            <Show when={idea().status === "archived"}>
-              <button
-                type="button"
-                onClick={() => setStatus("open")}
-                class="rounded-md border border-border px-2 py-1 text-[12px] text-muted hover:bg-hover hover:text-fg"
-              >
-                Reopen
-              </button>
-            </Show>
+          </Show>
+          <Show when={idea().status !== "converted"}>
             <button
               type="button"
-              onClick={() => void remove()}
-              title="Delete idea"
-              aria-label="Delete idea"
-              class="rounded-md border border-border p-1.5 text-muted transition-colors hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-500"
+              onClick={() => setConvertOpen((o) => !o)}
+              class="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[12px] text-muted hover:bg-hover hover:text-fg"
             >
-              <TrashIcon class="h-3.5 w-3.5" />
+              <CheckIcon class="h-3 w-3" /> Convert
             </button>
+          </Show>
+          <Show when={idea().status === "open"}>
             <button
               type="button"
-              onClick={props.onClose}
-              aria-label="Close"
-              class="rounded p-1 text-muted transition-colors hover:bg-hover hover:text-fg"
+              onClick={() => setStatus("archived")}
+              class="rounded-md border border-border px-2 py-1 text-[12px] text-muted hover:bg-hover hover:text-fg"
             >
-              <XIcon class="h-4 w-4" />
+              Archive
             </button>
-          </div>
+          </Show>
+          <Show when={idea().status === "archived"}>
+            <button
+              type="button"
+              onClick={() => setStatus("open")}
+              class="rounded-md border border-border px-2 py-1 text-[12px] text-muted hover:bg-hover hover:text-fg"
+            >
+              Reopen
+            </button>
+          </Show>
+          <button
+            type="button"
+            onClick={() => void remove()}
+            title="Delete idea"
+            aria-label="Delete idea"
+            class="rounded-md border border-border p-1.5 text-muted transition-colors hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-500"
+          >
+            <TrashIcon class="h-3.5 w-3.5" />
+          </button>
         </div>
+      </div>
 
-        <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+      <Show when={convertOpen() || detailsOpen() || err()}>
+        <div class="max-h-64 shrink-0 overflow-y-auto border-b border-border bg-surface px-5 py-3">
           <Show when={convertOpen()}>
             <ConvertForm
               idea={idea()}
@@ -353,13 +376,34 @@ function IdeaView(props: {
               {err()}
             </p>
           </Show>
-          <SceneView scene={idea().scene} />
-          <Show when={idea().summary}>
-            <div class="mt-3 rounded-lg border border-border bg-surface-2/40 px-3 py-2 text-[13px]">
+          <Show when={detailsOpen() && idea().summary}>
+            <div class="rounded-lg border border-border bg-surface-2/40 px-3 py-2 text-[13px]">
               <Markdown body={idea().summary} projectId={idea().project_id} />
             </div>
           </Show>
+          <Show when={detailsOpen() && !idea().summary}>
+            <p class="text-[12px] text-muted">No summary on this idea.</p>
+          </Show>
         </div>
+      </Show>
+
+      <div class="min-h-0 flex-1">
+        <Show
+          when={project()}
+          fallback={
+            <div class="flex h-full items-center justify-center">
+              <Spinner />
+            </div>
+          }
+        >
+          {(p) => (
+            <BoardCanvas
+              project={p()}
+              scene={idea().scene as Record<string, unknown> | undefined}
+              onSave={saveBoard}
+            />
+          )}
+        </Show>
       </div>
 
       <Show when={editing()}>
@@ -369,7 +413,13 @@ function IdeaView(props: {
           hint="Mindmap canvas — agents can read and revise the same scene."
           scene={idea().scene}
           onSave={async (scene) => {
-            const i = await api.updateIdea(idea().id, { scene });
+            // merge — Excalidraw owns `elements`, the board owns `relay_board`
+            const merged = {
+              ...scene,
+              relay_board: (idea().scene as Record<string, unknown>)
+                ?.relay_board,
+            };
+            const i = await api.updateIdea(idea().id, { scene: merged });
             setIdea(i);
             setEditing(false);
           }}

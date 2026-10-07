@@ -339,6 +339,19 @@ export function onDeepLink(cb: (url: string) => void): () => void {
   return () => {};
 }
 
+// The tray's "Check for updates" item emits this; updates.ts listens and
+// runs the same check the auto-update poll does.
+export function onCheckUpdates(cb: () => void): () => void {
+  const rt = (
+    window as unknown as {
+      runtime?: { EventsOn?: (n: string, cb: (d: string) => void) => void };
+    }
+  ).runtime;
+  if (typeof rt?.EventsOn !== "function") return () => {};
+  rt.EventsOn("relay:check-updates", cb);
+  return () => {};
+}
+
 // Map a relay:// URL to an app route. Grammar: relay://open/<path> or
 // relay://open?to=<path> — anything else (host-shaped URLs from the OS) is
 // folded to /connect for safety instead of navigating blind.

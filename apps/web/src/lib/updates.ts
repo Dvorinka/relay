@@ -8,6 +8,7 @@ import {
   desktopSelfUpdate,
   desktopVersion,
   isDesktop,
+  onCheckUpdates,
 } from "./desktop";
 import { net } from "./net";
 
@@ -62,6 +63,8 @@ if (isDesktop()) {
     // long-lived desktop windows surface a badge without a manual check;
     // installing still waits for the next launch
     setInterval(() => void checkForUpdates(), 6 * 60 * 60 * 1000);
+    // tray → "Check for updates" lights the same badge/flow
+    onCheckUpdates(() => void checkForUpdates());
   });
 }
 
