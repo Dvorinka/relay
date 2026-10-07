@@ -76,7 +76,7 @@ func (q *Queries) CreateBrief(ctx context.Context, arg CreateBriefParams) (Brief
 const createBriefConversation = `-- name: CreateBriefConversation :one
 insert into conversations (project_id, kind, brief_id)
 values ($1, 'brief', $2)
-returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot
+returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked
 `
 
 type CreateBriefConversationParams struct {
@@ -99,6 +99,8 @@ func (q *Queries) CreateBriefConversation(ctx context.Context, arg CreateBriefCo
 		&i.CreatedByUser,
 		&i.CreatedByAgent,
 		&i.CreatorNameSnapshot,
+		&i.ExpiresAt,
+		&i.AgentsBlocked,
 	)
 	return i, err
 }

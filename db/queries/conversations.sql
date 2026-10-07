@@ -29,27 +29,41 @@ from messages
 where id = $1;
 
 -- name: CreateThread :one
--- one thread per message; the unique index makes this race-safe
-insert into conversations (project_id, kind, parent_message_id, title, created_by_user)
+-- one thread per message; the unique index makes this race-safe. expires_at
+-- is computed by the handler: default 5 days, NULL means the thread never
+-- expires.
+insert into conversations (project_id, kind, parent_message_id, title, created_by_user, expires_at)
 values (sqlc.arg(project_id), 'thread', sqlc.arg(parent_message_id),
-        sqlc.narg(title), sqlc.arg(created_by_user))
+        sqlc.narg(title), sqlc.arg(created_by_user), sqlc.narg(expires_at))
 on conflict (parent_message_id) where kind = 'thread' do nothing
 returning *;
 
 -- name: CreateThreadAgent :one
-insert into conversations (project_id, kind, parent_message_id, title, created_by_agent)
+insert into conversations (project_id, kind, parent_message_id, title, created_by_agent, expires_at)
 values (sqlc.arg(project_id), 'thread', sqlc.arg(parent_message_id),
-        sqlc.narg(title), sqlc.arg(created_by_agent))
+        sqlc.narg(title), sqlc.arg(created_by_agent), sqlc.narg(expires_at))
 on conflict (parent_message_id) where kind = 'thread' do nothing
 returning *;
+
+-- name: SetThreadExpiry :one
+-- expires_at NULL keeps the thread alive forever
+update conversations
+set expires_at = sqlc.narg(expires_at)
+where id = sqlc.arg(id) and kind = 'thread'
+returning *;
+
+-- name: DeleteExpiredThreads :execrows
+delete from conversations
+where kind = 'thread' and expires_at is not null and expires_at < now();
 
 -- name: GetThreadByParentMessage :one
 select *
 from conversations
-where parent_message_id = $1 and kind = 'thread';
+where parent_message_id = $1 and kind = 'thread'
+  and (expires_at is null or expires_at > now());
 
 -- name: GetThread :one
-select c.id, c.project_id, c.parent_message_id, c.title, c.created_at,
+select c.id, c.project_id, c.parent_message_id, c.title, c.created_at, c.expires_at,
        pm.conversation_id as parent_conversation_id,
        coalesce(u.name, a.name, nullif(c.creator_name_snapshot, ''), '') as creator_name,
        case when pm.deleted_at is null then coalesce(pu.name, pa.name, nullif(pm.author_name_snapshot, ''), '')
@@ -64,11 +78,12 @@ left join users u on u.id = c.created_by_user
 left join agents a on a.id = c.created_by_agent
 left join users pu on pu.id = pm.author_user_id
 left join agents pa on pa.id = pm.author_agent_id
-where c.id = $1;
+where c.id = $1
+  and (c.expires_at is null or c.expires_at > now());
 
 -- name: ListProjectThreads :many
 -- thread index for a project, most recently active first
-select c.id, c.parent_message_id, c.title, c.created_at,
+select c.id, c.parent_message_id, c.title, c.created_at, c.expires_at,
        pm.conversation_id as parent_conversation_id,
        coalesce(u.name, a.name, nullif(c.creator_name_snapshot, ''), '') as creator_name,
        case when pm.deleted_at is null then coalesce(pu.name, pa.name, nullif(pm.author_name_snapshot, ''), '')
@@ -86,8 +101,40 @@ left join agents a on a.id = c.created_by_agent
 left join users pu on pu.id = pm.author_user_id
 left join agents pa on pa.id = pm.author_agent_id
 where c.project_id = $1 and c.kind = 'thread'
+  and (c.expires_at is null or c.expires_at > now())
 order by last_reply_at desc nulls last, c.created_at desc
 limit 100;
+
+-- name: CreateChannel :one
+-- named side conversation inside a project; name is unique per project
+insert into conversations (project_id, kind, title, created_by_user)
+values (sqlc.arg(project_id), 'channel', sqlc.arg(title), sqlc.narg(created_by_user))
+on conflict (project_id, lower(title)) where kind = 'channel' do nothing
+returning *;
+
+-- name: ListChannels :many
+-- a project's persistent channels, in creation order
+select *
+from conversations
+where project_id = $1 and kind = 'channel'
+order by created_at;
+
+-- name: RenameChannel :one
+update conversations
+set title = sqlc.arg(title)
+where id = sqlc.arg(id) and kind = 'channel'
+returning *;
+
+-- name: SetChannelAgentsBlocked :one
+-- agents_blocked channels are invisible to MCP agents; humans unaffected
+update conversations
+set agents_blocked = sqlc.arg(agents_blocked)
+where id = sqlc.arg(id) and kind = 'channel'
+returning *;
+
+-- name: DeleteChannel :execrows
+delete from conversations
+where id = $1 and kind = 'channel';
 
 -- name: GetProjectForUser :one
 -- project row only when the caller is a member of its workspace
@@ -121,6 +168,7 @@ left join messages pm on pm.id = m.parent_id
 left join users pu on pu.id = pm.author_user_id
 left join agents pa on pa.id = pm.author_agent_id
 left join conversations t on t.parent_message_id = m.id and t.kind = 'thread'
+  and (t.expires_at is null or t.expires_at > now())
 left join messages f on f.id = m.forwarded_from
 left join conversations fcp on fcp.id = f.conversation_id
 left join users fu on fu.id = f.author_user_id
@@ -156,6 +204,7 @@ left join messages pm on pm.id = m.parent_id
 left join users pu on pu.id = pm.author_user_id
 left join agents pa on pa.id = pm.author_agent_id
 left join conversations t on t.parent_message_id = m.id and t.kind = 'thread'
+  and (t.expires_at is null or t.expires_at > now())
 left join messages f on f.id = m.forwarded_from
 left join conversations fcp on fcp.id = f.conversation_id
 left join users fu on fu.id = f.author_user_id
@@ -218,6 +267,7 @@ left join messages pm on pm.id = m.parent_id
 left join users pu on pu.id = pm.author_user_id
 left join agents pa on pa.id = pm.author_agent_id
 left join conversations t on t.parent_message_id = m.id and t.kind = 'thread'
+  and (t.expires_at is null or t.expires_at > now())
 left join messages f on f.id = m.forwarded_from
 left join conversations fcp on fcp.id = f.conversation_id
 left join users fu on fu.id = f.author_user_id

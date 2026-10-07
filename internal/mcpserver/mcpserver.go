@@ -311,6 +311,7 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithDescription("Open (or get) the thread rooted at a message: a focused side conversation. Use it for anything bigger than a quick answer — plans in progress, multi-step work, open questions, anything that needs back-and-forth — so the channel stays readable. Posts a 'started a thread' notice into the channel. One thread per message; threads cannot nest. Afterwards post into it via send_message with conversation_id=<thread id>."),
 		mcp.WithString("message_id", mcp.Required()),
 		mcp.WithString("title", mcp.Description("Optional thread title; defaults to the parent excerpt")),
+		mcp.WithNumber("ttl_hours", mcp.Description("Hours until the thread expires. Default 120 (5 days); a negative value makes it permanent.")),
 	), s.createThread)
 
 	srv.AddTool(mcp.NewTool("request_input",
@@ -821,12 +822,35 @@ func (s *Service) listConversations(ctx context.Context, req mcp.CallToolRequest
 	}
 	out := make([]gin.H, 0, len(rows))
 	for _, c := range rows {
-		out = append(out, gin.H{
+		e := gin.H{
 			"id": c.ID, "kind": c.Kind, "issue_id": c.IssueID, "created_at": c.CreatedAt.Time,
 			"unread_count": unread[c.ID.String()],
-		})
+		}
+		if c.Title.Valid {
+			e["name"] = c.Title.String
+		}
+		if c.ExpiresAt.Valid {
+			e["expires_at"] = c.ExpiresAt.Time
+		}
+		out = append(out, e)
 	}
 	return jsonResult(out)
+}
+
+// checkAgentConversation refuses channels flagged agents_blocked and
+// conversations past their expiry — the per-channel agent gate.
+func (s *Service) checkAgentConversation(ctx context.Context, cid pgtype.UUID) error {
+	conv, err := s.q.GetConversationByID(ctx, cid)
+	if err != nil {
+		return err
+	}
+	if conv.AgentsBlocked {
+		return errors.New("this channel is not accessible to agents")
+	}
+	if conv.ExpiresAt.Valid && !conv.ExpiresAt.Time.After(time.Now()) {
+		return errors.New("conversation expired")
+	}
+	return nil
 }
 
 // resolveConversationArg accepts a conversation_id, a project_id (whose
@@ -836,6 +860,9 @@ func (s *Service) resolveConversationArg(ctx context.Context, req mcp.CallToolRe
 		cid, err := uuidArg(req, "conversation_id")
 		if err != nil {
 			return pgtype.UUID{}, mcp.NewToolResultError("invalid conversation_id")
+		}
+		if err := s.checkAgentConversation(ctx, cid); err != nil {
+			return pgtype.UUID{}, mcp.NewToolResultError(err.Error())
 		}
 		return cid, nil
 	}
@@ -852,6 +879,9 @@ func (s *Service) resolveConversationArg(ctx context.Context, req mcp.CallToolRe
 			// Not a project — treat the id as a conversation (brief threads,
 			// issue threads) so `messages <uuid>` works on either.
 			if _, cerr := s.q.ResolveConversationProject(ctx, pid); cerr == nil {
+				if cerr := s.checkAgentConversation(ctx, pid); cerr != nil {
+					return pgtype.UUID{}, mcp.NewToolResultError(cerr.Error())
+				}
 				return pid, nil
 			}
 			return pgtype.UUID{}, mcp.NewToolResultError(err.Error())
@@ -1471,7 +1501,7 @@ func (s *Service) deleteMessage(ctx context.Context, req mcp.CallToolRequest) (*
 // openThread gets or creates the thread rooted at mid — the shared core of
 // create_thread and request_input. Returns the GetThread row, whether it was
 // just created, and the parent conversation id.
-func (s *Service) openThread(ctx context.Context, mid, pid pgtype.UUID, title string) (db.GetThreadRow, bool, pgtype.UUID, error) {
+func (s *Service) openThread(ctx context.Context, mid, pid pgtype.UUID, title string, ttlHours *float64) (db.GetThreadRow, bool, pgtype.UUID, error) {
 	var zero db.GetThreadRow
 	parentConvID, err := s.q.GetMessageConversation(ctx, mid)
 	if err != nil {
@@ -1481,8 +1511,15 @@ func (s *Service) openThread(ctx context.Context, mid, pid pgtype.UUID, title st
 	if err != nil {
 		return zero, false, pgtype.UUID{}, err
 	}
+	if parentConv.AgentsBlocked {
+		return zero, false, pgtype.UUID{}, errors.New("this channel is not accessible to agents")
+	}
 	if parentConv.Kind == "thread" {
 		return zero, false, pgtype.UUID{}, errors.New("threads cannot be nested")
+	}
+	expiresAt, err := agentThreadTTL(ttlHours)
+	if err != nil {
+		return zero, false, pgtype.UUID{}, err
 	}
 	title = strings.TrimSpace(title)
 	if len([]rune(title)) > 120 {
@@ -1504,6 +1541,7 @@ func (s *Service) openThread(ctx context.Context, mid, pid pgtype.UUID, title st
 			ParentMessageID: mid,
 			Title:           pgtype.Text{String: title, Valid: title != ""},
 			CreatedByAgent:  agent(ctx).ID,
+			ExpiresAt:       expiresAt,
 		})
 		if err != nil {
 			if existing, e2 := s.q.GetThreadByParentMessage(ctx, mid); e2 == nil {
@@ -1534,8 +1572,23 @@ func (s *Service) publishThreadCreated(ctx context.Context, tr db.GetThreadRow) 
 	})
 }
 
+// agentThreadTTL maps the optional ttl_hours argument to expires_at:
+// absent → 5-day default, negative → never expires.
+func agentThreadTTL(ttl *float64) (pgtype.Timestamptz, error) {
+	if ttl == nil {
+		return pgtype.Timestamptz{Time: time.Now().Add(5 * 24 * time.Hour), Valid: true}, nil
+	}
+	if *ttl < 0 {
+		return pgtype.Timestamptz{}, nil
+	}
+	if *ttl == 0 || *ttl > 24*365 {
+		return pgtype.Timestamptz{}, errors.New("ttl_hours must be > 0 hours (or negative for never expires)")
+	}
+	return pgtype.Timestamptz{Time: time.Now().Add(time.Duration(*ttl * float64(time.Hour))), Valid: true}, nil
+}
+
 func threadOut(tr db.GetThreadRow) map[string]any {
-	return map[string]any{
+	out := map[string]any{
 		"id":                  tr.ID.String(),
 		"parent_message_id":   tr.ParentMessageID.String(),
 		"parent_conversation": tr.ParentConversationID.String(),
@@ -1544,6 +1597,10 @@ func threadOut(tr db.GetThreadRow) map[string]any {
 		"created_by":          tr.CreatorName,
 		"created_at":          tr.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
 	}
+	if tr.ExpiresAt.Valid {
+		out["expires_at"] = tr.ExpiresAt.Time.Format("2006-01-02T15:04:05Z07:00")
+	}
+	return out
 }
 
 // postThreadNotice drops a "started a thread" row into the parent channel so
@@ -1584,7 +1641,11 @@ func (s *Service) createThread(ctx context.Context, req mcp.CallToolRequest) (*m
 		return errResult(err)
 	}
 	title, _ := req.GetArguments()["title"].(string)
-	tr, _, _, err := s.openThread(ctx, mid, pid, title)
+	var ttl *float64
+	if v, ok := req.GetArguments()["ttl_hours"].(float64); ok {
+		ttl = &v
+	}
+	tr, _, _, err := s.openThread(ctx, mid, pid, title, ttl)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -1637,7 +1698,7 @@ func (s *Service) requestInput(ctx context.Context, req mcp.CallToolRequest) (*m
 		}
 	} else {
 		var terr error
-		tr, _, _, terr = s.openThread(ctx, mid, pid, "")
+		tr, _, _, terr = s.openThread(ctx, mid, pid, "", nil)
 		if terr != nil {
 			return mcp.NewToolResultError(terr.Error()), nil
 		}
@@ -1774,7 +1835,7 @@ func (s *Service) workStart(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 	if err != nil {
 		return errResult(err)
 	}
-	tr, _, _, err := s.openThread(ctx, mid, pid, title)
+	tr, _, _, err := s.openThread(ctx, mid, pid, title, nil)
 	if err != nil {
 		return errResult(err)
 	}

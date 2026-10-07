@@ -23,6 +23,7 @@ import {
 import { Portal } from "solid-js/web";
 import {
   CheckIcon,
+  ClockIcon,
   DotsIcon,
   FileIcon,
   FolderIcon,
@@ -60,7 +61,7 @@ import { formatBytes, initials, messagePreview } from "../../lib/text";
 import { useProjects } from "../../stores/projects";
 import { useSession } from "../../stores/session";
 import { useChatStyle, useClock } from "../../stores/theme";
-import { timeAgo } from "../../lib/time";
+import { timeAgo, timeUntil } from "../../lib/time";
 import { refreshUnread } from "../../stores/unread";
 
 const PAGE_SIZE = 50;
@@ -1856,6 +1857,9 @@ function ThreadsModal(props: {
                       <p class="mt-0.5 truncate text-[12px] text-muted">
                         {t.reply_count}{" "}
                         {t.reply_count === 1 ? "reply" : "replies"}
+                        {t.expires_at
+                          ? ` · expires ${timeUntil(t.expires_at)}`
+                          : ""}
                         {t.parent?.preview
                           ? ` · ${t.parent?.author ?? ""}: ${t.parent?.preview}`
                           : ""}
@@ -3621,7 +3625,51 @@ function ThreadPanel(props: {
   const [width, setWidth] = createSignal(threadWidth());
   const [full, setFull] = createSignal(false);
   const [idCopied, setIdCopied] = createSignal(false);
+  const [expiryOpen, setExpiryOpen] = createSignal(false);
+  const [expiresAt, setExpiresAt] = createSignal<string | null | undefined>(
+    undefined,
+  );
+  let expiryWrapEl: HTMLDivElement | undefined;
   let dragging = false;
+
+  createEffect(() => {
+    if (!expiryOpen()) return;
+    // read current expiry once per open — the index endpoint already lists it
+    void api
+      .listThreads(props.projectId)
+      .then((r) =>
+        setExpiresAt(
+          r.threads.find((t) => t.id === props.thread.id)?.expires_at ?? null,
+        ),
+      )
+      .catch(() => setExpiresAt(null));
+    const onDown = (e: PointerEvent) => {
+      if (expiryWrapEl && !expiryWrapEl.contains(e.target as Node)) {
+        setExpiryOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setExpiryOpen(false);
+    };
+    window.addEventListener("pointerdown", onDown);
+    window.addEventListener("keydown", onKey);
+    onCleanup(() => {
+      window.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("keydown", onKey);
+    });
+  });
+
+  async function setExpiry(hours: number | null) {
+    setExpiryOpen(false);
+    const at =
+      hours === null
+        ? null
+        : new Date(Date.now() + hours * 3600_000).toISOString();
+    const res = await api
+      .setThreadExpiry(props.thread.id, at)
+      .catch(() => undefined);
+    if (res) setExpiresAt(res.thread.expires_at ?? null);
+  }
 
   const clamp = (w: number) =>
     Math.min(
@@ -3681,6 +3729,47 @@ function ThreadPanel(props: {
             {props.thread.reply_count}{" "}
             {props.thread.reply_count === 1 ? "reply" : "replies"}
           </p>
+        </div>
+        <div class="relative" ref={(el) => (expiryWrapEl = el)}>
+          <button
+            type="button"
+            onClick={() => setExpiryOpen((v) => !v)}
+            aria-label="Thread expiry"
+            aria-expanded={expiryOpen()}
+            title="Set when this thread expires"
+            class="rounded p-1 text-muted transition-colors hover:bg-hover hover:text-fg"
+          >
+            <ClockIcon class="h-4 w-4" />
+          </button>
+          <Show when={expiryOpen()}>
+            <div class="absolute right-0 top-full z-50 mt-1 w-48 overflow-hidden rounded-xl border border-border bg-surface p-1 shadow-xl">
+              <p class="px-2.5 pb-1 pt-1.5 text-[10.5px] uppercase tracking-wider text-faint">
+                Expires
+                {expiresAt() === undefined
+                  ? ""
+                  : expiresAt()
+                    ? ` ${timeUntil(expiresAt()!)}`
+                    : " — never"}
+              </p>
+              <For
+                each={[
+                  { label: "In 24 hours", hours: 24 },
+                  { label: "In 5 days (default)", hours: 120 },
+                  { label: "Never", hours: null },
+                ]}
+              >
+                {(opt) => (
+                  <button
+                    type="button"
+                    onClick={() => void setExpiry(opt.hours)}
+                    class="flex w-full items-center rounded-lg px-2.5 py-2 text-[13px] text-fg transition-colors hover:bg-hover"
+                  >
+                    {opt.label}
+                  </button>
+                )}
+              </For>
+            </div>
+          </Show>
         </div>
         <button
           type="button"
