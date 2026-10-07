@@ -34,6 +34,7 @@ from messages m
 join conversations c on c.id = m.conversation_id
 where c.project_id = $1
   and m.deleted_at is null
+  and not c.agents_blocked
   and (m.author_agent_id is null or m.author_agent_id <> $2)
   and not exists (
     select 1 from message_reads r
@@ -109,6 +110,7 @@ select c.project_id, count(*)::int as unread
 from messages m
 join conversations c on c.id = m.conversation_id
 where m.deleted_at is null
+  and not c.agents_blocked
   and (m.author_agent_id is null or m.author_agent_id <> $1)
   and not exists (
     select 1 from message_reads r
@@ -329,6 +331,7 @@ left join messages pm on pm.id = m.parent_id
 left join users pu on pu.id = pm.author_user_id
 left join agents pa on pa.id = pm.author_agent_id
 left join conversations t on t.parent_message_id = m.id and t.kind = 'thread'
+  and (t.expires_at is null or t.expires_at > now())
 left join messages f on f.id = m.forwarded_from
 left join conversations fcp on fcp.id = f.conversation_id
 left join users fu on fu.id = f.author_user_id
@@ -400,10 +403,13 @@ func (q *Queries) GetMessageFull(ctx context.Context, id pgtype.UUID) (GetMessag
 }
 
 const listProjectConversations = `-- name: ListProjectConversations :many
-select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot from conversations where project_id = $1
+select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked from conversations where project_id = $1
+  and not agents_blocked
+  and (expires_at is null or expires_at > now())
 order by created_at
 `
 
+// agents never see channels flagged agents_blocked nor expired threads
 func (q *Queries) ListProjectConversations(ctx context.Context, projectID pgtype.UUID) ([]Conversation, error) {
 	rows, err := q.db.Query(ctx, listProjectConversations, projectID)
 	if err != nil {
@@ -425,6 +431,8 @@ func (q *Queries) ListProjectConversations(ctx context.Context, projectID pgtype
 			&i.CreatedByUser,
 			&i.CreatedByAgent,
 			&i.CreatorNameSnapshot,
+			&i.ExpiresAt,
+			&i.AgentsBlocked,
 		); err != nil {
 			return nil, err
 		}
@@ -687,6 +695,7 @@ left join users u on u.id = m.author_user_id
 left join agents a on a.id = m.author_agent_id
 where c.project_id = $1
   and m.deleted_at is null
+  and not c.agents_blocked
   and m.body ilike '%' || $2 || '%'
 order by m.created_at desc
 limit $3

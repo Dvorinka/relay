@@ -160,9 +160,19 @@ Rules of engagement:
 
 - **Read before you post.** `get_messages` on the project conversation;
   paginate with `before_id` for older history.
-- **Reply in-channel.** Status updates belong in the project
-  conversation, threaded (`parent_id`/`--reply`) when responding to a
-  specific message. People read Relay, not your logs.
+- **Reply in-channel.** Projects have named **channels** (Discord-style)
+  alongside the main conversation — `list_conversations` returns them with
+  `kind: "channel"`, a `name`, and `unread_count`. Post work where it
+  belongs: a `#backend` question goes in `#backend`, not the main feed.
+  Channels marked `agents_blocked` simply won't appear in any of your
+  listings, searches, or unread counts — that's intentional access
+  control, not a sync bug; don't try to reach them by id. People read
+  Relay, not your logs.
+- **Threads expire.** `create_thread` takes an optional `ttl_hours`
+  (default **120** = 5 days; `0`/omitted uses the default, a **negative**
+  value makes the thread permanent). Expired threads disappear from
+  listings and return `not_found` — treat threads as scratch space,
+  channels as permanent memory.
 - **Keep it terse.** Post what changed, what remains, links. Not a
   transcript of everything you did.
 - **Mark read what you consumed** (`mark_message_read` / `read`) — it
@@ -243,7 +253,7 @@ end. This is not optional polish — a silent agent looks dead to the user.
 | `list_projects` | `projects` | granted projects + `unread_count` each |
 | `activity` | `activity` | cross-project feed: open issues, PRs, latest messages |
 | `get_project` | — | one project |
-| `list_conversations` | `conversations <pid>` | threads in a project + `unread_count` each |
+| `list_conversations` | `conversations <pid>` | channels + threads in a project; each carries `kind`, `name`, `expires_at`, `unread_count` |
 | `get_messages` | `messages <pid|cid> [--limit] [--tags t]` | read a conversation; `--tags` filters; each message carries `was_unread` — fetching marks read, so capture it before acting |
 | `get_message` | `read <mid>` | one message + `was_unread` + mark read |
 | `search_messages` | `search <pid> "query"` | FTS + `from:` `in:` `has:image` `has:file` `before:` `after:` |
@@ -258,7 +268,7 @@ end. This is not optional polish — a silent agent looks dead to the user.
 | `pin_message` | `pin <mid>` / `unpin <mid>` | pin or unpin |
 | `list_pins` | `pins <pid|cid>` | pinned messages |
 | `forward_message` | `forward <mid> <pid>` | copy into another granted project |
-| `create_thread` | `thread <mid> [--title t]` | side conversation on a message |
+| `create_thread` | `thread <mid> [--title t]` | side conversation on a message; `ttl_hours` sets expiry (default 5 days, negative = permanent) |
 | `mark_message_read` | `read <mid>` | read receipt |
 | `get_attachment` | `attachment <id> [--out f]` | download bytes |
 | `upload_attachment` | `say … --attach f.png` | upload (base64) → attach via `attachment_ids` |

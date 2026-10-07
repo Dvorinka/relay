@@ -1725,3 +1725,170 @@ func mcpToolResultNoFail(env map[string]any) map[string]any {
 	}
 	return map[string]any{}
 }
+
+// TestChannelsAndExpiry: channel CRUD under a project plus thread expiry —
+// default 5-day ttl, PATCH expiry, and expired threads disappearing from
+// reads.
+func TestChannelsAndExpiry(t *testing.T) {
+	dsn := os.Getenv("RELAY_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("RELAY_TEST_DATABASE_URL unset")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	goose.SetBaseFS(relaydb.MigrationsFS)
+	if err := goose.SetDialect("postgres"); err != nil {
+		t.Fatal(err)
+	}
+	if err := goose.UpContext(ctx, stdlib.OpenDBFromPool(pool), "migrations"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "delete from rate_limits"); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Config{
+		DatabaseURL:     dsn,
+		AuthSecret:      "test-secret-test-secret-test-secret",
+		InsecureDev:     true,
+		SessionTTLHours: 1,
+	}
+	srv := httptest.NewServer(New(cfg, zap.NewNop(), pool, "test"))
+	defer srv.Close()
+	c := &e2eClient{t: t, base: srv.URL}
+
+	code, reg := c.call("POST", "/api/auth/register",
+		fmt.Sprintf(`{"email":"ch-%d@relay.dev","password":"chanpass12345","name":"Channer"}`,
+			time.Now().UnixNano()))
+	if code != 201 && code != 200 {
+		t.Fatalf("register: %d %v", code, reg)
+	}
+	code, ws := c.call("POST", "/api/workspaces", `{"name":"Chan WS"}`)
+	wsID := ws["id"].(string)
+	code, proj := c.call("POST", "/api/projects",
+		fmt.Sprintf(`{"workspace_id":%q,"key":"CHN","name":"Channel Lab"}`, wsID))
+	projID := proj["id"].(string)
+
+	// create + list
+	code, ch := c.call("POST", "/api/projects/"+projID+"/channels", `{"name":"Agent Talk"}`)
+	if code != 201 {
+		t.Fatalf("create channel: %d %v", code, ch)
+	}
+	chID := ch["channel"].(map[string]any)["id"].(string)
+	if ch["channel"].(map[string]any)["name"] != "Agent Talk" {
+		t.Fatalf("channel name: %v", ch)
+	}
+	if ch["channel"].(map[string]any)["agents_blocked"] != false {
+		t.Fatalf("agents_blocked default: %v", ch)
+	}
+
+	// duplicate name (case-insensitive) conflicts
+	code, dup := c.call("POST", "/api/projects/"+projID+"/channels", `{"name":"agent talk"}`)
+	if code != 409 {
+		t.Fatalf("dup channel: %d %v", code, dup)
+	}
+
+	// messages ride the generic conversation routes
+	code, msg := c.call("POST", "/api/conversations/"+chID+"/messages", `{"body":"hello channel"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("channel post: %d %v", code, msg)
+	}
+	code, msgs := c.call("GET", "/api/conversations/"+chID+"/messages", "")
+	if code != 200 || len(msgs["messages"].([]any)) != 1 {
+		t.Fatalf("channel messages: %d %v", code, msgs)
+	}
+
+	// rename + agents_blocked
+	code, up := c.call("PATCH", "/api/channels/"+chID, `{"name":"agent-lab","agents_blocked":true}`)
+	if code != 200 {
+		t.Fatalf("update channel: %d %v", code, up)
+	}
+	if up["channel"].(map[string]any)["name"] != "agent-lab" {
+		t.Fatalf("rename: %v", up)
+	}
+	if up["channel"].(map[string]any)["agents_blocked"] != true {
+		t.Fatalf("agents_blocked: %v", up)
+	}
+
+	code, list := c.call("GET", "/api/projects/"+projID+"/channels", "")
+	if code != 200 || len(list["channels"].([]any)) != 1 {
+		t.Fatalf("list channels: %d %v", code, list)
+	}
+
+	// thread expiry: default ~5 days out
+	code, conv := c.call("GET", "/api/projects/"+projID+"/conversation", "")
+	convID := conv["id"].(string)
+	code, m := c.call("POST", "/api/conversations/"+convID+"/messages", `{"body":"expiry parent"}`)
+	mID := m["id"].(string)
+	code, tr := c.call("POST", "/api/messages/"+mID+"/thread", `{"title":"expiring"}`)
+	thread := tr["thread"].(map[string]any)
+	threadID := thread["id"].(string)
+	exp, _ := thread["expires_at"].(string)
+	if exp == "" {
+		t.Fatalf("thread should expire by default: %v", thread)
+	}
+	expT, _ := time.Parse(time.RFC3339, exp)
+	if d := time.Until(expT); d < 4*24*time.Hour || d > 6*24*time.Hour {
+		t.Fatalf("default expiry should be ~5 days, got %v", d)
+	}
+
+	// ttl_hours override
+	code, m2 := c.call("POST", "/api/conversations/"+convID+"/messages", `{"body":"short lived"}`)
+	m2ID := m2["id"].(string)
+	code, tr2 := c.call("POST", "/api/messages/"+m2ID+"/thread", `{"title":"short","ttl_hours":2}`)
+	exp2, _ := tr2["thread"].(map[string]any)["expires_at"].(string)
+	expT2, _ := time.Parse(time.RFC3339, exp2)
+	if d := time.Until(expT2); d < time.Hour || d > 3*time.Hour {
+		t.Fatalf("ttl_hours=2 expiry should be ~2h, got %v", d)
+	}
+
+	// never expires
+	code, m3 := c.call("POST", "/api/conversations/"+convID+"/messages", `{"body":"forever"}`)
+	m3ID := m3["id"].(string)
+	code, tr3 := c.call("POST", "/api/messages/"+m3ID+"/thread", `{"ttl_hours":-1}`)
+	if tr3["thread"].(map[string]any)["expires_at"] != nil {
+		t.Fatalf("ttl_hours=-1 should never expire: %v", tr3)
+	}
+
+	// patch expiry: set to null → permanent
+	code, sp := c.call("PATCH", "/api/conversations/"+threadID+"/expiry", `{"expires_at":null}`)
+	if code != 200 || sp["thread"].(map[string]any)["expires_at"] != nil {
+		t.Fatalf("clear expiry: %d %v", code, sp)
+	}
+
+	// force-expire the first thread, then confirm reads treat it as gone
+	if _, err := pool.Exec(ctx,
+		`update conversations set expires_at = now() - interval '1 minute' where id = $1`,
+		threadID); err != nil {
+		t.Fatal(err)
+	}
+	code, _ = c.call("GET", "/api/conversations/"+threadID+"/messages", "")
+	if code != 404 {
+		t.Fatalf("expired thread messages should 404, got %d", code)
+	}
+	code, thr := c.call("GET", "/api/projects/"+projID+"/threads", "")
+	for _, r := range thr["threads"].([]any) {
+		if r.(map[string]any)["id"] == threadID {
+			t.Fatal("expired thread still listed")
+		}
+	}
+
+	// delete the channel — messages cascade
+	code, _ = c.call("DELETE", "/api/channels/"+chID, "")
+	if code != 204 {
+		t.Fatalf("delete channel: %d", code)
+	}
+	code, _ = c.call("GET", "/api/conversations/"+chID+"/messages", "")
+	if code != 404 {
+		t.Fatalf("deleted channel should 404, got %d", code)
+	}
+	code, list = c.call("GET", "/api/projects/"+projID+"/channels", "")
+	if len(list["channels"].([]any)) != 0 {
+		t.Fatalf("channel still listed after delete: %v", list)
+	}
+}

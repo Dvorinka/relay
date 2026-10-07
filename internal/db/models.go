@@ -126,6 +126,8 @@ type Conversation struct {
 	CreatedByUser       pgtype.UUID        `json:"created_by_user"`
 	CreatedByAgent      pgtype.UUID        `json:"created_by_agent"`
 	CreatorNameSnapshot string             `json:"creator_name_snapshot"`
+	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
+	AgentsBlocked       bool               `json:"agents_blocked"`
 }
 
 type GithubApp struct {

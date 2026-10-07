@@ -16,7 +16,10 @@ select project_id from issues where id = sqlc.arg(id);
 select project_id from attachments where id = sqlc.arg(id);
 
 -- name: ListProjectConversations :many
+-- agents never see channels flagged agents_blocked nor expired threads
 select * from conversations where project_id = sqlc.arg(project_id)
+  and not agents_blocked
+  and (expires_at is null or expires_at > now())
 order by created_at;
 
 -- name: SearchMessagesInProject :many
@@ -30,6 +33,7 @@ left join users u on u.id = m.author_user_id
 left join agents a on a.id = m.author_agent_id
 where c.project_id = sqlc.arg(project_id)
   and m.deleted_at is null
+  and not c.agents_blocked
   and m.body ilike '%' || sqlc.arg(q) || '%'
 order by m.created_at desc
 limit sqlc.arg(lim);
@@ -85,6 +89,7 @@ left join messages pm on pm.id = m.parent_id
 left join users pu on pu.id = pm.author_user_id
 left join agents pa on pa.id = pm.author_agent_id
 left join conversations t on t.parent_message_id = m.id and t.kind = 'thread'
+  and (t.expires_at is null or t.expires_at > now())
 left join messages f on f.id = m.forwarded_from
 left join conversations fcp on fcp.id = f.conversation_id
 left join users fu on fu.id = f.author_user_id
@@ -133,6 +138,7 @@ from messages m
 join conversations c on c.id = m.conversation_id
 where c.project_id = sqlc.arg(project_id)
   and m.deleted_at is null
+  and not c.agents_blocked
   and (m.author_agent_id is null or m.author_agent_id <> sqlc.arg(agent_id))
   and not exists (
     select 1 from message_reads r
@@ -145,6 +151,7 @@ select c.project_id, count(*)::int as unread
 from messages m
 join conversations c on c.id = m.conversation_id
 where m.deleted_at is null
+  and not c.agents_blocked
   and (m.author_agent_id is null or m.author_agent_id <> sqlc.arg(agent_id))
   and not exists (
     select 1 from message_reads r

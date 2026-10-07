@@ -1303,7 +1303,7 @@ paths:
     post:
       operationId: createThread
       summary: Create (or fetch) the thread rooted at this message
-      description: "One thread per message. Title optional - defaults to an excerpt of the parent body. Threads cannot nest; calls on a message inside a thread return 400."
+      description: "One thread per message. Title optional - defaults to an excerpt of the parent body. Threads cannot nest; calls on a message inside a thread return 400. Threads expire after ttl_hours (default 120 = 5 days; a negative value means never)."
       tags: [conversations]
       parameters: [ { $ref: "#/components/parameters/MessageId" } ]
       requestBody:
@@ -1314,6 +1314,9 @@ paths:
               type: object
               properties:
                 title: { type: string, maxLength: 120 }
+                ttl_hours:
+                  type: number
+                  description: "Hours until the thread expires. Absent → 120 (5 days); negative → never expires."
       responses:
         "200":
           description: Thread already existed
@@ -1326,6 +1329,37 @@ paths:
                   thread: { $ref: "#/components/schemas/Thread" }
         "201":
           description: Thread created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [thread]
+                properties:
+                  thread: { $ref: "#/components/schemas/Thread" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/conversations/{conversationId}/expiry:
+    patch:
+      operationId: setThreadExpiry
+      summary: Change when a thread expires
+      description: "Sets the thread's expires_at. Pass null to keep the thread forever."
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/ConversationId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expires_at:
+                  type: ["string", "null"]
+                  format: date-time
+      responses:
+        "200":
+          description: Updated thread
           content:
             application/json:
               schema:
@@ -1356,6 +1390,106 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/Thread" }
         "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/projects/{projectId}/channels:
+    get:
+      operationId: listChannels
+      summary: List a project's persistent side channels
+      description: "Channels are named conversations living beside the project's main chat. The main chat itself is the project conversation, not a channel."
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      responses:
+        "200":
+          description: Channel list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [channels]
+                properties:
+                  channels:
+                    type: array
+                    items: { $ref: "#/components/schemas/Channel" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: createChannel
+      summary: Create a channel under a project
+      description: "Names are unique per project, case-insensitive; 1-60 characters."
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 60 }
+      responses:
+        "201":
+          description: Channel created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [channel]
+                properties:
+                  channel: { $ref: "#/components/schemas/Channel" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: A channel with that name already exists
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/channels/{channelId}:
+    patch:
+      operationId: updateChannel
+      summary: Rename a channel or toggle agent access
+      description: "agents_blocked=true hides the channel from MCP agents entirely - its messages no longer appear in list_conversations, get_messages, send_message or search."
+      tags: [conversations]
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, minLength: 1, maxLength: 60 }
+                agents_blocked: { type: boolean }
+      responses:
+        "200":
+          description: Updated channel
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [channel]
+                properties:
+                  channel: { $ref: "#/components/schemas/Channel" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: deleteChannel
+      summary: Delete a channel and its messages
+      tags: [conversations]
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /api/messages/{messageId}/pin:
     put:
@@ -2844,7 +2978,7 @@ paths:
                       properties:
                         conversation_id: { type: string, format: uuid }
                         project_id: { type: string, format: uuid }
-                        kind: { type: string, enum: [project, issue, brief, thread] }
+                        kind: { type: string, enum: [project, issue, brief, thread, channel] }
                         unread: { type: integer }
                         first_unread_id: { type: string, format: uuid }
                         issue_id: { type: string, format: uuid }
@@ -3220,7 +3354,7 @@ components:
         body: { type: string }
         created_at: { type: string, format: date-time }
         conversation_id: { type: string, format: uuid }
-        conversation_kind: { type: string, enum: [project, issue, brief, thread] }
+        conversation_kind: { type: string, enum: [project, issue, brief, thread, channel] }
         project_id: { type: string, format: uuid }
         project_key: { type: string }
         project_name: { type: string }
@@ -3325,7 +3459,7 @@ components:
       properties:
         id: { type: string, format: uuid }
         project_id: { type: string, format: uuid }
-        kind: { type: string, enum: [project, issue, brief, thread] }
+        kind: { type: string, enum: [project, issue, brief, thread, channel] }
         issue_id: { type: ["string", "null"], format: uuid }
         brief_id: { type: ["string", "null"], format: uuid }
         created_at: { type: string, format: date-time }
@@ -3486,6 +3620,23 @@ components:
             author: { type: string }
             preview: { type: string }
         last_reply_at: { type: ["string", "null"], format: date-time }
+        expires_at:
+          type: ["string", "null"]
+          format: date-time
+          description: "When the thread expires; null means it never does"
+        created_at: { type: string, format: date-time }
+
+    Channel:
+      type: object
+      required: [id, project_id, kind, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        kind: { type: string, enum: [channel] }
+        name: { type: ["string", "null"], maxLength: 60 }
+        agents_blocked:
+          type: boolean
+          description: "True hides the channel from MCP agents entirely"
         created_at: { type: string, format: date-time }
 
     MentionRef:

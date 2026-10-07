@@ -180,6 +180,41 @@ func (q *Queries) CopyMessageAttachments(ctx context.Context, arg CopyMessageAtt
 	return err
 }
 
+const createChannel = `-- name: CreateChannel :one
+insert into conversations (project_id, kind, title, created_by_user)
+values ($1, 'channel', $2, $3)
+on conflict (project_id, lower(title)) where kind = 'channel' do nothing
+returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked
+`
+
+type CreateChannelParams struct {
+	ProjectID     pgtype.UUID `json:"project_id"`
+	Title         pgtype.Text `json:"title"`
+	CreatedByUser pgtype.UUID `json:"created_by_user"`
+}
+
+// named side conversation inside a project; name is unique per project
+func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (Conversation, error) {
+	row := q.db.QueryRow(ctx, createChannel, arg.ProjectID, arg.Title, arg.CreatedByUser)
+	var i Conversation
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Kind,
+		&i.IssueID,
+		&i.CreatedAt,
+		&i.BriefID,
+		&i.ParentMessageID,
+		&i.Title,
+		&i.CreatedByUser,
+		&i.CreatedByAgent,
+		&i.CreatorNameSnapshot,
+		&i.ExpiresAt,
+		&i.AgentsBlocked,
+	)
+	return i, err
+}
+
 const createMessage = `-- name: CreateMessage :one
 insert into messages (conversation_id, author_user_id, body, parent_id, mentions, forwarded_from, tags, silent)
 values ($1, $2, $3, $4, coalesce($5, '[]'::jsonb), $6, coalesce($7, '{}'::text[]), coalesce($8, false))
@@ -217,7 +252,7 @@ const createProjectConversation = `-- name: CreateProjectConversation :one
 insert into conversations (project_id, kind)
 values ($1, 'project')
 on conflict do nothing
-returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot
+returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked
 `
 
 func (q *Queries) CreateProjectConversation(ctx context.Context, projectID pgtype.UUID) (Conversation, error) {
@@ -235,32 +270,38 @@ func (q *Queries) CreateProjectConversation(ctx context.Context, projectID pgtyp
 		&i.CreatedByUser,
 		&i.CreatedByAgent,
 		&i.CreatorNameSnapshot,
+		&i.ExpiresAt,
+		&i.AgentsBlocked,
 	)
 	return i, err
 }
 
 const createThread = `-- name: CreateThread :one
-insert into conversations (project_id, kind, parent_message_id, title, created_by_user)
+insert into conversations (project_id, kind, parent_message_id, title, created_by_user, expires_at)
 values ($1, 'thread', $2,
-        $3, $4)
+        $3, $4, $5)
 on conflict (parent_message_id) where kind = 'thread' do nothing
-returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot
+returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked
 `
 
 type CreateThreadParams struct {
-	ProjectID       pgtype.UUID `json:"project_id"`
-	ParentMessageID pgtype.UUID `json:"parent_message_id"`
-	Title           pgtype.Text `json:"title"`
-	CreatedByUser   pgtype.UUID `json:"created_by_user"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	ParentMessageID pgtype.UUID        `json:"parent_message_id"`
+	Title           pgtype.Text        `json:"title"`
+	CreatedByUser   pgtype.UUID        `json:"created_by_user"`
+	ExpiresAt       pgtype.Timestamptz `json:"expires_at"`
 }
 
-// one thread per message; the unique index makes this race-safe
+// one thread per message; the unique index makes this race-safe. expires_at
+// is computed by the handler: default 5 days, NULL means the thread never
+// expires.
 func (q *Queries) CreateThread(ctx context.Context, arg CreateThreadParams) (Conversation, error) {
 	row := q.db.QueryRow(ctx, createThread,
 		arg.ProjectID,
 		arg.ParentMessageID,
 		arg.Title,
 		arg.CreatedByUser,
+		arg.ExpiresAt,
 	)
 	var i Conversation
 	err := row.Scan(
@@ -275,23 +316,26 @@ func (q *Queries) CreateThread(ctx context.Context, arg CreateThreadParams) (Con
 		&i.CreatedByUser,
 		&i.CreatedByAgent,
 		&i.CreatorNameSnapshot,
+		&i.ExpiresAt,
+		&i.AgentsBlocked,
 	)
 	return i, err
 }
 
 const createThreadAgent = `-- name: CreateThreadAgent :one
-insert into conversations (project_id, kind, parent_message_id, title, created_by_agent)
+insert into conversations (project_id, kind, parent_message_id, title, created_by_agent, expires_at)
 values ($1, 'thread', $2,
-        $3, $4)
+        $3, $4, $5)
 on conflict (parent_message_id) where kind = 'thread' do nothing
-returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot
+returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked
 `
 
 type CreateThreadAgentParams struct {
-	ProjectID       pgtype.UUID `json:"project_id"`
-	ParentMessageID pgtype.UUID `json:"parent_message_id"`
-	Title           pgtype.Text `json:"title"`
-	CreatedByAgent  pgtype.UUID `json:"created_by_agent"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	ParentMessageID pgtype.UUID        `json:"parent_message_id"`
+	Title           pgtype.Text        `json:"title"`
+	CreatedByAgent  pgtype.UUID        `json:"created_by_agent"`
+	ExpiresAt       pgtype.Timestamptz `json:"expires_at"`
 }
 
 func (q *Queries) CreateThreadAgent(ctx context.Context, arg CreateThreadAgentParams) (Conversation, error) {
@@ -300,6 +344,7 @@ func (q *Queries) CreateThreadAgent(ctx context.Context, arg CreateThreadAgentPa
 		arg.ParentMessageID,
 		arg.Title,
 		arg.CreatedByAgent,
+		arg.ExpiresAt,
 	)
 	var i Conversation
 	err := row.Scan(
@@ -314,8 +359,36 @@ func (q *Queries) CreateThreadAgent(ctx context.Context, arg CreateThreadAgentPa
 		&i.CreatedByUser,
 		&i.CreatedByAgent,
 		&i.CreatorNameSnapshot,
+		&i.ExpiresAt,
+		&i.AgentsBlocked,
 	)
 	return i, err
+}
+
+const deleteChannel = `-- name: DeleteChannel :execrows
+delete from conversations
+where id = $1 and kind = 'channel'
+`
+
+func (q *Queries) DeleteChannel(ctx context.Context, id pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteChannel, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteExpiredThreads = `-- name: DeleteExpiredThreads :execrows
+delete from conversations
+where kind = 'thread' and expires_at is not null and expires_at < now()
+`
+
+func (q *Queries) DeleteExpiredThreads(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredThreads)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const firstUnreadMessageID = `-- name: FirstUnreadMessageID :one
@@ -346,7 +419,7 @@ func (q *Queries) FirstUnreadMessageID(ctx context.Context, arg FirstUnreadMessa
 }
 
 const getConversationByID = `-- name: GetConversationByID :one
-select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot
+select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked
 from conversations
 where id = $1
 `
@@ -366,12 +439,14 @@ func (q *Queries) GetConversationByID(ctx context.Context, id pgtype.UUID) (Conv
 		&i.CreatedByUser,
 		&i.CreatedByAgent,
 		&i.CreatorNameSnapshot,
+		&i.ExpiresAt,
+		&i.AgentsBlocked,
 	)
 	return i, err
 }
 
 const getConversationForUser = `-- name: GetConversationForUser :one
-select c.id, c.project_id, c.kind, c.issue_id, c.created_at, c.brief_id, c.parent_message_id, c.title, c.created_by_user, c.created_by_agent, c.creator_name_snapshot
+select c.id, c.project_id, c.kind, c.issue_id, c.created_at, c.brief_id, c.parent_message_id, c.title, c.created_by_user, c.created_by_agent, c.creator_name_snapshot, c.expires_at, c.agents_blocked
 from conversations c
 join projects p on p.id = c.project_id
 join workspace_members wm on wm.workspace_id = p.workspace_id
@@ -399,6 +474,8 @@ func (q *Queries) GetConversationForUser(ctx context.Context, arg GetConversatio
 		&i.CreatedByUser,
 		&i.CreatedByAgent,
 		&i.CreatorNameSnapshot,
+		&i.ExpiresAt,
+		&i.AgentsBlocked,
 	)
 	return i, err
 }
@@ -425,6 +502,7 @@ left join messages pm on pm.id = m.parent_id
 left join users pu on pu.id = pm.author_user_id
 left join agents pa on pa.id = pm.author_agent_id
 left join conversations t on t.parent_message_id = m.id and t.kind = 'thread'
+  and (t.expires_at is null or t.expires_at > now())
 left join messages f on f.id = m.forwarded_from
 left join conversations fcp on fcp.id = f.conversation_id
 left join users fu on fu.id = f.author_user_id
@@ -532,7 +610,7 @@ func (q *Queries) GetMessageForUser(ctx context.Context, arg GetMessageForUserPa
 }
 
 const getProjectConversation = `-- name: GetProjectConversation :one
-select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot
+select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked
 from conversations
 where project_id = $1 and kind = 'project'
 `
@@ -552,6 +630,8 @@ func (q *Queries) GetProjectConversation(ctx context.Context, projectID pgtype.U
 		&i.CreatedByUser,
 		&i.CreatedByAgent,
 		&i.CreatorNameSnapshot,
+		&i.ExpiresAt,
+		&i.AgentsBlocked,
 	)
 	return i, err
 }
@@ -604,7 +684,7 @@ func (q *Queries) GetProjectForUser(ctx context.Context, arg GetProjectForUserPa
 }
 
 const getThread = `-- name: GetThread :one
-select c.id, c.project_id, c.parent_message_id, c.title, c.created_at,
+select c.id, c.project_id, c.parent_message_id, c.title, c.created_at, c.expires_at,
        pm.conversation_id as parent_conversation_id,
        coalesce(u.name, a.name, nullif(c.creator_name_snapshot, ''), '') as creator_name,
        case when pm.deleted_at is null then coalesce(pu.name, pa.name, nullif(pm.author_name_snapshot, ''), '')
@@ -620,6 +700,7 @@ left join agents a on a.id = c.created_by_agent
 left join users pu on pu.id = pm.author_user_id
 left join agents pa on pa.id = pm.author_agent_id
 where c.id = $1
+  and (c.expires_at is null or c.expires_at > now())
 `
 
 type GetThreadRow struct {
@@ -628,6 +709,7 @@ type GetThreadRow struct {
 	ParentMessageID      pgtype.UUID        `json:"parent_message_id"`
 	Title                pgtype.Text        `json:"title"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt            pgtype.Timestamptz `json:"expires_at"`
 	ParentConversationID pgtype.UUID        `json:"parent_conversation_id"`
 	CreatorName          string             `json:"creator_name"`
 	ParentAuthorName     string             `json:"parent_author_name"`
@@ -644,6 +726,7 @@ func (q *Queries) GetThread(ctx context.Context, id pgtype.UUID) (GetThreadRow, 
 		&i.ParentMessageID,
 		&i.Title,
 		&i.CreatedAt,
+		&i.ExpiresAt,
 		&i.ParentConversationID,
 		&i.CreatorName,
 		&i.ParentAuthorName,
@@ -654,9 +737,10 @@ func (q *Queries) GetThread(ctx context.Context, id pgtype.UUID) (GetThreadRow, 
 }
 
 const getThreadByParentMessage = `-- name: GetThreadByParentMessage :one
-select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot
+select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked
 from conversations
 where parent_message_id = $1 and kind = 'thread'
+  and (expires_at is null or expires_at > now())
 `
 
 func (q *Queries) GetThreadByParentMessage(ctx context.Context, parentMessageID pgtype.UUID) (Conversation, error) {
@@ -674,8 +758,52 @@ func (q *Queries) GetThreadByParentMessage(ctx context.Context, parentMessageID 
 		&i.CreatedByUser,
 		&i.CreatedByAgent,
 		&i.CreatorNameSnapshot,
+		&i.ExpiresAt,
+		&i.AgentsBlocked,
 	)
 	return i, err
+}
+
+const listChannels = `-- name: ListChannels :many
+select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked
+from conversations
+where project_id = $1 and kind = 'channel'
+order by created_at
+`
+
+// a project's persistent channels, in creation order
+func (q *Queries) ListChannels(ctx context.Context, projectID pgtype.UUID) ([]Conversation, error) {
+	rows, err := q.db.Query(ctx, listChannels, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Conversation{}
+	for rows.Next() {
+		var i Conversation
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Kind,
+			&i.IssueID,
+			&i.CreatedAt,
+			&i.BriefID,
+			&i.ParentMessageID,
+			&i.Title,
+			&i.CreatedByUser,
+			&i.CreatedByAgent,
+			&i.CreatorNameSnapshot,
+			&i.ExpiresAt,
+			&i.AgentsBlocked,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listMessages = `-- name: ListMessages :many
@@ -700,6 +828,7 @@ left join messages pm on pm.id = m.parent_id
 left join users pu on pu.id = pm.author_user_id
 left join agents pa on pa.id = pm.author_agent_id
 left join conversations t on t.parent_message_id = m.id and t.kind = 'thread'
+  and (t.expires_at is null or t.expires_at > now())
 left join messages f on f.id = m.forwarded_from
 left join conversations fcp on fcp.id = f.conversation_id
 left join users fu on fu.id = f.author_user_id
@@ -825,6 +954,7 @@ left join messages pm on pm.id = m.parent_id
 left join users pu on pu.id = pm.author_user_id
 left join agents pa on pa.id = pm.author_agent_id
 left join conversations t on t.parent_message_id = m.id and t.kind = 'thread'
+  and (t.expires_at is null or t.expires_at > now())
 left join messages f on f.id = m.forwarded_from
 left join conversations fcp on fcp.id = f.conversation_id
 left join users fu on fu.id = f.author_user_id
@@ -913,7 +1043,7 @@ func (q *Queries) ListPinnedMessages(ctx context.Context, conversationID pgtype.
 }
 
 const listProjectThreads = `-- name: ListProjectThreads :many
-select c.id, c.parent_message_id, c.title, c.created_at,
+select c.id, c.parent_message_id, c.title, c.created_at, c.expires_at,
        pm.conversation_id as parent_conversation_id,
        coalesce(u.name, a.name, nullif(c.creator_name_snapshot, ''), '') as creator_name,
        case when pm.deleted_at is null then coalesce(pu.name, pa.name, nullif(pm.author_name_snapshot, ''), '')
@@ -931,6 +1061,7 @@ left join agents a on a.id = c.created_by_agent
 left join users pu on pu.id = pm.author_user_id
 left join agents pa on pa.id = pm.author_agent_id
 where c.project_id = $1 and c.kind = 'thread'
+  and (c.expires_at is null or c.expires_at > now())
 order by last_reply_at desc nulls last, c.created_at desc
 limit 100
 `
@@ -940,6 +1071,7 @@ type ListProjectThreadsRow struct {
 	ParentMessageID      pgtype.UUID        `json:"parent_message_id"`
 	Title                pgtype.Text        `json:"title"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt            pgtype.Timestamptz `json:"expires_at"`
 	ParentConversationID pgtype.UUID        `json:"parent_conversation_id"`
 	CreatorName          string             `json:"creator_name"`
 	ParentAuthorName     string             `json:"parent_author_name"`
@@ -963,6 +1095,7 @@ func (q *Queries) ListProjectThreads(ctx context.Context, projectID pgtype.UUID)
 			&i.ParentMessageID,
 			&i.Title,
 			&i.CreatedAt,
+			&i.ExpiresAt,
 			&i.ParentConversationID,
 			&i.CreatorName,
 			&i.ParentAuthorName,
@@ -1321,6 +1454,107 @@ func (q *Queries) RemoveReactionUser(ctx context.Context, arg RemoveReactionUser
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const renameChannel = `-- name: RenameChannel :one
+update conversations
+set title = $1
+where id = $2 and kind = 'channel'
+returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked
+`
+
+type RenameChannelParams struct {
+	Title pgtype.Text `json:"title"`
+	ID    pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) RenameChannel(ctx context.Context, arg RenameChannelParams) (Conversation, error) {
+	row := q.db.QueryRow(ctx, renameChannel, arg.Title, arg.ID)
+	var i Conversation
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Kind,
+		&i.IssueID,
+		&i.CreatedAt,
+		&i.BriefID,
+		&i.ParentMessageID,
+		&i.Title,
+		&i.CreatedByUser,
+		&i.CreatedByAgent,
+		&i.CreatorNameSnapshot,
+		&i.ExpiresAt,
+		&i.AgentsBlocked,
+	)
+	return i, err
+}
+
+const setChannelAgentsBlocked = `-- name: SetChannelAgentsBlocked :one
+update conversations
+set agents_blocked = $1
+where id = $2 and kind = 'channel'
+returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked
+`
+
+type SetChannelAgentsBlockedParams struct {
+	AgentsBlocked bool        `json:"agents_blocked"`
+	ID            pgtype.UUID `json:"id"`
+}
+
+// agents_blocked channels are invisible to MCP agents; humans unaffected
+func (q *Queries) SetChannelAgentsBlocked(ctx context.Context, arg SetChannelAgentsBlockedParams) (Conversation, error) {
+	row := q.db.QueryRow(ctx, setChannelAgentsBlocked, arg.AgentsBlocked, arg.ID)
+	var i Conversation
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Kind,
+		&i.IssueID,
+		&i.CreatedAt,
+		&i.BriefID,
+		&i.ParentMessageID,
+		&i.Title,
+		&i.CreatedByUser,
+		&i.CreatedByAgent,
+		&i.CreatorNameSnapshot,
+		&i.ExpiresAt,
+		&i.AgentsBlocked,
+	)
+	return i, err
+}
+
+const setThreadExpiry = `-- name: SetThreadExpiry :one
+update conversations
+set expires_at = $1
+where id = $2 and kind = 'thread'
+returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked
+`
+
+type SetThreadExpiryParams struct {
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	ID        pgtype.UUID        `json:"id"`
+}
+
+// expires_at NULL keeps the thread alive forever
+func (q *Queries) SetThreadExpiry(ctx context.Context, arg SetThreadExpiryParams) (Conversation, error) {
+	row := q.db.QueryRow(ctx, setThreadExpiry, arg.ExpiresAt, arg.ID)
+	var i Conversation
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Kind,
+		&i.IssueID,
+		&i.CreatedAt,
+		&i.BriefID,
+		&i.ParentMessageID,
+		&i.Title,
+		&i.CreatedByUser,
+		&i.CreatedByAgent,
+		&i.CreatorNameSnapshot,
+		&i.ExpiresAt,
+		&i.AgentsBlocked,
+	)
+	return i, err
 }
 
 const softDeleteMessage = `-- name: SoftDeleteMessage :one
