@@ -96,12 +96,36 @@ function notifyBridge(granted: boolean): string {
 // Every page load pushes the web session token to native so the share sheet
 // and download fallback can call REST endpoints with the same auth the SPA
 // uses. Empty after sign-out — stored accordingly.
+// Also wires edge-swipe navigation: a right-swipe starting inside the left
+// 28px of the screen goes back, the mirror on the right edge goes forward —
+// hardware back already exists, this is the expected phone gesture.
 const TOKEN_BRIDGE = `
 try {
   window.ReactNativeWebView.postMessage(JSON.stringify({
     type: "token", token: localStorage.getItem("relay.token") || ""
   }));
 } catch (e) {}
+if (!window.__rnSwipeNav) {
+  window.__rnSwipeNav = true;
+  var sx = 0, sy = 0, edge = 0;
+  document.addEventListener("touchstart", function (e) {
+    var t = e.touches[0];
+    edge = t.clientX < 28 ? 1 : (t.clientX > window.innerWidth - 28 ? -1 : 0);
+    sx = t.clientX; sy = t.clientY;
+  }, { passive: true });
+  document.addEventListener("touchend", function (e) {
+    if (!edge) return;
+    var t = e.changedTouches[0];
+    var dx = t.clientX - sx, dy = t.clientY - sy;
+    var e0 = edge;
+    edge = 0;
+    if (e0 === 1 && dx > 72 && Math.abs(dy) < dx / 2) {
+      window.ReactNativeWebView.postMessage(JSON.stringify({ type: "nav-back" }));
+    } else if (e0 === -1 && dx < -72 && Math.abs(dy) < -dx / 2) {
+      window.ReactNativeWebView.postMessage(JSON.stringify({ type: "nav-forward" }));
+    }
+  }, { passive: true });
+}
 true;
 `;
 
@@ -159,6 +183,7 @@ export default function Shell() {
   const [server, setServer] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [canGoBack, setCanGoBack] = useState(false);
+  const [canGoForward, setCanGoForward] = useState(false);
   const [failed, setFailed] = useState(false);
   const [notifyGranted, setNotifyGranted] = useState(false);
   const { hasShareIntent, shareIntent, resetShareIntent } = useShareIntent();
@@ -196,6 +221,14 @@ export default function Shell() {
       void saveSessionToken(m.token || null);
       return;
     }
+    if (m.type === "nav-back") {
+      if (canGoBack) web.current?.goBack();
+      return;
+    }
+    if (m.type === "nav-forward") {
+      if (canGoForward) web.current?.goForward();
+      return;
+    }
     if (m.type === "notify" && m.title) {
       void Notifications.scheduleNotificationAsync({
         content: { title: m.title, body: m.body },
@@ -211,7 +244,7 @@ export default function Shell() {
         );
       });
     }
-  }, []);
+  }, [canGoBack, canGoForward]);
 
   // Hardware back walks the WebView history before exiting.
   useEffect(() => {
@@ -341,7 +374,11 @@ export default function Shell() {
         injectedJavaScriptBeforeContentLoaded={notifyBridge(notifyGranted)}
         onMessage={onWebMessage}
         onFileDownload={onFileDownload}
-        onNavigationStateChange={(nav) => setCanGoBack(nav.canGoBack)}
+        allowsBackForwardNavigationGestures
+        onNavigationStateChange={(nav) => {
+          setCanGoBack(nav.canGoBack);
+          setCanGoForward(nav.canGoForward);
+        }}
         onLoadStart={() => {
           webReady.current = false;
         }}
