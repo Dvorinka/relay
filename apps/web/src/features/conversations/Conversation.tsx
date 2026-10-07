@@ -1199,6 +1199,41 @@ function MessageRow(props: {
   // Touch devices have no hover: tapping the row toggles the toolbar.
   const [tapped, setTapped] = createSignal(false);
 
+  // Swipe-right on a message replies to it (Discord mobile parity). The
+  // gesture only engages once horizontal intent is clear, so vertical
+  // scrolling is untouched; past 56px on release fires the reply.
+  const [swipeX, setSwipeX] = createSignal(0);
+  let touchStart: { x: number; y: number } | null = null;
+  let swipeActive = false;
+  let didSwipe = false;
+  const onTouchStart = (e: TouchEvent) => {
+    const t = e.touches[0];
+    if (!t) return;
+    touchStart = { x: t.clientX, y: t.clientY };
+    swipeActive = false;
+  };
+  const onTouchMove = (e: TouchEvent) => {
+    const t = e.touches[0];
+    if (!touchStart || !t) return;
+    const dx = t.clientX - touchStart.x;
+    const dy = t.clientY - touchStart.y;
+    if (!swipeActive) {
+      if (dx > 10 && Math.abs(dy) < dx * 0.6) swipeActive = true;
+      else if (Math.abs(dy) > 10) touchStart = null;
+      else return;
+    }
+    if (swipeActive) setSwipeX(Math.min(dx, 72));
+  };
+  const onTouchEnd = () => {
+    if (swipeActive && swipeX() > 56) {
+      props.onReply(m());
+      didSwipe = true;
+    }
+    setSwipeX(0);
+    touchStart = null;
+    swipeActive = false;
+  };
+
   // Esc cancels edit even when focus has left the textarea (Discord parity).
   createEffect(() => {
     if (!editing()) return;
@@ -1241,7 +1276,15 @@ function MessageRow(props: {
             }`) +
         (props.highlighted ? " rounded-xl bg-hover transition-colors" : " transition-colors")
       }
+      style={swipeX() > 0 ? { transform: `translateX(${swipeX()}px)` } : undefined}
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
       onClick={(e) => {
+        if (didSwipe) {
+          didSwipe = false;
+          return;
+        }
         if (window.matchMedia("(hover: none)").matches &&
             !(e.target as HTMLElement).closest("a,button,textarea,input,pre")) {
           setTapped((v) => !v);
