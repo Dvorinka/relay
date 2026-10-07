@@ -1768,9 +1768,9 @@ func TestChannelsAndExpiry(t *testing.T) {
 	if code != 201 && code != 200 {
 		t.Fatalf("register: %d %v", code, reg)
 	}
-	code, ws := c.call("POST", "/api/workspaces", `{"name":"Chan WS"}`)
+	_, ws := c.call("POST", "/api/workspaces", `{"name":"Chan WS"}`)
 	wsID := ws["id"].(string)
-	code, proj := c.call("POST", "/api/projects",
+	_, proj := c.call("POST", "/api/projects",
 		fmt.Sprintf(`{"workspace_id":%q,"key":"CHN","name":"Channel Lab"}`, wsID))
 	projID := proj["id"].(string)
 
@@ -1821,11 +1821,11 @@ func TestChannelsAndExpiry(t *testing.T) {
 	}
 
 	// thread expiry: default ~5 days out
-	code, conv := c.call("GET", "/api/projects/"+projID+"/conversation", "")
+	_, conv := c.call("GET", "/api/projects/"+projID+"/conversation", "")
 	convID := conv["id"].(string)
-	code, m := c.call("POST", "/api/conversations/"+convID+"/messages", `{"body":"expiry parent"}`)
+	_, m := c.call("POST", "/api/conversations/"+convID+"/messages", `{"body":"expiry parent"}`)
 	mID := m["id"].(string)
-	code, tr := c.call("POST", "/api/messages/"+mID+"/thread", `{"title":"expiring"}`)
+	_, tr := c.call("POST", "/api/messages/"+mID+"/thread", `{"title":"expiring"}`)
 	thread := tr["thread"].(map[string]any)
 	threadID := thread["id"].(string)
 	exp, _ := thread["expires_at"].(string)
@@ -1838,9 +1838,9 @@ func TestChannelsAndExpiry(t *testing.T) {
 	}
 
 	// ttl_hours override
-	code, m2 := c.call("POST", "/api/conversations/"+convID+"/messages", `{"body":"short lived"}`)
+	_, m2 := c.call("POST", "/api/conversations/"+convID+"/messages", `{"body":"short lived"}`)
 	m2ID := m2["id"].(string)
-	code, tr2 := c.call("POST", "/api/messages/"+m2ID+"/thread", `{"title":"short","ttl_hours":2}`)
+	_, tr2 := c.call("POST", "/api/messages/"+m2ID+"/thread", `{"title":"short","ttl_hours":2}`)
 	exp2, _ := tr2["thread"].(map[string]any)["expires_at"].(string)
 	expT2, _ := time.Parse(time.RFC3339, exp2)
 	if d := time.Until(expT2); d < time.Hour || d > 3*time.Hour {
@@ -1848,9 +1848,9 @@ func TestChannelsAndExpiry(t *testing.T) {
 	}
 
 	// never expires
-	code, m3 := c.call("POST", "/api/conversations/"+convID+"/messages", `{"body":"forever"}`)
+	_, m3 := c.call("POST", "/api/conversations/"+convID+"/messages", `{"body":"forever"}`)
 	m3ID := m3["id"].(string)
-	code, tr3 := c.call("POST", "/api/messages/"+m3ID+"/thread", `{"ttl_hours":-1}`)
+	_, tr3 := c.call("POST", "/api/messages/"+m3ID+"/thread", `{"ttl_hours":-1}`)
 	if tr3["thread"].(map[string]any)["expires_at"] != nil {
 		t.Fatalf("ttl_hours=-1 should never expire: %v", tr3)
 	}
@@ -1871,7 +1871,7 @@ func TestChannelsAndExpiry(t *testing.T) {
 	if code != 404 {
 		t.Fatalf("expired thread messages should 404, got %d", code)
 	}
-	code, thr := c.call("GET", "/api/projects/"+projID+"/threads", "")
+	_, thr := c.call("GET", "/api/projects/"+projID+"/threads", "")
 	for _, r := range thr["threads"].([]any) {
 		if r.(map[string]any)["id"] == threadID {
 			t.Fatal("expired thread still listed")
@@ -1887,7 +1887,7 @@ func TestChannelsAndExpiry(t *testing.T) {
 	if code != 404 {
 		t.Fatalf("deleted channel should 404, got %d", code)
 	}
-	code, list = c.call("GET", "/api/projects/"+projID+"/channels", "")
+	_, list = c.call("GET", "/api/projects/"+projID+"/channels", "")
 	if len(list["channels"].([]any)) != 0 {
 		t.Fatalf("channel still listed after delete: %v", list)
 	}
