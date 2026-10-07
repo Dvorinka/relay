@@ -56,7 +56,7 @@ func TestMergePR(t *testing.T) {
 		b, _ := io.ReadAll(r.Body)
 		gotBody = string(b)
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"merged":true,"sha":"abc123","message":"Merged"}`)
+		_, _ = fmt.Fprint(w, `{"merged":true,"sha":"abc123","message":"Merged"}`)
 	}))
 	defer srv.Close()
 
