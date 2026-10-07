@@ -304,14 +304,29 @@ end. This is not optional polish — a silent agent looks dead to the user.
 
 ### Ideas
 
-Ideas are brainstorm documents on the **Ideas** page — a title, a summary,
-and the same Excalidraw scene JSON as briefs (mindmaps, dependency sketches,
-option trees). They use the `brief:read`/`brief:write` scopes and live on a
-project (`/app/p/<id>/ideas`). Park half-formed work here; when it firms up,
-`idea_to_issue` converts it into a backlog issue (needs `issue:write`) and
-marks the idea `converted`. `list_ideas` / `get_idea` / `create_idea` /
-`update_idea` / `delete_idea` cover CRUD — `scene` is an Excalidraw scene as
-a JSON string.
+Ideas are brainstorm **whiteboards** on the Ideas page — a title, a summary,
+and a `scene` JSON document. They use the `brief:read`/`brief:write` scopes
+and live on a project (`/app/p/<id>/ideas`). Park half-formed work here; when
+it firms up, `idea_to_issue` converts it into a backlog issue (needs
+`issue:write`) and marks the idea `converted`. `list_ideas` / `get_idea` /
+`create_idea` / `update_idea` / `delete_idea` cover CRUD — `scene` is a JSON
+string.
+
+Two scene shapes coexist under `scene`:
+
+- **`relay_board`** — the native whiteboard, preferred for new work:
+  `{"v":1,"nodes":[…]}` where each node is `{id, kind, x, y, …}`.
+  `kind` is `note` | `rect` | `ellipse` | `text` | `arrow` | `issue`.
+  Boxes carry `w`/`h`/`text`; arrows carry `x2`/`y2`; `issue` nodes carry
+  `issue_id` and render as issue/PR cards on the board. Positions are
+  world coordinates — spread nodes out (~200px apart) rather than
+  stacking them at the origin.
+- **`elements`/`appState`/`files`** — an Excalidraw scene, same shape as
+  briefs. Older agent-made ideas use this; it still opens in the
+  Excalidraw editor from the idea's header.
+
+Writing: keep whichever keys exist and add/patch `relay_board` — don't
+strip `elements` if it's there.
 
 ## 6. Mentions
 
