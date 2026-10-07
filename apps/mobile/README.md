@@ -17,9 +17,29 @@ mobile without a rebuild.
 - `relay://open/<path>` links (scheme `relay` in `app.json`) deep-link into
   the matching web route.
 
+## Native integration
+
+The shell is a real Android app around the WebView, not a PWA:
+
+- **Notifications** — a `Notification` shim is injected into the page; the
+  web app's notifications arrive as Android notifications (`POST_NOTIFICATIONS`
+  is requested when the web app asks for permission).
+- **Downloads** — `onFileDownload` intercepts attachment downloads, fetches
+  them natively with the session token, and saves images/video to the
+  gallery (`expo-media-library`) or opens the system share sheet
+  (`expo-sharing`) for other files.
+- **Share target** — the app registers for `ACTION_SEND` (`text/*`,
+  `image/*`) and `ACTION_SEND_MULTIPLE` (`image/*`). Sharing a screenshot
+  or link to Relay opens a native sheet: pick a project, add a note, and
+  the content is uploaded as attachments and posted to the project
+  conversation (`expo-share-intent`).
+- **Session bridge** — the page posts `relay.token` from localStorage to
+  the native layer on every load, so the share sheet and downloader call
+  the same REST endpoints the SPA does (`src/lib/relay.ts`).
+
 The old fully-native screens were retired — maintaining a second parallel
-client duplicated every feature badly. What the shell does not give you:
-push notifications and the send-only offline outbox the native app had.
+client duplicated every feature badly. Remaining gap: background push —
+notifications fire only while the app is alive.
 
 ## Requirements
 

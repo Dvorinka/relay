@@ -940,9 +940,11 @@ func (s *Service) getMessages(ctx context.Context, req mcp.CallToolRequest) (*mc
 		}
 	}
 	s.publishRead(ctx, cid, newlyRead)
+	attsByMsg := s.attachmentsByMessage(ctx, ids)
 	out := make([]gin.H, 0, len(rows))
 	for _, r := range rows {
 		m := messageJSON(db.GetMessageFullRow(r))
+		m["attachments"] = attsByMsg[r.ID.String()]
 		// own posts are never "new" to their author
 		m["was_unread"] = !readBefore[r.ID.String()] && r.AuthorAgentID != agent(ctx).ID
 		out = append(out, m)
@@ -1043,6 +1045,27 @@ func (s *Service) getAttachment(ctx context.Context, req mcp.CallToolRequest) (*
 func (s *Service) messageJSONFull(ctx context.Context, m db.GetMessageFullRow) gin.H {
 	out := messageJSON(m)
 	out["attachments"] = s.attachmentsJSON(ctx, m.ID)
+	return out
+}
+
+// attachmentsByMessage batches one ListAttachmentsForMessages call across a
+// page of messages so list endpoints don't run a query per row.
+func (s *Service) attachmentsByMessage(ctx context.Context, ids []pgtype.UUID) map[string][]gin.H {
+	out := make(map[string][]gin.H, len(ids))
+	if len(ids) == 0 {
+		return out
+	}
+	rows, err := s.q.ListAttachmentsForMessages(ctx, ids)
+	if err != nil {
+		return out
+	}
+	for _, r := range rows {
+		mid := r.MessageID.String()
+		out[mid] = append(out[mid], attachments.JSON(db.Attachment{
+			ID: r.ID, ProjectID: r.ProjectID, Filename: r.Filename,
+			ContentType: r.ContentType, SizeBytes: r.SizeBytes, CreatedAt: r.CreatedAt,
+		}))
+	}
 	return out
 }
 

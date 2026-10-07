@@ -12,9 +12,10 @@
     },
     "android": {
       "package": "dev.tdvorak.relay",
-      "edgeToEdgeEnabled": true,
       "softwareKeyboardLayoutMode": "resize",
-      "permissions": ["POST_NOTIFICATIONS"],
+      "permissions": [
+        "POST_NOTIFICATIONS"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#0a0a0b",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -42,7 +43,22 @@
             "usesCleartextTraffic": true
           }
         }
-      ]
+      ],
+      "expo-sharing",
+      [
+        "expo-share-intent",
+        {
+          "androidIntentFilters": [
+            "text/*",
+            "image/*"
+          ],
+          "androidMultiIntentFilters": [
+            "image/*"
+          ],
+          "disableIOS": true
+        }
+      ],
+      "expo-media-library"
     ]
   }
 }
