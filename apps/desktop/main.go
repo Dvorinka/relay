@@ -80,8 +80,6 @@ func main() {
 				if app.ctx != nil {
 					wailsruntime.WindowShow(app.ctx)
 					wailsruntime.WindowUnminimise(app.ctx)
-					wailsruntime.WindowSetAlwaysOnTop(app.ctx, true)
-					wailsruntime.WindowSetAlwaysOnTop(app.ctx, false)
 					// A relay:// launch against a running instance delivers
 					// the URL here instead of a fresh argv.
 					if link := deepLinkArg(data.Args); link != "" {
