@@ -17,15 +17,18 @@ type Def struct {
 	Closed bool   `json:"closed,omitempty"`
 }
 
-// Defaults mirrors the pre-migration CHECK constraint exactly.
+// Defaults: the built-in lanes. "other" is the catch-all for work that fits
+// no other lane; ids stay stable for data compatibility (cancelled id keeps
+// its historical spelling).
 func Defaults() []Def {
 	return []Def{
 		{ID: "backlog", Label: "Backlog", Color: "#78716c"},
 		{ID: "todo", Label: "To do", Color: "#0891b2"},
 		{ID: "in_progress", Label: "In progress", Color: "#d97706"},
 		{ID: "review", Label: "In review", Color: "#7c3aed"},
+		{ID: "other", Label: "Other", Color: "#64748b"},
 		{ID: "done", Label: "Done", Color: "#059669", Closed: true},
-		{ID: "cancelled", Label: "Cancelled", Color: "#dc2626", Closed: true},
+		{ID: "cancelled", Label: "Canceled", Color: "#dc2626", Closed: true},
 	}
 }
 

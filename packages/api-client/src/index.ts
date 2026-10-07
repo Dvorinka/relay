@@ -179,6 +179,7 @@ export interface DevRepoPanel {
     author: string;
     head: string;
     base: string;
+    updated_at?: string;
   }[];
   commits: {
     sha: string;
@@ -670,6 +671,16 @@ export function createClient(baseUrl: string, token?: string) {
     pullDetail: (projectId: string, repo: string, number: number) =>
       request<PullDetail>(
         `/api/projects/${projectId}/github/pull?repo=${encodeURIComponent(repo)}&number=${number}`,
+      ),
+    mergePullRequest: (
+      projectId: string,
+      repo: string,
+      number: number,
+      method: "merge" | "squash" | "rebase" = "merge",
+    ) =>
+      post<{ merged: boolean; sha: string }>(
+        `/api/projects/${projectId}/github/pull/merge?repo=${encodeURIComponent(repo)}`,
+        { number, method },
       ),
     repoCommits: (projectId: string, repo: string, branch?: string) =>
       request<{ commits: RepoCommit[]; branch: string }>(

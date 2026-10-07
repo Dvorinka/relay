@@ -1,6 +1,7 @@
 package github
 
 import (
+	"context"
 	"crypto"
 	"crypto/hmac"
 	"crypto/rand"
@@ -11,6 +12,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -43,6 +46,37 @@ func TestValidSignature(t *testing.T) {
 	}
 	if validSignature(secret, body, "") {
 		t.Fatal("missing header must fail")
+	}
+}
+
+func TestMergePR(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"merged":true,"sha":"abc123","message":"Merged"}`)
+	}))
+	defer srv.Close()
+
+	old := apiBase
+	apiBase = srv.URL
+	defer func() { apiBase = old }()
+
+	cli := NewPATClient("tok")
+	res, err := cli.MergePR(context.Background(), 0, "o", "r", 42, "squash", "t", "m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPut || gotPath != "/repos/o/r/pulls/42/merge" {
+		t.Fatalf("wrong request: %s %s", gotMethod, gotPath)
+	}
+	if !strings.Contains(gotBody, `"merge_method":"squash"`) {
+		t.Fatalf("merge_method missing from body: %s", gotBody)
+	}
+	if !res.Merged || res.SHA != "abc123" {
+		t.Fatalf("unexpected result: %+v", res)
 	}
 }
 

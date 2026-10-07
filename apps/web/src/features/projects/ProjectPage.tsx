@@ -24,7 +24,9 @@ import {
   CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  CommitIcon,
   DownloadIcon,
+  ExternalLinkIcon,
   GitBranchIcon,
   GitPullRequestIcon,
   IssueIcon,
@@ -831,6 +833,23 @@ function ContextRail(props: {
       (i) => i.github?.kind !== "pr" && !isClosed(i.status, statusDefs(props.project)),
     ).slice(0, 5),
   );
+  const openPRs = createMemo(() =>
+    (issues.latest ?? []).filter(
+      (i) => i.github?.kind === "pr" && !isClosed(i.status, statusDefs(props.project)),
+    ).slice(0, 5),
+  );
+
+  // Development snapshot powers the rail's commits strip — cached 60s upstream.
+  const [dev] = createResource(
+    () => ((repos.latest ?? []).length > 0 ? props.project.id : undefined),
+    (id) => api.projectDevelopment(id).catch(() => undefined),
+  );
+  const commits = createMemo(() =>
+    (dev()?.repos ?? [])
+      .flatMap((r) => r.commits.map((c) => ({ ...c, repo: r.repo.full_name })))
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, 5),
+  );
 
   // Rail width + collapse persist across sessions. Collapsed keeps a thin
   // icon strip with per-section counts instead of hiding outright.
@@ -868,13 +887,12 @@ function ContextRail(props: {
     () =>
       [
         { icon: IssueIcon, count: openIssues().length, act: () => props.onOpenView("issues"), tip: "Open issues" },
-        { icon: ReviewIcon, count: reviews.latest?.length ?? 0, act: () => props.onOpenView("reviews"), tip: "Pending reviews" },
-        { icon: BriefsIcon, count: briefs.latest?.length ?? 0, act: () => props.onOpenBriefs(), tip: "Briefs" },
-        { icon: GitBranchIcon, count: null, act: () => props.onOpenView("development"), tip: "Development" },
+        { icon: GitPullRequestIcon, count: openPRs().length, act: () => props.onOpenView("pulls"), tip: "Open pull requests" },
+        { icon: ReviewIcon, count: reviews.latest?.length ?? 0, act: () => props.onOpenView("reviews"), tip: "Reviews & briefs" },
+        { icon: CommitIcon, count: null, act: () => props.onOpenView("commits"), tip: "Recent commits" },
         { icon: UsersIcon, count: members.latest?.length ?? 0, act: toggleCollapsed, tip: "Members" },
         { icon: BotIcon, count: agents.latest?.length ?? 0, act: toggleCollapsed, tip: "Agents" },
         { icon: CheckIcon, count: (todos.latest ?? []).filter((t) => !t.done).length, act: toggleCollapsed, tip: "Open todos" },
-        { icon: SettingsIcon, count: null, act: () => props.onOpenView("settings"), tip: "Project settings" },
       ] as const,
   );
 
@@ -964,7 +982,32 @@ function ContextRail(props: {
         </button>
       </RailSection>
 
-      <RailSection label="Pending reviews" count={reviews.latest?.length ?? 0}>
+      <Show when={(openPRs().length ?? 0) > 0 || (repos.latest?.length ?? 0) > 0}>
+        <RailSection label="Open pull requests" count={openPRs().length}>
+          <div class="flex flex-col gap-1.5">
+            <For
+              each={openPRs()}
+              fallback={
+                <p class="text-[12px] text-muted">No pull requests open.</p>
+              }
+            >
+              {(i) => <MiniIssue project={props.project} issue={i} />}
+            </For>
+          </div>
+          <button
+            type="button"
+            onClick={() => props.onOpenView("pulls")}
+            class="mt-1.5 text-[12px] text-accent hover:underline"
+          >
+            All pull requests →
+          </button>
+        </RailSection>
+      </Show>
+
+      <RailSection
+        label="Reviews"
+        count={(reviews.latest?.length ?? 0) + (briefs.latest?.length ?? 0)}
+      >
         <div class="flex flex-col gap-1.5">
           <For
             each={(reviews.latest ?? []).slice(0, 3)}
@@ -977,6 +1020,21 @@ function ContextRail(props: {
               />
             )}
           </For>
+          <button
+            type="button"
+            onClick={props.onOpenBriefs}
+            class="w-full rounded-lg border border-border bg-surface px-3 py-2 text-left transition-colors hover:border-muted/60"
+          >
+            <span class="flex items-center gap-2 text-[12.5px] font-medium">
+              <BriefsIcon class="h-3.5 w-3.5 text-muted" />
+              Briefs
+            </span>
+            <span class="mt-1 block text-[11px] text-muted">
+              {briefs.state === "ready" && (briefs.latest?.length ?? 0) === 0
+                ? "No briefs yet — ask your agent to “explain this change”."
+                : `${briefs.latest?.length ?? 0} brief${(briefs.latest?.length ?? 0) === 1 ? "" : "s"} — visual explanations agents attach to work`}
+            </span>
+          </button>
         </div>
         <button
           type="button"
@@ -987,26 +1045,54 @@ function ContextRail(props: {
         </button>
       </RailSection>
 
-      <RailSection
-        label="Briefs"
-        count={(briefs.latest ?? []).length}
-      >
-        <button
-          type="button"
-          onClick={props.onOpenBriefs}
-          class="w-full rounded-lg border border-border bg-surface px-3 py-2 text-left transition-colors hover:border-muted/60"
-        >
-          <span class="flex items-center gap-2 text-[12.5px] font-medium">
-            <BriefsIcon class="h-3.5 w-3.5 text-muted" />
-            Visual explanations agents attach to work.
-          </span>
-          <span class="mt-1 block text-[11px] text-muted">
-            {briefs.state === "ready" && (briefs.latest?.length ?? 0) === 0
-              ? "No briefs yet — ask your agent to “explain this change”."
-              : `${briefs.latest?.length ?? 0} brief${(briefs.latest?.length ?? 0) === 1 ? "" : "s"} · ${(props.project.brief_policy ?? "on_request") === "on_request" ? "On request — only when asked" : props.project.brief_policy}`}
-          </span>
-        </button>
-      </RailSection>
+      <Show when={commits().length > 0 || (repos.latest?.length ?? 0) > 0}>
+        <RailSection label="Commits">
+          <ul class="divide-y divide-border rounded-lg border border-border bg-surface">
+            <For
+              each={commits()}
+              fallback={
+                <li class="px-3 py-2 text-[12px] text-muted">
+                  {repos.state === "ready" && (repos.latest?.length ?? 0) === 0
+                    ? "Link a repo to see commits."
+                    : "No commits fetched."}
+                </li>
+              }
+            >
+              {(c) => (
+                <li class="px-3 py-2">
+                  <div class="flex items-baseline gap-2">
+                    <span class="shrink-0 font-mono text-[10.5px] font-medium text-accent">
+                      {c.sha.slice(0, 7)}
+                    </span>
+                    <a
+                      href={c.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      class="min-w-0 flex-1 truncate text-[12.5px] hover:underline"
+                    >
+                      {c.message}
+                    </a>
+                  </div>
+                  <div class="mt-0.5 flex items-center gap-2 text-[11px] text-muted">
+                    <span class="truncate">{c.author}</span>
+                    <span class="ml-auto shrink-0 font-mono text-[10px]">
+                      {c.repo}
+                    </span>
+                    <span class="shrink-0">{timeAgo(c.date)}</span>
+                  </div>
+                </li>
+              )}
+            </For>
+          </ul>
+          <button
+            type="button"
+            onClick={() => props.onOpenView("commits")}
+            class="mt-1.5 text-[12px] text-accent hover:underline"
+          >
+            All commits →
+          </button>
+        </RailSection>
+      </Show>
 
       <RailSection label="Ideas">
         <A
@@ -1038,22 +1124,32 @@ function ContextRail(props: {
         >
           <For each={repos.latest}>
             {(r) => (
-              <a
-                href={r.url}
-                target="_blank"
-                rel="noreferrer"
-                class="mb-1.5 flex items-center gap-2.5 rounded-lg border border-border bg-surface px-3 py-2 transition-colors hover:border-muted/60"
-              >
-                <span class="text-fg">{markGitHub("h-4 w-4")}</span>
-                <span class="min-w-0">
-                  <span class="block truncate text-[12.5px] font-medium">
-                    {r.full_name}
+              <div class="mb-1.5 flex items-center gap-2.5 rounded-lg border border-border bg-surface px-3 py-2 transition-colors hover:border-muted/60">
+                <button
+                  type="button"
+                  onClick={() => props.onOpenView("development")}
+                  class="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+                >
+                  <span class="text-fg">{markGitHub("h-4 w-4")}</span>
+                  <span class="min-w-0">
+                    <span class="block truncate text-[12.5px] font-medium">
+                      {r.full_name}
+                    </span>
+                    <span class="block font-mono text-[10.5px] text-muted">
+                      {r.default_branch}
+                    </span>
                   </span>
-                  <span class="block font-mono text-[10.5px] text-muted">
-                    {r.default_branch}
-                  </span>
-                </span>
-              </a>
+                </button>
+                <a
+                  href={r.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label={`Open ${r.full_name} on GitHub`}
+                  class="shrink-0 text-muted transition-colors hover:text-fg"
+                >
+                  <ExternalLinkIcon class="h-3.5 w-3.5" />
+                </a>
+              </div>
             )}
           </For>
           <button
@@ -1061,7 +1157,7 @@ function ContextRail(props: {
             onClick={() => props.onOpenView("development")}
             class="mt-0.5 text-[12px] text-accent hover:underline"
           >
-            Commits &amp; PRs →
+            Branches &amp; files →
           </button>
         </Show>
       </RailSection>
@@ -1140,17 +1236,6 @@ function ContextRail(props: {
           todos={todos.latest ?? []}
           onChanged={refetchTodos}
         />
-      </RailSection>
-
-      <RailSection label="Workspace">
-        <button
-          type="button"
-          onClick={() => props.onOpenView("settings")}
-          class="flex w-full items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-[12.5px] transition-colors hover:border-muted/60"
-        >
-          <SettingsIcon class="h-3.5 w-3.5 text-muted" />
-          Webhooks &amp; project settings
-        </button>
       </RailSection>
       </aside>
     </Show>

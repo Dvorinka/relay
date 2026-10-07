@@ -73,6 +73,7 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup, pub *gin.RouterGroup) {
 	g.GET("/projects/:id/github/files", s.projectMemberOnly, s.handleRepoTree)
 	g.GET("/projects/:id/github/files/read", s.projectMemberOnly, s.handleRepoFile)
 	g.GET("/projects/:id/github/pull", s.projectMemberOnly, s.handlePullDetail)
+	g.POST("/projects/:id/github/pull/merge", s.projectMemberOnly, s.handlePullMerge)
 	g.GET("/projects/:id/github/commits", s.projectMemberOnly, s.handleCommits)
 	g.GET("/projects/:id/github/branches", s.projectMemberOnly, s.handleBranches)
 	g.POST("/projects/:id/github/import", s.projectAdminOnly, s.handleImport)
@@ -122,7 +123,7 @@ func (s *Service) handleManifest(c *gin.Context) {
 		"public":       false,
 		"default_permissions": gin.H{
 			"issues":        "write",
-			"pull_requests": "read",
+			"pull_requests": "write",
 			"contents":      "read",
 			"metadata":      "read",
 		},
@@ -513,6 +514,7 @@ func (s *Service) handleDevelopment(c *gin.Context) {
 					"number": pr.Number, "title": pr.Title, "state": pr.State,
 					"draft": pr.Draft, "url": pr.HTMLURL, "author": pr.User.Login,
 					"head": pr.Head.Ref, "base": pr.Base.Ref,
+					"updated_at": pr.UpdatedAt,
 				})
 			}
 		}
@@ -639,6 +641,53 @@ func (s *Service) handlePullDetail(c *gin.Context) {
 		"commits": outCommits,
 		"checks":  outChecks,
 	})
+}
+
+// handlePullMerge merges a pull request through the app — GitHub still owns
+// the merge, Relay just holds the button. method is merge|squash|rebase
+// (default merge). Errors map to what GitHub says: 405 not mergeable,
+// 409 head changed, 403/404 the installation predates pull_requests:write.
+func (s *Service) handlePullMerge(c *gin.Context) {
+	p := project(c)
+	repo, ok := s.linkedRepo(c, p)
+	if !ok {
+		return
+	}
+	var req struct {
+		Number int    `json:"number"`
+		Method string `json:"method"`
+		Title  string `json:"title"`
+		Body   string `json:"body"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Number <= 0 {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "number is required")
+		return
+	}
+	if req.Method == "" {
+		req.Method = "merge"
+	}
+	if req.Method != "merge" && req.Method != "squash" && req.Method != "rebase" {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "method must be merge, squash, or rebase")
+		return
+	}
+	cli, err := s.githubClient(c.Request.Context())
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "not_registered", "GitHub is not connected")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
+	defer cancel()
+	res, err := cli.MergePR(ctx, repo.InstallationID, repo.Owner, repo.Name,
+		req.Number, req.Method, req.Title, req.Body)
+	if err != nil {
+		httpx.Error(c, http.StatusBadGateway, "github_error", truncate(err.Error(), 300))
+		return
+	}
+	if !res.Merged {
+		httpx.Error(c, http.StatusConflict, "merge_failed", res.Message)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"merged": true, "sha": res.SHA})
 }
 
 // handleCommits serves the git log view — commits on any branch of a linked

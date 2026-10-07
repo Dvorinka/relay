@@ -14,7 +14,8 @@ import (
 	"time"
 )
 
-const apiBase = "https://api.github.com"
+// apiBase is a var (not const) so tests can point the client at httptest.
+var apiBase = "https://api.github.com"
 
 // Client talks to api.github.com. It carries the app's private key so it
 // can mint JWTs and exchange them for per-installation access tokens,
@@ -455,6 +456,33 @@ func (c *Client) ListCheckRuns(ctx context.Context, installID int64, owner, repo
 		fmt.Sprintf("%s/repos/%s/%s/commits/%s/check-runs?per_page=100", apiBase, owner, repo, sha),
 		tok, nil, &out)
 	return out.CheckRuns, err
+}
+
+// MergeResult is GitHub's response to a merge call.
+type MergeResult struct {
+	Merged  bool   `json:"merged"`
+	SHA     string `json:"sha"`
+	Message string `json:"message"`
+}
+
+// MergePR merges a pull request — method is "merge" | "squash" | "rebase".
+// Requires the app's pull_requests:write permission; older installations
+// registered while the manifest asked for read get a 403/404 from GitHub.
+func (c *Client) MergePR(ctx context.Context, installID int64, owner, repo string, number int, method, commitTitle, commitMessage string) (*MergeResult, error) {
+	tok, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return nil, err
+	}
+	payload, _ := json.Marshal(map[string]string{
+		"merge_method":   method,
+		"commit_title":   commitTitle,
+		"commit_message": commitMessage,
+	})
+	var out MergeResult
+	err = c.do(ctx, "PUT",
+		fmt.Sprintf("%s/repos/%s/%s/pulls/%d/merge", apiBase, owner, repo, number),
+		tok, bytes.NewReader(payload), &out)
+	return &out, err
 }
 
 // ListBranches returns the repo's branches (first 100).

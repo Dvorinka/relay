@@ -2258,6 +2258,47 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "502": { description: "GitHub upstream error" }
 
+  /api/projects/{projectId}/github/pull/merge:
+    post:
+      operationId: mergePullRequest
+      summary: Merge a pull request through the GitHub App installation
+      description: >-
+        Runs GitHub's own merge (merge|squash|rebase). Requires the app's
+        pull_requests:write permission — installations created while the
+        manifest asked for read must be updated on GitHub first. GitHub
+        enforces branch protection, required checks and reviews; Relay
+        returns whatever GitHub decided.
+      tags: [github]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - { name: repo, in: query, schema: { type: string }, description: "owner/name or repo id; optional when only one repo is linked" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [number]
+              properties:
+                number: { type: integer }
+                method: { type: string, enum: [merge, squash, rebase], default: merge }
+                title: { type: string, description: "optional merge commit title" }
+                body: { type: string, description: "optional merge commit message" }
+      responses:
+        "200":
+          description: Merged
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  merged: { type: boolean }
+                  sha: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: "GitHub refused the merge (not mergeable, head changed)" }
+        "502": { description: "GitHub upstream error — e.g. app lacks pull_requests:write" }
+
   /api/projects/{projectId}/github/commits:
     get:
       operationId: gitCommits
@@ -3208,6 +3249,7 @@ components:
         title: { type: string }
         status: { type: string }
         priority: { type: string }
+        github_kind: { type: string, enum: [issue, pr], description: "pr when the row mirrors a GitHub pull request" }
         updated_at: { type: string, format: date-time }
         project_key: { type: string }
         project_name: { type: string }
