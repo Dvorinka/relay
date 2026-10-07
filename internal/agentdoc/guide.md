@@ -188,8 +188,12 @@ Rules of engagement:
 - **File the review.** `submit_review` is how humans approve work —
   see the schema in [docs/CLI.md](../../docs/CLI.md#reviews). In `gate` mode, call
   `await_review` afterwards and act on the verdict.
-- **Images count.** `get_attachment` returns metadata plus a
-  `download_url` — a same-origin route authenticated with your `rly_`
+- **Images count.** Every message from `get_messages`/`get_message`
+  carries an `attachments` list — each entry has `id`, `filename`,
+  `content_type`, `size_bytes`, and a `download_url` you can fetch with
+  your `rly_` token directly (no `get_attachment` round-trip needed).
+  `get_attachment` still exists for metadata-only lookups and returns the
+  same `download_url` — a same-origin route authenticated with your
   token, so it works wherever `/mcp` works. Fetch it straight to disk:
 
   ```bash

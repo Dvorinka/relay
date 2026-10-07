@@ -330,5 +330,7 @@ func JSON(a db.Attachment) gin.H {
 		"content_type": a.ContentType,
 		"size_bytes":   a.SizeBytes,
 		"created_at":   a.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
+		// bearer-authenticated fetch — works anywhere the rly_ token does
+		"download_url": "/api/agent/attachments/" + a.ID.String() + "/download",
 	}
 }
