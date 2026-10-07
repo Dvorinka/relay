@@ -67,7 +67,7 @@ thread, thread becomes an issue, issue tracks GitHub state.
 - **GitHub** - connect repositories three ways: a GitHub App (one-click register + install from workspace settings), a `GITHUB_TOKEN`, or the machine's own `gh` CLI login — Relay picks it up automatically when no app is registered. Issues, PRs, and commits mirror into the project with signature-verified webhooks.
 - **Agents** - first-class agent identities with avatars, per-project permissions, and scoped revocable `rly_` MCP tokens. "Last seen" is real MCP activity - never fabricated presence.
 - **Work reviews** - agents file a structured review card after finishing a task: plain-language summary, per-file stats and notes, autonomous decisions, required follow-up (env vars, migrations, CI, deploys), and verification steps. Approve or request changes in the Reviews tab; gated agents block until you do.
-- **MCP server** - streamable-HTTP endpoint exposing projects, conversations, messages, attachments, and issues as tools for external agents.
+- **MCP server** - streamable-HTTP endpoint exposing projects, conversations, messages, attachments, and issues as tools for external agents. `get_attachment` returns a token-authenticated `download_url` agents can curl straight to disk, plus a real image content block for inline viewing — no brittle presigned URLs.
 - **Realtime** - SSE event stream for live messages, issue changes, and notifications.
 - **Search** - `Ctrl/Cmd+K` across projects, issues, messages, and GitHub items, backed by Postgres FTS.
 - **Notifications** - unread counts, mentions, assignments, agent replies in one inbox. Optional **Web Push** (VAPID) delivers mentions and review requests to the browser even when the tab is closed - enable in Settings → Notifications.

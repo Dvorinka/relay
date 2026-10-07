@@ -255,7 +255,7 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 	), s.getMessage)
 
 	srv.AddTool(mcp.NewTool("get_attachment",
-		mcp.WithDescription("Get an attachment's metadata and a short-lived download URL."),
+		mcp.WithDescription("Get an attachment's metadata and a download_url — fetch it with your rly_ bearer token (curl -o file \"<relay-base><download_url>\" -H \"Authorization: Bearer $TOKEN\"). Images also arrive as an MCP image block; small non-images inline as data_base64."),
 		mcp.WithString("attachment_id", mcp.Required()),
 	), s.getAttachment)
 
@@ -975,30 +975,36 @@ func (s *Service) getAttachment(ctx context.Context, req mcp.CallToolRequest) (*
 	out := gin.H{
 		"id": a.ID, "filename": a.Filename, "content_type": a.ContentType,
 		"size_bytes": a.SizeBytes,
+		// Same-origin route, bearer rly_ auth — fetchable wherever /mcp is.
+		// Agents should curl it to disk instead of decoding data_base64.
+		"download_url": "/api/agent/attachments/" + a.ID.String() + "/download",
 	}
-	// Presigned URLs only work when the public storage endpoint is reachable
-	// — often it isn't (dev, NAT, misconfigured deploys). Inline the bytes so
-	// agents always get the file; past the cap fall back to the URL.
+	// Inline the bytes for small files so agents can consume them without a
+	// second fetch. Images go out as a real MCP image content block —
+	// vision-capable clients render it; everyone else uses download_url.
 	const inlineMax = 8 << 20
-	if a.SizeBytes <= inlineMax {
-		obj, err := s.store.Get(ctx, a.StorageKey)
-		if err != nil {
-			return errResult(err)
-		}
-		data, err := io.ReadAll(obj)
-		_ = obj.Close()
-		if err != nil {
-			return errResult(err)
-		}
-		out["data_base64"] = base64.StdEncoding.EncodeToString(data)
-	} else {
-		url, err := s.store.PresignGet(ctx, a.StorageKey, a.Filename, a.ContentType)
-		if err != nil {
-			return errResult(err)
-		}
-		out["download_url"] = url
-		out["note"] = "too large to inline — fetch download_url within its expiry"
+	if a.SizeBytes > inlineMax {
+		return jsonResult(out)
 	}
+	obj, err := s.store.Get(ctx, a.StorageKey)
+	if err != nil {
+		return errResult(err)
+	}
+	data, err := io.ReadAll(obj)
+	_ = obj.Close()
+	if err != nil {
+		return errResult(err)
+	}
+	b64 := base64.StdEncoding.EncodeToString(data)
+	if storage.InlineSafe(a.ContentType) {
+		r, err := mcp.NewToolResultJSON(out)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		r.Content = append(r.Content, mcp.NewImageContent(b64, a.ContentType))
+		return r, nil
+	}
+	out["data_base64"] = b64
 	return jsonResult(out)
 }
 

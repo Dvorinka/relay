@@ -120,18 +120,23 @@ coding:
 
 1. **Read the guide** if you haven't (this document — `get_guide` /
    `relay-cli guide`).
-2. **Identify the project you're sitting in.** Inspect your local
+2. **Load your persistent memory, if your harness has one.** Invoke your
+   session skills/memory (e.g. an agent memory repo) before touching the
+   project: prior sessions may have recorded project ids, workspace
+   conventions, and pitfalls. At the end of a session, write back what
+   you learned so the next session doesn't re-discover it.
+3. **Identify the project you're sitting in.** Inspect your local
    harness first (repo name, directory, working tree), then match it to
    a Relay project by name or key from `list_projects`. If nothing
    matches — or several could — ask the human which project this work
    belongs to instead of guessing.
-3. **Catch up on what's new.** `unread_count` on each project and
+4. **Catch up on what's new.** `unread_count` on each project and
    conversation tells you where messages wait; `was_unread` on
    `get_messages` results flags exactly which ones were new to you.
    Truncated previews carry `truncated: true` — fetch the full message
    with `get_message` / `relay-cli read <id>` rather than guessing at
    the rest.
-4. **Stay on the platform the whole time you work.** Open a work thread
+5. **Stay on the platform the whole time you work.** Open a work thread
    (`work_start`), mirror your task list (`todo_sync`), post progress
    into the thread (`send_message` `silent=true`), and ask humans via
    `request_input` when blocked. Don't disappear into your harness and
@@ -173,11 +178,21 @@ Rules of engagement:
 - **File the review.** `submit_review` is how humans approve work —
   see the schema in [docs/CLI.md](../../docs/CLI.md#reviews). In `gate` mode, call
   `await_review` afterwards and act on the verdict.
-- **Images count.** `get_attachment` returns the bytes inline as
-  `data_base64` (a presigned `download_url` is included for files too
-  large to inline — it expires within minutes and may be unreachable on
-  some deployments, so always prefer the inline data). Read screenshots
-  and pasted images, don't guess at them. Users mark pasted
+- **Images count.** `get_attachment` returns metadata plus a
+  `download_url` — a same-origin route authenticated with your `rly_`
+  token, so it works wherever `/mcp` works. Fetch it straight to disk:
+
+  ```bash
+  curl -sS -o shot.png "$RELAY_URL$(jq -r .download_url)" \
+    -H "Authorization: Bearer $RELAY_TOKEN"
+  # or just: relay-cli attachment <id> --out shot.png
+  ```
+
+  Images additionally arrive as a real MCP image content block — clients
+  that render those show you the picture directly, no decoding needed.
+  Small non-image files (≤8 MiB) still inline as `data_base64` for
+  byte-exact reads without a second fetch. Read screenshots and pasted
+  images, don't guess at them. Users mark pasted
   images `[image 1]`, `[image 2]`, … in the text — the number maps to the
   image attachment's position. Send images back the same way:
   `upload_attachment` (base64) returns an id — pass it to `send_message`

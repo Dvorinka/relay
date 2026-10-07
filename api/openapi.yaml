@@ -2491,6 +2491,31 @@ paths:
           content:
             text/event-stream: {}
 
+  /api/agent/attachments/{attachmentId}/download:
+    get:
+      operationId: downloadAgentAttachment
+      summary: Stream attachment bytes to an agent token
+      description: >-
+        Same-origin download authenticated with an `rly_` bearer token
+        (Authorization header or `access_token` query). Requires the
+        `attachment:read` scope on the attachment's project. The MCP
+        `get_attachment` tool returns this path as `download_url` so agents
+        can fetch bytes straight to disk instead of decoding base64.
+      tags: [attachments]
+      security: [ { mcpBearer: [] } ]
+      parameters:
+        - { $ref: "#/components/parameters/AttachmentId" }
+      responses:
+        "200":
+          description: Attachment bytes
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { description: "Object storage not configured" }
+
   /api/agent/events:
     get:
       operationId: streamAgentEvents
@@ -2999,7 +3024,7 @@ components:
     mcpBearer:
       type: http
       scheme: bearer
-      description: Agent MCP token (rly_...), evaluated on the /mcp endpoint only.
+      description: Agent MCP token (rly_...), evaluated on /mcp and /api/agent/* endpoints.
   parameters:
     WorkspaceId:
       name: workspaceId
