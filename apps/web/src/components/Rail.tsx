@@ -11,7 +11,7 @@ import {
   type ParentProps,
 } from "solid-js";
 import { api } from "../lib/api";
-import { mediaURL } from "../lib/net";
+import { mediaURL, net } from "../lib/net";
 import {
   checkForUpdates,
   loadServerVersion,
@@ -525,6 +525,7 @@ function CollapsedRail(props: { onExpand: () => void }) {
 }
 
 export function Rail() {
+  const session = useSession();
   const projects = useProjects();
   const { navOpen, closeNav } = useNav();
   const [creating, setCreating] = createSignal(false);
