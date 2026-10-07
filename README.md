@@ -50,6 +50,7 @@ thread, thread becomes an issue, issue tracks GitHub state.
 
 ## Features
 
+- **Workspaces** - multiple isolated workspaces (e.g. one per company) with fast switching and creation from the rail header. Projects and issues stay fully separate; messages still forward across workspaces.
 - **Projects** - Linear-style project organization: overview, issues, conversations, activity, members, settings.
 - **Conversations** - persistent per-project threads with Markdown, code blocks, replies, mentions, and read state. `@` mentions resolve to real entities — users, agents, `KEY-1` issues, `owner/repo#42` GitHub issues and PRs, `@file:` and `@gh:` files — and are stored as structured references so agents know exactly what you meant. Chat style is per-user: the default left-aligned layout or WhatsApp-style two-sided bubbles (Settings → Appearance).
 - **Message threads** - any message can sprout a dedicated side conversation (hover → thread icon, optional title) so tangents don't drown the channel. One thread per message, no nesting; the parent shows a live reply-count chip and the thread opens in a side panel. Works in local mode and via MCP (`create_thread`).

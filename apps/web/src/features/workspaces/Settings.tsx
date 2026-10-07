@@ -1084,15 +1084,31 @@ function ConnectionSection() {
             Sign in to additional Relay servers — their projects appear in
             the rail under their own label, and clicking one hops over.
           </p>
-          <For each={connections()}>
+          <For
+            each={[...connections()].sort(
+              (a, b) =>
+                Number(b.url === net.serverUrl()) -
+                Number(a.url === net.serverUrl()),
+            )}
+          >
             {(c) => {
               const active = () => c.url === net.serverUrl();
               const hue = connectionHue(c.url);
               return (
-                <div class="flex items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5">
+                <div
+                  class={`flex items-center gap-2 rounded-md border px-2.5 py-1.5 ${
+                    active()
+                      ? "border-accent/30 bg-accent/5"
+                      : "border-border bg-surface"
+                  }`}
+                >
                   <span
                     class="h-2 w-2 shrink-0 rounded-full"
-                    style={{ "background-color": `hsl(${hue} 65% 55%)` }}
+                    style={{
+                      "background-color": active()
+                        ? "var(--color-emerald-500, #10b981)"
+                        : `hsl(${hue} 65% 55%)`,
+                    }}
                   />
                   <div class="min-w-0 flex-1">
                     <p class="truncate text-[12.5px] font-medium">{c.label}</p>
@@ -1101,29 +1117,34 @@ function ConnectionSection() {
                   <Show
                     when={active()}
                     fallback={
-                      <button
-                        type="button"
-                        onClick={() => activateConnection(c, "/app")}
-                        class="rounded-md border border-border px-2 py-0.5 text-[11.5px] text-muted transition-colors hover:bg-hover hover:text-fg"
-                      >
-                        Switch
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => activateConnection(c, "/app")}
+                          class="rounded-md border border-border px-2 py-0.5 text-[11.5px] text-muted transition-colors hover:bg-hover hover:text-fg"
+                        >
+                          Switch
+                        </button>
+                        <Tip
+                          text="Forget server"
+                          hint="Remove this server from the list — sign-in required to reconnect"
+                        >
+                          <button
+                            type="button"
+                            aria-label={`Forget ${c.label}`}
+                            onClick={() => forgetConnection(c.id)}
+                            class="rounded p-1 text-muted transition-colors hover:text-red-500"
+                          >
+                            <TrashIcon class="h-3.5 w-3.5" />
+                          </button>
+                        </Tip>
+                      </>
                     }
                   >
                     <span class="rounded border border-accent/40 bg-accent-soft px-1.5 py-px text-[10px] font-medium uppercase tracking-wide text-accent-ink">
                       active
                     </span>
                   </Show>
-                  <Tip text="Forget server" hint="Remove this server from the list — sign-in required to reconnect">
-                    <button
-                      type="button"
-                      aria-label={`Forget ${c.label}`}
-                      onClick={() => forgetConnection(c.id)}
-                      class="rounded p-1 text-muted transition-colors hover:text-red-500"
-                    >
-                      <TrashIcon class="h-3.5 w-3.5" />
-                    </button>
-                  </Tip>
                 </div>
               );
             }}

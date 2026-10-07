@@ -1982,6 +1982,27 @@ function ConversationThread(props: {
   // /clear and /new both wipe the channel — confirmClear records which
   // command was typed (false = /clear, true = /new) or null when closed.
   const [confirmClear, setConfirmClear] = createSignal<boolean | null>(null);
+  // One attach button opens a small menu: file picker or folder picker —
+  // <input type=file> can't offer both modes at once.
+  const [attachOpen, setAttachOpen] = createSignal(false);
+  let attachWrapEl: HTMLDivElement | undefined;
+  createEffect(() => {
+    if (!attachOpen()) return;
+    const onDown = (e: PointerEvent) => {
+      if (attachWrapEl && !attachWrapEl.contains(e.target as Node)) {
+        setAttachOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setAttachOpen(false);
+    };
+    window.addEventListener("pointerdown", onDown);
+    window.addEventListener("keydown", onKey);
+    onCleanup(() => {
+      window.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("keydown", onKey);
+    });
+  });
 
   // Custom name colors come from the workspace member list, loaded once.
   createResource(() => props.projectId, async (id) => {
@@ -2510,6 +2531,11 @@ function ConversationThread(props: {
     window.addEventListener("relay:open-file", onOpenFile);
     // A restored draft needs the composer sized to its content.
     requestAnimationFrame(autogrow);
+    // Entering a chat puts the caret in the composer — pointer:fine only,
+    // so touch devices don't get a surprise keyboard.
+    if (window.matchMedia("(pointer: fine)").matches) {
+      requestAnimationFrame(() => inputEl?.focus());
+    }
   });
   onCleanup(() => window.removeEventListener("relay:open-file", onOpenFile));
 
@@ -3271,30 +3297,53 @@ function ConversationThread(props: {
               </Show>
             </div>
           </Show>
-          <div class="flex items-end gap-1 p-1.5">
-            <button
-              type="button"
-              onClick={() => fileEl?.click()}
-              aria-label="Attach files"
-              title="Attach files"
-              class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-muted transition-colors hover:bg-hover hover:text-fg"
+          <div class="flex items-center gap-1 p-1.5">
+            <div
+              class="relative shrink-0"
+              ref={(el) => (attachWrapEl = el)}
             >
-              <Show
-                when={hasUploading()}
-                fallback={<PaperclipIcon class="h-4.5 w-4.5" />}
+              <button
+                type="button"
+                onClick={() => setAttachOpen((v) => !v)}
+                aria-label="Attach"
+                title="Attach files or a folder"
+                aria-expanded={attachOpen()}
+                class="flex h-10 w-10 items-center justify-center rounded-xl text-muted transition-colors hover:bg-hover hover:text-fg"
               >
-                <Spinner class="h-4 w-4 text-accent-ink" />
+                <Show
+                  when={hasUploading()}
+                  fallback={<PaperclipIcon class="h-4.5 w-4.5" />}
+                >
+                  <Spinner class="h-4 w-4 text-accent-ink" />
+                </Show>
+              </button>
+              <Show when={attachOpen()}>
+                <div class="absolute bottom-full left-0 z-40 mb-1.5 w-44 overflow-hidden rounded-xl border border-border bg-surface p-1 shadow-xl">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAttachOpen(false);
+                      fileEl?.click();
+                    }}
+                    class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] text-fg transition-colors hover:bg-hover"
+                  >
+                    <PaperclipIcon class="h-4 w-4 text-faint" />
+                    Files
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAttachOpen(false);
+                      dirEl?.click();
+                    }}
+                    class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] text-fg transition-colors hover:bg-hover"
+                  >
+                    <FolderIcon class="h-4 w-4 text-faint" />
+                    Folder
+                  </button>
+                </div>
               </Show>
-            </button>
-            <button
-              type="button"
-              onClick={() => dirEl?.click()}
-              aria-label="Attach a folder"
-              title="Attach a folder"
-              class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-muted transition-colors hover:bg-hover hover:text-fg"
-            >
-              <FolderIcon class="h-4.5 w-4.5" />
-            </button>
+            </div>
             <button
               type="button"
               onClick={() => setTagPickerOpen((o) => !o)}
