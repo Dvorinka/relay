@@ -15,8 +15,9 @@ export const DEFAULT_STATUSES: StatusDef[] = [
   { id: "todo", label: "To do", color: "#0891b2" },
   { id: "in_progress", label: "In progress", color: "#d97706" },
   { id: "review", label: "In review", color: "#7c3aed" },
+  { id: "other", label: "Other", color: "#64748b" },
   { id: "done", label: "Done", color: "#059669", closed: true },
-  { id: "cancelled", label: "Cancelled", color: "#dc2626", closed: true },
+  { id: "cancelled", label: "Canceled", color: "#dc2626", closed: true },
 ];
 
 export const ISSUE_STATUSES: IssueStatus[] = DEFAULT_STATUSES.map(

@@ -579,6 +579,24 @@ export function GitBranchIcon(props: IconProps): JSX.Element {
   );
 }
 
+export function CommitIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <circle cx="8" cy="8" r="2.2" />
+      <path d="M1.5 8h4.3M10.2 8h4.3" />
+    </svg>
+  );
+}
+
 export function TagIcon(props: IconProps): JSX.Element {
   return (
     <svg

@@ -47,6 +47,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   InboxIcon,
+  IssueIcon,
   LockIcon,
   PlusIcon,
   SettingsIcon,
@@ -646,6 +647,10 @@ export function Rail() {
               {totalUnread() > 99 ? "99+" : totalUnread()}
             </span>
           </Show>
+        </NavItem>
+        <NavItem href="/app/overview">
+          <IssueIcon class="h-3.5 w-3.5" />
+          Overview
         </NavItem>
       </nav>
 

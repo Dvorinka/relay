@@ -1497,6 +1497,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{projectId}/github/pull/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Merge a pull request through the GitHub App installation
+         * @description Runs GitHub's own merge (merge|squash|rebase). Requires the app's pull_requests:write permission — installations created while the manifest asked for read must be updated on GitHub first. GitHub enforces branch protection, required checks and reviews; Relay returns whatever GitHub decided.
+         */
+        post: operations["mergePullRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{projectId}/github/commits": {
         parameters: {
             query?: never;
@@ -2148,6 +2168,11 @@ export interface components {
             title: string;
             status: string;
             priority: string;
+            /**
+             * @description pr when the row mirrors a GitHub pull request
+             * @enum {string}
+             */
+            github_kind?: "issue" | "pr";
             /** Format: date-time */
             updated_at: string;
             project_key: string;
@@ -5947,6 +5972,65 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             404: components["responses"]["NotFound"];
             /** @description GitHub upstream error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    mergePullRequest: {
+        parameters: {
+            query?: {
+                /** @description owner/name or repo id; optional when only one repo is linked */
+                repo?: string;
+            };
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    number: number;
+                    /**
+                     * @default merge
+                     * @enum {string}
+                     */
+                    method?: "merge" | "squash" | "rebase";
+                    /** @description optional merge commit title */
+                    title?: string;
+                    /** @description optional merge commit message */
+                    body?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Merged */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        merged?: boolean;
+                        sha?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            /** @description GitHub refused the merge (not mergeable, head changed) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description GitHub upstream error — e.g. app lacks pull_requests:write */
             502: {
                 headers: {
                     [name: string]: unknown;

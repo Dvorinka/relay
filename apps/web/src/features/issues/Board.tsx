@@ -52,12 +52,8 @@ export function Board(props: {
       <div class="flex min-h-0 flex-1 gap-3 overflow-x-auto pb-1">
         <For each={statusDefs(props.project)}>
           {(def) => {
-            // PR mirrors (github.kind="pr") aren't issues — they're listed
-            // under Pull requests, not on the issue board.
             const cards = () =>
-              (issues() ?? []).filter(
-                (i) => i.status === def.id && i.github?.kind !== "pr",
-              );
+              (issues() ?? []).filter((i) => i.status === def.id);
             return (
             <div
               class={`flex w-60 shrink-0 flex-col rounded-lg border border-border ${def.closed ? "bg-surface/30 opacity-75" : "bg-surface/50"}`}

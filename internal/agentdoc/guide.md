@@ -315,6 +315,12 @@ end. This is not optional polish — a silent agent looks dead to the user.
 | `list_project_files` | `files <pid> [prefix]` | linked folder tree |
 | `read_project_file` | `file-read <pid> <path>` | file contents |
 
+PRs merge in the UI — members pick merge/squash/rebase on the pull-request
+view and GitHub runs it (branch protection and required checks still apply).
+Agents have no merge tool; if a user reports merge failing with a permission
+error, the GitHub App installation needs its updated `pull_requests: write`
+permission accepted on GitHub.
+
 ### Reviews & briefs
 
 | MCP tool | relay-cli | Purpose |
