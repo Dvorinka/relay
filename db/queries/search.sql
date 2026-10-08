@@ -36,6 +36,8 @@ limit 20;
 -- name: SearchIssues :many
 select i.id, i.number, i.title, i.status, i.priority, i.project_id,
        p.key as project_key,
+       i.github_kind, i.github_state, i.github_number, i.github_url,
+       coalesce((r.owner || '/' || r.name)::text, '') as github_repo,
        ts_rank(
          to_tsvector('english', i.title || ' ' || i.description)
          || to_tsvector('simple', p.key || '-' || i.number || ' ' || p.key || i.number),
@@ -43,6 +45,7 @@ select i.id, i.number, i.title, i.status, i.priority, i.project_id,
 from issues i
 join projects p on p.id = i.project_id
 join workspace_members wm on wm.workspace_id = p.workspace_id and wm.user_id = $1
+left join repositories r on r.id = i.github_repo_id
 where (to_tsvector('english', i.title || ' ' || i.description)
        || to_tsvector('simple', p.key || '-' || i.number || ' ' || p.key || i.number))
       @@ websearch_to_tsquery('english', $2)
@@ -69,4 +72,17 @@ join projects p on p.id = t.project_id
 join workspace_members wm on wm.workspace_id = p.workspace_id and wm.user_id = $1
 where to_tsvector('english', t.content) @@ websearch_to_tsquery('english', $2)
 order by rank desc, t.created_at desc
+limit 20;
+
+-- name: SearchConversations :many
+-- channels and threads by title, restricted to the caller's workspaces
+select c.id, c.title, c.kind, c.project_id, p.key as project_key, p.name as project_name
+from conversations c
+join projects p on p.id = c.project_id
+join workspace_members wm on wm.workspace_id = p.workspace_id and wm.user_id = $1
+where c.kind in ('channel', 'thread')
+  and c.title <> ''
+  and to_tsvector('simple', c.title) @@ websearch_to_tsquery('simple', $2)
+  and (c.expires_at is null or c.expires_at > now())
+order by c.created_at desc
 limit 20;

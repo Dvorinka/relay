@@ -363,6 +363,60 @@ func (q *Queries) ListProjectReposForWorkspace(ctx context.Context, workspaceID 
 	return items, nil
 }
 
+const listWorkspaceRepoProjects = `-- name: ListWorkspaceRepoProjects :many
+select r.id, r.project_id, r.installation_id, r.owner, r.name, r.default_branch, r.linked_by, r.created_at, p.name as project_name, p.key as project_key
+from repositories r
+join projects p on p.id = r.project_id
+where p.workspace_id = $1
+order by r.owner, r.name
+`
+
+type ListWorkspaceRepoProjectsRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	InstallationID int64              `json:"installation_id"`
+	Owner          string             `json:"owner"`
+	Name           string             `json:"name"`
+	DefaultBranch  string             `json:"default_branch"`
+	LinkedBy       pgtype.UUID        `json:"linked_by"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	ProjectName    string             `json:"project_name"`
+	ProjectKey     string             `json:"project_key"`
+}
+
+// every linked repo in the workspace, carrying its project's name/key so
+// aggregate views (all open PRs) don't need a second hop
+func (q *Queries) ListWorkspaceRepoProjects(ctx context.Context, workspaceID pgtype.UUID) ([]ListWorkspaceRepoProjectsRow, error) {
+	rows, err := q.db.Query(ctx, listWorkspaceRepoProjects, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListWorkspaceRepoProjectsRow{}
+	for rows.Next() {
+		var i ListWorkspaceRepoProjectsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.InstallationID,
+			&i.Owner,
+			&i.Name,
+			&i.DefaultBranch,
+			&i.LinkedBy,
+			&i.CreatedAt,
+			&i.ProjectName,
+			&i.ProjectKey,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const recordGitHubEvent = `-- name: RecordGitHubEvent :exec
 insert into github_events (delivery_id, event)
 values ($1, $2)

@@ -1,4 +1,4 @@
-import type { Channel, Project } from "@relay/api-client";
+import type { Channel, Project, Thread } from "@relay/api-client";
 import { A, useLocation, useNavigate, useParams } from "@solidjs/router";
 import {
   createEffect,
@@ -42,17 +42,22 @@ import {
   foreignProjects,
 } from "../lib/connections";
 import {
+  BulbIcon,
   CheckIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  GitPullRequestIcon,
   InboxIcon,
   IssueIcon,
   LockIcon,
   PlusIcon,
   SettingsIcon,
+  ThreadIcon,
+  TrashIcon,
 } from "./icons";
 import { RepoPicker } from "./RepoPicker";
+import { confirmDestructive } from "./Confirm";
 import { FormError, inputClass, SubmitButton, Tip } from "./ui";
 
 const navClass =
@@ -144,95 +149,203 @@ function ProjectRow(props: { project: Project }) {
         </div>
       </div>
       <Show when={open() || active()}>
-        <ChannelList project={props.project} />
+        <ProjectChildren project={props.project} />
       </Show>
     </div>
   );
 }
 
-// ChannelList: the project's persistent side channels nested under its rail
-// row, plus an inline create field. Refetches on channel.* SSE frames.
-function ChannelList(props: { project: Project }) {
+// ProjectChildren: a project's nested surfaces in the rail — persistent
+// channels, expiring threads, and the Ideas board — with inline create and
+// hover-to-delete actions. Refetches on channel.*/thread.* SSE frames.
+function ProjectChildren(props: { project: Project }) {
   const { unreadConversations } = useUnreadConversations();
   const navigate = useNavigate();
+  const location = useLocation();
   const params = useParams<{ channelId?: string }>();
-  const [channels, { refetch }] = createResource(
+  const [channels, { refetch: refetchChannels }] = createResource(
     () => props.project.id,
     (id) => api.listChannels(id).then((r) => r.channels),
   );
-  const [adding, setAdding] = createSignal(false);
+  const [threads, { refetch: refetchThreads }] = createResource(
+    () => props.project.id,
+    (id) => api.listThreads(id).then((r) => r.threads),
+  );
+  const [adding, setAdding] = createSignal<"channel" | "thread" | null>(null);
   const [name, setName] = createSignal("");
   const [error, setError] = createSignal("");
   const unsub = subscribe((e) => {
-    if (e.project_id === props.project.id && e.type.startsWith("channel.")) {
-      refetch();
-    }
+    if (e.project_id !== props.project.id) return;
+    if (e.type.startsWith("channel.")) refetchChannels();
+    if (e.type.startsWith("thread.")) refetchThreads();
   });
   onCleanup(unsub);
 
   const unreadFor = (id: string) =>
     unreadConversations().find((c) => c.conversation_id === id)?.unread ?? 0;
+  const viewingChannel = (id: string) => params.channelId === id;
+  const viewingThread = (id: string) => location.query.thread === id;
 
   async function add(e: SubmitEvent) {
     e.preventDefault();
     const n = name().trim();
     if (!n) return;
     try {
-      const res = await api.createChannel(props.project.id, n);
-      setName("");
-      setAdding(false);
-      setError("");
-      refetch();
-      navigate(`/app/p/${props.project.id}/c/${res.channel.id}`);
+      if (adding() === "channel") {
+        const res = await api.createChannel(props.project.id, n);
+        setName("");
+        setAdding(null);
+        setError("");
+        refetchChannels();
+        navigate(`/app/p/${props.project.id}/c/${res.channel.id}`);
+      } else {
+        // Threads root at a message — the channel's latest is the anchor.
+        const conv = await api.projectConversation(props.project.id);
+        const latest = (
+          await api.listMessages(conv.id, { limit: 1 })
+        ).messages[0];
+        if (!latest) {
+          setError("Post a message first — threads root at a message");
+          return;
+        }
+        const res = await api.createThread(latest.id, n);
+        setName("");
+        setAdding(null);
+        setError("");
+        refetchThreads();
+        navigate(`/app/p/${props.project.id}?thread=${res.thread.id}`);
+      }
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Could not create channel",
+        err instanceof Error
+          ? err.message
+          : `Could not create ${adding() ?? "item"}`,
       );
     }
   }
+
+  async function removeChannel(ch: Channel) {
+    const ok = await confirmDestructive({
+      title: `Delete #${ch.name ?? "channel"}`,
+      body: "All messages in this channel are deleted permanently.",
+      confirmLabel: "Delete channel",
+    });
+    if (!ok) return;
+    await api.deleteChannel(ch.id).catch(() => {});
+    if (viewingChannel(ch.id)) navigate(`/app/p/${props.project.id}`);
+    refetchChannels();
+  }
+
+  async function removeThread(t: Thread) {
+    const ok = await confirmDestructive({
+      title: `Delete thread "${t.title || "Thread"}"`,
+      body: "The thread and its replies are removed permanently.",
+      confirmLabel: "Delete thread",
+    });
+    if (!ok) return;
+    // Expire-now — the next listThreads call sweeps the row server-side.
+    await api
+      .setThreadExpiry(t.id, new Date(Date.now() - 1000).toISOString())
+      .catch(() => {});
+    if (viewingThread(t.id)) navigate(`/app/p/${props.project.id}`);
+    refetchThreads();
+  }
+
+  const rowClass = (on: boolean) =>
+    `group flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] transition-colors hover:bg-hover ${
+      on ? "bg-hover text-fg" : "text-muted hover:text-fg"
+    }`;
+  const delBtn =
+    "shrink-0 rounded p-0.5 text-faint opacity-0 transition-opacity hover:text-red-500 focus-visible:opacity-100 group-hover:opacity-100";
 
   return (
     <div class="ml-4 flex flex-col gap-0.5 border-l border-border pl-1.5">
       <For each={channels.latest}>
         {(ch: Channel) => (
-          <A
-            href={`/app/p/${props.project.id}/c/${ch.id}`}
-            class={`flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] transition-colors hover:bg-hover ${
-              params.channelId === ch.id
-                ? "bg-hover text-fg"
-                : "text-muted hover:text-fg"
-            }`}
-          >
-            <span class="text-faint">#</span>
-            <span class="min-w-0 flex-1 truncate">{ch.name}</span>
-            <Show when={ch.agents_blocked}>
-              <Tip
-                text="Agents blocked"
-                hint="Agents can't see or post in this channel"
-                class="shrink-0"
-              >
-                <LockIcon class="h-3 w-3 shrink-0 text-faint" />
-              </Tip>
-            </Show>
-            <Show when={unreadFor(ch.id) > 0}>
-              <span class="rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-medium leading-none text-white">
-                {unreadFor(ch.id)}
+          <div class={rowClass(viewingChannel(ch.id))}>
+            <A
+              href={`/app/p/${props.project.id}/c/${ch.id}`}
+              class="flex min-w-0 flex-1 items-center gap-1.5"
+            >
+              <span class="text-faint">#</span>
+              <span class="min-w-0 flex-1 truncate">{ch.name}</span>
+              <Show when={ch.agents_blocked}>
+                <Tip
+                  text="Agents blocked"
+                  hint="Agents can't see or post in this channel"
+                  class="shrink-0"
+                >
+                  <LockIcon class="h-3 w-3 shrink-0 text-faint" />
+                </Tip>
+              </Show>
+              <Show when={unreadFor(ch.id) > 0}>
+                <span class="rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-medium leading-none text-white">
+                  {unreadFor(ch.id)}
+                </span>
+              </Show>
+            </A>
+            <button
+              type="button"
+              aria-label={`Delete channel ${ch.name ?? ""}`}
+              title="Delete channel"
+              onClick={() => void removeChannel(ch)}
+              class={delBtn}
+            >
+              <TrashIcon class="h-3 w-3" />
+            </button>
+          </div>
+        )}
+      </For>
+      <For each={threads.latest}>
+        {(t: Thread) => (
+          <div class={rowClass(viewingThread(t.id))}>
+            <A
+              href={`/app/p/${props.project.id}?thread=${t.id}`}
+              class="flex min-w-0 flex-1 items-center gap-1.5"
+            >
+              <ThreadIcon class="h-3 w-3 shrink-0 text-faint" />
+              <span class="min-w-0 flex-1 truncate">
+                {t.title || "Thread"}
               </span>
-            </Show>
-          </A>
+              <Show when={t.reply_count > 0}>
+                <span class="shrink-0 text-[10px] text-faint">
+                  {t.reply_count}
+                </span>
+              </Show>
+            </A>
+            <button
+              type="button"
+              aria-label={`Delete thread ${t.title ?? ""}`}
+              title="Delete thread"
+              onClick={() => void removeThread(t)}
+              class={delBtn}
+            >
+              <TrashIcon class="h-3 w-3" />
+            </button>
+          </div>
         )}
       </For>
       <Show
         when={adding()}
         fallback={
-          <button
-            type="button"
-            onClick={() => setAdding(true)}
-            class="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] text-faint transition-colors hover:bg-hover hover:text-fg"
-          >
-            <PlusIcon class="h-3 w-3" />
-            New channel
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={() => setAdding("channel")}
+              class="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] text-faint transition-colors hover:bg-hover hover:text-fg"
+            >
+              <PlusIcon class="h-3 w-3" />
+              New channel
+            </button>
+            <button
+              type="button"
+              onClick={() => setAdding("thread")}
+              class="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] text-faint transition-colors hover:bg-hover hover:text-fg"
+            >
+              <PlusIcon class="h-3 w-3" />
+              New thread
+            </button>
+          </>
         }
       >
         <form onSubmit={add} class="px-2 py-1">
@@ -242,17 +355,30 @@ function ChannelList(props: { project: Project }) {
             onInput={(e) => setName(e.currentTarget.value)}
             onKeyDown={(e) => {
               if (e.key === "Escape") {
-                setAdding(false);
+                setAdding(null);
                 setName("");
               }
             }}
-            placeholder="channel-name"
+            placeholder={
+              adding() === "channel" ? "channel-name" : "thread-title"
+            }
             maxLength={60}
             class={inputClass + " h-6 px-1.5 text-[12px]"}
           />
           <FormError message={error()} />
         </form>
       </Show>
+      <A
+        href={`/app/p/${props.project.id}/ideas`}
+        class={`flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] transition-colors hover:bg-hover ${
+          location.pathname === `/app/p/${props.project.id}/ideas`
+            ? "bg-hover text-fg"
+            : "text-muted hover:text-fg"
+        }`}
+      >
+        <BulbIcon class="h-3 w-3 shrink-0 text-faint" />
+        <span class="min-w-0 flex-1 truncate">Ideas</span>
+      </A>
     </div>
   );
 }
@@ -652,6 +778,10 @@ export function Rail() {
         <NavItem href="/app/overview">
           <IssueIcon class="h-3.5 w-3.5" />
           Overview
+        </NavItem>
+        <NavItem href="/app/pulls">
+          <GitPullRequestIcon class="h-3.5 w-3.5" />
+          Pull requests
         </NavItem>
       </nav>
 

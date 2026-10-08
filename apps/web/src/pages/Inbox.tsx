@@ -1,8 +1,17 @@
 import { A } from "@solidjs/router";
-import { createResource, For, onCleanup, Show } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createResource,
+  createSignal,
+  For,
+  onCleanup,
+  Show,
+} from "solid-js";
 import { Avatar } from "@ark-ui/solid";
 import type { UnreadConversation } from "@relay/api-client";
-import { Spinner } from "../components/ui";
+import { inputClass, Spinner } from "../components/ui";
+import { SearchIcon, XIcon } from "../components/icons";
 import { api } from "../lib/api";
 import { mediaURL } from "../lib/net";
 import { subscribe } from "../lib/events";
@@ -17,7 +26,38 @@ import {
   useUnreadConversations,
 } from "../stores/unread";
 
-function PendingReviews() {
+// Filter kinds unify the three sections: "unread" means any unread row or
+// unread mention; thread/issue/channel match both unread rows and mentions
+// living inside those surfaces.
+type Kind =
+  | "all"
+  | "unread"
+  | "mention"
+  | "review"
+  | "thread"
+  | "issue"
+  | "channel";
+
+const KIND_CHIPS: { id: Kind; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "unread", label: "Unread" },
+  { id: "mention", label: "Mentions" },
+  { id: "review", label: "Reviews" },
+  { id: "thread", label: "Threads" },
+  { id: "issue", label: "Issues" },
+  { id: "channel", label: "Channels" },
+];
+
+type Filters = {
+  q: () => string;
+  kind: () => Kind;
+  project: () => string;
+};
+
+function PendingReviews(props: {
+  f: Filters;
+  onCount: (n: number) => void;
+}) {
   const [reviews, { refetch }] = createResource(() =>
     api.myReviews().then((r) => r.reviews),
   );
@@ -28,21 +68,40 @@ function PendingReviews() {
   });
   onCleanup(unsub);
 
+  const shown = createMemo(() => {
+    const q = props.f.q().toLowerCase();
+    const k = props.f.kind();
+    const pid = props.f.project();
+    return (reviews() ?? []).filter((r) => {
+      if (k !== "all" && k !== "review") return false;
+      if (pid !== "all" && r.project_id !== pid) return false;
+      if (
+        q &&
+        !`${r.title} ${r.agent.name} ${r.project_name} ${r.project_key}`
+          .toLowerCase()
+          .includes(q)
+      )
+        return false;
+      return true;
+    });
+  });
+  createEffect(() => props.onCount(shown().length));
+
   return (
-    <Show when={(reviews() ?? []).length > 0}>
+    <Show when={shown().length > 0}>
       <section class="mb-6">
         <h2 class="mb-2 flex items-center gap-2 text-[12px] font-semibold uppercase tracking-wider text-muted">
           Awaiting your verdict
           <span class="rounded-full bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-400">
-            {reviews()!.length}
+            {shown().length}
           </span>
         </h2>
         <ul class="divide-y divide-border overflow-hidden rounded-md border border-violet-500/30">
-          <For each={reviews()}>
+          <For each={shown()}>
             {(r) => (
               <li>
                 <A
-                  href={`/app/p/${r.project_id}?tab=reviews`}
+                  href={`/app/p/${r.project_id}?view=reviews`}
                   class="flex items-start gap-3 bg-violet-500/[0.04] px-4 py-3 transition-colors hover:bg-violet-500/[0.08]"
                 >
                   <Avatar.Root class="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-surface">
@@ -81,9 +140,12 @@ function PendingReviews() {
 
 // Conversations with unread messages — each row lands on the exact place:
 // the channel scrolls to its "New" divider, issues open their page, threads
-// jump to the parent message, briefs open the briefs panel. Older servers
-// return only per-project counts — fall back to project rows for those.
-function UnreadChannels() {
+// jump to the parent message. Older servers return only per-project counts —
+// fall back to project rows for those.
+function UnreadChannels(props: {
+  f: Filters;
+  onCount: (n: number) => void;
+}) {
   const { unread } = useUnread();
   const { unreadConversations } = useUnreadConversations();
   const projects = useProjects();
@@ -103,7 +165,7 @@ function UnreadChannels() {
       case "issue":
         return `/app/p/${c.project_id}/i/${c.issue_id}`;
       case "brief":
-        return `/app/p/${c.project_id}?briefs=1`;
+        return `/app/p/${c.project_id}?view=reviews`;
       case "thread":
         return `/app/p/${c.project_id}?msg=${c.parent_message_id}`;
       default:
@@ -116,7 +178,7 @@ function UnreadChannels() {
       case "issue":
         return `${key}-${c.issue_number ?? "?"}${c.issue_title ? ` · ${c.issue_title}` : ""}`;
       case "brief":
-        return `brief${c.brief_title ? ` · ${c.brief_title}` : ""}`;
+        return `review${c.brief_title ? ` · ${c.brief_title}` : ""}`;
       case "thread":
         return `thread${c.title ? ` · ${c.title}` : ""}`;
       default:
@@ -125,6 +187,22 @@ function UnreadChannels() {
   };
 
   const rows = (): Row[] => {
+    const k = props.f.kind();
+    const pid = props.f.project();
+    const q = props.f.q().toLowerCase();
+    const keep = (r: Row): boolean => {
+      if (pid !== "all" && r.project.id !== pid) return false;
+      if (k !== "all" && k !== "unread") {
+        // Generic project rows have no sub-kind; only conv rows match.
+        if (!r.conv || r.conv.kind !== k) return false;
+      }
+      if (q) {
+        const hay =
+          `${r.project.name} ${r.project.key} ${r.where ?? ""} ${r.conv?.snippet ?? ""} ${r.conv?.author_name ?? ""}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    };
     const convs = unreadConversations();
     if (convs.length > 0) {
       return convs
@@ -139,7 +217,7 @@ function UnreadChannels() {
             conv: c,
           };
         })
-        .filter((r): r is Row => r !== null)
+        .filter((r): r is Row => r !== null && keep(r))
         .sort((a, b) => b.count - a.count);
     }
     return Object.entries(unread())
@@ -154,8 +232,9 @@ function UnreadChannels() {
           conv: null,
         };
       })
-      .filter((r): r is Row => r !== null);
+      .filter((r): r is Row => r !== null && keep(r));
   };
+  createEffect(() => props.onCount(rows().length));
 
   return (
     <Show when={rows().length > 0}>
@@ -252,8 +331,71 @@ export default function Inbox() {
     api.mentions().then((r) => r.mentions),
   );
   const { unread } = useUnread();
+  const projects = useProjects();
   const totalUnread = () =>
     Object.values(unread()).reduce((s, n) => s + n, 0);
+
+  const [query, setQuery] = createSignal("");
+  const [kind, setKind] = createSignal<Kind>("all");
+  const [projectId, setProjectId] = createSignal("all");
+  const f: Filters = { q: query, kind, project: projectId };
+  const hasFilters = () =>
+    query().trim() !== "" || kind() !== "all" || projectId() !== "all";
+  const clearFilters = () => {
+    setQuery("");
+    setKind("all");
+    setProjectId("all");
+  };
+
+  const [unreadN, setUnreadN] = createSignal(0);
+  const [reviewN, setReviewN] = createSignal(0);
+  const projectName = (id: string) =>
+    projects.projects()?.find((p) => p.id === id)?.name ?? "";
+
+  const shownMentions = createMemo(() => {
+    const q = query().toLowerCase();
+    const k = kind();
+    const pid = projectId();
+    return (mentions() ?? []).filter((m) => {
+      switch (k) {
+        case "all":
+          break;
+        case "unread":
+          if (m.is_read) return false;
+          break;
+        case "mention":
+          break;
+        case "thread":
+          if (m.conversation_kind !== "thread") return false;
+          break;
+        case "issue":
+          if (!m.issue_id) return false;
+          break;
+        case "channel":
+          if (m.conversation_kind !== "channel" || m.issue_id) return false;
+          break;
+        default:
+          return false;
+      }
+      if (pid !== "all" && m.project_id !== pid) return false;
+      if (
+        q &&
+        !`${m.body} ${m.author.name} ${projectName(m.project_id)}`
+          .toLowerCase()
+          .includes(q)
+      )
+        return false;
+      return true;
+    });
+  });
+
+  const nothingFound = () =>
+    hasFilters() &&
+    mentions.state === "ready" &&
+    unreadN() === 0 &&
+    reviewN() === 0 &&
+    shownMentions().length === 0;
+
   const unsub = subscribe((e) => {
     if (e.type === "message.created") {
       void refetch();
@@ -284,10 +426,62 @@ export default function Inbox() {
         <p class="mt-0.5 text-[12px] text-muted">
           Reviews awaiting you, mentions and unread activity across your workspaces
         </p>
+        <div class="mt-3 flex flex-wrap items-center gap-2">
+          <div class="relative min-w-40 flex-1 sm:max-w-xs">
+            <SearchIcon class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
+            <input
+              type="search"
+              value={query()}
+              onInput={(e) => setQuery(e.currentTarget.value)}
+              placeholder="Search inbox…"
+              aria-label="Search inbox"
+              class={`${inputClass} pl-8`}
+            />
+          </div>
+          <div class="flex flex-wrap items-center gap-1">
+            <For each={KIND_CHIPS}>
+              {(c) => (
+                <button
+                  type="button"
+                  onClick={() => setKind(c.id)}
+                  aria-pressed={kind() === c.id}
+                  class={`rounded-full border px-2.5 py-1 text-[11.5px] transition-colors ${
+                    kind() === c.id
+                      ? "border-accent bg-accent/10 font-medium text-accent"
+                      : "border-border text-muted hover:border-muted/60 hover:text-fg"
+                  }`}
+                >
+                  {c.label}
+                </button>
+              )}
+            </For>
+          </div>
+          <select
+            value={projectId()}
+            onChange={(e) => setProjectId(e.currentTarget.value)}
+            aria-label="Filter by project"
+            class={`${inputClass} w-auto`}
+          >
+            <option value="all">All projects</option>
+            <For each={projects.projects() ?? []}>
+              {(p) => <option value={p.id}>{p.name}</option>}
+            </For>
+          </select>
+          <Show when={hasFilters()}>
+            <button
+              type="button"
+              onClick={clearFilters}
+              class="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-[11.5px] text-muted transition-colors hover:border-muted/60 hover:text-fg"
+            >
+              <XIcon class="h-3 w-3" />
+              Clear
+            </button>
+          </Show>
+        </div>
       </header>
       <div class="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-        <UnreadChannels />
-        <PendingReviews />
+        <UnreadChannels f={f} onCount={setUnreadN} />
+        <PendingReviews f={f} onCount={setReviewN} />
         <Show
           when={mentions.state === "ready"}
           fallback={
@@ -318,10 +512,12 @@ export default function Inbox() {
           </Show>
           <ul class="divide-y divide-border overflow-hidden rounded-md border border-border">
             <For
-              each={mentions()}
+              each={shownMentions()}
               fallback={
                 <li class="px-4 py-8 text-center text-[13px] text-muted">
-                  No mentions yet — someone will say your name eventually
+                  {hasFilters()
+                    ? "No mentions match these filters"
+                    : "No mentions yet — someone will say your name eventually"}
                 </li>
               }
             >
@@ -388,6 +584,20 @@ export default function Inbox() {
               )}
             </For>
           </ul>
+        </Show>
+        <Show when={nothingFound()}>
+          <div class="flex flex-col items-center gap-2 py-14 text-center">
+            <p class="text-[13px] text-muted">
+              Nothing matches these filters.
+            </p>
+            <button
+              type="button"
+              onClick={clearFilters}
+              class="text-[12px] font-medium text-accent hover:underline"
+            >
+              Clear filters
+            </button>
+          </div>
         </Show>
       </div>
     </div>

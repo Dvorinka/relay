@@ -2,7 +2,8 @@ import { createMemo, createResource, createSignal, For, onCleanup, Show } from "
 import { A, useNavigate } from "@solidjs/router";
 import { api } from "../../lib/api";
 import { subscribe } from "../../lib/events";
-import { Spinner, Tip } from "../../components/ui";
+import { inputClass, Spinner, Tip } from "../../components/ui";
+import { openCommit } from "../github/CommitModal";
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -10,6 +11,7 @@ import {
   GitPullRequestIcon,
   IssueIcon,
   ReviewIcon,
+  SearchIcon,
 } from "../../components/icons";
 import { statusColor } from "./meta";
 import type { AgentReview, DevelopmentPanel, Issue, Project } from "@relay/api-client";
@@ -19,15 +21,16 @@ import type { AgentReview, DevelopmentPanel, Issue, Project } from "@relay/api-c
 // `project` for the per-project view (issues page tab) or a `projects` list
 // for the cross-project view on Overview — entries then carry project
 // identity and a project filter appears beside the kind/repo filters.
-type Kind = "issue" | "gh-issue" | "pr" | "commit" | "review";
+export type Kind = "issue" | "gh-issue" | "pr" | "commit" | "review";
 
-type CalEntry = {
+export type CalEntry = {
   id: string;
   kind: Kind;
   title: string;
   meta: string;
   day: string; // YYYY-MM-DD
   repo?: string;
+  sha?: string;
   projectId?: string;
   projectName?: string;
   href?: string;
@@ -35,7 +38,7 @@ type CalEntry = {
   color?: string;
 };
 
-const KIND_LABEL: Record<Kind, string> = {
+export const KIND_LABEL: Record<Kind, string> = {
   issue: "Issues",
   "gh-issue": "GitHub issues",
   pr: "Pull requests",
@@ -43,7 +46,7 @@ const KIND_LABEL: Record<Kind, string> = {
   review: "Reviews",
 };
 
-const KIND_COLOR: Record<Kind, string> = {
+export const KIND_COLOR: Record<Kind, string> = {
   issue: "#8b5cf6",
   "gh-issue": "#10b981",
   pr: "#a78bfa",
@@ -55,17 +58,51 @@ function dayKey(iso: string): string {
   return iso.slice(0, 10);
 }
 
-type ProjectBundle = {
+export type ProjectBundle = {
   project: Project;
   issues: Issue[];
   dev?: DevelopmentPanel;
   reviews: AgentReview[];
 };
 
-// projectEntries: one project's slice of the calendar — local issues and PR
-// mirrors link in-app, GitHub-only rows link out. Filtering happens in the
-// view; this just maps records to day entries.
-function projectEntries(b: ProjectBundle): CalEntry[] {
+// One resource keyed on the project list — fans out per project in parallel
+// and merges. Development (GitHub) failures degrade to no repo rows for that
+// project instead of blanking the view. Shared by Calendar and Timeline.
+export function useProjectBundles(projList: () => Project[]) {
+  const [bundles, { refetch }] = createResource(
+    () => projList().map((p) => p.id).join(","),
+    async () =>
+      Promise.all(
+        projList().map(async (p): Promise<ProjectBundle> => {
+          const [issues, dev, reviews] = await Promise.all([
+            api.listIssues(p.id, {}).then((r) => r.issues).catch(() => [] as Issue[]),
+            api.projectDevelopment(p.id).catch(() => undefined),
+            api.listReviews(p.id).then((r) => r.reviews).catch(() => [] as AgentReview[]),
+          ]);
+          return { project: p, issues, dev, reviews };
+        }),
+      ),
+  );
+
+  const unsub = subscribe((e) => {
+    if (!e.project_id || !projList().some((p) => p.id === e.project_id)) return;
+    if (
+      e.type.startsWith("issue.") ||
+      e.type.startsWith("review.") ||
+      e.type.startsWith("github.")
+    ) {
+      refetch();
+    }
+  });
+  onCleanup(unsub);
+
+  return { bundles, refetch };
+}
+
+// projectEntries: one project's slice of the feed — local issues and PR
+// mirrors link in-app, commits open the in-app commit modal, GitHub-only
+// rows link out. Filtering happens in the view; this maps records to entries.
+export function projectEntries(b: ProjectBundle): CalEntry[] {
   const out: CalEntry[] = [];
   const p = b.project;
   const tag = { projectId: p.id, projectName: p.name };
@@ -116,6 +153,7 @@ function projectEntries(b: ProjectBundle): CalEntry[] {
         meta: `${cm.sha.slice(0, 7)} · ${cm.author}`,
         day: dayKey(cm.date),
         repo: name,
+        sha: cm.sha,
         external: cm.url,
         ...tag,
       });
@@ -145,42 +183,12 @@ export function Calendar(props: { project?: Project; projects?: Project[] }) {
   const [kinds, setKinds] = createSignal<Set<Kind>>(
     new Set<Kind>(["issue", "gh-issue", "pr", "commit", "review"]),
   );
+  const [query, setQuery] = createSignal("");
   const [openDay, setOpenDay] = createSignal<string | null>(null);
 
   const projList = () => props.projects ?? (props.project ? [props.project] : []);
   const multi = () => props.projects !== undefined;
-
-  // One resource keyed on the project list — fans out per project in
-  // parallel and merges. Development (GitHub) failures degrade to no
-  // repo rows for that project instead of blanking the calendar.
-  const [bundles, { refetch }] = createResource(
-    () => projList().map((p) => p.id).join(","),
-    async () => {
-      const out = await Promise.all(
-        projList().map(async (p): Promise<ProjectBundle> => {
-          const [issues, dev, reviews] = await Promise.all([
-            api.listIssues(p.id, {}).then((r) => r.issues).catch(() => [] as Issue[]),
-            api.projectDevelopment(p.id).catch(() => undefined),
-            api.listReviews(p.id).then((r) => r.reviews).catch(() => [] as AgentReview[]),
-          ]);
-          return { project: p, issues, dev, reviews };
-        }),
-      );
-      return out;
-    },
-  );
-
-  const unsub = subscribe((e) => {
-    if (!e.project_id || !projList().some((p) => p.id === e.project_id)) return;
-    if (
-      e.type.startsWith("issue.") ||
-      e.type.startsWith("review.") ||
-      e.type.startsWith("github.")
-    ) {
-      refetch();
-    }
-  });
-  onCleanup(unsub);
+  const { bundles } = useProjectBundles(projList);
 
   const repos = createMemo(() => {
     const set = new Set<string>();
@@ -194,13 +202,18 @@ export function Calendar(props: { project?: Project; projects?: Project[] }) {
 
   const entries = createMemo((): CalEntry[] => {
     const want = kinds();
+    const q = query().trim().toLowerCase();
     const repoOk = (r?: string) => !repoFilter() || r === repoFilter();
     const projOk = (p?: string) => !projFilter() || p === projFilter();
     return (bundles() ?? [])
       .flatMap(projectEntries)
       .filter(
         (e) =>
-          want.has(e.kind) && repoOk(e.repo) && projOk(e.projectId),
+          want.has(e.kind) && repoOk(e.repo) && projOk(e.projectId) &&
+          (!q ||
+            `${e.title} ${e.meta} ${e.repo ?? ""} ${e.projectName ?? ""}`
+              .toLowerCase()
+              .includes(q)),
       );
   });
 
@@ -272,7 +285,9 @@ export function Calendar(props: { project?: Project; projects?: Project[] }) {
       title={`${KIND_LABEL[e.kind]}${e.projectName ? ` · ${e.projectName}` : ""} — ${e.title}\n${e.meta}`}
       onClick={(ev) => {
         ev.stopPropagation();
-        if (e.href) navigate(e.href);
+        if (e.kind === "commit" && e.sha && e.repo && e.projectId) {
+          openCommit(e.projectId, e.repo, e.sha);
+        } else if (e.href) navigate(e.href);
         else if (e.external) window.open(e.external, "_blank", "noreferrer");
       }}
       class="flex w-full items-center gap-1 truncate rounded px-1 py-0.5 text-left text-[10.5px] transition-colors hover:bg-hover"
@@ -304,7 +319,18 @@ export function Calendar(props: { project?: Project; projects?: Project[] }) {
       </>
     );
     const cls =
-      "flex items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5 text-[12px] transition-colors hover:border-muted/60";
+      "flex w-full items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5 text-left text-[12px] transition-colors hover:border-muted/60";
+    if (e.kind === "commit" && e.sha && e.repo && e.projectId) {
+      return (
+        <button
+          type="button"
+          onClick={() => openCommit(e.projectId!, e.repo!, e.sha!)}
+          class={cls}
+        >
+          {body}
+        </button>
+      );
+    }
     if (inner === "a") {
       return (
         <a href={e.external} target="_blank" rel="noreferrer" class={cls}>
@@ -353,6 +379,17 @@ export function Calendar(props: { project?: Project; projects?: Project[] }) {
           >
             Today
           </button>
+        </div>
+        <div class="relative w-44">
+          <SearchIcon class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
+          <input
+            type="search"
+            value={query()}
+            onInput={(e) => setQuery(e.currentTarget.value)}
+            placeholder="Search entries"
+            aria-label="Search calendar entries"
+            class={`${inputClass} !pl-8 !py-1 text-[12px]`}
+          />
         </div>
         <div class="flex flex-wrap items-center gap-1">
           <For each={Object.keys(KIND_LABEL) as Kind[]}>
@@ -516,13 +553,32 @@ export function Calendar(props: { project?: Project; projects?: Project[] }) {
               when={openDayEntries().length > 0}
               fallback={<p class="text-[12px] text-muted">Nothing this day.</p>}
             >
-              <ul class="flex max-h-40 flex-col gap-1 overflow-y-auto">
-                <For each={openDayEntries()}>
-                  {(e) => (
-                    <li>{e.href ? dayRow(e, "link") : dayRow(e, "a")}</li>
-                  )}
+              <div class="max-h-56 space-y-2.5 overflow-y-auto">
+                <For each={Object.keys(KIND_LABEL) as Kind[]}>
+                  {(k) => {
+                    const group = () =>
+                      openDayEntries().filter((e) => e.kind === k);
+                    return (
+                      <Show when={group().length > 0}>
+                        <div>
+                          <p class="mb-1 text-[10.5px] font-semibold uppercase tracking-wider text-muted">
+                            {KIND_LABEL[k]} · {group().length}
+                          </p>
+                          <ul class="flex flex-col gap-1">
+                            <For each={group()}>
+                              {(e) => (
+                                <li>
+                                  {e.href ? dayRow(e, "link") : dayRow(e, "a")}
+                                </li>
+                              )}
+                            </For>
+                          </ul>
+                        </div>
+                      </Show>
+                    );
+                  }}
                 </For>
-              </ul>
+              </div>
             </Show>
           </div>
         )}

@@ -1,6 +1,10 @@
 // Outbound webhook management for a project. Agents point their listener
 // here; Relay POSTs a signed event envelope for each matching domain event.
-import type { WebhookDelivery, WebhookSubscription } from "@relay/api-client";
+import type {
+  InboundHook,
+  WebhookDelivery,
+  WebhookSubscription,
+} from "@relay/api-client";
 import {
   createEffect,
   createResource,
@@ -367,7 +371,232 @@ export function WebhooksSection(props: { projectId: string }) {
           — no URL needed; signed deliveries appear under Deliveries.
         </p>
         <FormError message={err()} />
+
+        <InboundHooksSection projectId={props.projectId} />
       </div>
     </div>
+  );
+}
+
+// Inbound hooks — the opposite direction: external services POST to a
+// tokenized Relay URL and the payload lands as a message in a channel.
+
+function InboundHookRow(props: {
+  h: InboundHook;
+  hookUrl: string;
+  onChanged: () => void;
+}) {
+  const [confirmDelete, setConfirmDelete] = createSignal(false);
+  const [freshToken, setFreshToken] = createSignal("");
+  const [err, setErr] = createSignal("");
+  const h = () => props.h;
+
+  const toggle = async () => {
+    try {
+      await api.updateInboundHook(h().id!, { enabled: !h().enabled });
+      props.onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "update failed");
+    }
+  };
+  const rotate = async () => {
+    try {
+      const r = await api.rotateInboundHook(h().id!);
+      setFreshToken(r.url);
+      props.onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "rotate failed");
+    }
+  };
+  const remove = async () => {
+    setConfirmDelete(false);
+    try {
+      await api.deleteInboundHook(h().id!);
+      props.onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "delete failed");
+    }
+  };
+
+  return (
+    <li class="rounded-md border border-border px-3 py-2.5">
+      <div class="flex items-center gap-2.5">
+        <span
+          class={`h-1.5 w-1.5 shrink-0 rounded-full ${
+            h().enabled ? "bg-emerald-500" : "bg-muted/40"
+          }`}
+        />
+        <span class="min-w-0 flex-1 truncate text-[12.5px] font-medium">
+          {h().name}
+        </span>
+        <span class="shrink-0 font-mono text-[10px] text-muted">
+          {h().token_hint}
+        </span>
+        <span class="shrink-0 text-[11px] text-muted">
+          {h().last_used_at
+            ? `used ${timeAgo(h().last_used_at!)}`
+            : "never used"}
+        </span>
+      </div>
+      <Show when={freshToken()}>
+        <div class="mt-2 rounded-md border border-amber-500/40 bg-amber-500/[0.06] px-2.5 py-2">
+          <p class="text-[10.5px] font-medium uppercase tracking-wider text-amber-600 dark:text-amber-400">
+            New URL — shown once
+          </p>
+          <p class="mt-0.5 select-all break-all font-mono text-[11.5px]">
+            {freshToken()}
+          </p>
+        </div>
+      </Show>
+      <div class="mt-1.5 flex items-center gap-2">
+        <code class="min-w-0 flex-1 truncate rounded border border-border/60 px-1.5 py-0.5 font-mono text-[10.5px] text-muted">
+          POST {props.hookUrl}
+        </code>
+        <button
+          type="button"
+          onClick={() => void navigator.clipboard.writeText(props.hookUrl)}
+          class="shrink-0 text-[11.5px] text-muted transition-colors hover:text-fg"
+        >
+          Copy URL
+        </button>
+        <button
+          type="button"
+          onClick={toggle}
+          class="shrink-0 text-[11.5px] text-muted transition-colors hover:text-fg"
+        >
+          {h().enabled ? "Disable" : "Enable"}
+        </button>
+        <button
+          type="button"
+          onClick={rotate}
+          class="shrink-0 text-[11.5px] text-muted transition-colors hover:text-fg"
+        >
+          Rotate
+        </button>
+        <button
+          type="button"
+          onClick={() => setConfirmDelete(true)}
+          class="shrink-0 text-[11.5px] text-red-500/80 transition-colors hover:text-red-500"
+        >
+          Delete
+        </button>
+      </div>
+      <FormError message={err()} />
+      <ConfirmDialog
+        open={confirmDelete()}
+        onOpenChange={setConfirmDelete}
+        title="Delete inbound hook"
+        body={`Delete "${h().name}"? The token stops working immediately.`}
+        confirmLabel="Delete"
+        onConfirm={() => void remove()}
+      />
+    </li>
+  );
+}
+
+function InboundHooksSection(props: { projectId: string }) {
+  const [hooks, { refetch }] = createResource(
+    () => props.projectId,
+    (id) => api.listInboundHooks(id).then((r) => r.hooks),
+  );
+  const [channels] = createResource(
+    () => props.projectId,
+    (id) => api.listChannels(id).then((r) => r.channels),
+  );
+  const [name, setName] = createSignal("");
+  const [convId, setConvId] = createSignal("");
+  const [freshUrl, setFreshUrl] = createSignal("");
+  const [err, setErr] = createSignal("");
+  const [busy, setBusy] = createSignal(false);
+  const base = () => (net.serverUrl() || window.location.origin) + "/api/hooks/";
+
+  const create = async () => {
+    if (!name().trim() || !convId() || busy()) return;
+    setBusy(true);
+    setErr("");
+    try {
+      const r = await api.createInboundHook(props.projectId, {
+        name: name().trim(),
+        conversation_id: convId(),
+      });
+      setFreshUrl(r.url);
+      setName("");
+      refetch();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "create failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <h2 class="mt-10 text-[13px] font-semibold">Inbound hooks</h2>
+      <p class="mt-1 text-[12px] text-muted">
+        CI alerts, deploy bots, monitoring — anything that can POST JSON.
+        <code class="font-mono"> {"{message: \"...\"}"} </code> lands in the
+        target channel, tagged with the hook name.
+      </p>
+
+      <Show when={freshUrl()}>
+        <div class="mt-3 rounded-md border border-amber-500/40 bg-amber-500/[0.06] px-3 py-2.5">
+          <p class="text-[11px] font-medium uppercase tracking-wider text-amber-600 dark:text-amber-400">
+            Hook URL — shown once, store it now
+          </p>
+          <p class="mt-1 select-all break-all font-mono text-[12px]">
+            {freshUrl()}
+          </p>
+        </div>
+      </Show>
+
+      <ul class="mt-4 flex flex-col gap-2">
+        <Show when={hooks.state === "ready"} fallback={<Spinner />}>
+          <For
+            each={hooks() ?? []}
+            fallback={
+              <li class="rounded-md border border-dashed border-border px-4 py-5 text-center text-[12.5px] text-muted">
+                No inbound hooks — name one and pick a channel below.
+              </li>
+            }
+          >
+            {(h) => (
+              <InboundHookRow
+                h={h}
+                hookUrl={base() + "<token>"}
+                onChanged={refetch}
+              />
+            )}
+          </For>
+        </Show>
+      </ul>
+
+      <div class="mt-4 flex items-center gap-2">
+        <input
+          class={`${inputClass} flex-1`}
+          placeholder="Hook name — e.g. ci-alerts"
+          value={name()}
+          onInput={(e) => setName(e.currentTarget.value)}
+        />
+        <select
+          class={inputClass}
+          value={convId()}
+          onChange={(e) => setConvId(e.currentTarget.value)}
+        >
+          <option value="">channel…</option>
+          <For each={channels() ?? []}>
+            {(ch) => <option value={ch.id}>{ch.name}</option>}
+          </For>
+        </select>
+        <button
+          type="button"
+          disabled={busy() || !name().trim() || !convId()}
+          onClick={() => void create()}
+          class="h-[34px] shrink-0 rounded-md bg-accent px-3 text-[12.5px] font-medium text-white transition-opacity disabled:opacity-40"
+        >
+          {busy() ? "Creating…" : "Create hook"}
+        </button>
+      </div>
+      <FormError message={err()} />
+    </>
   );
 }

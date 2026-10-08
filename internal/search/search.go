@@ -169,10 +169,12 @@ func (s *Service) handle(c *gin.Context) {
 	issues := []db.SearchIssuesRow{}
 	projs := []db.SearchProjectsRow{}
 	todos := []db.SearchTodosRow{}
+	convs := []db.SearchConversationsRow{}
 	if text != "" {
 		issues, _ = s.q.SearchIssues(ctx, db.SearchIssuesParams{UserID: user.ID, WebsearchToTsquery: text})
 		projs, _ = s.q.SearchProjects(ctx, db.SearchProjectsParams{UserID: user.ID, WebsearchToTsquery: text})
 		todos, _ = s.q.SearchTodos(ctx, db.SearchTodosParams{UserID: user.ID, WebsearchToTsquery: text})
+		convs, _ = s.q.SearchConversations(ctx, db.SearchConversationsParams{UserID: user.ID, WebsearchToTsquery: text})
 	}
 
 	mOut := make([]gin.H, 0, len(msgs))
@@ -184,11 +186,21 @@ func (s *Service) handle(c *gin.Context) {
 	}
 	iOut := make([]gin.H, 0, len(issues))
 	for _, i := range issues {
-		iOut = append(iOut, gin.H{
+		item := gin.H{
 			"id": i.ID.String(), "key": i.ProjectKey + "-" + strconv.Itoa(int(i.Number)),
 			"title": i.Title, "status": i.Status, "priority": i.Priority,
 			"project_id": i.ProjectID.String(),
-		})
+		}
+		// GitHub-linked issues (incl. mirrored PRs) carry the repo + number so
+		// the palette can deep-link the PR view instead of the issue card.
+		if i.GithubNumber.Valid {
+			item["github"] = gin.H{
+				"kind": i.GithubKind, "state": i.GithubState.String,
+				"number": i.GithubNumber.Int32, "repo": i.GithubRepo,
+				"url": i.GithubUrl.String,
+			}
+		}
+		iOut = append(iOut, item)
 	}
 	pOut := make([]gin.H, 0, len(projs))
 	for _, p := range projs {
@@ -204,7 +216,16 @@ func (s *Service) handle(c *gin.Context) {
 			"project_id": t.ProjectID.String(),
 		})
 	}
+	cOut := make([]gin.H, 0, len(convs))
+	for _, cv := range convs {
+		cOut = append(cOut, gin.H{
+			"id": cv.ID.String(), "title": cv.Title.String, "kind": cv.Kind,
+			"project_id":  cv.ProjectID.String(),
+			"project_key": cv.ProjectKey, "project_name": cv.ProjectName,
+		})
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"messages": mOut, "issues": iOut, "projects": pOut, "todos": tOut,
+		"conversations": cOut,
 	})
 }

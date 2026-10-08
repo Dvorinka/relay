@@ -1,9 +1,18 @@
-import { createMemo, createResource, createSignal, For, Show } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createResource,
+  createSignal,
+  For,
+  Show,
+} from "solid-js";
+import { useSearchParams } from "@solidjs/router";
 import { api } from "../../lib/api";
 import { Spinner, Tip } from "../../components/ui";
 import { GitPullRequestIcon } from "../../components/icons";
 import { markGitHub } from "./GitHub";
 import { PullRequestDetail } from "./PullRequestDetail";
+import { openCreatePull } from "./CreateModals";
 import type { Issue } from "@relay/api-client";
 
 // Pull requests mirrored from the linked GitHub repos arrive as issues with
@@ -22,6 +31,22 @@ export function PullRequestList(props: { projectId: string }) {
     repo: string;
     number: number;
   } | null>(null);
+  // ?pr=owner/name:number deep link — e.g. from the workspace Pulls page.
+  const [searchParams, setSearchParams] = useSearchParams();
+  createEffect(() => {
+    const p = searchParams.pr;
+    const raw = Array.isArray(p) ? p[0] : p;
+    if (!raw) return;
+    const sep = raw.lastIndexOf(":");
+    const num = Number(raw.slice(sep + 1));
+    if (sep > 0 && Number.isInteger(num) && num > 0) {
+      setSelected({ repo: raw.slice(0, sep), number: num });
+    }
+  });
+  const clearSelected = () => {
+    setSelected(null);
+    if (searchParams.pr) setSearchParams({ pr: undefined });
+  };
   const [query, setQuery] = createSignal("");
   const [stateFilter, setStateFilter] = createSignal<
     "all" | "open" | "merged" | "closed"
@@ -112,7 +137,7 @@ export function PullRequestList(props: { projectId: string }) {
           projectId={props.projectId}
           repo={selected()!.repo}
           number={selected()!.number}
-          onBack={() => setSelected(null)}
+          onBack={clearSelected}
         />
       }
     >
@@ -185,6 +210,19 @@ export function PullRequestList(props: { projectId: string }) {
                 <span class="text-faint">
                   ({prs().length} total — filter active)
                 </span>
+              </Show>
+              <Show when={repos.latest?.length === 1 && repos.latest![0]}>
+                {(r) => (
+                  <button
+                    type="button"
+                    class="ml-auto rounded px-1.5 py-0.5 text-accent hover:bg-hover"
+                    onClick={() =>
+                      openCreatePull(props.projectId, r().full_name)
+                    }
+                  >
+                    + New PR
+                  </button>
+                )}
               </Show>
             </p>
             <Show

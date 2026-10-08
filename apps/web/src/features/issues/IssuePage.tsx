@@ -339,6 +339,7 @@ export default function IssuePage() {
                     body={i.description}
                     class="max-w-3xl"
                     projectId={params.projectId}
+                    allowHtml={i.github != null}
                   />
                 </Show>
 

@@ -1517,6 +1517,154 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{projectId}/github/pulls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Open a pull request on the linked repo
+         * @description Creates the PR on GitHub (defaults base to the repo's default branch) and mirrors it back as a Relay issue of kind "pr" so it shows up in lists immediately.
+         */
+        post: operations["createPullRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/github/issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * File a new issue on the linked repo
+         * @description Creates the issue on GitHub as the app installation and mirrors it back as a Relay issue so it appears on the board immediately.
+         */
+        post: operations["createGitHubIssue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/github/issues/comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Comment on a GitHub issue or pull request
+         * @description Issues and PRs share the same comments API upstream.
+         */
+        post: operations["commentOnIssue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/github/pull/state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Close or reopen a pull request
+         * @description PATCHes the PR on GitHub and eagerly updates the mirrored issue's github_state so in-app lists reflect the change before the webhook lands.
+         */
+        post: operations["setPullState"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/github/pull/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit a review on a pull request (as the app installation) */
+        post: operations["reviewPullRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/github/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Recent GitHub Actions workflow runs for a linked repo */
+        get: operations["repoActions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/github/actions/rerun": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Re-trigger a finished GitHub Actions workflow run */
+        post: operations["rerunAction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspaceId}/github/pulls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Open pull requests across every linked repo in the workspace */
+        get: operations["workspacePulls"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{projectId}/github/commits": {
         parameters: {
             query?: never;
@@ -1526,6 +1674,23 @@ export interface paths {
         };
         /** Commit log (git log) of a branch on a linked repository */
         get: operations["gitCommits"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/github/commit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** In-app commit detail — full message, stats, files, CI checks */
+        get: operations["gitCommit"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1926,6 +2091,79 @@ export interface paths {
         put?: never;
         /** Public listener endpoint for relay_managed subscriptions — accepts the signed envelope, always 204 */
         post: operations["webhookCatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/hooks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List a project's inbound hooks (tokens never returned) */
+        get: operations["listInboundHooks"];
+        put?: never;
+        /** Create an inbound hook targeting a channel — returns the token once */
+        post: operations["createInboundHook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/inbound-hooks/{hookId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete an inbound hook — the token stops working immediately */
+        delete: operations["deleteInboundHook"];
+        options?: never;
+        head?: never;
+        /** Rename or enable/disable an inbound hook */
+        patch: operations["updateInboundHook"];
+        trace?: never;
+    };
+    "/api/inbound-hooks/{hookId}/rotate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rotate an inbound hook token — returns the new token once */
+        post: operations["rotateInboundHook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/hooks/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Public token-secured endpoint — posts {message|text|body} into the hook's conversation
+         * @description Unauthenticated; the path token is the credential (rlh_...). Rate-limited to 30 posts/minute per token, body cap 64KiB. The message lands tagged ["webhook", hook-name].
+         */
+        post: operations["inboundHookPost"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2614,6 +2852,12 @@ export interface components {
             }[];
             /** @description Markdown steps to confirm the change works */
             verify: string;
+            /** @description Diagrams embedded in the review — replaces standalone visual briefs */
+            scenes?: {
+                title?: string;
+                /** @description Excalidraw scene JSON ({elements: [...]}) */
+                scene?: Record<string, never>;
+            }[];
             agent: {
                 id?: string;
                 name?: string;
@@ -2650,6 +2894,25 @@ export interface components {
             secret?: string;
             /** @description whsec_…XXXX shown on list/get */
             secret_hint?: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        /** @description Token-secured inbound endpoint. External services POST {"message": "..."} to /api/hooks/<token> and Relay posts the body into the target conversation, tagged ["webhook", name]. The token is only returned at create/rotate — the server stores sha256 only. */
+        InboundHook: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            project_id: string;
+            /** Format: uuid */
+            conversation_id: string;
+            name: string;
+            enabled: boolean;
+            /** @description first 8 chars of the token hash */
+            token_hint: string;
+            /** @description rlh_... — only present on create/rotate */
+            token?: string;
+            /** Format: date-time */
+            last_used_at?: string;
             /** Format: date-time */
             created_at: string;
         };
@@ -6039,6 +6302,334 @@ export interface operations {
             };
         };
     };
+    createPullRequest: {
+        parameters: {
+            query?: {
+                repo?: string;
+            };
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description source branch (use owner:branch for forks) */
+                    head: string;
+                    base?: string;
+                    title: string;
+                    body?: string;
+                    /** @default false */
+                    draft?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Pull request created and mirrored */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        pull?: {
+                            id?: string;
+                            number?: number;
+                            url?: string;
+                            state?: string;
+                            draft?: boolean;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description GitHub upstream error — e.g. no commits between head and base */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    createGitHubIssue: {
+        parameters: {
+            query?: {
+                repo?: string;
+            };
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    title: string;
+                    body?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Issue created and mirrored */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        issue?: {
+                            id?: string;
+                            number?: number;
+                            url?: string;
+                            state?: string;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description GitHub upstream error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    commentOnIssue: {
+        parameters: {
+            query?: {
+                repo?: string;
+            };
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    number: number;
+                    body: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Comment posted */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        commented?: boolean;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description GitHub upstream error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    setPullState: {
+        parameters: {
+            query?: {
+                repo?: string;
+            };
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    number: number;
+                    /** @enum {string} */
+                    state: "open" | "closed";
+                };
+            };
+        };
+        responses: {
+            /** @description New PR state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        state?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description GitHub upstream error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    reviewPullRequest: {
+        parameters: {
+            query?: {
+                repo?: string;
+            };
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    number: number;
+                    /** @enum {string} */
+                    event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
+                    /** @description required for REQUEST_CHANGES */
+                    body?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Review submitted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        submitted?: boolean;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description GitHub upstream error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    repoActions: {
+        parameters: {
+            query?: {
+                /** @description owner/name or repo id; optional when only one repo is linked */
+                repo?: string;
+            };
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Workflow runs */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        runs?: Record<string, never>[];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            /** @description GitHub upstream error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    rerunAction: {
+        parameters: {
+            query?: {
+                repo?: string;
+            };
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: int64 */
+                    run_id: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Rerun requested */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        rerun?: boolean;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description GitHub upstream error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    workspacePulls: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description PR groups keyed by project+repo */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        groups?: Record<string, never>[];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
     gitCommits: {
         parameters: {
             query?: {
@@ -6072,6 +6663,68 @@ export interface operations {
                             date?: string;
                         }[];
                         branch?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            /** @description GitHub upstream error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    gitCommit: {
+        parameters: {
+            query: {
+                /** @description owner/name or repo id; optional when only one repo is linked */
+                repo?: string;
+                sha: string;
+            };
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Commit detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        commit?: {
+                            sha?: string;
+                            /** @description full commit message */
+                            message?: string;
+                            url?: string;
+                            author?: string;
+                            /** Format: date-time */
+                            date?: string;
+                            additions?: number;
+                            deletions?: number;
+                            repo?: {
+                                full_name?: string;
+                            };
+                        };
+                        files?: {
+                            filename?: string;
+                            status?: string;
+                            additions?: number;
+                            deletions?: number;
+                        }[];
+                        checks?: {
+                            name?: string;
+                            status?: string;
+                            conclusion?: string;
+                            url?: string;
+                        }[];
                     };
                 };
             };
@@ -6910,6 +7563,199 @@ export interface operations {
         responses: {
             /** @description Accepted */
             204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listInboundHooks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Inbound hooks */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        hooks?: components["schemas"]["InboundHook"][];
+                    };
+                };
+            };
+        };
+    };
+    createInboundHook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    name: string;
+                    /**
+                     * Format: uuid
+                     * @description channel or main project conversation
+                     */
+                    conversation_id: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Created — token and full URL shown once */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        hook?: components["schemas"]["InboundHook"];
+                        url?: string;
+                        token?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    deleteInboundHook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                hookId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateInboundHook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                hookId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    name?: string;
+                    enabled?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated hook */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        hook?: components["schemas"]["InboundHook"];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    rotateInboundHook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                hookId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description New token and URL */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        hook?: components["schemas"]["InboundHook"];
+                        url?: string;
+                        token?: string;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    inboundHookPost: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    message?: string;
+                    text?: string;
+                    body?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Posted into the conversation */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        posted?: boolean;
+                        message_id?: string;
+                    };
+                };
+            };
+            /** @description Unknown or disabled token */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rate limited */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

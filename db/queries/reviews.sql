@@ -1,7 +1,8 @@
 -- name: CreateReview :one
 insert into agent_reviews (project_id, issue_id, agent_id, title, summary,
-                           files, decisions, actions, links, verify, supersedes)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                           files, decisions, actions, links, verify, supersedes,
+                           scenes)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 returning *;
 
 -- name: GetReview :one

@@ -2027,6 +2027,21 @@ func TestChannelsAndExpiry(t *testing.T) {
 		}
 	}
 
+	// PATCH with a past expires_at is delete-by-expiry: the handler must not
+	// 500 re-reading the row it just invalidated
+	shortID := tr2["thread"].(map[string]any)["id"].(string)
+	code, del := c.call("PATCH", "/api/conversations/"+shortID+"/expiry",
+		`{"expires_at":"2000-01-01T00:00:00Z"}`)
+	if code != 200 || del["deleted"] != true {
+		t.Fatalf("expire-to-past: %d %v", code, del)
+	}
+	_, thr2 := c.call("GET", "/api/projects/"+projID+"/threads", "")
+	for _, r := range thr2["threads"].([]any) {
+		if r.(map[string]any)["id"] == shortID {
+			t.Fatal("past-expired thread still listed")
+		}
+	}
+
 	// delete the channel — messages cascade
 	code, _ = c.call("DELETE", "/api/channels/"+chID, "")
 	if code != 204 {

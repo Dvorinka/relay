@@ -67,12 +67,13 @@ thread, thread becomes an issue, issue tracks GitHub state.
 - **Any-server clients** - sign in to any reachable Relay server from the login screen; the API accepts bearer tokens cross-origin (CORS `*`), so the web build works hosted anywhere.
 - **Visual briefs** - agents can attach Excalidraw diagrams explaining their work, and you can draw right back: every brief opens in a real embedded Excalidraw editor (full shape/tool vocabulary, images, bindings) while agents read and revise the identical scene JSON through MCP (`create_brief` / `update_brief`). Each brief has its own comment thread so you can iterate on the picture. Per-project policy: never, on request, or expected pre-merge (Settings → Project settings → Visual briefs).
 - **Ideas** - a per-project whiteboard (context rail → Ideas, or `/app/p/<id>/ideas`): a native pan/zoom canvas with sticky notes, shapes, arrows, text, and **issue/PR mention cards** placed from a searchable picker. Changes autosave; agents read and draw the same `scene.relay_board` document over MCP (`create_idea` / `update_idea`). Legacy Excalidraw scenes still open in the embedded editor. When a sketch firms up, convert it into a backlog issue or spin it out as a new project — the idea is kept, marked converted.
-- **GitHub** - connect repositories three ways: a GitHub App (one-click register + install from workspace settings), a `GITHUB_TOKEN`, or the machine's own `gh` CLI login — Relay picks it up automatically when no app is registered. Issues, PRs, and commits mirror into the project with signature-verified webhooks; open PRs can be merged in-app (merge/squash/rebase — GitHub still enforces branch protection and required checks).
+- **GitHub** - connect repositories three ways: a GitHub App (one-click register + install from workspace settings), a `GITHUB_TOKEN`, or the machine's own `gh` CLI login — Relay picks it up automatically when no app is registered. Issues, PRs, and commits mirror into the project with signature-verified webhooks. Open PRs can be merged, closed, reviewed, and commented on in-app (merge/squash/rebase — GitHub still enforces branch protection and required checks), and issues/PRs can be **created on GitHub straight from Relay** — they mirror onto the board instantly. A `/app/pulls` page aggregates every open PR across the workspace; Actions runs and `deployment_status`/`release` webhooks repaint CI state live.
 - **Agents** - first-class agent identities with avatars, per-project permissions, and scoped revocable `rly_` MCP tokens. "Last seen" is real MCP activity - never fabricated presence.
 - **Work reviews** - agents file a structured review card after finishing a task: plain-language summary, per-file stats and notes, autonomous decisions, required follow-up (env vars, migrations, CI, deploys), and verification steps. Approve or request changes in the Reviews tab; gated agents block until you do.
-- **MCP server** - streamable-HTTP endpoint exposing projects, conversations, messages, attachments, and issues as tools for external agents. `get_attachment` returns a token-authenticated `download_url` agents can curl straight to disk, plus a real image content block for inline viewing — no brittle presigned URLs.
-- **Realtime** - SSE event stream for live messages, issue changes, and notifications.
-- **Search** - `Ctrl/Cmd+K` across projects, issues, messages, and GitHub items, backed by Postgres FTS.
+- **MCP server** - streamable-HTTP endpoint exposing projects, conversations, messages, attachments, and issues as tools for external agents. Agents get the full GitHub write surface too — create issues/PRs, comment, review, merge, watch CI (`github_create_issue` … `github_rerun`). `get_attachment` returns a token-authenticated `download_url` agents can curl straight to disk, plus a real image content block for inline viewing — no brittle presigned URLs.
+- **Inbound hooks** - token-authenticated `POST /api/hooks/<token>` drops a message into any channel — one generic endpoint for CI alerts, deploy bots, and external automation. Managed from project webhooks (rotate, disable, delete); tokens are sha256-stored and rate-limited.
+- **Realtime** - SSE event stream for live messages, issue changes, CI updates, ephemeral typing indicators, and notifications. Drafts — staged attachments included — survive reloads.
+- **Search** - `Ctrl/Cmd+K` across projects, issues, channels, threads, messages, and mirrored GitHub items, backed by Postgres FTS; PR results deep-link into the in-app PR view.
 - **Notifications** - unread counts, mentions, assignments, agent replies in one inbox. Optional **Web Push** (VAPID) delivers mentions and review requests to the browser even when the tab is closed - enable in Settings → Notifications.
 - **Mobile outbox** - the Android app queues messages and images when offline and syncs them automatically on reconnect.
 - **Web first** - dark and light mode, keyboard-first, accessible. Desktop (Wails: Linux/macOS/Windows) and Android (Expo) clients consume the same API - see the [roadmap](ROADMAP.md).
@@ -210,7 +211,10 @@ Tools: `list_projects`, `get_project`, `list_conversations`, `get_messages`,
 `mark_message_read`, `todo_list`, `todo_add`, `todo_update`,
 `todo_delete`, `list_project_files`, `read_project_file`,
 `github_list_issues`, `github_get_issue`, `github_list_prs`,
-`github_get_pr`, `submit_review`, `list_reviews`, `get_review`,
+`github_get_pr`, `github_ci_runs`, `github_create_issue`,
+`github_create_pr`, `github_comment`, `github_review_pr`,
+`github_pr_state`, `github_merge_pr`, `github_rerun`,
+`submit_review`, `list_reviews`, `get_review`,
 `await_review`, `get_brief_policy`, `list_briefs`, `get_brief`,
 `create_brief`, `update_brief`, `delete_brief`, `list_ideas`, `get_idea`,
 `create_idea`, `update_idea`, `delete_idea`, `idea_to_issue`.
@@ -248,7 +252,7 @@ SSE updates, and avatars on both sides of the card.
 
 - **[apps/web](apps/web)** - SolidJS + Vite + Tailwind + Ark UI frontend.
 - **[packages/api-client](packages/api-client)** - OpenAPI-generated TS client shared by all clients.
-- **[apps/desktop](apps/desktop)** - Wails shell for Linux/macOS/Windows proxying your Relay server. Optional close-to-tray (Windows notification area) keeps it connected for alerts while hidden.
+- **[apps/desktop](apps/desktop)** - Wails shell for Linux/macOS/Windows proxying your Relay server. Optional close-to-tray keeps it connected for alerts while hidden (Windows notification area; Linux StatusNotifierItem on desktops that expose one).
 - **[apps/mobile](apps/mobile)** - React Native + Expo app for Android: login, conversations, issues, work list, attachments (phase 10; push/iOS deferred - see its README).
 - **MCP server** - built into the `relay` binary at `/mcp`.
 

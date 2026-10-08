@@ -33,6 +33,7 @@ import (
 	"github.com/Dvorinka/relay/internal/auth"
 	"github.com/Dvorinka/relay/internal/config"
 	"github.com/Dvorinka/relay/internal/db"
+	"github.com/Dvorinka/relay/internal/events"
 	"github.com/Dvorinka/relay/internal/httpx"
 )
 
@@ -43,8 +44,9 @@ type Service struct {
 	pool *pgxpool.Pool
 
 	mu     sync.Mutex
-	client *Client  // built lazily from the stored app row
-	cache  sync.Map // dev-panel cache: key -> {data, expiry}
+	client *Client     // built lazily from the stored app row
+	cache  sync.Map    // dev-panel cache: key -> {data, expiry}
+	Bus    *events.Hub // optional — CI webhook events republish to subscribers
 
 	// dispatchMu serializes webhook processing: GitHub delivers resource events
 	// in order, and concurrent handlers would race read-modify-write.
@@ -73,8 +75,17 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup, pub *gin.RouterGroup) {
 	g.GET("/projects/:id/github/files", s.projectMemberOnly, s.handleRepoTree)
 	g.GET("/projects/:id/github/files/read", s.projectMemberOnly, s.handleRepoFile)
 	g.GET("/projects/:id/github/pull", s.projectMemberOnly, s.handlePullDetail)
+	g.POST("/projects/:id/github/pulls", s.projectMemberOnly, s.handleCreatePull)
+	g.POST("/projects/:id/github/issues", s.projectMemberOnly, s.handleCreateGitHubIssue)
+	g.POST("/projects/:id/github/issues/comments", s.projectMemberOnly, s.handleIssueComment)
 	g.POST("/projects/:id/github/pull/merge", s.projectMemberOnly, s.handlePullMerge)
+	g.POST("/projects/:id/github/pull/state", s.projectMemberOnly, s.handlePullState)
+	g.POST("/projects/:id/github/pull/review", s.projectMemberOnly, s.handlePullReview)
+	g.GET("/projects/:id/github/actions", s.projectMemberOnly, s.handleActions)
+	g.POST("/projects/:id/github/actions/rerun", s.projectMemberOnly, s.handleActionRerun)
+	g.GET("/workspaces/:id/github/pulls", s.memberOnly, s.handleWorkspacePulls)
 	g.GET("/projects/:id/github/commits", s.projectMemberOnly, s.handleCommits)
+	g.GET("/projects/:id/github/commit", s.projectMemberOnly, s.handleCommitDetail)
 	g.GET("/projects/:id/github/branches", s.projectMemberOnly, s.handleBranches)
 	g.POST("/projects/:id/github/import", s.projectAdminOnly, s.handleImport)
 	// browser redirect targets / webhook entry
@@ -124,12 +135,15 @@ func (s *Service) handleManifest(c *gin.Context) {
 		"default_permissions": gin.H{
 			"issues":        "write",
 			"pull_requests": "write",
+			"actions":       "write", // workflow run list + rerun
+			"checks":        "read",  // CI check runs on commits/PRs
+			"deployments":   "read",  // deployment_status events
 			"contents":      "read",
 			"metadata":      "read",
 		},
 		// "installation" is not a valid default_events entry - GitHub delivers
 		// it to the app webhook automatically.
-		"default_events": []string{"issues", "pull_request", "push"},
+		"default_events": []string{"issues", "pull_request", "push", "check_run", "workflow_run", "deployment_status", "release"},
 	}
 	// page_url is a public auto-submitting page that POSTs the manifest to
 	// github.com — desktop shells open it in the system browser, where the
@@ -687,7 +701,397 @@ func (s *Service) handlePullMerge(c *gin.Context) {
 		httpx.Error(c, http.StatusConflict, "merge_failed", res.Message)
 		return
 	}
+	s.SyncMirroredIssue(c.Request.Context(), repo, req.Number, "merged")
 	c.JSON(http.StatusOK, gin.H{"merged": true, "sha": res.SHA})
+}
+
+// SyncMirroredIssue pushes a GitHub-side state change into the mirrored
+// issue row and broadcasts issue.updated — open lists repaint immediately
+// instead of waiting for the webhook echo. Exported for the MCP server.
+func (s *Service) SyncMirroredIssue(ctx context.Context, repo db.Repository, number int, state string) {
+	iss, err := s.q.FindIssueByGitHub(ctx,
+		db.FindIssueByGitHubParams{RepoID: repo.ID, Number: pgtype.Int4{Int32: int32(number), Valid: true}})
+	if err != nil {
+		return
+	}
+	if _, err := s.q.UpdateGitHubIssue(ctx, db.UpdateGitHubIssueParams{
+		ID: iss.ID, GhState: pgtype.Text{String: state, Valid: true},
+	}); err != nil {
+		s.log.Warn("mirror pr state", zap.Error(err))
+		return
+	}
+	if s.Bus != nil {
+		pid, _ := uuid.FromBytes(iss.ProjectID.Bytes[:])
+		s.Bus.Publish(events.Event{Type: "issue.updated", ProjectID: pid,
+			Data: map[string]any{"issue": map[string]any{"id": iss.ID.String()}}})
+	}
+}
+
+// handlePullState closes or reopens a pull request. The mirrored issue's
+// github_state updates eagerly so in-app lists don't wait for the webhook.
+func (s *Service) handlePullState(c *gin.Context) {
+	p := project(c)
+	repo, ok := s.linkedRepo(c, p)
+	if !ok {
+		return
+	}
+	var req struct {
+		Number int    `json:"number"`
+		State  string `json:"state"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Number <= 0 ||
+		(req.State != "open" && req.State != "closed") {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "number and state (open|closed) are required")
+		return
+	}
+	cli, err := s.githubClient(c.Request.Context())
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "not_registered", "GitHub is not connected")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	pr, err := cli.SetPRState(ctx, repo.InstallationID, repo.Owner, repo.Name, req.Number, req.State)
+	if err != nil {
+		httpx.Error(c, http.StatusBadGateway, "github_error", truncate(err.Error(), 300))
+		return
+	}
+	state := pr.State
+	if pr.Merged {
+		state = "merged"
+	}
+	// keep the mirrored issue row current ahead of the webhook, and tell
+	// subscribers — the event body only needs the id, listeners refetch
+	s.SyncMirroredIssue(c.Request.Context(), repo, req.Number, state)
+	s.invalidateDevPanel(p.ID)
+	c.JSON(http.StatusOK, gin.H{"state": state})
+}
+
+// handlePullReview submits a GitHub review on a pull request — the app acts
+// as the installation, so approvals land as the Relay app/bot on GitHub.
+// event is APPROVE | REQUEST_CHANGES | COMMENT.
+func (s *Service) handlePullReview(c *gin.Context) {
+	p := project(c)
+	repo, ok := s.linkedRepo(c, p)
+	if !ok {
+		return
+	}
+	var req struct {
+		Number int    `json:"number"`
+		Event  string `json:"event"`
+		Body   string `json:"body"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Number <= 0 {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "number is required")
+		return
+	}
+	switch req.Event {
+	case "APPROVE", "COMMENT":
+	case "REQUEST_CHANGES":
+		if strings.TrimSpace(req.Body) == "" {
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "body is required when requesting changes")
+			return
+		}
+	default:
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "event must be APPROVE, REQUEST_CHANGES, or COMMENT")
+		return
+	}
+	cli, err := s.githubClient(c.Request.Context())
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "not_registered", "GitHub is not connected")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	if err := cli.CreatePRReview(ctx, repo.InstallationID, repo.Owner, repo.Name,
+		req.Number, req.Event, req.Body); err != nil {
+		httpx.Error(c, http.StatusBadGateway, "github_error", truncate(err.Error(), 300))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"submitted": true})
+}
+
+// handleActions lists recent GitHub Actions workflow runs for the linked
+// repo — the CI/CD surface behind the development panel.
+func (s *Service) handleActions(c *gin.Context) {
+	p := project(c)
+	repo, ok := s.linkedRepo(c, p)
+	if !ok {
+		return
+	}
+	cli, err := s.githubClient(c.Request.Context())
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "not_registered", "GitHub is not connected")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	runs, err := cli.ListWorkflowRuns(ctx, repo.InstallationID, repo.Owner, repo.Name, 15)
+	if err != nil {
+		httpx.Error(c, http.StatusBadGateway, "github_error", "could not load workflow runs")
+		return
+	}
+	out := make([]gin.H, 0, len(runs))
+	for _, r := range runs {
+		out = append(out, gin.H{
+			"id": r.ID, "name": r.Name, "status": r.Status,
+			"conclusion": r.Conclusion, "event": r.Event,
+			"head_branch": r.HeadBranch, "head_sha": r.HeadSHA,
+			"run_number": r.RunNumber, "run_attempt": r.RunAttempt,
+			"url": r.HTMLURL, "actor": r.Actor.Login,
+			"created_at": r.CreatedAt, "updated_at": r.UpdatedAt,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"runs": out})
+}
+
+// handleActionRerun re-triggers a finished workflow run.
+func (s *Service) handleActionRerun(c *gin.Context) {
+	p := project(c)
+	repo, ok := s.linkedRepo(c, p)
+	if !ok {
+		return
+	}
+	var req struct {
+		RunID int64 `json:"run_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.RunID <= 0 {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "run_id is required")
+		return
+	}
+	cli, err := s.githubClient(c.Request.Context())
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "not_registered", "GitHub is not connected")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	if err := cli.RerunWorkflowRun(ctx, repo.InstallationID, repo.Owner, repo.Name, req.RunID); err != nil {
+		httpx.Error(c, http.StatusBadGateway, "github_error", truncate(err.Error(), 300))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"rerun": true})
+}
+
+// handleCreateGitHubIssue files a new issue on the linked repo and mirrors
+// it back as a Relay issue — create once, tracked in both places.
+func (s *Service) handleCreateGitHubIssue(c *gin.Context) {
+	p := project(c)
+	repo, ok := s.linkedRepo(c, p)
+	if !ok {
+		return
+	}
+	var req struct {
+		Title string `json:"title"`
+		Body  string `json:"body"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Title) == "" {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "title is required")
+		return
+	}
+	cli, err := s.githubClient(c.Request.Context())
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "not_registered", "GitHub is not connected")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	gh, err := cli.CreateIssue(ctx, repo.InstallationID, repo.Owner, repo.Name,
+		req.Title, req.Body)
+	if err != nil {
+		httpx.Error(c, http.StatusBadGateway, "github_error", truncate(err.Error(), 300))
+		return
+	}
+	issueID, err := s.MirrorIssue(c.Request.Context(), repo, *gh)
+	if err != nil {
+		s.log.Warn("mirror created issue", zap.Error(err))
+	}
+	s.invalidateDevPanel(p.ID)
+	c.JSON(http.StatusCreated, gin.H{
+		"issue": gin.H{"id": issueID.String(), "number": gh.Number,
+			"url": gh.HTMLURL, "state": gh.State},
+	})
+}
+
+// handleCreatePull opens a pull request on the linked repo and mirrors it
+// back as a Relay issue of kind "pr".
+func (s *Service) handleCreatePull(c *gin.Context) {
+	p := project(c)
+	repo, ok := s.linkedRepo(c, p)
+	if !ok {
+		return
+	}
+	var req struct {
+		Head  string `json:"head"`
+		Base  string `json:"base"`
+		Title string `json:"title"`
+		Body  string `json:"body"`
+		Draft bool   `json:"draft"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Title) == "" ||
+		strings.TrimSpace(req.Head) == "" {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "title and head are required")
+		return
+	}
+	if req.Base == "" {
+		req.Base = repo.DefaultBranch
+	}
+	cli, err := s.githubClient(c.Request.Context())
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "not_registered", "GitHub is not connected")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	pr, err := cli.CreatePR(ctx, repo.InstallationID, repo.Owner, repo.Name,
+		req.Head, req.Base, req.Title, req.Body, req.Draft)
+	if err != nil {
+		httpx.Error(c, http.StatusBadGateway, "github_error", truncate(err.Error(), 300))
+		return
+	}
+	issueID, err := s.MirrorPR(c.Request.Context(), repo, *pr)
+	if err != nil {
+		s.log.Warn("mirror created pr", zap.Error(err))
+	}
+	s.invalidateDevPanel(p.ID)
+	c.JSON(http.StatusCreated, gin.H{
+		"pull": gin.H{"id": issueID.String(), "number": pr.Number,
+			"url": pr.HTMLURL, "state": pr.State, "draft": pr.Draft},
+	})
+}
+
+// handleIssueComment posts a comment on a GitHub issue or pull request —
+// both ride the issues comments API upstream.
+func (s *Service) handleIssueComment(c *gin.Context) {
+	p := project(c)
+	repo, ok := s.linkedRepo(c, p)
+	if !ok {
+		return
+	}
+	var req struct {
+		Number int    `json:"number"`
+		Body   string `json:"body"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Number <= 0 ||
+		strings.TrimSpace(req.Body) == "" {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "number and body are required")
+		return
+	}
+	cli, err := s.githubClient(c.Request.Context())
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "not_registered", "GitHub is not connected")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	if err := cli.CreateIssueComment(ctx, repo.InstallationID, repo.Owner, repo.Name,
+		req.Number, req.Body); err != nil {
+		httpx.Error(c, http.StatusBadGateway, "github_error", truncate(err.Error(), 300))
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"commented": true})
+}
+
+// invalidateDevPanel drops the project's cached dev-panel payload so a
+// write (issue created, PR merged) shows up on the next read.
+func (s *Service) invalidateDevPanel(projectID pgtype.UUID) {
+	s.cache.Delete("dev:" + projectID.String())
+}
+
+// handleWorkspacePulls aggregates open PRs across every linked repo in the
+// workspace — the "all open pull requests" surface. Repos fan out four-wide
+// and the result caches for 60s like the dev panel; per-repo failures drop
+// that group rather than blanking the whole view.
+func (s *Service) handleWorkspacePulls(c *gin.Context) {
+	wsID, _ := httpx.PathUUID(c, "id")
+	key := "wspulls:" + wsID.String()
+	if v, ok := s.cache.Load(key); ok {
+		if e := v.(cacheEntry); time.Now().Before(e.expiry) {
+			c.JSON(http.StatusOK, e.data)
+			return
+		}
+	}
+	repos, err := s.q.ListWorkspaceRepoProjects(c.Request.Context(), wsID)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	cli, err := s.githubClient(c.Request.Context())
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "not_registered", "GitHub is not connected")
+		return
+	}
+	type result struct {
+		idx   int
+		pulls []gin.H
+	}
+	jobs := make(chan int, len(repos))
+	results := make(chan result, len(repos))
+	workers := 4
+	if len(repos) < workers {
+		workers = len(repos)
+	}
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range jobs {
+				r := repos[i]
+				ctx, cancel := context.WithTimeout(c.Request.Context(), 12*time.Second)
+				prs, err := cli.ListPRs(ctx, r.InstallationID, r.Owner, r.Name)
+				cancel()
+				if err != nil {
+					s.log.Warn("workspace pulls", zap.String("repo", r.Owner+"/"+r.Name), zap.Error(err))
+					results <- result{i, nil}
+					continue
+				}
+				out := make([]gin.H, 0, len(prs))
+				for _, pr := range prs {
+					labels := make([]string, 0, len(pr.Labels))
+					for _, l := range pr.Labels {
+						labels = append(labels, l.Name)
+					}
+					out = append(out, gin.H{
+						"number": pr.Number, "title": pr.Title, "state": pr.State,
+						"draft": pr.Draft, "url": pr.HTMLURL, "author": pr.User.Login,
+						"head": pr.Head.Ref, "base": pr.Base.Ref, "labels": labels,
+						"created_at": pr.CreatedAt, "updated_at": pr.UpdatedAt,
+					})
+				}
+				results <- result{i, out}
+			}
+		}()
+	}
+	for i := range repos {
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
+	close(results)
+	pulls := make([][]gin.H, len(repos))
+	for res := range results {
+		pulls[res.idx] = res.pulls
+	}
+	groups := make([]gin.H, 0, len(repos))
+	for i, r := range repos {
+		if pulls[i] == nil {
+			continue // repo call failed
+		}
+		groups = append(groups, gin.H{
+			"project_id":   r.ProjectID.String(),
+			"project_name": r.ProjectName,
+			"project_key":  r.ProjectKey,
+			"repo": repoJSON(db.Repository{
+				ID: r.ID, Owner: r.Owner, Name: r.Name,
+				DefaultBranch: r.DefaultBranch, InstallationID: r.InstallationID,
+			}),
+			"pulls": pulls[i],
+		})
+	}
+	payload := gin.H{"groups": groups, "fetched_at": time.Now()}
+	s.cache.Store(key, cacheEntry{data: payload, expiry: time.Now().Add(60 * time.Second)})
+	c.JSON(http.StatusOK, payload)
 }
 
 // handleCommits serves the git log view — commits on any branch of a linked
@@ -721,6 +1125,61 @@ func (s *Service) handleCommits(c *gin.Context) {
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"commits": out, "branch": branch})
+}
+
+// handleCommitDetail serves the in-app commit modal — full message, stats,
+// touched files and the CI checks on that SHA — so clicking a commit doesn't
+// send the user out to github.com.
+func (s *Service) handleCommitDetail(c *gin.Context) {
+	p := project(c)
+	repo, ok := s.linkedRepo(c, p)
+	if !ok {
+		return
+	}
+	sha := c.Query("sha")
+	if sha == "" {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "sha is required")
+		return
+	}
+	cli, err := s.githubClient(c.Request.Context())
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "not_registered", "GitHub is not connected")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+
+	d, err := cli.GetCommit(ctx, repo.InstallationID, repo.Owner, repo.Name, sha)
+	if err != nil {
+		httpx.Error(c, http.StatusBadGateway, "github_error", "could not load the commit")
+		return
+	}
+	// checks are supplementary — a failure degrades to an empty list.
+	checks, _ := cli.ListCheckRuns(ctx, repo.InstallationID, repo.Owner, repo.Name, d.SHA)
+	outFiles := make([]gin.H, 0, len(d.Files))
+	for _, f := range d.Files {
+		outFiles = append(outFiles, gin.H{
+			"filename": f.Filename, "status": f.Status,
+			"additions": f.Additions, "deletions": f.Deletions,
+		})
+	}
+	outChecks := make([]gin.H, 0, len(checks))
+	for _, ch := range checks {
+		outChecks = append(outChecks, gin.H{
+			"name": ch.Name, "status": ch.Status,
+			"conclusion": ch.Conclusion, "url": ch.HTMLURL,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"commit": gin.H{
+			"sha": d.SHA, "message": d.Commit.Message, "url": d.HTMLURL,
+			"author": d.Commit.Author.Name, "date": d.Commit.Author.Date,
+			"additions": d.Stats.Additions, "deletions": d.Stats.Deletions,
+			"repo": repoJSON(repo),
+		},
+		"files":  outFiles,
+		"checks": outChecks,
+	})
 }
 
 // handleBranches lists branches of a linked repo for the git log picker.
@@ -853,7 +1312,67 @@ func (s *Service) dispatch(event string, body []byte) {
 		s.onIssue(ctx, p)
 	case "pull_request":
 		s.onPullRequest(ctx, p)
+	case "check_run", "check_suite", "workflow_run", "deployment_status", "release":
+		s.onCIEvent(ctx, event, body, p)
 	}
+}
+
+// onCIEvent republishes check/workflow-run webhooks onto the bus so the
+// Actions panel and PR check lists refresh live. The payload keeps only
+// the fields a client needs to repaint.
+func (s *Service) onCIEvent(ctx context.Context, event string, body []byte, p webhookPayload) {
+	if s.Bus == nil || p.Repository == nil || p.Installation == nil {
+		return
+	}
+	repo, err := s.q.GetRepoForIssue(ctx, db.GetRepoForIssueParams{
+		InstallationID: p.Installation.ID,
+		Owner:          p.Repository.Owner.Login,
+		Name:           p.Repository.Name,
+	})
+	if err != nil {
+		return // repo not linked to any project
+	}
+	var detail struct {
+		WorkflowRun *struct {
+			ID         int64  `json:"id"`
+			Status     string `json:"status"`
+			Conclusion string `json:"conclusion"`
+		} `json:"workflow_run"`
+		CheckRun *struct {
+			ID         int64  `json:"id"`
+			Status     string `json:"status"`
+			Conclusion string `json:"conclusion"`
+		} `json:"check_run"`
+		DeploymentStatus *struct {
+			State       string `json:"state"`
+			Environment string `json:"environment"`
+		} `json:"deployment_status"`
+		Release *struct {
+			TagName string `json:"tag_name"`
+		} `json:"release"`
+	}
+	_ = json.Unmarshal(body, &detail)
+	data := map[string]any{
+		"repo": repo.Owner + "/" + repo.Name,
+		"kind": event,
+	}
+	if detail.WorkflowRun != nil {
+		data["status"] = detail.WorkflowRun.Status
+		data["conclusion"] = detail.WorkflowRun.Conclusion
+	}
+	if detail.CheckRun != nil {
+		data["status"] = detail.CheckRun.Status
+		data["conclusion"] = detail.CheckRun.Conclusion
+	}
+	if detail.DeploymentStatus != nil {
+		data["status"] = detail.DeploymentStatus.State
+		data["environment"] = detail.DeploymentStatus.Environment
+	}
+	if detail.Release != nil {
+		data["tag"] = detail.Release.TagName
+	}
+	pid, _ := uuid.FromBytes(repo.ProjectID.Bytes[:])
+	s.Bus.Publish(events.Event{Type: "github.ci", ProjectID: pid, Data: data})
 }
 
 func (s *Service) onInstallation(ctx context.Context, body []byte, p webhookPayload) {
@@ -1009,6 +1528,28 @@ func (s *Service) upsertGitHub(ctx context.Context, repo db.Repository, in impor
 		GhUrl:       pgtype.Text{String: in.url, Valid: in.url != ""},
 	})
 	return row.ID, false, err
+}
+
+// MirrorIssue mirrors a GitHub issue into Relay's issues table. Exported
+// for the MCP server — an agent filing an issue should land on the board
+// the same way the REST create path does.
+func (s *Service) MirrorIssue(ctx context.Context, repo db.Repository, i GHIssue) (pgtype.UUID, error) {
+	id, _, err := s.upsertGitHub(ctx, repo, importItem{
+		kind: "issue", number: i.Number, title: i.Title, body: i.Body,
+		state: i.State, url: i.HTMLURL, nodeID: i.NodeID,
+		status: issueStatus(i.State),
+	})
+	return id, err
+}
+
+// MirrorPR mirrors a GitHub pull request into Relay's issues table.
+func (s *Service) MirrorPR(ctx context.Context, repo db.Repository, p PR) (pgtype.UUID, error) {
+	id, _, err := s.upsertGitHub(ctx, repo, importItem{
+		kind: "pr", number: p.Number, title: p.Title, body: p.Body,
+		state: p.State, url: p.HTMLURL, nodeID: p.NodeID,
+		status: prStatus(p.State, p.Merged, p.Draft),
+	})
+	return id, err
 }
 
 // ghActivity records a GitHub-originated entry in the issue's activity feed.

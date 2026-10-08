@@ -13,9 +13,10 @@ import (
 
 const createReview = `-- name: CreateReview :one
 insert into agent_reviews (project_id, issue_id, agent_id, title, summary,
-                           files, decisions, actions, links, verify, supersedes)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-returning id, project_id, issue_id, agent_id, status, title, summary, files, decisions, actions, links, verify, supersedes, responded_by, response, responded_at, created_at, updated_at
+                           files, decisions, actions, links, verify, supersedes,
+                           scenes)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+returning id, project_id, issue_id, agent_id, status, title, summary, files, decisions, actions, links, verify, supersedes, responded_by, response, responded_at, created_at, updated_at, scenes
 `
 
 type CreateReviewParams struct {
@@ -30,6 +31,7 @@ type CreateReviewParams struct {
 	Links      []byte      `json:"links"`
 	Verify     string      `json:"verify"`
 	Supersedes pgtype.UUID `json:"supersedes"`
+	Scenes     []byte      `json:"scenes"`
 }
 
 func (q *Queries) CreateReview(ctx context.Context, arg CreateReviewParams) (AgentReview, error) {
@@ -45,6 +47,7 @@ func (q *Queries) CreateReview(ctx context.Context, arg CreateReviewParams) (Age
 		arg.Links,
 		arg.Verify,
 		arg.Supersedes,
+		arg.Scenes,
 	)
 	var i AgentReview
 	err := row.Scan(
@@ -66,6 +69,7 @@ func (q *Queries) CreateReview(ctx context.Context, arg CreateReviewParams) (Age
 		&i.RespondedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Scenes,
 	)
 	return i, err
 }
@@ -82,7 +86,7 @@ func (q *Queries) GetAgentReviewMode(ctx context.Context, id pgtype.UUID) (strin
 }
 
 const getReview = `-- name: GetReview :one
-select r.id, r.project_id, r.issue_id, r.agent_id, r.status, r.title, r.summary, r.files, r.decisions, r.actions, r.links, r.verify, r.supersedes, r.responded_by, r.response, r.responded_at, r.created_at, r.updated_at, a.name as agent_name, a.slug as agent_slug, a.avatar_key as agent_avatar,
+select r.id, r.project_id, r.issue_id, r.agent_id, r.status, r.title, r.summary, r.files, r.decisions, r.actions, r.links, r.verify, r.supersedes, r.responded_by, r.response, r.responded_at, r.created_at, r.updated_at, r.scenes, a.name as agent_name, a.slug as agent_slug, a.avatar_key as agent_avatar,
        p.key as project_key, i.number as issue_number,
        u.name as responder_name, u.avatar_key as responder_avatar
 from agent_reviews r
@@ -112,6 +116,7 @@ type GetReviewRow struct {
 	RespondedAt     pgtype.Timestamptz `json:"responded_at"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	Scenes          []byte             `json:"scenes"`
 	AgentName       string             `json:"agent_name"`
 	AgentSlug       string             `json:"agent_slug"`
 	AgentAvatar     pgtype.Text        `json:"agent_avatar"`
@@ -143,6 +148,7 @@ func (q *Queries) GetReview(ctx context.Context, id pgtype.UUID) (GetReviewRow, 
 		&i.RespondedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Scenes,
 		&i.AgentName,
 		&i.AgentSlug,
 		&i.AgentAvatar,
@@ -155,7 +161,7 @@ func (q *Queries) GetReview(ctx context.Context, id pgtype.UUID) (GetReviewRow, 
 }
 
 const listIssueReviews = `-- name: ListIssueReviews :many
-select r.id, r.project_id, r.issue_id, r.agent_id, r.status, r.title, r.summary, r.files, r.decisions, r.actions, r.links, r.verify, r.supersedes, r.responded_by, r.response, r.responded_at, r.created_at, r.updated_at, a.name as agent_name, a.slug as agent_slug, a.avatar_key as agent_avatar,
+select r.id, r.project_id, r.issue_id, r.agent_id, r.status, r.title, r.summary, r.files, r.decisions, r.actions, r.links, r.verify, r.supersedes, r.responded_by, r.response, r.responded_at, r.created_at, r.updated_at, r.scenes, a.name as agent_name, a.slug as agent_slug, a.avatar_key as agent_avatar,
        p.key as project_key, i.number as issue_number,
        u.name as responder_name, u.avatar_key as responder_avatar
 from agent_reviews r
@@ -186,6 +192,7 @@ type ListIssueReviewsRow struct {
 	RespondedAt     pgtype.Timestamptz `json:"responded_at"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	Scenes          []byte             `json:"scenes"`
 	AgentName       string             `json:"agent_name"`
 	AgentSlug       string             `json:"agent_slug"`
 	AgentAvatar     pgtype.Text        `json:"agent_avatar"`
@@ -223,6 +230,7 @@ func (q *Queries) ListIssueReviews(ctx context.Context, issueID pgtype.UUID) ([]
 			&i.RespondedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Scenes,
 			&i.AgentName,
 			&i.AgentSlug,
 			&i.AgentAvatar,
@@ -300,7 +308,7 @@ func (q *Queries) ListMyPendingReviews(ctx context.Context, userID pgtype.UUID) 
 }
 
 const listProjectReviews = `-- name: ListProjectReviews :many
-select r.id, r.project_id, r.issue_id, r.agent_id, r.status, r.title, r.summary, r.files, r.decisions, r.actions, r.links, r.verify, r.supersedes, r.responded_by, r.response, r.responded_at, r.created_at, r.updated_at, a.name as agent_name, a.slug as agent_slug, a.avatar_key as agent_avatar,
+select r.id, r.project_id, r.issue_id, r.agent_id, r.status, r.title, r.summary, r.files, r.decisions, r.actions, r.links, r.verify, r.supersedes, r.responded_by, r.response, r.responded_at, r.created_at, r.updated_at, r.scenes, a.name as agent_name, a.slug as agent_slug, a.avatar_key as agent_avatar,
        p.key as project_key, i.number as issue_number,
        u.name as responder_name, u.avatar_key as responder_avatar
 from agent_reviews r
@@ -339,6 +347,7 @@ type ListProjectReviewsRow struct {
 	RespondedAt     pgtype.Timestamptz `json:"responded_at"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	Scenes          []byte             `json:"scenes"`
 	AgentName       string             `json:"agent_name"`
 	AgentSlug       string             `json:"agent_slug"`
 	AgentAvatar     pgtype.Text        `json:"agent_avatar"`
@@ -376,6 +385,7 @@ func (q *Queries) ListProjectReviews(ctx context.Context, arg ListProjectReviews
 			&i.RespondedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Scenes,
 			&i.AgentName,
 			&i.AgentSlug,
 			&i.AgentAvatar,
@@ -446,7 +456,7 @@ update agent_reviews
 set status = $2, responded_by = $3, response = $4,
     responded_at = now(), updated_at = now()
 where id = $1 and status = 'pending'
-returning id, project_id, issue_id, agent_id, status, title, summary, files, decisions, actions, links, verify, supersedes, responded_by, response, responded_at, created_at, updated_at
+returning id, project_id, issue_id, agent_id, status, title, summary, files, decisions, actions, links, verify, supersedes, responded_by, response, responded_at, created_at, updated_at, scenes
 `
 
 type RespondToReviewParams struct {
@@ -484,6 +494,7 @@ func (q *Queries) RespondToReview(ctx context.Context, arg RespondToReviewParams
 		&i.RespondedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Scenes,
 	)
 	return i, err
 }

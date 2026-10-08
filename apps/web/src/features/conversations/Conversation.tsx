@@ -52,6 +52,7 @@ import {
 } from "../../components/ui";
 import { api } from "../../lib/api";
 import { copyText } from "../../lib/clipboard";
+import { confirmDestructive } from "../../components/Confirm";
 import { openProfile } from "../../components/ProfileModal";
 import { subscribe } from "../../lib/events";
 import { loadNameColors, nameColorFor } from "../../lib/namecolors";
@@ -76,13 +77,23 @@ const QUICK_REACTIONS = ["👀", "✅", "❤️", "🎉"];
 // need a tail ("/todo buy milk"); the composer suggests these when the text
 // starts with "/" and dispatches them in send().
 const SLASH_COMMANDS: { name: string; desc: string; args?: string }[] = [
+  { name: "thread", desc: "start a thread here", args: "<title>" },
+  { name: "channel", desc: "create a channel in this project", args: "<name>" },
+  { name: "threads", desc: "list all threads" },
   { name: "todo", desc: "add a task to this project", args: "<task>" },
   { name: "issue", desc: "create an issue and link it here", args: "<title>" },
   { name: "silent", desc: "post without notifying anyone", args: "<message>" },
   { name: "me", desc: "post an action line — /me waves", args: "<action>" },
   { name: "tag", desc: "tag your next message", args: "<tag>" },
   { name: "inbox", desc: "jump to your inbox" },
+  { name: "overview", desc: "cross-project overview" },
   { name: "board", desc: "open this project's board" },
+  { name: "issues", desc: "open the issue list" },
+  { name: "pulls", desc: "open pull requests" },
+  { name: "allpulls", desc: "pull requests across the workspace" },
+  { name: "commits", desc: "recent commits on linked repos" },
+  { name: "reviews", desc: "open the review queue" },
+  { name: "ideas", desc: "open this project's ideas board" },
   { name: "settings", desc: "open settings" },
   { name: "projects", desc: "back to the project list" },
   { name: "clear", desc: "wipe the channel (asks first)" },
@@ -113,6 +124,9 @@ type PendingAttachment = {
   status: "uploading" | "ready" | "error";
   attachmentId?: string;
   error?: string;
+  // Restored-from-localStorage entries carry a stub File (0 bytes); size
+  // keeps the real byte count for the chip's label.
+  size?: number;
 };
 
 // Staged attachments live outside the component, keyed by conversation, so
@@ -1768,10 +1782,10 @@ function PendingChip(props: {
     if (item().status === "error") {
       return item().error ?? "Upload failed";
     }
-    const size = formatBytes(item().file.size);
+    const size = formatBytes(item().file.size || item().size || 0);
     return item().status === "uploading"
       ? "uploading…"
-      : `${size} · ${ext} · will upload on send`;
+      : `${size} · ${ext} · ready`;
   };
   return (
     <li
@@ -1829,17 +1843,44 @@ function PendingChip(props: {
   );
 }
 
+// Deleting a thread = expiring it now; the next listThreads call sweeps the
+// row server-side. Confirmed via the shared destructive modal.
+async function expireThreadNow(t: { id: string; title?: string | null }) {
+  const ok = await confirmDestructive({
+    title: `Delete thread "${t.title || "Thread"}"`,
+    body: "The thread and its replies are removed permanently.",
+    confirmLabel: "Delete thread",
+  });
+  if (!ok) return false;
+  await api
+    .setThreadExpiry(t.id, new Date(Date.now() - 1000).toISOString())
+    .catch(() => {});
+  return true;
+}
+
 // ThreadsModal — the project's thread index ("See all threads"), most
-// recently active first. Picking one opens the thread panel.
+// recently active first. Picking one opens the thread panel; hover shows a
+// delete action.
 function ThreadsModal(props: {
   projectId: string;
   onPick: (t: ThreadSummary) => void;
   onClose: () => void;
 }) {
-  const [threads] = createResource(
+  const [threads, { refetch }] = createResource(
     () => props.projectId,
     async (id) => (await api.listThreads(id)).threads,
   );
+  const unsub = subscribe((e) => {
+    if (e.project_id === props.projectId && e.type.startsWith("thread.")) {
+      refetch();
+    }
+  });
+  onCleanup(unsub);
+
+  async function remove(t: ThreadSummary) {
+    if (!(await expireThreadNow(t))) return;
+    refetch(); // listThreads sweeps expired rows
+  }
   return (
     <div
       class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
@@ -1883,11 +1924,11 @@ function ThreadsModal(props: {
                 }
               >
                 {(t) => (
-                  <li>
+                  <li class="group flex items-center transition-colors hover:bg-hover">
                     <button
                       type="button"
                       onClick={() => props.onPick(t)}
-                      class="block w-full px-5 py-3 text-left transition-colors hover:bg-hover"
+                      class="block min-w-0 flex-1 px-5 py-3 text-left"
                     >
                       <div class="flex items-baseline gap-2">
                         <span class="min-w-0 flex-1 truncate text-[13.5px] font-medium">
@@ -1907,6 +1948,18 @@ function ThreadsModal(props: {
                           ? ` · ${t.parent?.author ?? ""}: ${t.parent?.preview}`
                           : ""}
                       </p>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Delete thread ${t.title ?? ""}`}
+                      title="Delete thread"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void remove(t);
+                      }}
+                      class="mr-3 shrink-0 rounded p-1 text-faint opacity-0 transition-opacity hover:text-red-500 focus-visible:opacity-100 group-hover:opacity-100"
+                    >
+                      <TrashIcon class="h-3.5 w-3.5" />
                     </button>
                   </li>
                 )}
@@ -1951,7 +2004,11 @@ function ConversationThread(props: {
     try {
       const raw = localStorage.getItem(draftKey);
       return raw
-        ? (JSON.parse(raw) as { body?: string; tags?: string[] })
+        ? (JSON.parse(raw) as {
+            body?: string;
+            tags?: string[];
+            attachments?: { id: string; name: string; size: number; type: string }[];
+          })
         : null;
     } catch {
       return null;
@@ -1967,11 +2024,30 @@ function ConversationThread(props: {
   createEffect(() => {
     const body = draft();
     const tags = draftTags();
+    // Already-uploaded attachments persist too — the file is on the server,
+    // so restoring only needs its id/name/size. "uploading"/"error" entries
+    // don't survive a reload (their File object is gone anyway).
+    const attachments = pending()
+      .flatMap((p) =>
+        p.status === "ready" && p.attachmentId
+          ? [
+              {
+                id: p.attachmentId,
+                name: p.file.name,
+                size: p.file.size || p.size || 0,
+                type: p.file.type,
+              },
+            ]
+          : [],
+      );
     try {
-      if (!body.trim() && tags.length === 0) {
+      if (!body.trim() && tags.length === 0 && attachments.length === 0) {
         localStorage.removeItem(draftKey);
       } else {
-        localStorage.setItem(draftKey, JSON.stringify({ body, tags }));
+        localStorage.setItem(
+          draftKey,
+          JSON.stringify({ body, tags, attachments }),
+        );
       }
     } catch {
       /* storage full/denied — drafts are best-effort */
@@ -2009,9 +2085,22 @@ function ConversationThread(props: {
   // Messages that arrived while the reader was scrolled up — drives the
   // Discord-style "New messages" jump pill above the composer.
   const [newBelow, setNewBelow] = createSignal(0);
-  // Restore staged attachments for this conversation (survives navigation).
+  // Restore staged attachments for this conversation: in-session navigation
+  // keeps the live File objects (pendingDrafts); a reload restores the
+  // already-uploaded ones from localStorage with stub Files — the bytes live
+  // on the server under attachmentId, so sending still links them.
   const [pending, setPending] = createSignal<PendingAttachment[]>(
-    pendingDrafts.get(props.conversationId) ?? [],
+    pendingDrafts.get(props.conversationId) ??
+      (savedDraft?.attachments ?? []).map((a) => ({
+        localId: `restored-${a.id}`,
+        file: new File([], a.name, { type: a.type }),
+        previewUrl: a.type.startsWith("image/")
+          ? api.attachmentURL(props.projectId, a.id)
+          : null,
+        status: "ready",
+        attachmentId: a.id,
+        size: a.size,
+      })),
   );
   createEffect(() => {
     const list = pending();
@@ -2137,9 +2226,50 @@ function ConversationThread(props: {
     );
   }
 
+  // Typing indicators — ephemeral. Each event grants ~4s of visibility;
+  // senders throttle to one POST per 3s of keystrokes.
+  const [typers, setTypers] = createSignal<
+    Record<string, { name: string; until: number }>
+  >({});
+  const pruneTypers = setInterval(() => {
+    const now = Date.now();
+    setTypers((cur) => {
+      const next = Object.fromEntries(
+        Object.entries(cur).filter(([, t]) => t.until > now),
+      );
+      return Object.keys(next).length === Object.keys(cur).length
+        ? cur
+        : next;
+    });
+  }, 1000);
+  onCleanup(() => clearInterval(pruneTypers));
+  let lastTypingSent = 0;
+  const maybeTyping = () => {
+    if (Date.now() - lastTypingSent < 3000) return;
+    lastTypingSent = Date.now();
+    api.sendTyping(props.conversationId).catch(() => {});
+  };
+  const typingLabel = () => {
+    const names = Object.values(typers()).map((t) => t.name);
+    if (names.length === 0) return "";
+    if (names.length === 1) return `${names[0]} is typing…`;
+    if (names.length === 2) return `${names[0]} and ${names[1]} are typing…`;
+    return "Several people are typing…";
+  };
+
   const unsub = subscribe((e) => {
     const data = e.data as Record<string, unknown> | undefined;
     if (!data || data.conversation_id !== props.conversationId) return;
+    if (e.type === "typing") {
+      const u = data.user as { id: string; name: string } | undefined;
+      if (u && u.id !== session.user()?.id) {
+        setTypers((cur) => ({
+          ...cur,
+          [u.id]: { name: u.name, until: Date.now() + 4000 },
+        }));
+      }
+      return;
+    }
     if (e.type === "message.created") {
       const m = data.message as Message;
       // Under an active tag filter only matching messages join the view.
@@ -2716,6 +2846,88 @@ function ConversationThread(props: {
         return true;
       };
       switch (cmd) {
+        case "/thread": {
+          // Threads root at a message — the reply target wins, else the
+          // channel's latest. createThread posts the "started a thread"
+          // notice itself.
+          const rootId = replyTo()?.id ?? messages().at(-1)?.id;
+          if (!rootId) {
+            setSendError("Nothing to thread yet — send a message first");
+            return;
+          }
+          setSending(true);
+          setSendError(null);
+          try {
+            const { thread } = await api.createThread(
+              rootId,
+              arg || undefined,
+            );
+            props.onOpenThread?.({
+              id: thread.id,
+              title: thread.title,
+              reply_count: thread.reply_count,
+            });
+            clearDraft();
+            setReplyTo(null);
+          } catch (err) {
+            setSendError(
+              err instanceof Error ? err.message : "Could not create thread",
+            );
+          } finally {
+            setSending(false);
+          }
+          return;
+        }
+        case "/threads":
+          clearDraft();
+          setThreadsOpen(true);
+          return;
+        case "/channel": {
+          if (!arg && needArg("/channel <name>")) return;
+          setSending(true);
+          setSendError(null);
+          try {
+            const res = await api.createChannel(props.projectId, arg);
+            clearDraft();
+            navigate(`/app/p/${props.projectId}/c/${res.channel.id}`);
+          } catch (err) {
+            setSendError(
+              err instanceof Error ? err.message : "Could not create channel",
+            );
+          } finally {
+            setSending(false);
+          }
+          return;
+        }
+        case "/reviews":
+        case "/review":
+          clearDraft();
+          navigate(`/app/p/${props.projectId}?view=reviews`);
+          return;
+        case "/issues":
+          clearDraft();
+          navigate(`/app/p/${props.projectId}?view=issues`);
+          return;
+        case "/pulls":
+          clearDraft();
+          navigate(`/app/p/${props.projectId}?view=pulls`);
+          return;
+        case "/allpulls":
+          clearDraft();
+          navigate("/app/pulls");
+          return;
+        case "/commits":
+          clearDraft();
+          navigate(`/app/p/${props.projectId}?view=commits`);
+          return;
+        case "/ideas":
+          clearDraft();
+          navigate(`/app/p/${props.projectId}/ideas`);
+          return;
+        case "/overview":
+          clearDraft();
+          navigate("/app/overview");
+          return;
         case "/clear":
         case "/new": {
           clearDraft();
@@ -3244,6 +3456,11 @@ function ConversationThread(props: {
             </For>
           </div>
         </Show>
+        <Show when={typingLabel()}>
+          <p class="px-3 pb-1 text-[11.5px] italic text-muted">
+            {typingLabel()}
+          </p>
+        </Show>
         <div
           class={`rounded-2xl border bg-surface transition-colors ${
             dragging()
@@ -3416,6 +3633,7 @@ function ConversationThread(props: {
               onInput={(e) => {
                 setDraft(e.currentTarget.value);
                 autogrow();
+                maybeTyping();
                 detectMention(
                   e.currentTarget.value,
                   e.currentTarget.selectionStart,
@@ -3711,7 +3929,7 @@ function ThreadPanel(props: {
     const res = await api
       .setThreadExpiry(props.thread.id, at)
       .catch(() => undefined);
-    if (res) setExpiresAt(res.thread.expires_at ?? null);
+    if (res?.thread) setExpiresAt(res.thread.expires_at ?? null);
   }
 
   const clamp = (w: number) =>
@@ -3832,6 +4050,17 @@ function ThreadPanel(props: {
         </button>
         <button
           type="button"
+          aria-label="Delete thread"
+          title="Delete thread"
+          onClick={async () => {
+            if (await expireThreadNow(props.thread)) props.onClose();
+          }}
+          class="rounded p-1 text-muted transition-colors hover:bg-hover hover:text-red-500"
+        >
+          <TrashIcon class="h-4 w-4" />
+        </button>
+        <button
+          type="button"
           onClick={() => setFull((v) => !v)}
           aria-label={full() ? "Restore thread panel" : "Enlarge thread"}
           title={full() ? "Restore" : "Enlarge to fullscreen"}
@@ -3880,6 +4109,25 @@ export function Conversation(props: {
   const [activeThread, setActiveThread] = createSignal<ThreadSummary | null>(
     null,
   );
+  // ?thread=<id> deep links (left rail, inbox) open the side panel — resolve
+  // the summary from the project's thread index once the conversation is up.
+  const [searchParams] = useSearchParams();
+  let threadLast: string | null = null;
+  createEffect(() => {
+    const raw = searchParams.thread;
+    const id = (Array.isArray(raw) ? raw[0] : raw) ?? null;
+    if (!id || !resolved() || activeThread()?.id === id || id === threadLast) {
+      return;
+    }
+    threadLast = id;
+    void api
+      .listThreads(props.projectId)
+      .then((r) => {
+        const t = r.threads.find((x) => x.id === id);
+        if (t) setActiveThread(t);
+      })
+      .catch(() => {});
+  });
   return (
     <Show
       when={resolved()}

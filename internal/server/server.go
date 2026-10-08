@@ -76,14 +76,37 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	todoSvc.Bus = hub
 	reviewSvc.Bus = hub
 	agentSvc.Bus = hub
+	ghSvc.Bus = hub
 	rtSvc := realtime.NewService(hub, pool)
 	searchSvc := search.NewService(pool)
 	hookSvc := webhooks.NewService(log, pool, cfg.PublicURL)
+	hookSvc.Bus = hub
 	pushSvc := push.NewService(log, pool, cfg)
 	briefSvc := briefs.NewService(log, pool)
 	ideaSvc := ideas.NewService(log, pool)
 	convSvc.Push = pushSvc
 	hookSvc.Start(context.Background(), hub)
+	// Janitor: expired threads and abandoned staged attachments were only
+	// swept lazily on read paths. Run a first pass at boot — downtime may
+	// have stranded both — then every ten minutes. Guarded: pgx panics on a
+	// closed pool (tests shut pools while this goroutine still runs).
+	go func() {
+		sweep := func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Warn("janitor sweep aborted", zap.Any("panic", r))
+				}
+			}()
+			convSvc.SweepExpired(context.Background())
+			attSvc.SweepOrphans(context.Background())
+		}
+		sweep()
+		t := time.NewTicker(10 * time.Minute)
+		defer t.Stop()
+		for range t.C {
+			sweep()
+		}
+	}()
 	mcpHandler := mcpserver.New(db.New(pool), store, cfg.StorageMaxUploadMiB<<20, log, ghSvc, hub, pushSvc)
 
 	api := r.Group("/api", corsForTokenClients())

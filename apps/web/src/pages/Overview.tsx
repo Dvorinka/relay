@@ -1,19 +1,165 @@
 import { A } from "@solidjs/router";
-import { createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
-import type { ActivityIssue } from "@relay/api-client";
+import {
+  createEffect,
+  createMemo,
+  createResource,
+  createSignal,
+  For,
+  Match,
+  onCleanup,
+  Show,
+  Switch,
+} from "solid-js";
+import type { ActivityIssue, Project } from "@relay/api-client";
 import { api } from "../lib/api";
 import { subscribe } from "../lib/events";
 import { FullPageSpinner, inputClass } from "../components/ui";
-import { GitPullRequestIcon, IssueIcon, SearchIcon } from "../components/icons";
+import {
+  ChevronDownIcon,
+  GitPullRequestIcon,
+  IssueIcon,
+  SearchIcon,
+} from "../components/icons";
 import { useProjects } from "../stores/projects";
 import { useSession } from "../stores/session";
 import { activeWorkspace } from "../stores/workspace";
 import { StatusDot } from "../features/issues/meta";
 import { Calendar } from "../features/issues/Calendar";
+import { TimelineFeed } from "../features/issues/TimelineFeed";
 import { timeAgo } from "../lib/time";
 
 type Kind = "all" | "issue" | "pr";
-type View = "list" | "calendar";
+type View = "list" | "calendar" | "timeline";
+
+// Custom project picker — searchable, shows the project color dot, closes on
+// outside click and Escape. Replaces the bare <select>.
+function ProjectPicker(props: {
+  projects: Project[];
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  const [open, setOpen] = createSignal(false);
+  const [q, setQ] = createSignal("");
+  let wrap: HTMLDivElement | undefined;
+  let input: HTMLInputElement | undefined;
+
+  const selected = () => props.projects.find((p) => p.id === props.value);
+  const shown = () => {
+    const needle = q().trim().toLowerCase();
+    if (!needle) return props.projects;
+    return props.projects.filter(
+      (p) =>
+        p.name.toLowerCase().includes(needle) ||
+        p.key.toLowerCase().includes(needle),
+    );
+  };
+  const pick = (id: string) => {
+    props.onChange(id);
+    setOpen(false);
+    setQ("");
+  };
+
+  createEffect(() => {
+    if (!open()) return;
+    const onDoc = (e: MouseEvent) => {
+      if (wrap && !wrap.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    input?.focus();
+    onCleanup(() => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    });
+  });
+
+  return (
+    <div ref={(el) => (wrap = el)} class="relative">
+      <button
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open()}
+        onClick={() => setOpen(!open())}
+        class={`${inputClass} !w-auto flex items-center gap-1.5 pr-6`}
+      >
+        <Show when={selected()?.color}>
+          <span
+            class="h-2 w-2 shrink-0 rounded-full"
+            style={{ "background-color": selected()!.color! }}
+          />
+        </Show>
+        <span class="max-w-40 truncate">
+          {selected()?.name ?? "All projects"}
+        </span>
+        <ChevronDownIcon class="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
+      </button>
+      <Show when={open()}>
+        <div class="absolute left-0 top-full z-30 mt-1 w-60 overflow-hidden rounded-lg border border-border bg-surface shadow-xl">
+          <div class="border-b border-border p-1.5">
+            <input
+              ref={(el) => (input = el)}
+              type="search"
+              value={q()}
+              onInput={(e) => setQ(e.currentTarget.value)}
+              placeholder="Search projects…"
+              aria-label="Search projects"
+              class={inputClass}
+            />
+          </div>
+          <ul role="listbox" class="max-h-64 overflow-y-auto py-1">
+            <li>
+              <button
+                type="button"
+                role="option"
+                aria-selected={props.value === ""}
+                onClick={() => pick("")}
+                class={`w-full px-3 py-1.5 text-left text-[12.5px] transition-colors hover:bg-hover ${
+                  props.value === "" ? "font-medium text-accent" : ""
+                }`}
+              >
+                All projects
+              </button>
+            </li>
+            <For
+              each={shown()}
+              fallback={
+                <li class="px-3 py-2 text-[12px] text-muted">No matches</li>
+              }
+            >
+              {(p) => (
+                <li>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={props.value === p.id}
+                    onClick={() => pick(p.id)}
+                    class={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] transition-colors hover:bg-hover ${
+                      props.value === p.id ? "font-medium text-accent" : ""
+                    }`}
+                  >
+                    <span
+                      class="h-2 w-2 shrink-0 rounded-full"
+                      style={{
+                        "background-color": p.color ?? "var(--accent)",
+                      }}
+                    />
+                    <span class="min-w-0 flex-1 truncate">{p.name}</span>
+                    <span class="shrink-0 font-mono text-[10px] text-muted">
+                      {p.key}
+                    </span>
+                  </button>
+                </li>
+              )}
+            </For>
+          </ul>
+        </div>
+      </Show>
+    </div>
+  );
+}
 
 // Every open issue and GitHub-linked PR across the caller's projects — the
 // "Across projects" feed on Home unrolled into a full page. myActivity is
@@ -88,6 +234,7 @@ export default function Overview() {
               [
                 ["list", "List"],
                 ["calendar", "Calendar"],
+                ["timeline", "Timeline"],
               ] as const
             }
           >
@@ -143,23 +290,21 @@ export default function Overview() {
             )}
           </For>
         </div>
-        <select
+        <ProjectPicker
+          projects={wsProjects()}
           value={proj()}
-          onChange={(e) => setProj(e.currentTarget.value)}
-          aria-label="Filter by project"
-          class={`${inputClass} !w-auto`}
-        >
-          <option value="">All projects</option>
-          <For each={wsProjects()}>
-            {(p) => <option value={p.id}>{p.name}</option>}
-          </For>
-        </select>
+          onChange={setProj}
+        />
         </Show>
       </div>
-      <Show
-        when={view() === "list"}
-        fallback={<Calendar projects={wsProjects()} />}
-      >
+      <Switch>
+        <Match when={view() === "calendar"}>
+          <Calendar projects={wsProjects()} />
+        </Match>
+        <Match when={view() === "timeline"}>
+          <TimelineFeed projects={wsProjects()} />
+        </Match>
+        <Match when={view() === "list"}>
       <div class="min-h-0 flex-1 overflow-y-auto px-6 py-4">
         <Show
           when={activity.state === "ready"}
@@ -219,7 +364,8 @@ export default function Overview() {
           </ul>
         </Show>
       </div>
-      </Show>
+        </Match>
+      </Switch>
     </div>
   );
 }

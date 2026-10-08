@@ -20,6 +20,13 @@ interface Results {
     title: string;
     status: string;
     project_id: string;
+    github?: {
+      kind: string;
+      state: string;
+      number: number;
+      repo: string;
+      url: string;
+    };
   }[];
   messages: {
     id: string;
@@ -28,6 +35,14 @@ interface Results {
     author: string;
   }[];
   todos: { id: string; content: string; done: boolean; project_id: string }[];
+  conversations?: {
+    id: string;
+    title: string;
+    kind: string;
+    project_id: string;
+    project_key: string;
+    project_name: string;
+  }[];
 }
 
 type Entry = { label: string; sub?: string; href: string; group: string };
@@ -85,9 +100,24 @@ export function CommandPalette() {
       })),
       ...r.issues.map((i) => ({
         label: i.title,
-        sub: `${i.key} · ${statusLabel(i.status)}`,
-        href: `/app/p/${i.project_id}/i/${i.id}`,
-        group: "Issues",
+        sub: i.github
+          ? `${i.github.repo}#${i.github.number} · ${i.github.state}`
+          : `${i.key} · ${statusLabel(i.status)}`,
+        // Mirrored PRs open the in-app PR view, not the issue card.
+        href:
+          i.github?.kind === "pr"
+            ? `/app/p/${i.project_id}?view=pulls&pr=${i.github.repo}:${i.github.number}`
+            : `/app/p/${i.project_id}/i/${i.id}`,
+        group: i.github?.kind === "pr" ? "Pull requests" : "Issues",
+      })),
+      ...(r.conversations ?? []).map((c) => ({
+        label: c.title,
+        sub: `${c.kind === "channel" ? "#" : "thread in"} ${c.project_name}`,
+        href:
+          c.kind === "channel"
+            ? `/app/p/${c.project_id}/c/${c.id}`
+            : `/app/p/${c.project_id}?thread=${c.id}`,
+        group: "Channels & threads",
       })),
       ...r.todos.map((t) => ({
         label: t.content,

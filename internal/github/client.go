@@ -224,6 +224,26 @@ type Commit struct {
 	} `json:"commit"`
 }
 
+// CommitDetail is the expanded view of one commit: full message, line stats,
+// and the touched files — everything the in-app commit modal needs.
+type CommitDetail struct {
+	SHA     string `json:"sha"`
+	HTMLURL string `json:"html_url"`
+	Commit  struct {
+		Message string `json:"message"`
+		Author  struct {
+			Name string    `json:"name"`
+			Date time.Time `json:"date"`
+		} `json:"author"`
+	} `json:"commit"`
+	Stats struct {
+		Additions int `json:"additions"`
+		Deletions int `json:"deletions"`
+		Total     int `json:"total"`
+	} `json:"stats"`
+	Files []PRFile `json:"files"`
+}
+
 // IsPAT reports whether this client runs on a personal access token.
 func (c *Client) IsPAT() bool { return c.pat != "" }
 
@@ -515,6 +535,20 @@ func (c *Client) ListCommitsPaged(ctx context.Context, installID int64, owner, r
 	return out, err
 }
 
+// GetCommit returns full detail for one commit — message, stats, touched
+// files. Powers the in-app commit view so users don't leave for github.com.
+func (c *Client) GetCommit(ctx context.Context, installID int64, owner, repo, sha string) (*CommitDetail, error) {
+	tok, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return nil, err
+	}
+	var out CommitDetail
+	err = c.do(ctx, "GET",
+		fmt.Sprintf("%s/repos/%s/%s/commits/%s", apiBase, owner, repo, sha),
+		tok, nil, &out)
+	return &out, err
+}
+
 func (c *Client) ListCommits(ctx context.Context, installID int64, owner, repo, branch string) ([]Commit, error) {
 	tok, err := c.installationToken(ctx, installID)
 	if err != nil {
@@ -585,4 +619,115 @@ func (c *Client) RepoFile(ctx context.Context, installID int64, owner, repo, pat
 		return "", 0, err
 	}
 	return string(raw), out.Size, nil
+}
+
+// SetPRState closes or reopens a pull request. state is "open"|"closed".
+// Requires pull_requests:write, same as MergePR.
+func (c *Client) SetPRState(ctx context.Context, installID int64, owner, repo string, number int, state string) (*PR, error) {
+	tok, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return nil, err
+	}
+	payload, _ := json.Marshal(map[string]string{"state": state})
+	var out PR
+	err = c.do(ctx, "PATCH",
+		fmt.Sprintf("%s/repos/%s/%s/pulls/%d", apiBase, owner, repo, number),
+		tok, bytes.NewReader(payload), &out)
+	return &out, err
+}
+
+// CreatePRReview submits a review on a pull request. event is GitHub's
+// verb: "APPROVE" | "REQUEST_CHANGES" | "COMMENT". body is required for
+// REQUEST_CHANGES, optional for the rest.
+func (c *Client) CreatePRReview(ctx context.Context, installID int64, owner, repo string, number int, event, body string) error {
+	tok, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return err
+	}
+	payload, _ := json.Marshal(map[string]string{"event": event, "body": body})
+	var out struct {
+		ID int64 `json:"id"`
+	}
+	err = c.do(ctx, "POST",
+		fmt.Sprintf("%s/repos/%s/%s/pulls/%d/reviews", apiBase, owner, repo, number),
+		tok, bytes.NewReader(payload), &out)
+	return err
+}
+
+// WorkflowRun is one row of a repo's Actions tab.
+type WorkflowRun struct {
+	ID         int64     `json:"id"`
+	Name       string    `json:"name"`
+	Status     string    `json:"status"`     // queued | in_progress | completed | …
+	Conclusion string    `json:"conclusion"` // success | failure | cancelled | skipped | …
+	Event      string    `json:"event"`
+	HeadBranch string    `json:"head_branch"`
+	HeadSHA    string    `json:"head_sha"`
+	RunNumber  int       `json:"run_number"`
+	RunAttempt int       `json:"run_attempt"`
+	HTMLURL    string    `json:"html_url"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	Actor      struct {
+		Login string `json:"login"`
+	} `json:"actor"`
+}
+
+// ListWorkflowRuns returns the repo's most recent Actions runs.
+func (c *Client) ListWorkflowRuns(ctx context.Context, installID int64, owner, repo string, perPage int) ([]WorkflowRun, error) {
+	tok, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return nil, err
+	}
+	if perPage <= 0 || perPage > 50 {
+		perPage = 20
+	}
+	var out struct {
+		WorkflowRuns []WorkflowRun `json:"workflow_runs"`
+	}
+	err = c.do(ctx, "GET",
+		fmt.Sprintf("%s/repos/%s/%s/actions/runs?per_page=%d", apiBase, owner, repo, perPage),
+		tok, nil, &out)
+	return out.WorkflowRuns, err
+}
+
+// RerunWorkflowRun re-triggers a finished run (201 from GitHub on success).
+// Failed-only variant exists upstream but the plain rerun covers both.
+func (c *Client) RerunWorkflowRun(ctx context.Context, installID int64, owner, repo string, runID int64) error {
+	tok, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return err
+	}
+	return c.do(ctx, "POST",
+		fmt.Sprintf("%s/repos/%s/%s/actions/runs/%d/rerun", apiBase, owner, repo, runID),
+		tok, nil, nil)
+}
+
+// CreateIssueComment posts a comment on an issue or pull request — GitHub
+// serves both through the issues comments API.
+func (c *Client) CreateIssueComment(ctx context.Context, installID int64, owner, repo string, number int, body string) error {
+	tok, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return err
+	}
+	payload, _ := json.Marshal(map[string]string{"body": body})
+	return c.do(ctx, "POST",
+		fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments", apiBase, owner, repo, number),
+		tok, bytes.NewReader(payload), nil)
+}
+
+// CreatePR opens a pull request on GitHub.
+func (c *Client) CreatePR(ctx context.Context, installID int64, owner, repo, head, base, title, body string, draft bool) (*PR, error) {
+	tok, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return nil, err
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"head": head, "base": base, "title": title, "body": body, "draft": draft,
+	})
+	var out PR
+	err = c.do(ctx, "POST",
+		fmt.Sprintf("%s/repos/%s/%s/pulls", apiBase, owner, repo),
+		tok, bytes.NewReader(payload), &out)
+	return &out, err
 }

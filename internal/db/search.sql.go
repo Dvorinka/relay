@@ -11,9 +11,66 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const searchConversations = `-- name: SearchConversations :many
+select c.id, c.title, c.kind, c.project_id, p.key as project_key, p.name as project_name
+from conversations c
+join projects p on p.id = c.project_id
+join workspace_members wm on wm.workspace_id = p.workspace_id and wm.user_id = $1
+where c.kind in ('channel', 'thread')
+  and c.title <> ''
+  and to_tsvector('simple', c.title) @@ websearch_to_tsquery('simple', $2)
+  and (c.expires_at is null or c.expires_at > now())
+order by c.created_at desc
+limit 20
+`
+
+type SearchConversationsParams struct {
+	UserID             pgtype.UUID `json:"user_id"`
+	WebsearchToTsquery string      `json:"websearch_to_tsquery"`
+}
+
+type SearchConversationsRow struct {
+	ID          pgtype.UUID `json:"id"`
+	Title       pgtype.Text `json:"title"`
+	Kind        string      `json:"kind"`
+	ProjectID   pgtype.UUID `json:"project_id"`
+	ProjectKey  string      `json:"project_key"`
+	ProjectName string      `json:"project_name"`
+}
+
+// channels and threads by title, restricted to the caller's workspaces
+func (q *Queries) SearchConversations(ctx context.Context, arg SearchConversationsParams) ([]SearchConversationsRow, error) {
+	rows, err := q.db.Query(ctx, searchConversations, arg.UserID, arg.WebsearchToTsquery)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SearchConversationsRow{}
+	for rows.Next() {
+		var i SearchConversationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Kind,
+			&i.ProjectID,
+			&i.ProjectKey,
+			&i.ProjectName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const searchIssues = `-- name: SearchIssues :many
 select i.id, i.number, i.title, i.status, i.priority, i.project_id,
        p.key as project_key,
+       i.github_kind, i.github_state, i.github_number, i.github_url,
+       coalesce((r.owner || '/' || r.name)::text, '') as github_repo,
        ts_rank(
          to_tsvector('english', i.title || ' ' || i.description)
          || to_tsvector('simple', p.key || '-' || i.number || ' ' || p.key || i.number),
@@ -21,6 +78,7 @@ select i.id, i.number, i.title, i.status, i.priority, i.project_id,
 from issues i
 join projects p on p.id = i.project_id
 join workspace_members wm on wm.workspace_id = p.workspace_id and wm.user_id = $1
+left join repositories r on r.id = i.github_repo_id
 where (to_tsvector('english', i.title || ' ' || i.description)
        || to_tsvector('simple', p.key || '-' || i.number || ' ' || p.key || i.number))
       @@ websearch_to_tsquery('english', $2)
@@ -35,14 +93,19 @@ type SearchIssuesParams struct {
 }
 
 type SearchIssuesRow struct {
-	ID         pgtype.UUID `json:"id"`
-	Number     int32       `json:"number"`
-	Title      string      `json:"title"`
-	Status     string      `json:"status"`
-	Priority   string      `json:"priority"`
-	ProjectID  pgtype.UUID `json:"project_id"`
-	ProjectKey string      `json:"project_key"`
-	Rank       float32     `json:"rank"`
+	ID           pgtype.UUID `json:"id"`
+	Number       int32       `json:"number"`
+	Title        string      `json:"title"`
+	Status       string      `json:"status"`
+	Priority     string      `json:"priority"`
+	ProjectID    pgtype.UUID `json:"project_id"`
+	ProjectKey   string      `json:"project_key"`
+	GithubKind   string      `json:"github_kind"`
+	GithubState  pgtype.Text `json:"github_state"`
+	GithubNumber pgtype.Int4 `json:"github_number"`
+	GithubUrl    pgtype.Text `json:"github_url"`
+	GithubRepo   interface{} `json:"github_repo"`
+	Rank         float32     `json:"rank"`
 }
 
 func (q *Queries) SearchIssues(ctx context.Context, arg SearchIssuesParams) ([]SearchIssuesRow, error) {
@@ -62,6 +125,11 @@ func (q *Queries) SearchIssues(ctx context.Context, arg SearchIssuesParams) ([]S
 			&i.Priority,
 			&i.ProjectID,
 			&i.ProjectKey,
+			&i.GithubKind,
+			&i.GithubState,
+			&i.GithubNumber,
+			&i.GithubUrl,
+			&i.GithubRepo,
 			&i.Rank,
 		); err != nil {
 			return nil, err

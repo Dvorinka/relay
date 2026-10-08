@@ -19,9 +19,9 @@ import {
 import { Avatar } from "@ark-ui/solid";
 import {
   BotIcon,
-  BriefsIcon,
   BulbIcon,
   CheckIcon,
+  ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   CommitIcon,
@@ -66,7 +66,7 @@ import { ProjectConfigSections } from "../issues/ProjectSettings";
 import { isClosed, statusDefs, StatusDot } from "../issues/meta";
 import { Reviews } from "../reviews/Reviews";
 import { WebhooksSection } from "../webhooks/Webhooks";
-import { BriefsPanel } from "../briefs/BriefsPanel";
+import { openCommit } from "../github/CommitModal";
 
 type View =
   | "issues"
@@ -148,22 +148,45 @@ function HeadButton(props: {
   );
 }
 
+// Each rail section collapses via its header chevron; the closed state
+// persists per section id across sessions.
 function RailSection(props: {
+  id: string;
   label: string;
   count?: number;
   children: any;
 }) {
+  const key = `relay.railsec.${props.id}`;
+  const [closed, setClosed] = createSignal(
+    localStorage.getItem(key) === "1",
+  );
+  const toggle = () =>
+    setClosed((v) => {
+      localStorage.setItem(key, v ? "0" : "1");
+      return !v;
+    });
   return (
-    <section class="px-4 pt-5">
+    <section class="px-4 pt-4">
       <h3 class="mb-2 flex items-center text-[10.5px] font-semibold uppercase tracking-[0.07em] text-muted/80">
-        {props.label}
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={!closed()}
+          aria-label={`${closed() ? "Expand" : "Collapse"} ${props.label}`}
+          class="flex min-w-0 flex-1 items-center gap-1 text-left transition-colors hover:text-fg"
+        >
+          <ChevronDownIcon
+            class={`h-3 w-3 shrink-0 transition-transform ${closed() ? "-rotate-90" : ""}`}
+          />
+          <span class="truncate">{props.label}</span>
+        </button>
         <Show when={props.count !== undefined}>
           <span class="ml-auto rounded-md bg-surface px-1.5 py-0.5 text-[10px] font-medium text-muted">
             {props.count}
           </span>
         </Show>
       </h3>
-      {props.children}
+      <Show when={!closed()}>{props.children}</Show>
     </section>
   );
 }
@@ -783,7 +806,6 @@ function SearchResultsView(props: {
 function ContextRail(props: {
   project: Project;
   onOpenView: (v: View) => void;
-  onOpenBriefs: () => void;
 }) {
   const session = useSession();
   const projects = useProjects();
@@ -794,10 +816,6 @@ function ContextRail(props: {
   const [reviews] = createResource(
     () => props.project.id,
     async (id) => (await api.listReviews(id, "pending")).reviews,
-  );
-  const [briefs] = createResource(
-    () => props.project.id,
-    async (id) => (await api.listBriefs(id)).briefs,
   );
   const [todos, { refetch: refetchTodos }] = createResource(
     () => props.project.id,
@@ -828,15 +846,16 @@ function ContextRail(props: {
   onCleanup(unsub);
 
   // PR mirrors carry github.kind="pr" — they're pull requests, not issues.
+  // Counts show the full open set; cards cap at 3 with an "all" link.
   const openIssues = createMemo(() =>
     (issues.latest ?? []).filter(
       (i) => i.github?.kind !== "pr" && !isClosed(i.status, statusDefs(props.project)),
-    ).slice(0, 5),
+    ),
   );
   const openPRs = createMemo(() =>
     (issues.latest ?? []).filter(
       (i) => i.github?.kind === "pr" && !isClosed(i.status, statusDefs(props.project)),
-    ).slice(0, 5),
+    ),
   );
 
   // Development snapshot powers the rail's commits strip — cached 60s upstream.
@@ -848,7 +867,7 @@ function ContextRail(props: {
     (dev()?.repos ?? [])
       .flatMap((r) => r.commits.map((c) => ({ ...c, repo: r.repo.full_name })))
       .sort((a, b) => b.date.localeCompare(a.date))
-      .slice(0, 5),
+      .slice(0, 3),
   );
 
   // Rail width + collapse persist across sessions. Collapsed keeps a thin
@@ -888,7 +907,7 @@ function ContextRail(props: {
       [
         { icon: IssueIcon, count: openIssues().length, act: () => props.onOpenView("issues"), tip: "Open issues" },
         { icon: GitPullRequestIcon, count: openPRs().length, act: () => props.onOpenView("pulls"), tip: "Open pull requests" },
-        { icon: ReviewIcon, count: reviews.latest?.length ?? 0, act: () => props.onOpenView("reviews"), tip: "Reviews & briefs" },
+        { icon: ReviewIcon, count: reviews.latest?.length ?? 0, act: () => props.onOpenView("reviews"), tip: "Reviews" },
         { icon: CommitIcon, count: null, act: () => props.onOpenView("commits"), tip: "Recent commits" },
         { icon: UsersIcon, count: members.latest?.length ?? 0, act: toggleCollapsed, tip: "Members" },
         { icon: BotIcon, count: agents.latest?.length ?? 0, act: toggleCollapsed, tip: "Agents" },
@@ -962,154 +981,7 @@ function ContextRail(props: {
         agents={(agents.latest ?? []).map((a) => ({ name: a.name }))}
         projects={projects.projects() ?? []}
       />
-      <RailSection label="Open issues" count={openIssues().length}>
-        <div class="flex flex-col gap-1.5">
-          <For
-            each={openIssues()}
-            fallback={
-              <p class="text-[12px] text-muted">Nothing open. Nice.</p>
-            }
-          >
-            {(i) => <MiniIssue project={props.project} issue={i} />}
-          </For>
-        </div>
-        <button
-          type="button"
-          onClick={() => props.onOpenView("issues")}
-          class="mt-1.5 text-[12px] text-accent hover:underline"
-        >
-          All issues →
-        </button>
-      </RailSection>
-
-      <Show when={(openPRs().length ?? 0) > 0 || (repos.latest?.length ?? 0) > 0}>
-        <RailSection label="Open pull requests" count={openPRs().length}>
-          <div class="flex flex-col gap-1.5">
-            <For
-              each={openPRs()}
-              fallback={
-                <p class="text-[12px] text-muted">No pull requests open.</p>
-              }
-            >
-              {(i) => <MiniIssue project={props.project} issue={i} />}
-            </For>
-          </div>
-          <button
-            type="button"
-            onClick={() => props.onOpenView("pulls")}
-            class="mt-1.5 text-[12px] text-accent hover:underline"
-          >
-            All pull requests →
-          </button>
-        </RailSection>
-      </Show>
-
-      <RailSection
-        label="Reviews"
-        count={(reviews.latest?.length ?? 0) + (briefs.latest?.length ?? 0)}
-      >
-        <div class="flex flex-col gap-1.5">
-          <For
-            each={(reviews.latest ?? []).slice(0, 3)}
-            fallback={<p class="text-[12px] text-muted">Queue is clear.</p>}
-          >
-            {(r) => (
-              <MiniReview
-                review={r}
-                onOpen={() => props.onOpenView("reviews")}
-              />
-            )}
-          </For>
-          <button
-            type="button"
-            onClick={props.onOpenBriefs}
-            class="w-full rounded-lg border border-border bg-surface px-3 py-2 text-left transition-colors hover:border-muted/60"
-          >
-            <span class="flex items-center gap-2 text-[12.5px] font-medium">
-              <BriefsIcon class="h-3.5 w-3.5 text-muted" />
-              Briefs
-            </span>
-            <span class="mt-1 block text-[11px] text-muted">
-              {briefs.state === "ready" && (briefs.latest?.length ?? 0) === 0
-                ? "No briefs yet — ask your agent to “explain this change”."
-                : `${briefs.latest?.length ?? 0} brief${(briefs.latest?.length ?? 0) === 1 ? "" : "s"} — visual explanations agents attach to work`}
-            </span>
-          </button>
-        </div>
-        <button
-          type="button"
-          onClick={() => props.onOpenView("reviews")}
-          class="mt-1.5 text-[12px] text-accent hover:underline"
-        >
-          All reviews →
-        </button>
-      </RailSection>
-
-      <Show when={commits().length > 0 || (repos.latest?.length ?? 0) > 0}>
-        <RailSection label="Commits">
-          <ul class="divide-y divide-border rounded-lg border border-border bg-surface">
-            <For
-              each={commits()}
-              fallback={
-                <li class="px-3 py-2 text-[12px] text-muted">
-                  {repos.state === "ready" && (repos.latest?.length ?? 0) === 0
-                    ? "Link a repo to see commits."
-                    : "No commits fetched."}
-                </li>
-              }
-            >
-              {(c) => (
-                <li class="px-3 py-2">
-                  <div class="flex items-baseline gap-2">
-                    <span class="shrink-0 font-mono text-[10.5px] font-medium text-accent">
-                      {c.sha.slice(0, 7)}
-                    </span>
-                    <a
-                      href={c.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      class="min-w-0 flex-1 truncate text-[12.5px] hover:underline"
-                    >
-                      {c.message}
-                    </a>
-                  </div>
-                  <div class="mt-0.5 flex items-center gap-2 text-[11px] text-muted">
-                    <span class="truncate">{c.author}</span>
-                    <span class="ml-auto shrink-0 font-mono text-[10px]">
-                      {c.repo}
-                    </span>
-                    <span class="shrink-0">{timeAgo(c.date)}</span>
-                  </div>
-                </li>
-              )}
-            </For>
-          </ul>
-          <button
-            type="button"
-            onClick={() => props.onOpenView("commits")}
-            class="mt-1.5 text-[12px] text-accent hover:underline"
-          >
-            All commits →
-          </button>
-        </RailSection>
-      </Show>
-
-      <RailSection label="Ideas">
-        <A
-          href={`/app/p/${props.project.id}/ideas`}
-          class="block w-full rounded-lg border border-border bg-surface px-3 py-2 text-left transition-colors hover:border-muted/60"
-        >
-          <span class="flex items-center gap-2 text-[12.5px] font-medium">
-            <BulbIcon class="h-3.5 w-3.5 text-muted" />
-            Brainstorm boards for this project.
-          </span>
-          <span class="mt-1 block text-[11px] text-muted">
-            Sketch a mindmap, then convert it into an issue or a new project.
-          </span>
-        </A>
-      </RailSection>
-
-      <RailSection label="Development">
+      <RailSection id="development" label="Development">
         <Show
           when={(repos.latest?.length ?? 0) > 0}
           fallback={
@@ -1162,7 +1034,130 @@ function ContextRail(props: {
         </Show>
       </RailSection>
 
-      <RailSection label="Members" count={members.latest?.length}>
+      <RailSection id="issues" label="Open issues" count={openIssues().length}>
+        <div class="flex flex-col gap-1.5">
+          <For
+            each={openIssues().slice(0, 3)}
+            fallback={
+              <p class="text-[12px] text-muted">Nothing open. Nice.</p>
+            }
+          >
+            {(i) => <MiniIssue project={props.project} issue={i} />}
+          </For>
+        </div>
+        <button
+          type="button"
+          onClick={() => props.onOpenView("issues")}
+          class="mt-1.5 text-[12px] text-accent hover:underline"
+        >
+          All issues →
+        </button>
+      </RailSection>
+
+      <Show when={(openPRs().length ?? 0) > 0 || (repos.latest?.length ?? 0) > 0}>
+        <RailSection
+          id="pulls"
+          label="Open pull requests"
+          count={openPRs().length}
+        >
+          <div class="flex flex-col gap-1.5">
+            <For
+              each={openPRs().slice(0, 3)}
+              fallback={
+                <p class="text-[12px] text-muted">No pull requests open.</p>
+              }
+            >
+              {(i) => <MiniIssue project={props.project} issue={i} />}
+            </For>
+          </div>
+          <button
+            type="button"
+            onClick={() => props.onOpenView("pulls")}
+            class="mt-1.5 text-[12px] text-accent hover:underline"
+          >
+            All pull requests →
+          </button>
+        </RailSection>
+      </Show>
+
+      <RailSection
+        id="reviews"
+        label="Reviews"
+        count={reviews.latest?.length ?? 0}
+      >
+        <div class="flex flex-col gap-1.5">
+          <For
+            each={(reviews.latest ?? []).slice(0, 3)}
+            fallback={<p class="text-[12px] text-muted">Queue is clear.</p>}
+          >
+            {(r) => (
+              <MiniReview
+                review={r}
+                onOpen={() => props.onOpenView("reviews")}
+              />
+            )}
+          </For>
+        </div>
+        <button
+          type="button"
+          onClick={() => props.onOpenView("reviews")}
+          class="mt-1.5 text-[12px] text-accent hover:underline"
+        >
+          All reviews →
+        </button>
+      </RailSection>
+
+      <Show when={commits().length > 0 || (repos.latest?.length ?? 0) > 0}>
+        <RailSection id="commits" label="Commits">
+          <ul class="divide-y divide-border rounded-lg border border-border bg-surface">
+            <For
+              each={commits()}
+              fallback={
+                <li class="px-3 py-2 text-[12px] text-muted">
+                  {repos.state === "ready" && (repos.latest?.length ?? 0) === 0
+                    ? "Link a repo to see commits."
+                    : "No commits fetched."}
+                </li>
+              }
+            >
+              {(c) => (
+                <li class="px-3 py-2">
+                  <div class="flex items-baseline gap-2">
+                    <span class="shrink-0 font-mono text-[10.5px] font-medium text-accent">
+                      {c.sha.slice(0, 7)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        openCommit(props.project.id, c.repo, c.sha)
+                      }
+                      class="min-w-0 flex-1 truncate text-left text-[12.5px] hover:underline"
+                    >
+                      {c.message}
+                    </button>
+                  </div>
+                  <div class="mt-0.5 flex items-center gap-2 text-[11px] text-muted">
+                    <span class="truncate">{c.author}</span>
+                    <span class="ml-auto shrink-0 font-mono text-[10px]">
+                      {c.repo}
+                    </span>
+                    <span class="shrink-0">{timeAgo(c.date)}</span>
+                  </div>
+                </li>
+              )}
+            </For>
+          </ul>
+          <button
+            type="button"
+            onClick={() => props.onOpenView("commits")}
+            class="mt-1.5 text-[12px] text-accent hover:underline"
+          >
+            All commits →
+          </button>
+        </RailSection>
+      </Show>
+
+      <RailSection id="members" label="Members" count={members.latest?.length}>
         <div class="flex flex-col gap-1">
           <For each={members.latest}>
             {(m) => (
@@ -1197,7 +1192,7 @@ function ContextRail(props: {
       </RailSection>
 
       <Show when={(agents.latest ?? []).length > 0}>
-        <RailSection label="Agents" count={agents.latest?.length}>
+        <RailSection id="agents" label="Agents" count={agents.latest?.length}>
           <div class="flex flex-col gap-1">
             <For each={agents.latest}>
               {(a) => (
@@ -1228,6 +1223,7 @@ function ContextRail(props: {
       </Show>
 
       <RailSection
+        id="todos"
         label="Todos"
         count={(todos.latest ?? []).filter((t) => !t.done).length}
       >
@@ -1250,7 +1246,6 @@ function ViewSheet(props: {
   project: Project;
   onClose: () => void;
   onProjectSaved: () => void;
-  onOpenBriefs: () => void;
   onOpenView: (v: View) => void;
 }) {
   createEffect(() => {
@@ -1676,11 +1671,11 @@ export default function ProjectPage() {
     }
   });
 
-  // ?briefs=1 opens the briefs panel — deep link for unread-brief rows.
+  // ?briefs=1 was the briefs-panel deep link — briefs folded into reviews;
+  // old links land on the review queue instead of 404ing the concept.
   createEffect(() => {
     if (searchParams.briefs) {
-      setBriefsOpen(true);
-      setSearchParams({ briefs: undefined });
+      setSearchParams({ briefs: undefined, view: "reviews" });
     }
   });
 
@@ -1689,7 +1684,6 @@ export default function ProjectPage() {
     (id) => api.projectOverview(id),
   );
 
-  const [briefsOpen, setBriefsOpen] = createSignal(false);
   const [channelCopied, setChannelCopied] = createSignal(false);
 
   // The project's own conversation id is the channel id agents address —
@@ -1792,12 +1786,11 @@ export default function ProjectPage() {
               <GitBranchIcon class="h-4 w-4" />
             </HeadButton>
             <HeadButton
-              title="Visual briefs"
-              hint="Diagrams and visual explanations agents attach to their work."
-              active={briefsOpen()}
-              onClick={() => setBriefsOpen(!briefsOpen())}
+              title="Ideas"
+              hint="Brainstorm boards — sketches and mindmaps that convert into issues."
+              onClick={() => navigate(`/app/p/${params.projectId}/ideas`)}
             >
-              <BriefsIcon class="h-4 w-4" />
+              <BulbIcon class="h-4 w-4" />
             </HeadButton>
             <HeadButton
               title="Reviews"
@@ -1840,18 +1833,8 @@ export default function ProjectPage() {
       <Show when={project()} keyed>
         {(p) => (
           <div class="hidden lg:block">
-            <ContextRail
-              project={p}
-              onOpenView={openView}
-              onOpenBriefs={() => setBriefsOpen(true)}
-            />
+            <ContextRail project={p} onOpenView={openView} />
           </div>
-        )}
-      </Show>
-
-      <Show when={briefsOpen() && project()} keyed>
-        {(p) => (
-          <BriefsPanel project={p} onClose={() => setBriefsOpen(false)} />
         )}
       </Show>
 
@@ -1865,7 +1848,6 @@ export default function ProjectPage() {
               refetchOverview();
               projects.refresh();
             }}
-            onOpenBriefs={() => setBriefsOpen(true)}
             onOpenView={openView}
           />
         )}
