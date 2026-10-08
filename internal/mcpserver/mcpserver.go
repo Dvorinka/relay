@@ -409,6 +409,63 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithNumber("number", mcp.Required()),
 	), s.ghGetPR)
 
+	srv.AddTool(mcp.NewTool("github_create_issue",
+		mcp.WithDescription("File a new issue on the project's linked GitHub repository. The issue is mirrored onto the project board."),
+		mcp.WithString("project_id", mcp.Required()),
+		mcp.WithString("title", mcp.Required()),
+		mcp.WithString("body"),
+	), s.ghCreateIssue)
+
+	srv.AddTool(mcp.NewTool("github_create_pr",
+		mcp.WithDescription("Open a pull request on the project's linked repository. head = source branch, base defaults to the repo's default branch."),
+		mcp.WithString("project_id", mcp.Required()),
+		mcp.WithString("head", mcp.Required()),
+		mcp.WithString("title", mcp.Required()),
+		mcp.WithString("base"),
+		mcp.WithString("body"),
+		mcp.WithBoolean("draft"),
+	), s.ghCreatePR)
+
+	srv.AddTool(mcp.NewTool("github_comment",
+		mcp.WithDescription("Post a comment on a GitHub issue or pull request."),
+		mcp.WithString("project_id", mcp.Required()),
+		mcp.WithNumber("number", mcp.Required()),
+		mcp.WithString("body", mcp.Required()),
+	), s.ghComment)
+
+	srv.AddTool(mcp.NewTool("github_review_pr",
+		mcp.WithDescription("Submit a review on a pull request. event = APPROVE | REQUEST_CHANGES | COMMENT. body required for REQUEST_CHANGES."),
+		mcp.WithString("project_id", mcp.Required()),
+		mcp.WithNumber("number", mcp.Required()),
+		mcp.WithString("event", mcp.Required(), mcp.Enum("APPROVE", "REQUEST_CHANGES", "COMMENT")),
+		mcp.WithString("body"),
+	), s.ghReviewPR)
+
+	srv.AddTool(mcp.NewTool("github_pr_state",
+		mcp.WithDescription("Close or reopen a pull request."),
+		mcp.WithString("project_id", mcp.Required()),
+		mcp.WithNumber("number", mcp.Required()),
+		mcp.WithString("state", mcp.Required(), mcp.Enum("open", "closed")),
+	), s.ghSetPRState)
+
+	srv.AddTool(mcp.NewTool("github_merge_pr",
+		mcp.WithDescription("Merge a pull request. method = merge | squash | rebase. GitHub enforces branch protection and required checks; the call fails if GitHub refuses."),
+		mcp.WithString("project_id", mcp.Required()),
+		mcp.WithNumber("number", mcp.Required()),
+		mcp.WithString("method", mcp.Enum("merge", "squash", "rebase")),
+	), s.ghMergePR)
+
+	srv.AddTool(mcp.NewTool("github_ci_runs",
+		mcp.WithDescription("List recent GitHub Actions workflow runs for the project's linked repository."),
+		mcp.WithString("project_id", mcp.Required()),
+	), s.ghCIRuns)
+
+	srv.AddTool(mcp.NewTool("github_rerun",
+		mcp.WithDescription("Rerun a completed GitHub Actions workflow run."),
+		mcp.WithString("project_id", mcp.Required()),
+		mcp.WithNumber("run_id", mcp.Required()),
+	), s.ghRerun)
+
 	srv.AddTool(mcp.NewTool("list_project_files",
 		mcp.WithDescription("List one directory level of the project's linked local folder. Omit path for the root."),
 		mcp.WithString("project_id", mcp.Required()),
@@ -488,6 +545,10 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 			mcp.Description("[{kind: env|config|deploy|ci|secret|migration|other, label, detail}] - required human follow-ups")),
 		mcp.WithArray("links", mcp.Items(map[string]any{"type": "object"}),
 			mcp.Description("[{label, url}] - PRs, commits, CI runs")),
+		mcp.WithArray("scenes", mcp.Items(map[string]any{"type": "object"}),
+			mcp.Description("[{title, scene}] - optional diagrams embedded in the review. "+
+				"'scene' is an Excalidraw scene object ({elements: [...]}) - keep to "+
+				"rectangle|ellipse|diamond|arrow|line|text for the lightweight in-app viewer")),
 		mcp.WithString("verify", mcp.Description("Markdown: how to verify the change works")),
 		mcp.WithString("supersedes", mcp.Description("Review UUID this revision replaces")),
 	), s.submitReview)
@@ -2409,6 +2470,229 @@ func (s *Service) ghGetPR(ctx context.Context, req mcp.CallToolRequest) (*mcp.Ca
 	return jsonResult(ghPRJSON(*p, r.Owner+"/"+r.Name))
 }
 
+// ghRepoWrite is ghRepo with the write scope — all GitHub mutations ride it.
+func (s *Service) ghRepoWrite(ctx context.Context, req mcp.CallToolRequest) (db.Repository, error) {
+	pid, err := uuidArg(req, "project_id")
+	if err != nil {
+		return db.Repository{}, err
+	}
+	if err := s.scope(ctx, pid, "issue:write"); err != nil {
+		return db.Repository{}, err
+	}
+	repos, err := s.q.ListProjectRepos(ctx, pid)
+	if err != nil || len(repos) == 0 {
+		return db.Repository{}, errors.New("no GitHub repository linked to this project")
+	}
+	return repos[0], nil
+}
+
+func (s *Service) ghCreateIssue(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	r, err := s.ghRepoWrite(ctx, req)
+	if err != nil {
+		return errResult(err)
+	}
+	title := req.GetString("title", "")
+	if title == "" {
+		return mcp.NewToolResultError("title required"), nil
+	}
+	cli, err := s.ghClient(ctx)
+	if err != nil {
+		return errResult(err)
+	}
+	gh, err := cli.CreateIssue(ctx, r.InstallationID, r.Owner, r.Name,
+		title, req.GetString("body", ""))
+	if err != nil {
+		return errResult(err)
+	}
+	var issueID string
+	if s.gh != nil {
+		if id, err := s.gh.MirrorIssue(ctx, r, *gh); err == nil {
+			issueID = id.String()
+		}
+	}
+	out := ghIssueJSON(*gh, r.Owner+"/"+r.Name)
+	out["issue_id"] = issueID
+	return jsonResult(out)
+}
+
+func (s *Service) ghCreatePR(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	r, err := s.ghRepoWrite(ctx, req)
+	if err != nil {
+		return errResult(err)
+	}
+	head := req.GetString("head", "")
+	title := req.GetString("title", "")
+	if head == "" || title == "" {
+		return mcp.NewToolResultError("head and title required"), nil
+	}
+	base := req.GetString("base", r.DefaultBranch)
+	cli, err := s.ghClient(ctx)
+	if err != nil {
+		return errResult(err)
+	}
+	pr, err := cli.CreatePR(ctx, r.InstallationID, r.Owner, r.Name,
+		head, base, title, req.GetString("body", ""), req.GetBool("draft", false))
+	if err != nil {
+		return errResult(err)
+	}
+	var issueID string
+	if s.gh != nil {
+		if id, err := s.gh.MirrorPR(ctx, r, *pr); err == nil {
+			issueID = id.String()
+		}
+	}
+	out := ghPRJSON(*pr, r.Owner+"/"+r.Name)
+	out["issue_id"] = issueID
+	return jsonResult(out)
+}
+
+func (s *Service) ghComment(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	r, err := s.ghRepoWrite(ctx, req)
+	if err != nil {
+		return errResult(err)
+	}
+	num := req.GetInt("number", 0)
+	body := req.GetString("body", "")
+	if num < 1 || body == "" {
+		return mcp.NewToolResultError("number and body required"), nil
+	}
+	cli, err := s.ghClient(ctx)
+	if err != nil {
+		return errResult(err)
+	}
+	if err := cli.CreateIssueComment(ctx, r.InstallationID, r.Owner, r.Name, num, body); err != nil {
+		return errResult(err)
+	}
+	return jsonResult(gin.H{"commented": true, "number": num})
+}
+
+func (s *Service) ghReviewPR(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	r, err := s.ghRepoWrite(ctx, req)
+	if err != nil {
+		return errResult(err)
+	}
+	num := req.GetInt("number", 0)
+	event := req.GetString("event", "")
+	body := req.GetString("body", "")
+	if num < 1 {
+		return mcp.NewToolResultError("number required"), nil
+	}
+	switch event {
+	case "APPROVE", "COMMENT":
+	case "REQUEST_CHANGES":
+		if body == "" {
+			return mcp.NewToolResultError("body required when requesting changes"), nil
+		}
+	default:
+		return mcp.NewToolResultError("event must be APPROVE | REQUEST_CHANGES | COMMENT"), nil
+	}
+	cli, err := s.ghClient(ctx)
+	if err != nil {
+		return errResult(err)
+	}
+	if err := cli.CreatePRReview(ctx, r.InstallationID, r.Owner, r.Name, num, event, body); err != nil {
+		return errResult(err)
+	}
+	return jsonResult(gin.H{"reviewed": true, "number": num, "event": event})
+}
+
+func (s *Service) ghSetPRState(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	r, err := s.ghRepoWrite(ctx, req)
+	if err != nil {
+		return errResult(err)
+	}
+	num := req.GetInt("number", 0)
+	state := req.GetString("state", "")
+	if num < 1 || (state != "open" && state != "closed") {
+		return mcp.NewToolResultError("number required; state must be open|closed"), nil
+	}
+	cli, err := s.ghClient(ctx)
+	if err != nil {
+		return errResult(err)
+	}
+	pr, err := cli.SetPRState(ctx, r.InstallationID, r.Owner, r.Name, num, state)
+	if err != nil {
+		return errResult(err)
+	}
+	if s.gh != nil {
+		st := pr.State
+		if pr.Merged {
+			st = "merged"
+		}
+		s.gh.SyncMirroredIssue(ctx, r, num, st)
+	}
+	return jsonResult(gin.H{"number": num, "state": pr.State, "merged": pr.Merged})
+}
+
+func (s *Service) ghMergePR(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	r, err := s.ghRepoWrite(ctx, req)
+	if err != nil {
+		return errResult(err)
+	}
+	num := req.GetInt("number", 0)
+	method := req.GetString("method", "merge")
+	if num < 1 {
+		return mcp.NewToolResultError("number required"), nil
+	}
+	cli, err := s.ghClient(ctx)
+	if err != nil {
+		return errResult(err)
+	}
+	res, err := cli.MergePR(ctx, r.InstallationID, r.Owner, r.Name, num, method, "", "")
+	if err != nil {
+		return errResult(err)
+	}
+	if s.gh != nil {
+		s.gh.SyncMirroredIssue(ctx, r, num, "merged")
+	}
+	return jsonResult(gin.H{"merged": res.Merged, "sha": res.SHA, "number": num})
+}
+
+func (s *Service) ghCIRuns(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	r, err := s.ghRepo(ctx, req)
+	if err != nil {
+		return errResult(err)
+	}
+	cli, err := s.ghClient(ctx)
+	if err != nil {
+		return errResult(err)
+	}
+	runs, err := cli.ListWorkflowRuns(ctx, r.InstallationID, r.Owner, r.Name, 15)
+	if err != nil {
+		return errResult(err)
+	}
+	out := make([]gin.H, 0, len(runs))
+	for _, w := range runs {
+		out = append(out, gin.H{
+			"id": w.ID, "name": w.Name, "status": w.Status,
+			"conclusion": w.Conclusion, "branch": w.HeadBranch,
+			"event": w.Event, "actor": w.Actor.Login, "url": w.HTMLURL,
+			"run_number": w.RunNumber, "created_at": w.CreatedAt,
+			"updated_at": w.UpdatedAt,
+		})
+	}
+	return jsonResult(out)
+}
+
+func (s *Service) ghRerun(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	r, err := s.ghRepoWrite(ctx, req)
+	if err != nil {
+		return errResult(err)
+	}
+	runID := req.GetInt("run_id", 0)
+	if runID < 1 {
+		return mcp.NewToolResultError("run_id required"), nil
+	}
+	cli, err := s.ghClient(ctx)
+	if err != nil {
+		return errResult(err)
+	}
+	if err := cli.RerunWorkflowRun(ctx, r.InstallationID, r.Owner, r.Name, int64(runID)); err != nil {
+		return errResult(err)
+	}
+	return jsonResult(gin.H{"rerun": true, "run_id": runID})
+}
+
 // --- agent todos ---
 
 func todoOut(t db.ListTodosRow) gin.H {
@@ -2777,6 +3061,7 @@ func mcpReviewJSON(r db.GetReviewRow) gin.H {
 		"status": r.Status, "title": r.Title, "summary": r.Summary,
 		"files": raw(r.Files), "decisions": raw(r.Decisions),
 		"actions": raw(r.Actions), "links": raw(r.Links), "verify": r.Verify,
+		"scenes":   raw(r.Scenes),
 		"issue_id": issueID, "supersedes": supersedes,
 		"response": r.Response, "responder": responder, "responded_at": respondedAt,
 		"created_at": r.CreatedAt.Time,
@@ -2833,6 +3118,10 @@ func (s *Service) submitReview(ctx context.Context, req mcp.CallToolRequest) (*m
 	if err != nil {
 		return errResult(err)
 	}
+	scenes, err := jsonbArg(req, "scenes")
+	if err != nil {
+		return errResult(err)
+	}
 	verify := req.GetString("verify", "")
 	if len(verify) > 10000 {
 		return errResult(errors.New("verify exceeds 10KB"))
@@ -2853,6 +3142,7 @@ func (s *Service) submitReview(ctx context.Context, req mcp.CallToolRequest) (*m
 		ProjectID: pid, IssueID: issueID, AgentID: agent(ctx).ID,
 		Title: title, Summary: summary,
 		Files: files, Decisions: decisions, Actions: actions, Links: links,
+		Scenes: scenes,
 		Verify: verify, Supersedes: supersedes,
 	})
 	if err != nil {

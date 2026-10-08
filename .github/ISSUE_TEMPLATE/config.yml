@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Agent / MCP integration help
+    url: https://github.com/Dvorinka/relay/blob/main/internal/agentdoc/guide.md
+    about: Connecting Devin, Codex, Claude Code, or another agent? Start with the agent guide.
+  - name: Self-hosting & deployment
+    url: https://github.com/Dvorinka/relay/blob/main/ARCHITECTURE.md
+    about: Architecture, configuration, and deployment notes for self-hosters.
+  - name: Security report
+    url: https://github.com/Dvorinka/relay/blob/main/SECURITY.md
+    about: Please do not file public issues for vulnerabilities — see SECURITY.md.

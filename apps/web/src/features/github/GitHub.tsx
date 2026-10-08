@@ -2,8 +2,9 @@ import type {
   DevelopmentPanel as DevPanel,
   DevRepoPanel,
   LinkedRepo,
+  WorkflowRun,
 } from "@relay/api-client";
-import { A } from "@solidjs/router";
+import { A, useNavigate } from "@solidjs/router";
 import type { JSX } from "solid-js";
 import {
   createMemo,
@@ -11,13 +12,18 @@ import {
   createSignal,
   For,
   Match,
+  onCleanup,
   Show,
   Switch,
 } from "solid-js";
 import { Spinner } from "../../components/ui";
 import { api } from "../../lib/api";
+import { subscribe } from "../../lib/events";
 import { confirmDestructive } from "../../components/Confirm";
+import { Markdown } from "../../lib/markdown";
 import { timeAgo } from "../../lib/time";
+import { openCommit } from "./CommitModal";
+import { openCreateIssue, openCreatePull } from "./CreateModals";
 
 export function markGitHub(path: string, cls = "h-4 w-4") {
   return (
@@ -217,7 +223,8 @@ function IssueRow(props: {
   );
 }
 
-function PrRow(props: DevRepoPanel["prs"][number]) {
+function PrRow(props: DevRepoPanel["prs"][number] & { projectId: string; repo: string }) {
+  const navigate = useNavigate();
   return (
     <li class="flex items-center gap-2.5 px-3 py-1.5">
       <svg
@@ -228,14 +235,17 @@ function PrRow(props: DevRepoPanel["prs"][number]) {
       >
         <path d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354Z" />
       </svg>
-      <a
-        href={props.url}
-        target="_blank"
-        rel="noreferrer"
-        class="min-w-0 flex-1 truncate text-[13px] hover:underline"
+      <button
+        type="button"
+        onClick={() =>
+          navigate(
+            `/app/p/${props.projectId}?view=pulls&pr=${encodeURIComponent(`${props.repo}:${props.number}`)}`,
+          )
+        }
+        class="min-w-0 flex-1 truncate text-left text-[13px] hover:underline"
       >
         {props.title}
-      </a>
+      </button>
       <Show when={props.draft}>
         <span class="shrink-0 rounded border border-border px-1 text-[10px] text-muted">
           draft
@@ -248,25 +258,138 @@ function PrRow(props: DevRepoPanel["prs"][number]) {
   );
 }
 
-function CommitRow(props: DevRepoPanel["commits"][number]) {
+function CommitRow(props: DevRepoPanel["commits"][number] & { repo: string; projectId: string }) {
   return (
     <li class="flex items-center gap-2.5 px-3 py-1.5">
       <span class="shrink-0 font-mono text-[11px] text-accent">
         {props.sha.slice(0, 7)}
       </span>
+      <button
+        type="button"
+        onClick={() => openCommit(props.projectId, props.repo, props.sha)}
+        class="min-w-0 flex-1 truncate text-left text-[13px] hover:underline"
+      >
+        {props.message}
+      </button>
       <a
         href={props.url}
         target="_blank"
         rel="noreferrer"
-        class="min-w-0 flex-1 truncate text-[13px] hover:underline"
+        aria-label="Open commit on GitHub"
+        class="shrink-0 text-muted transition-colors hover:text-fg"
       >
-        {props.message}
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" class="h-3 w-3" aria-hidden="true">
+          <path d="M6 3h7v7M13 3 7.5 8.5" />
+        </svg>
       </a>
       <span class="shrink-0 text-[11px] text-muted">{props.author}</span>
       <span class="w-20 shrink-0 text-right text-[11px] text-muted">
         {timeAgo(props.date)}
       </span>
     </li>
+  );
+}
+
+const RUN_NEUTRAL = { cls: "text-muted", mark: "○" };
+const RUN_STYLE: Record<string, { cls: string; mark: string }> = {
+  success: { cls: "text-emerald-500", mark: "●" },
+  failure: { cls: "text-red-500", mark: "●" },
+  cancelled: RUN_NEUTRAL,
+  skipped: RUN_NEUTRAL,
+  neutral: RUN_NEUTRAL,
+  in_progress: { cls: "text-amber-500", mark: "◐" },
+  queued: { cls: "text-amber-500", mark: "◐" },
+  requested: { cls: "text-amber-500", mark: "◐" },
+  waiting: { cls: "text-amber-500", mark: "◐" },
+};
+
+function runMark(r: WorkflowRun) {
+  return (
+    RUN_STYLE[r.status !== "completed" ? r.status : r.conclusion] ??
+    RUN_NEUTRAL
+  );
+}
+
+// Actions runs for one repo — the CI/CD readout plus an in-app rerun
+// button for finished runs. Details link out to GitHub.
+function ActionsRuns(props: { projectId: string; repo: string }) {
+  const [runs, { refetch }] = createResource(
+    () => props.repo,
+    (r) => api.repoActions(props.projectId, r).catch(() => undefined),
+  );
+  // webhook → bus → SSE: a check/workflow event on this repo refreshes the list
+  const unsub = subscribe((e) => {
+    if (e.type === "github.ci" && e.data?.repo === props.repo) void refetch();
+  });
+  onCleanup(unsub);
+  const [rerunning, setRerunning] = createSignal<number | null>(null);
+  const [err, setErr] = createSignal("");
+  const rerun = async (id: number) => {
+    setRerunning(id);
+    setErr("");
+    try {
+      await api.rerunAction(props.projectId, props.repo, id);
+      // the run flips to queued — give GitHub a beat then refresh
+      setTimeout(() => void refetch(), 1500);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Rerun failed");
+    } finally {
+      setRerunning(null);
+    }
+  };
+  return (
+    <Show when={(runs()?.runs.length ?? 0) > 0}>
+      <Section title={`CI runs (${runs()?.runs.length ?? 0})`}>
+        <For each={runs()!.runs}>
+          {(r) => (
+            <li class="flex items-center gap-2.5 px-3 py-1.5">
+              <span
+                class={`shrink-0 text-[10px] ${runMark(r).cls}`}
+                title={`${r.status}${r.conclusion ? ` · ${r.conclusion}` : ""}`}
+              >
+                {runMark(r).mark}
+              </span>
+              <span class="min-w-0 flex-1 truncate text-[13px]">
+                {r.name}
+                <span class="ml-1.5 font-mono text-[11px] text-muted">
+                  #{r.run_number}
+                </span>
+              </span>
+              <span class="hidden shrink-0 font-mono text-[11px] text-muted md:inline">
+                {r.head_branch}
+              </span>
+              <span class="shrink-0 text-[11px] text-muted">
+                {r.event} · {timeAgo(r.created_at)}
+              </span>
+              <Show when={r.status === "completed"}>
+                <button
+                  type="button"
+                  disabled={rerunning() === r.id}
+                  onClick={() => void rerun(r.id)}
+                  class="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-muted transition-colors hover:bg-hover hover:text-fg disabled:opacity-50"
+                >
+                  {rerunning() === r.id ? "Rerunning…" : "Rerun"}
+                </button>
+              </Show>
+              <a
+                href={r.url}
+                target="_blank"
+                rel="noreferrer"
+                aria-label="Open run on GitHub"
+                class="shrink-0 text-muted transition-colors hover:text-fg"
+              >
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" class="h-3 w-3" aria-hidden="true">
+                  <path d="M6 3h7v7M13 3 7.5 8.5" />
+                </svg>
+              </a>
+            </li>
+          )}
+        </For>
+        <Show when={err()}>
+          <li class="px-3 py-1.5 text-[12px] text-danger">{err()}</li>
+        </Show>
+      </Section>
+    </Show>
   );
 }
 
@@ -295,6 +418,7 @@ function RepoExtras(props: { projectId: string; repo: string }) {
 
   return (
     <>
+      <ActionsRuns projectId={props.projectId} repo={props.repo} />
       <Section title={`Branches (${branches()?.branches.length ?? 0})`}>
         <Show
           when={branches() && branches()!.branches.length > 0}
@@ -355,9 +479,13 @@ function RepoExtras(props: { projectId: string; repo: string }) {
                 {readmeOpen() ? "Hide README" : "Show README"}
               </button>
               <Show when={readmeOpen()}>
-                <pre class="mt-2 max-h-96 overflow-auto whitespace-pre-wrap rounded-md bg-surface p-3 font-mono text-[11.5px] leading-relaxed">
-                  {f().content.slice(0, 20000)}
-                </pre>
+                <div class="mt-2 max-h-96 overflow-auto rounded-md bg-surface p-3">
+                  <Markdown
+                    body={f().content.slice(0, 20000)}
+                    allowHtml
+                    class="text-[13px]"
+                  />
+                </div>
               </Show>
             </li>
           </Section>
@@ -367,11 +495,16 @@ function RepoExtras(props: { projectId: string; repo: string }) {
   );
 }
 
-function Section(props: { title: string; children: JSX.Element }) {
+function Section(props: {
+  title: string;
+  action?: JSX.Element;
+  children: JSX.Element;
+}) {
   return (
     <div class="mt-4">
-      <h4 class="mb-1 px-1 text-[11px] font-medium uppercase tracking-wider text-muted">
+      <h4 class="mb-1 flex items-center justify-between px-1 text-[11px] font-medium uppercase tracking-wider text-muted">
         {props.title}
+        {props.action}
       </h4>
       <ul class="divide-y divide-border rounded-md border border-border">
         {props.children}
@@ -532,7 +665,19 @@ export function DevelopmentPanel(props: {
                           {rp.error}
                         </p>
                       </Show>
-                      <Section title={`Open issues (${rp.issues.length})`}>
+                      <Section
+                        title={`Open issues (${rp.issues.length})`}
+                        action={
+                          <button
+                            class="rounded px-1.5 py-0.5 normal-case tracking-normal text-accent hover:bg-surface-2"
+                            onClick={() =>
+                              openCreateIssue(props.projectId, rp.repo.full_name)
+                            }
+                          >
+                            + New issue
+                          </button>
+                        }
+                      >
                         <For
                           each={rp.issues}
                           fallback={
@@ -544,7 +689,19 @@ export function DevelopmentPanel(props: {
                           {(i) => <IssueRow {...i} />}
                         </For>
                       </Section>
-                      <Section title={`Pull requests (${rp.prs.length})`}>
+                      <Section
+                        title={`Pull requests (${rp.prs.length})`}
+                        action={
+                          <button
+                            class="rounded px-1.5 py-0.5 normal-case tracking-normal text-accent hover:bg-surface-2"
+                            onClick={() =>
+                              openCreatePull(props.projectId, rp.repo.full_name)
+                            }
+                          >
+                            + New PR
+                          </button>
+                        }
+                      >
                         <For
                           each={rp.prs}
                           fallback={
@@ -553,7 +710,13 @@ export function DevelopmentPanel(props: {
                             </li>
                           }
                         >
-                          {(p) => <PrRow {...p} />}
+                          {(p) => (
+                            <PrRow
+                              {...p}
+                              projectId={props.projectId}
+                              repo={rp.repo.full_name}
+                            />
+                          )}
                         </For>
                       </Section>
                       <Section title="Recent commits">
@@ -565,7 +728,13 @@ export function DevelopmentPanel(props: {
                             </li>
                           }
                         >
-                          {(c) => <CommitRow {...c} />}
+                          {(c) => (
+                            <CommitRow
+                              {...c}
+                              repo={rp.repo.full_name}
+                              projectId={props.projectId}
+                            />
+                          )}
                         </For>
                       </Section>
                       <RepoExtras

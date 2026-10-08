@@ -45,6 +45,43 @@ func (q *Queries) ActiveWebhooksForProject(ctx context.Context, projectID pgtype
 	return items, nil
 }
 
+const createInboundHook = `-- name: CreateInboundHook :one
+insert into inbound_hooks (project_id, conversation_id, name, token_hash, created_by)
+values ($1, $2, $3, $4, $5)
+returning id, project_id, conversation_id, name, token_hash, enabled, created_by, created_at, last_used_at
+`
+
+type CreateInboundHookParams struct {
+	ProjectID      pgtype.UUID `json:"project_id"`
+	ConversationID pgtype.UUID `json:"conversation_id"`
+	Name           string      `json:"name"`
+	TokenHash      string      `json:"token_hash"`
+	CreatedBy      pgtype.UUID `json:"created_by"`
+}
+
+func (q *Queries) CreateInboundHook(ctx context.Context, arg CreateInboundHookParams) (InboundHook, error) {
+	row := q.db.QueryRow(ctx, createInboundHook,
+		arg.ProjectID,
+		arg.ConversationID,
+		arg.Name,
+		arg.TokenHash,
+		arg.CreatedBy,
+	)
+	var i InboundHook
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ConversationID,
+		&i.Name,
+		&i.TokenHash,
+		&i.Enabled,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+	)
+	return i, err
+}
+
 const createWebhookSubscription = `-- name: CreateWebhookSubscription :one
 insert into webhook_subscriptions (project_id, url, secret, events, active, created_by)
 values ($1, $2, $3, $4::text[], $5, $6)
@@ -84,6 +121,15 @@ func (q *Queries) CreateWebhookSubscription(ctx context.Context, arg CreateWebho
 	return i, err
 }
 
+const deleteInboundHook = `-- name: DeleteInboundHook :exec
+delete from inbound_hooks where id = $1
+`
+
+func (q *Queries) DeleteInboundHook(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteInboundHook, id)
+	return err
+}
+
 const deleteWebhook = `-- name: DeleteWebhook :exec
 delete from webhook_subscriptions where id = $1
 `
@@ -91,6 +137,72 @@ delete from webhook_subscriptions where id = $1
 func (q *Queries) DeleteWebhook(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, deleteWebhook, id)
 	return err
+}
+
+const getInboundHookByTokenHash = `-- name: GetInboundHookByTokenHash :one
+select id, project_id, conversation_id, name, token_hash, enabled, created_by, created_at, last_used_at from inbound_hooks where token_hash = $1 and enabled
+`
+
+func (q *Queries) GetInboundHookByTokenHash(ctx context.Context, tokenHash string) (InboundHook, error) {
+	row := q.db.QueryRow(ctx, getInboundHookByTokenHash, tokenHash)
+	var i InboundHook
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ConversationID,
+		&i.Name,
+		&i.TokenHash,
+		&i.Enabled,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+	)
+	return i, err
+}
+
+const getInboundHookForUser = `-- name: GetInboundHookForUser :one
+select h.id, h.project_id, h.conversation_id, h.name, h.token_hash, h.enabled, h.created_by, h.created_at, h.last_used_at, p.workspace_id
+from inbound_hooks h
+join projects p on p.id = h.project_id
+join workspace_members wm on wm.workspace_id = p.workspace_id and wm.user_id = $1
+where h.id = $2
+`
+
+type GetInboundHookForUserParams struct {
+	UserID pgtype.UUID `json:"user_id"`
+	ID     pgtype.UUID `json:"id"`
+}
+
+type GetInboundHookForUserRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	ConversationID pgtype.UUID        `json:"conversation_id"`
+	Name           string             `json:"name"`
+	TokenHash      string             `json:"token_hash"`
+	Enabled        bool               `json:"enabled"`
+	CreatedBy      pgtype.UUID        `json:"created_by"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+}
+
+// hook + owning project, only when the caller is a workspace member
+func (q *Queries) GetInboundHookForUser(ctx context.Context, arg GetInboundHookForUserParams) (GetInboundHookForUserRow, error) {
+	row := q.db.QueryRow(ctx, getInboundHookForUser, arg.UserID, arg.ID)
+	var i GetInboundHookForUserRow
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ConversationID,
+		&i.Name,
+		&i.TokenHash,
+		&i.Enabled,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.WorkspaceID,
+	)
+	return i, err
 }
 
 const getWebhookByID = `-- name: GetWebhookByID :one
@@ -174,6 +286,40 @@ func (q *Queries) GetWebhookForUser(ctx context.Context, arg GetWebhookForUserPa
 		&i.WorkspaceID,
 	)
 	return i, err
+}
+
+const listInboundHooks = `-- name: ListInboundHooks :many
+select id, project_id, conversation_id, name, token_hash, enabled, created_by, created_at, last_used_at from inbound_hooks where project_id = $1 order by created_at desc
+`
+
+func (q *Queries) ListInboundHooks(ctx context.Context, projectID pgtype.UUID) ([]InboundHook, error) {
+	rows, err := q.db.Query(ctx, listInboundHooks, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []InboundHook{}
+	for rows.Next() {
+		var i InboundHook
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.ConversationID,
+			&i.Name,
+			&i.TokenHash,
+			&i.Enabled,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.LastUsedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listProjectWebhooks = `-- name: ListProjectWebhooks :many
@@ -288,6 +434,43 @@ func (q *Queries) RecordWebhookDelivery(ctx context.Context, arg RecordWebhookDe
 	return i, err
 }
 
+const rotateInboundHook = `-- name: RotateInboundHook :one
+update inbound_hooks set token_hash = $1
+where id = $2
+returning id, project_id, conversation_id, name, token_hash, enabled, created_by, created_at, last_used_at
+`
+
+type RotateInboundHookParams struct {
+	TokenHash string      `json:"token_hash"`
+	ID        pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) RotateInboundHook(ctx context.Context, arg RotateInboundHookParams) (InboundHook, error) {
+	row := q.db.QueryRow(ctx, rotateInboundHook, arg.TokenHash, arg.ID)
+	var i InboundHook
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ConversationID,
+		&i.Name,
+		&i.TokenHash,
+		&i.Enabled,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+	)
+	return i, err
+}
+
+const touchInboundHook = `-- name: TouchInboundHook :exec
+update inbound_hooks set last_used_at = now() where id = $1
+`
+
+func (q *Queries) TouchInboundHook(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, touchInboundHook, id)
+	return err
+}
+
 const trimWebhookDeliveries = `-- name: TrimWebhookDeliveries :exec
 delete from webhook_deliveries d
 where d.subscription_id = $1
@@ -302,6 +485,37 @@ where d.subscription_id = $1
 func (q *Queries) TrimWebhookDeliveries(ctx context.Context, subscriptionID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, trimWebhookDeliveries, subscriptionID)
 	return err
+}
+
+const updateInboundHook = `-- name: UpdateInboundHook :one
+update inbound_hooks set
+    name = coalesce($1, name),
+    enabled = coalesce($2, enabled)
+where id = $3
+returning id, project_id, conversation_id, name, token_hash, enabled, created_by, created_at, last_used_at
+`
+
+type UpdateInboundHookParams struct {
+	Name    pgtype.Text `json:"name"`
+	Enabled pgtype.Bool `json:"enabled"`
+	ID      pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) UpdateInboundHook(ctx context.Context, arg UpdateInboundHookParams) (InboundHook, error) {
+	row := q.db.QueryRow(ctx, updateInboundHook, arg.Name, arg.Enabled, arg.ID)
+	var i InboundHook
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ConversationID,
+		&i.Name,
+		&i.TokenHash,
+		&i.Enabled,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+	)
+	return i, err
 }
 
 const updateWebhook = `-- name: UpdateWebhook :one

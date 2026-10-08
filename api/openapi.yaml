@@ -1252,6 +1252,19 @@ paths:
         "204": { description: All messages marked read }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /api/conversations/{conversationId}/typing:
+    post:
+      operationId: sendTyping
+      summary: Broadcast an ephemeral typing event — nothing is persisted
+      description: >-
+        Publishes a "typing" SSE event naming the caller. Clients hold it for
+        ~4s; callers should throttle to one POST per few seconds of input.
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/ConversationId" } ]
+      responses:
+        "204": { description: Broadcast }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /api/messages/{messageId}:
     patch:
       operationId: editMessage
@@ -2433,6 +2446,254 @@ paths:
         "409": { description: "GitHub refused the merge (not mergeable, head changed)" }
         "502": { description: "GitHub upstream error — e.g. app lacks pull_requests:write" }
 
+  /api/projects/{projectId}/github/pulls:
+    post:
+      operationId: createPullRequest
+      summary: Open a pull request on the linked repo
+      description: >-
+        Creates the PR on GitHub (defaults base to the repo's default branch)
+        and mirrors it back as a Relay issue of kind "pr" so it shows up in
+        lists immediately.
+      tags: [github]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - { name: repo, in: query, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [head, title]
+              properties:
+                head: { type: string, description: "source branch (use owner:branch for forks)" }
+                base: { type: string }
+                title: { type: string }
+                body: { type: string }
+                draft: { type: boolean, default: false }
+      responses:
+        "201":
+          description: Pull request created and mirrored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pull:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      number: { type: integer }
+                      url: { type: string }
+                      state: { type: string }
+                      draft: { type: boolean }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "502": { description: "GitHub upstream error — e.g. no commits between head and base" }
+
+  /api/projects/{projectId}/github/issues:
+    post:
+      operationId: createGitHubIssue
+      summary: File a new issue on the linked repo
+      description: >-
+        Creates the issue on GitHub as the app installation and mirrors it
+        back as a Relay issue so it appears on the board immediately.
+      tags: [github]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - { name: repo, in: query, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string }
+                body: { type: string }
+      responses:
+        "201":
+          description: Issue created and mirrored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  issue:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      number: { type: integer }
+                      url: { type: string }
+                      state: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "502": { description: "GitHub upstream error" }
+
+  /api/projects/{projectId}/github/issues/comments:
+    post:
+      operationId: commentOnIssue
+      summary: Comment on a GitHub issue or pull request
+      description: Issues and PRs share the same comments API upstream.
+      tags: [github]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - { name: repo, in: query, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [number, body]
+              properties:
+                number: { type: integer }
+                body: { type: string }
+      responses:
+        "201":
+          description: Comment posted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { commented: { type: boolean } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "502": { description: "GitHub upstream error" }
+
+  /api/projects/{projectId}/github/pull/state:
+    post:
+      operationId: setPullState
+      summary: Close or reopen a pull request
+      description: >-
+        PATCHes the PR on GitHub and eagerly updates the mirrored issue's
+        github_state so in-app lists reflect the change before the webhook
+        lands.
+      tags: [github]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - { name: repo, in: query, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [number, state]
+              properties:
+                number: { type: integer }
+                state: { type: string, enum: [open, closed] }
+      responses:
+        "200":
+          description: New PR state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { state: { type: string } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "502": { description: "GitHub upstream error" }
+
+  /api/projects/{projectId}/github/pull/review:
+    post:
+      operationId: reviewPullRequest
+      summary: Submit a review on a pull request (as the app installation)
+      tags: [github]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - { name: repo, in: query, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [number, event]
+              properties:
+                number: { type: integer }
+                event: { type: string, enum: [APPROVE, REQUEST_CHANGES, COMMENT] }
+                body: { type: string, description: "required for REQUEST_CHANGES" }
+      responses:
+        "200":
+          description: Review submitted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { submitted: { type: boolean } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "502": { description: "GitHub upstream error" }
+
+  /api/projects/{projectId}/github/actions:
+    get:
+      operationId: repoActions
+      summary: Recent GitHub Actions workflow runs for a linked repo
+      tags: [github]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - { name: repo, in: query, schema: { type: string }, description: "owner/name or repo id; optional when only one repo is linked" }
+      responses:
+        "200":
+          description: Workflow runs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  runs:
+                    type: array
+                    items: { type: object }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502": { description: "GitHub upstream error" }
+
+  /api/projects/{projectId}/github/actions/rerun:
+    post:
+      operationId: rerunAction
+      summary: Re-trigger a finished GitHub Actions workflow run
+      tags: [github]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - { name: repo, in: query, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [run_id]
+              properties:
+                run_id: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Rerun requested
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { rerun: { type: boolean } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "502": { description: "GitHub upstream error" }
+
+  /api/workspaces/{workspaceId}/github/pulls:
+    get:
+      operationId: workspacePulls
+      summary: Open pull requests across every linked repo in the workspace
+      tags: [github]
+      parameters:
+        - { name: workspaceId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: PR groups keyed by project+repo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  groups:
+                    type: array
+                    items: { type: object }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /api/projects/{projectId}/github/commits:
     get:
       operationId: gitCommits
@@ -2462,6 +2723,59 @@ paths:
                         author: { type: string }
                         date: { type: string, format: date-time }
                   branch: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502": { description: "GitHub upstream error" }
+
+  /api/projects/{projectId}/github/commit:
+    get:
+      operationId: gitCommit
+      summary: In-app commit detail — full message, stats, files, CI checks
+      tags: [github]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - { name: repo, in: query, schema: { type: string }, description: "owner/name or repo id; optional when only one repo is linked" }
+        - { name: sha, in: query, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Commit detail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  commit:
+                    type: object
+                    properties:
+                      sha: { type: string }
+                      message: { type: string, description: full commit message }
+                      url: { type: string }
+                      author: { type: string }
+                      date: { type: string, format: date-time }
+                      additions: { type: integer }
+                      deletions: { type: integer }
+                      repo:
+                        type: object
+                        properties:
+                          full_name: { type: string }
+                  files:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        filename: { type: string }
+                        status: { type: string }
+                        additions: { type: integer }
+                        deletions: { type: integer }
+                  checks:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        status: { type: string }
+                        conclusion: { type: string }
+                        url: { type: string }
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
         "502": { description: "GitHub upstream error" }
@@ -3017,6 +3331,143 @@ paths:
             schema: { type: object }
       responses:
         "204": { description: "Accepted" }
+
+  /api/projects/{projectId}/hooks:
+    get:
+      operationId: listInboundHooks
+      summary: List a project's inbound hooks (tokens never returned)
+      tags: [webhooks]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      responses:
+        "200":
+          description: Inbound hooks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hooks:
+                    type: array
+                    items: { $ref: "#/components/schemas/InboundHook" }
+    post:
+      operationId: createInboundHook
+      summary: Create an inbound hook targeting a channel — returns the token once
+      tags: [webhooks]
+      parameters: [ { $ref: "#/components/parameters/ProjectId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, conversation_id]
+              properties:
+                name: { type: string }
+                conversation_id: { type: string, format: uuid, description: "channel or main project conversation" }
+      responses:
+        "201":
+          description: Created — token and full URL shown once
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hook: { $ref: "#/components/schemas/InboundHook" }
+                  url: { type: string }
+                  token: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/inbound-hooks/{hookId}:
+    patch:
+      operationId: updateInboundHook
+      summary: Rename or enable/disable an inbound hook
+      tags: [webhooks]
+      parameters:
+        - { name: hookId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: Updated hook
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { hook: { $ref: "#/components/schemas/InboundHook" } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: deleteInboundHook
+      summary: Delete an inbound hook — the token stops working immediately
+      tags: [webhooks]
+      parameters:
+        - { name: hookId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: "Deleted" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/inbound-hooks/{hookId}/rotate:
+    post:
+      operationId: rotateInboundHook
+      summary: Rotate an inbound hook token — returns the new token once
+      tags: [webhooks]
+      parameters:
+        - { name: hookId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: New token and URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hook: { $ref: "#/components/schemas/InboundHook" }
+                  url: { type: string }
+                  token: { type: string }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/hooks/{token}:
+    post:
+      operationId: inboundHookPost
+      summary: Public token-secured endpoint — posts {message|text|body} into the hook's conversation
+      description: >-
+        Unauthenticated; the path token is the credential (rlh_...).
+        Rate-limited to 30 posts/minute per token, body cap 64KiB.
+        The message lands tagged ["webhook", hook-name].
+      tags: [webhooks]
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message: { type: string }
+                text: { type: string }
+                body: { type: string }
+      responses:
+        "202":
+          description: Posted into the conversation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  posted: { type: boolean }
+                  message_id: { type: string }
+        "404": { description: "Unknown or disabled token" }
+        "429": { description: "Rate limited" }
 
   /api/me/unread:
     get:
@@ -3888,6 +4339,16 @@ components:
               label: { type: string }
               url: { type: string }
         verify: { type: string, description: Markdown steps to confirm the change works }
+        scenes:
+          type: array
+          description: Diagrams embedded in the review — replaces standalone visual briefs
+          items:
+            type: object
+            properties:
+              title: { type: string }
+              scene:
+                type: object
+                description: "Excalidraw scene JSON ({elements: [...]})"
         agent:
           type: object
           properties:
@@ -3926,6 +4387,25 @@ components:
         active: { type: boolean }
         secret: { type: string, description: "whsec_... — only present on create" }
         secret_hint: { type: string, description: "whsec_…XXXX shown on list/get" }
+        created_at: { type: string, format: date-time }
+
+    InboundHook:
+      type: object
+      description: >-
+        Token-secured inbound endpoint. External services POST
+        {"message": "..."} to /api/hooks/<token> and Relay posts the body
+        into the target conversation, tagged ["webhook", name]. The token
+        is only returned at create/rotate — the server stores sha256 only.
+      required: [id, project_id, conversation_id, name, enabled, token_hint, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        conversation_id: { type: string, format: uuid }
+        name: { type: string }
+        enabled: { type: boolean }
+        token_hint: { type: string, description: "first 8 chars of the token hash" }
+        token: { type: string, description: "rlh_... — only present on create/rotate" }
+        last_used_at: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
 
     WebhookDelivery:

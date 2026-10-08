@@ -239,6 +239,38 @@ func (q *Queries) ListAttachmentsForMessages(ctx context.Context, ids []pgtype.U
 	return items, nil
 }
 
+const listOrphanAttachments = `-- name: ListOrphanAttachments :many
+select a.id, a.storage_key from attachments a
+where a.created_at < now() - interval '24 hours'
+  and not exists (select 1 from message_attachments ma where ma.attachment_id = a.id)
+`
+
+type ListOrphanAttachmentsRow struct {
+	ID         pgtype.UUID `json:"id"`
+	StorageKey string      `json:"storage_key"`
+}
+
+// staged uploads that never linked to a message — abandoned drafts
+func (q *Queries) ListOrphanAttachments(ctx context.Context) ([]ListOrphanAttachmentsRow, error) {
+	rows, err := q.db.Query(ctx, listOrphanAttachments)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListOrphanAttachmentsRow{}
+	for rows.Next() {
+		var i ListOrphanAttachmentsRow
+		if err := rows.Scan(&i.ID, &i.StorageKey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markAttachmentReady = `-- name: MarkAttachmentReady :one
 update attachments set status = 'ready' where id = $1
 returning id, project_id, uploader_id, storage_key, filename, content_type, size_bytes, status, created_at, uploader_agent_id

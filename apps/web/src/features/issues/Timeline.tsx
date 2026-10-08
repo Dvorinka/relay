@@ -4,6 +4,7 @@ import { api } from "../../lib/api";
 import { subscribe } from "../../lib/events";
 import { timeAgo } from "../../lib/time";
 import { Spinner, Tip } from "../../components/ui";
+import { openCommit } from "../github/CommitModal";
 import {
   ExternalLinkIcon,
   GitBranchIcon,
@@ -27,6 +28,8 @@ type Entry = {
   href?: string;
   external?: string;
   color?: string;
+  repo?: string;
+  sha?: string;
 };
 
 const DIR_KEY = "relay.timelineDir";
@@ -109,9 +112,11 @@ export function Timeline(props: { project: Project }) {
           id: `cm-${repoName}-${cm.sha}`,
           kind: "commit",
           title: cm.message,
-          meta: `${cm.sha} · ${cm.author}`,
+          meta: `${cm.sha.slice(0, 7)} · ${cm.author}`,
           at: cm.date,
           external: cm.url,
+          repo: repoName,
+          sha: cm.sha,
         });
       }
     }
@@ -225,28 +230,33 @@ export function Timeline(props: { project: Project }) {
                         e.color ? { "background-color": e.color } : undefined
                       }
                     />
-                    <Show
-                      when={e.href}
-                      fallback={
-                        <a
-                          href={e.external}
-                          target="_blank"
-                          rel="noreferrer"
-                          class="block rounded-md border border-transparent px-2 py-1.5 transition-colors hover:border-border hover:bg-surface/60"
-                        >
-                          {body(e)}
-                        </a>
-                      }
-                    >
-                      {(href) => (
-                        <A
-                          href={href()}
-                          class="block rounded-md border border-transparent px-2 py-1.5 transition-colors hover:border-border hover:bg-surface/60"
-                        >
-                          {body(e)}
-                        </A>
-                      )}
-                    </Show>
+                    {e.href ? (
+                      <A
+                        href={e.href}
+                        class="block rounded-md border border-transparent px-2 py-1.5 transition-colors hover:border-border hover:bg-surface/60"
+                      >
+                        {body(e)}
+                      </A>
+                    ) : e.sha && e.repo ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          openCommit(props.project.id, e.repo!, e.sha!)
+                        }
+                        class="block w-full rounded-md border border-transparent px-2 py-1.5 text-left transition-colors hover:border-border hover:bg-surface/60"
+                      >
+                        {body(e)}
+                      </button>
+                    ) : (
+                      <a
+                        href={e.external}
+                        target="_blank"
+                        rel="noreferrer"
+                        class="block rounded-md border border-transparent px-2 py-1.5 transition-colors hover:border-border hover:bg-surface/60"
+                      >
+                        {body(e)}
+                      </a>
+                    )}
                   </div>
                 )}
               </For>

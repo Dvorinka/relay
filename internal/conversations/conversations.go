@@ -4,6 +4,7 @@
 package conversations
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -46,6 +47,7 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
 	g.GET("/projects/:id/conversation", s.projectMemberOnly, s.handleProjectConversation)
 	g.GET("/projects/:id/mentionables", s.projectMemberOnly, s.handleMentionables)
 	g.GET("/conversations/:id/messages", s.memberOnly, s.handleListMessages)
+	g.POST("/conversations/:id/typing", s.memberOnly, s.handleTyping)
 	g.POST("/conversations/:id/messages", s.memberOnly, s.handlePostMessage)
 	g.PATCH("/messages/:id", s.handleEditMessage)
 	g.DELETE("/messages/:id", s.handleDeleteMessage)
@@ -140,6 +142,23 @@ func (s *Service) handleProjectConversation(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, conversationJSON(conv))
+}
+
+// handleTyping publishes an ephemeral "typing" event — nothing touches the
+// database. Clients hold the entry for ~4s and let it expire; senders
+// throttle to one POST every few seconds while keys fall.
+func (s *Service) handleTyping(c *gin.Context) {
+	conv := c.MustGet(ctxConversation).(db.Conversation)
+	u := auth.CurrentUser(c)
+	if s.Bus != nil {
+		pid, _ := uuid.FromBytes(conv.ProjectID.Bytes[:])
+		s.Bus.Publish(events.Event{Type: "typing", ProjectID: pid,
+			Data: map[string]any{
+				"conversation_id": conv.ID.String(),
+				"user":            map[string]any{"id": u.ID.String(), "name": u.Name},
+			}})
+	}
+	c.Status(http.StatusNoContent)
 }
 
 func (s *Service) handleListMessages(c *gin.Context) {
@@ -818,12 +837,32 @@ func (s *Service) handleSetExpiry(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
+	// A past expires_at is a delete: GetThread filters expired rows, so the
+	// re-read misses. Sweep eagerly and confirm instead of 500ing.
+	if at.Valid && !at.Time.After(time.Now()) {
+		if _, err := s.q.DeleteExpiredThreads(c.Request.Context()); err != nil {
+			s.log.Warn("thread sweep failed", zap.Error(err))
+		}
+		c.JSON(http.StatusOK, gin.H{"thread": nil, "deleted": true})
+		return
+	}
 	tr, err := s.q.GetThread(c.Request.Context(), conv.ID)
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"thread": threadJSON(tr)})
+}
+
+// SweepExpired deletes expired threads outside the request path — the lazy
+// sweep in handleListThreads only runs when someone lists threads, so rows
+// could otherwise linger indefinitely.
+func (s *Service) SweepExpired(ctx context.Context) {
+	if n, err := s.q.DeleteExpiredThreads(ctx); err != nil {
+		s.log.Warn("thread sweep failed", zap.Error(err))
+	} else if n > 0 {
+		s.log.Info("swept expired threads", zap.Int64("count", n))
+	}
 }
 
 // handleListThreads returns a project's thread index for the Threads view.

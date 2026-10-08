@@ -20,6 +20,7 @@ import { Markdown } from "../../lib/markdown";
 import { mediaURL } from "../../lib/net";
 import { initials } from "../../lib/text";
 import { timeAgo } from "../../lib/time";
+import { SceneView } from "../briefs/SceneView";
 
 type ReviewFile = {
   path: string;
@@ -32,6 +33,12 @@ type ReviewFile = {
 type ReviewDecision = { decision: string; rationale?: string };
 type ReviewAction = { kind?: string; label: string; detail?: string };
 type ReviewLink = { label: string; url: string };
+// Scenes are Excalidraw-compatible: {title, scene:{elements:[...]}} — the
+// same shape briefs carry, rendered by the shared SceneView.
+type ReviewScene = {
+  title?: string;
+  scene?: Record<string, unknown>;
+};
 
 const STATUS_FALLBACK = { label: "Pending", cls: "border-border text-muted" };
 const ACTION_FALLBACK = { label: "STEP", cls: "border-border text-muted" };
@@ -133,12 +140,34 @@ function DiffBar(props: { add: number; del: number }) {
   );
 }
 
-function ReviewCard(props: { review: AgentReview; onResponded: () => void }) {
+function SceneCard(props: { scene: ReviewScene }) {
+  return (
+    <figure class="overflow-hidden rounded-md border border-border bg-bg">
+      <Show when={props.scene.title}>
+        <figcaption class="border-b border-border px-3 py-1.5 text-[11.5px] font-medium text-muted">
+          {props.scene.title}
+        </figcaption>
+      </Show>
+      <SceneView scene={props.scene.scene ?? {}} />
+    </figure>
+  );
+}
+
+// A GitHub PR link in a review points at a pull we can render in-app —
+// route it into the project's pulls view instead of bouncing to github.com.
+const GITHUB_PR_URL = /github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/;
+
+function ReviewCard(props: {
+  review: AgentReview;
+  onResponded: () => void;
+  projectId: string;
+}) {
   const r = () => props.review;
   const files = () => (r().files ?? []) as ReviewFile[];
   const decisions = () => (r().decisions ?? []) as ReviewDecision[];
   const actions = () => (r().actions ?? []) as ReviewAction[];
   const links = () => (r().links ?? []) as ReviewLink[];
+  const scenes = () => ((r() as { scenes?: ReviewScene[] }).scenes ?? []);
   const [open, setOpen] = createSignal<string | null>(null);
   const [note, setNote] = createSignal("");
   const [busy, setBusy] = createSignal<"" | "approved" | "changes_requested">("");
@@ -234,6 +263,15 @@ function ReviewCard(props: { review: AgentReview; onResponded: () => void }) {
         <Section title="What changed">
           <Markdown body={r().summary} class="text-[13px]" />
         </Section>
+
+        {/* diagrams attached by the agent */}
+        <Show when={scenes().length > 0}>
+          <Section title={`Diagrams (${scenes().length})`}>
+            <div class="space-y-3">
+              <For each={scenes()}>{(s) => <SceneCard scene={s} />}</For>
+            </div>
+          </Section>
+        </Show>
 
         {/* files */}
         <Show when={files().length > 0}>
@@ -332,16 +370,26 @@ function ReviewCard(props: { review: AgentReview; onResponded: () => void }) {
           <Section title="Links">
             <div class="flex flex-wrap gap-2">
               <For each={links()}>
-                {(l) => (
-                  <a
-                    href={l.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    class="rounded-md border border-border px-2.5 py-1 text-[12.5px] text-accent transition-colors hover:bg-hover"
-                  >
-                    {l.label} ↗
-                  </a>
-                )}
+                {(l) => {
+                  const pr = GITHUB_PR_URL.exec(l.url);
+                  return pr ? (
+                    <A
+                      href={`/app/p/${props.projectId}?view=pulls&pr=${pr[1]}:${pr[2]}`}
+                      class="rounded-md border border-border px-2.5 py-1 text-[12.5px] text-accent transition-colors hover:bg-hover"
+                    >
+                      {l.label} · {pr[1]}#{pr[2]}
+                    </A>
+                  ) : (
+                    <a
+                      href={l.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      class="rounded-md border border-border px-2.5 py-1 text-[12.5px] text-accent transition-colors hover:bg-hover"
+                    >
+                      {l.label} ↗
+                    </a>
+                  );
+                }}
               </For>
             </div>
           </Section>
@@ -503,7 +551,13 @@ export function Reviews(props: { project: Project }) {
                     </div>
                   }
                 >
-                  {(r) => <ReviewCard review={r} onResponded={refetch} />}
+                  {(r) => (
+                    <ReviewCard
+                      review={r}
+                      onResponded={refetch}
+                      projectId={props.project.id}
+                    />
+                  )}
                 </For>
               </div>
             </>

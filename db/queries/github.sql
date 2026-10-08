@@ -91,3 +91,12 @@ select r.* from repositories r
 join projects p on p.id = r.project_id
 where p.workspace_id = sqlc.arg(workspace_id)
 order by r.owner, r.name;
+
+-- name: ListWorkspaceRepoProjects :many
+-- every linked repo in the workspace, carrying its project's name/key so
+-- aggregate views (all open PRs) don't need a second hop
+select r.*, p.name as project_name, p.key as project_key
+from repositories r
+join projects p on p.id = r.project_id
+where p.workspace_id = sqlc.arg(workspace_id)
+order by r.owner, r.name;

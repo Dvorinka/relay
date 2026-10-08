@@ -135,7 +135,7 @@ export default function Home() {
           </div>
         }
       >
-        <div class="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
+        <div class="mx-auto w-full max-w-[88rem] px-4 py-6 sm:px-6 sm:py-8">
           <div class="mb-4 flex flex-wrap items-center gap-2 sm:gap-3">
             <h1 class="text-[15px] font-semibold">Projects</h1>
             <span class="text-[12px] text-muted">{totals().projects}</span>
@@ -199,7 +199,7 @@ export default function Home() {
                   </p>
                 }
               >
-                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                   <For each={rows()}>
                     {(p) => (
                       <ProjectCard
@@ -265,7 +265,7 @@ function IssueFeed(props: { title: string; items: ActivityIssue[] }) {
           {props.title}
         </h3>
         <ul class="divide-y divide-border/60 overflow-hidden rounded-md border border-border bg-surface">
-          <For each={props.items.slice(0, 8)}>
+          <For each={props.items.slice(0, 5)}>
             {(i) => (
               <li>
                 <A
@@ -300,7 +300,7 @@ function MessageFeed(props: { items: ActivityMessage[] }) {
           Latest messages
         </h3>
         <ul class="divide-y divide-border/60 overflow-hidden rounded-md border border-border bg-surface">
-          <For each={props.items.slice(0, 10)}>
+          <For each={props.items.slice(0, 5)}>
             {(m) => (
               <li>
                 <A

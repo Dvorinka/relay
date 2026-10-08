@@ -79,6 +79,7 @@ export type PendingReviewItem = NonNullable<
   paths["/api/me/reviews"]["get"]["responses"]["200"]["content"]["application/json"]["reviews"]
 >[number];
 export type WebhookSubscription = components["schemas"]["WebhookSubscription"];
+export type InboundHook = components["schemas"]["InboundHook"];
 export type StatusDef = components["schemas"]["StatusDef"];
 export type SavedFilter = components["schemas"]["SavedFilter"];
 export type Brief = components["schemas"]["Brief"];
@@ -139,12 +140,80 @@ export interface PullDetail {
   }[];
 }
 
+// WorkflowRun is one row of a repo's GitHub Actions list.
+export interface WorkflowRun {
+  id: number;
+  name: string;
+  status: string; // queued | in_progress | completed | …
+  conclusion: string; // success | failure | cancelled | skipped | …
+  event: string;
+  head_branch: string;
+  head_sha: string;
+  run_number: number;
+  run_attempt: number;
+  url: string;
+  actor: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// WorkspacePulls groups every linked repo's open PRs by project — the
+// workspace-wide "all open PRs" view.
+export interface WorkspacePulls {
+  groups: {
+    project_id: string;
+    project_name: string;
+    project_key: string;
+    repo: LinkedRepo;
+    pulls: {
+      number: number;
+      title: string;
+      state: string;
+      draft: boolean;
+      url: string;
+      author: string;
+      head: string;
+      base: string;
+      labels: string[];
+      created_at: string;
+      updated_at: string;
+    }[];
+  }[];
+}
+
 export interface RepoCommit {
   sha: string;
   message: string;
   url: string;
   author: string;
   date: string;
+}
+
+// CommitDetail is the in-app commit modal payload: full message, line stats,
+// touched files and CI checks on that SHA.
+export interface CommitDetail {
+  commit: {
+    sha: string;
+    message: string;
+    url: string;
+    author: string;
+    date: string;
+    additions: number;
+    deletions: number;
+    repo?: { full_name?: string };
+  };
+  files: {
+    filename: string;
+    status: string;
+    additions: number;
+    deletions: number;
+  }[];
+  checks: {
+    name: string;
+    status: string;
+    conclusion: string;
+    url: string;
+  }[];
 }
 
 // An installable repository offered by the GitHub App / PAT — carries enough
@@ -480,6 +549,8 @@ export function createClient(baseUrl: string, token?: string) {
       post<void>(`/api/messages/${messageId}/read`),
     markConversationRead: (conversationId: string) =>
       post<void>(`/api/conversations/${conversationId}/read`),
+    sendTyping: (conversationId: string) =>
+      post<void>(`/api/conversations/${conversationId}/typing`),
     clearConversation: (conversationId: string) =>
       request<{ cleared: number }>(
         `/api/conversations/${conversationId}/messages`,
@@ -491,9 +562,10 @@ export function createClient(baseUrl: string, token?: string) {
         ...(ttlHours !== undefined ? { ttl_hours: ttlHours } : {}),
       }),
     setThreadExpiry: (conversationId: string, expiresAt: string | null) =>
-      patch<{ thread: Thread }>(`/api/conversations/${conversationId}/expiry`, {
-        expires_at: expiresAt,
-      }),
+      patch<{ thread: Thread | null; deleted?: boolean }>(
+        `/api/conversations/${conversationId}/expiry`,
+        { expires_at: expiresAt },
+      ),
     listThreads: (projectId: string) =>
       request<{ threads: Thread[] }>(`/api/projects/${projectId}/threads`),
     listChannels: (projectId: string) =>
@@ -690,6 +762,25 @@ export function createClient(baseUrl: string, token?: string) {
       request<PullDetail>(
         `/api/projects/${projectId}/github/pull?repo=${encodeURIComponent(repo)}&number=${number}`,
       ),
+    createPullRequest: (
+      projectId: string,
+      repo: string,
+      input: { head: string; base?: string; title: string; body?: string; draft?: boolean },
+    ) =>
+      post<{ pull: { id: string; number: number; url: string; state: string; draft: boolean } }>(
+        `/api/projects/${projectId}/github/pulls?repo=${encodeURIComponent(repo)}`,
+        input,
+      ),
+    createGitHubIssue: (projectId: string, repo: string, input: { title: string; body?: string }) =>
+      post<{ issue: { id: string; number: number; url: string; state: string } }>(
+        `/api/projects/${projectId}/github/issues?repo=${encodeURIComponent(repo)}`,
+        input,
+      ),
+    commentOnIssue: (projectId: string, repo: string, number: number, body: string) =>
+      post<{ commented: boolean }>(
+        `/api/projects/${projectId}/github/issues/comments?repo=${encodeURIComponent(repo)}`,
+        { number, body },
+      ),
     mergePullRequest: (
       projectId: string,
       repo: string,
@@ -700,9 +791,45 @@ export function createClient(baseUrl: string, token?: string) {
         `/api/projects/${projectId}/github/pull/merge?repo=${encodeURIComponent(repo)}`,
         { number, method },
       ),
+    setPullState: (
+      projectId: string,
+      repo: string,
+      number: number,
+      state: "open" | "closed",
+    ) =>
+      post<{ state: string }>(
+        `/api/projects/${projectId}/github/pull/state?repo=${encodeURIComponent(repo)}`,
+        { number, state },
+      ),
+    reviewPullRequest: (
+      projectId: string,
+      repo: string,
+      number: number,
+      event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT",
+      body: string,
+    ) =>
+      post<{ submitted: boolean }>(
+        `/api/projects/${projectId}/github/pull/review?repo=${encodeURIComponent(repo)}`,
+        { number, event, body },
+      ),
+    repoActions: (projectId: string, repo: string) =>
+      request<{ runs: WorkflowRun[] }>(
+        `/api/projects/${projectId}/github/actions?repo=${encodeURIComponent(repo)}`,
+      ),
+    rerunAction: (projectId: string, repo: string, runId: number) =>
+      post<{ rerun: boolean }>(
+        `/api/projects/${projectId}/github/actions/rerun?repo=${encodeURIComponent(repo)}`,
+        { run_id: runId },
+      ),
+    workspacePulls: (workspaceId: string) =>
+      request<WorkspacePulls>(`/api/workspaces/${workspaceId}/github/pulls`),
     repoCommits: (projectId: string, repo: string, branch?: string) =>
       request<{ commits: RepoCommit[]; branch: string }>(
         `/api/projects/${projectId}/github/commits?repo=${encodeURIComponent(repo)}${branch ? `&branch=${encodeURIComponent(branch)}` : ""}`,
+      ),
+    repoCommit: (projectId: string, repo: string, sha: string) =>
+      request<CommitDetail>(
+        `/api/projects/${projectId}/github/commit?repo=${encodeURIComponent(repo)}&sha=${encodeURIComponent(sha)}`,
       ),
     repoBranches: (projectId: string, repo: string) =>
       request<{ branches: { name: string; protected: boolean }[]; default_branch: string }>(
@@ -806,6 +933,27 @@ export function createClient(baseUrl: string, token?: string) {
       ),
     testWebhook: (webhookId: string) =>
       post<{ queued: boolean }>(`/api/webhooks/${webhookId}/test`, {}),
+
+    // Inbound hooks — token-secured endpoints that post into a channel
+    listInboundHooks: (projectId: string) =>
+      request<{ hooks: InboundHook[] }>(`/api/projects/${projectId}/hooks`),
+    createInboundHook: (projectId: string, body: { name: string; conversation_id: string }) =>
+      post<{ hook: InboundHook; url: string; token: string }>(
+        `/api/projects/${projectId}/hooks`,
+        body,
+      ),
+    updateInboundHook: (hookId: string, body: { name?: string; enabled?: boolean }) =>
+      request<{ hook: InboundHook }>(`/api/inbound-hooks/${hookId}`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      }),
+    rotateInboundHook: (hookId: string) =>
+      post<{ hook: InboundHook; url: string; token: string }>(
+        `/api/inbound-hooks/${hookId}/rotate`,
+        {},
+      ),
+    deleteInboundHook: (hookId: string) =>
+      request<void>(`/api/inbound-hooks/${hookId}`, { method: "DELETE" }),
 
     // Avatars — same FormData trick as uploadAttachment
     uploadAvatar: (file: File) => {

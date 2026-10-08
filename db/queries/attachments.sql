@@ -44,3 +44,9 @@ from message_attachments ma
 join attachments a on a.id = ma.attachment_id
 where ma.message_id = any(sqlc.arg(ids)::uuid[])
 order by ma.position;
+
+-- name: ListOrphanAttachments :many
+-- staged uploads that never linked to a message — abandoned drafts
+select a.id, a.storage_key from attachments a
+where a.created_at < now() - interval '24 hours'
+  and not exists (select 1 from message_attachments ma where ma.attachment_id = a.id);

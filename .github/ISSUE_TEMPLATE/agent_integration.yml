@@ -1,0 +1,31 @@
+name: Agent / MCP integration
+description: An agent tool, MCP call, or rly_ token is misbehaving
+labels: [bug, agent]
+body:
+  - type: input
+    id: agent
+    attributes:
+      label: Agent & transport
+      description: e.g. "Devin via relay-cli 1.0.49", "Claude Code via /mcp HTTP"
+    validations:
+      required: true
+  - type: input
+    id: tool
+    attributes:
+      label: MCP tool(s) involved
+      description: e.g. send_message, github_create_pr — leave blank if unsure
+    validations:
+      required: false
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: The call made, the response expected, the response received. Redact tokens and secrets.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Agent output or server logs. Never paste secrets.
+      render: text

@@ -1,10 +1,19 @@
 import type { PullDetail } from "@relay/api-client";
-import { createResource, createSignal, For, Show } from "solid-js";
+import {
+  createResource,
+  createSignal,
+  For,
+  onCleanup,
+  Show,
+} from "solid-js";
 import { api } from "../../lib/api";
+import { subscribe } from "../../lib/events";
 import { Markdown } from "../../lib/markdown";
 import { timeAgo } from "../../lib/time";
 import { FormError, Spinner } from "../../components/ui";
+import { confirmDestructive } from "../../components/Confirm";
 import { markGitHub } from "./GitHub";
+import { openCommit } from "./CommitModal";
 import { ArrowLeftIcon, ExternalLinkIcon } from "../../components/icons";
 
 // PullRequestDetail: the in-app PR view — body, CI checks, commits and the
@@ -20,6 +29,11 @@ export function PullRequestDetail(props: {
     () => `${props.repo}#${props.number}`,
     () => api.pullDetail(props.projectId, props.repo, props.number),
   );
+  // check-run webhooks repaint the Checks section while the page is open
+  const unsub = subscribe((e) => {
+    if (e.type === "github.ci" && e.data?.repo === props.repo) void refetch();
+  });
+  onCleanup(unsub);
 
   return (
     <div class="flex min-h-0 flex-1 flex-col">
@@ -78,7 +92,11 @@ export function PullRequestDetail(props: {
               onMerged={() => void refetch()}
             />
             <PRChecks checks={d().checks} />
-            <PRCommits commits={d().commits} />
+            <PRCommits
+              commits={d().commits}
+              projectId={props.projectId}
+              repo={props.repo}
+            />
             <PRFiles files={d().files} />
           </div>
         )}
@@ -100,6 +118,11 @@ function PRBody(props: {
   );
   const [merging, setMerging] = createSignal(false);
   const [mergeError, setMergeError] = createSignal("");
+  const [reviewBody, setReviewBody] = createSignal("");
+  const [reviewBusy, setReviewBusy] = createSignal("");
+  const [reviewError, setReviewError] = createSignal("");
+  const [stateBusy, setStateBusy] = createSignal(false);
+  const [stateError, setStateError] = createSignal("");
   const canMerge = () =>
     state() === "open" && !pr().draft && !merging();
   const doMerge = async () => {
@@ -118,6 +141,51 @@ function PRBody(props: {
       setConfirming(false);
     } finally {
       setMerging(false);
+    }
+  };
+  const submitReview = async (
+    event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT",
+  ) => {
+    setReviewBusy(event);
+    setReviewError("");
+    try {
+      if (event === "COMMENT") {
+        // plain conversation comment, not a review — matches what users
+        // expect from a single text box
+        await api.commentOnIssue(
+          props.projectId,
+          props.repo,
+          pr().number,
+          reviewBody().trim(),
+        );
+      } else {
+        await api.reviewPullRequest(
+          props.projectId,
+          props.repo,
+          pr().number,
+          event,
+          reviewBody().trim(),
+        );
+      }
+      setReviewBody("");
+      props.onMerged(); // generic "something changed" — refetch detail
+    } catch (e) {
+      setReviewError(e instanceof Error ? e.message : "Review failed");
+    } finally {
+      setReviewBusy("");
+    }
+  };
+  const toggleState = async () => {
+    const next = pr().state === "open" ? "closed" : "open";
+    setStateBusy(true);
+    setStateError("");
+    try {
+      await api.setPullState(props.projectId, props.repo, pr().number, next);
+      props.onMerged();
+    } catch (e) {
+      setStateError(e instanceof Error ? e.message : "State change failed");
+    } finally {
+      setStateBusy(false);
     }
   };
   const state = () =>
@@ -234,9 +302,91 @@ function PRBody(props: {
           {(msg) => <div class="mt-2"><FormError message={msg()} /></div>}
         </Show>
       </Show>
+      <Show when={state() === "open"}>
+        <div class="mt-3 border-t border-border/60 pt-3">
+          <label class="mb-1.5 block text-[12px] font-semibold text-muted">
+            Review — lands on GitHub as the Relay app
+          </label>
+          <textarea
+            value={reviewBody()}
+            onInput={(e) => setReviewBody(e.currentTarget.value)}
+            rows={3}
+            placeholder="Optional summary — required when requesting changes"
+            class="w-full resize-y rounded border border-border bg-transparent px-2 py-1.5 text-[12.5px] outline-none placeholder:text-muted/60 focus:border-accent/50"
+          />
+          <div class="mt-2 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={reviewBusy() !== ""}
+              onClick={() => void submitReview("APPROVE")}
+              class="rounded bg-emerald-600/90 px-2.5 py-1 text-[12px] font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
+            >
+              {reviewBusy() === "APPROVE" ? "Approving…" : "Approve"}
+            </button>
+            <button
+              type="button"
+              disabled={reviewBusy() !== "" || !reviewBody().trim()}
+              title={!reviewBody().trim() ? "A body is required" : ""}
+              onClick={() => void submitReview("COMMENT")}
+              class="rounded border border-border px-2.5 py-1 text-[12px] font-medium transition-colors hover:bg-hover disabled:opacity-50"
+            >
+              {reviewBusy() === "COMMENT" ? "Commenting…" : "Comment"}
+            </button>
+            <button
+              type="button"
+              disabled={reviewBusy() !== "" || !reviewBody().trim()}
+              title={!reviewBody().trim() ? "A body is required" : ""}
+              onClick={() => void submitReview("REQUEST_CHANGES")}
+              class="rounded border border-red-400/50 px-2.5 py-1 text-[12px] font-medium text-red-600 transition-colors hover:bg-red-500/10 disabled:opacity-50 dark:text-red-400"
+            >
+              {reviewBusy() === "REQUEST_CHANGES"
+                ? "Requesting…"
+                : "Request changes"}
+            </button>
+            <button
+              type="button"
+              disabled={stateBusy() || reviewBusy() !== ""}
+              onClick={() => {
+                void confirmDestructive({
+                  title: `Close PR #${pr().number}`,
+                  body: "The pull request closes on GitHub. It can be reopened.",
+                  confirmLabel: "Close pull request",
+                }).then((ok) => {
+                  if (ok) void toggleState();
+                });
+              }}
+              class="ml-auto rounded px-2 py-1 text-[12px] text-muted transition-colors hover:bg-hover hover:text-fg disabled:opacity-50"
+            >
+              {stateBusy() ? "Closing…" : "Close pull request"}
+            </button>
+          </div>
+          <Show when={reviewError()}>
+            {(msg) => <div class="mt-2"><FormError message={msg()} /></div>}
+          </Show>
+        </div>
+      </Show>
+      <Show when={state() === "closed"}>
+        <div class="mt-3 border-t border-border/60 pt-3">
+          <button
+            type="button"
+            disabled={stateBusy()}
+            onClick={() => void toggleState()}
+            class="rounded border border-border px-2.5 py-1 text-[12px] font-medium transition-colors hover:bg-hover disabled:opacity-50"
+          >
+            {stateBusy() ? "Reopening…" : "Reopen pull request"}
+          </button>
+          <Show when={stateError()}>
+            {(msg) => <div class="mt-2"><FormError message={msg()} /></div>}
+          </Show>
+        </div>
+      </Show>
       <Show when={pr().body.trim()}>
         <div class="markdown mt-3 border-t border-border/60 pt-3">
-          <Markdown body={pr().body} projectId={props.projectId} />
+          <Markdown
+            body={pr().body}
+            projectId={props.projectId}
+            allowHtml
+          />
         </div>
       </Show>
     </div>
@@ -290,7 +440,11 @@ function PRChecks(props: { checks: PullDetail["checks"] }) {
   );
 }
 
-function PRCommits(props: { commits: PullDetail["commits"] }) {
+function PRCommits(props: {
+  commits: PullDetail["commits"];
+  projectId: string;
+  repo: string;
+}) {
   return (
     <Show when={props.commits.length > 0}>
       <section class="border-b border-border px-4 py-3">
@@ -299,14 +453,15 @@ function PRCommits(props: { commits: PullDetail["commits"] }) {
           <For each={props.commits}>
             {(cm) => (
               <li class="flex items-baseline gap-2 text-[12.5px]">
-                <a
-                  href={cm.url}
-                  target="_blank"
-                  rel="noopener"
+                <button
+                  type="button"
+                  onClick={() =>
+                    openCommit(props.projectId, props.repo, cm.sha)
+                  }
                   class="shrink-0 font-mono text-[11.5px] text-accent hover:underline"
                 >
                   {cm.sha.slice(0, 7)}
-                </a>
+                </button>
                 <span class="min-w-0 flex-1 truncate">{cm.message}</span>
                 <span class="shrink-0 text-[11px] text-muted">
                   {cm.author} · {timeAgo(cm.date)}

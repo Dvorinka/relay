@@ -202,15 +202,17 @@ function codeRenderer(token: { text: string; lang?: string }): string {
   );
 }
 
-function parserFor(projectId?: string): Marked {
-  const cacheKey = projectId ?? "";
+function parserFor(projectId?: string, allowHtml = false): Marked {
+  const cacheKey = `${projectId ?? ""}:${allowHtml ? "h" : ""}`;
   let p = parsers.get(cacheKey);
   if (!p) {
     p = new Marked({
       gfm: true,
       breaks: true,
       walkTokens(token) {
-        if (token.type === "html") {
+        // allowHtml is for trusted-remote bodies (GitHub issues/PRs/README):
+        // inline HTML passes through to DOMPurify instead of rendering raw.
+        if (token.type === "html" && !allowHtml) {
           token.text = escapeHtml(token.text);
         }
       },
@@ -226,11 +228,12 @@ export function renderMarkdown(
   body: string,
   projectId?: string,
   mentions?: MentionRef[],
+  allowHtml = false,
 ): string {
   activeMentions = mentions ?? [];
   try {
     return DOMPurify.sanitize(
-      parserFor(projectId).parse(body, { async: false }),
+      parserFor(projectId, allowHtml).parse(body, { async: false }),
     );
   } finally {
     activeMentions = [];
@@ -242,9 +245,15 @@ export function Markdown(props: {
   class?: string;
   projectId?: string;
   mentions?: MentionRef[];
+  allowHtml?: boolean;
 }) {
   const html = createMemo(() =>
-    renderMarkdown(props.body, props.projectId, props.mentions),
+    renderMarkdown(
+      props.body,
+      props.projectId,
+      props.mentions,
+      props.allowHtml,
+    ),
   );
   return (
     <div

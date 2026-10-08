@@ -406,3 +406,160 @@ repos' open PRs; rail search filters this project inline.
   `ConversationThread`; local-mode adapter mirrors the surface; MCP gets
   `create_thread`. `GET /api/projects/:id/threads` indexes a project's
   threads most-recent-first.
+
+## Phase 23 — channels, thread management, reviews-in-context, GitHub depth ☑
+
+Verified live on a scratch stack (Postgres + built binary): migrations to
+0033 apply, review scenes round-trip through MCP `submit_review` → REST,
+channel + thread lifecycle works, delete-by-expiry returns `200
+{deleted:true}` (fixed a 500 where the handler re-read the expired row it
+just invalidated — regression covered in `TestChannelsAndExpiry`).
+
+- **Channels**: `conversations.kind='channel'` (migration 0032) — named,
+  persistent channels under each project; create/rename/delete from the
+  left rail; `PATCH`/`DELETE /api/channels/:id`.
+- **Thread management**: threads list under the project in the rail next
+  to channels, "New thread" action, hover-delete on rows, delete from the
+  threads modal and the open thread panel, `?thread=` deep links.
+- **Composer slash commands**: `/thread`, `/channel`, `/review`,
+  `/overview`, `/commits`, `/issues`, `/pulls`, `/ideas`, `/settings`,
+  plus the existing message actions.
+- **Reviews as the agent surface**: `agent_reviews.scenes` jsonb
+  (migration 0033) — agents attach Excalidraw-shaped scene JSON on
+  `submit_review`; review cards render diagrams via the shared
+  `SceneView`. `?briefs=1` deep links redirect to the review queue;
+  BriefsPanel removed (SceneView/SceneEditor stay as the shared renderer
+  for reviews and ideas).
+- **Context rail rework**: collapsible persisted sections (Development,
+  issues, PRs, reviews, commits, members, agents, todos), 3-item caps with
+  "All →" links, compact cards, Ideas moved to left nav.
+- **In-app commit detail**: `GET /api/projects/:id/github/commit` —
+  message, stats, files, checks. Clicking a commit anywhere (rail, git
+  log, calendar, timeline, PR detail) opens `CommitModal` instead of
+  github.com.
+- **Markdown rendering**: GitHub bodies (README, issue, PR) render through
+  the Markdown component with `allowHtml` — sanitised inline HTML.
+- **Workspace "Pull requests" page** (`/app/pulls`): every linked repo's
+  open PRs grouped by project, searchable, live-refreshed on `issue.*`
+  events; rows deep-link `?pr=owner/name:number` into the project pulls
+  view.
+- **PR write actions in-app**: merge (merge|squash|rebase), close/reopen
+  (`POST .../pull/state`, mirrored issue updated eagerly), submit review
+  (`POST .../pull/review` — APPROVE / REQUEST_CHANGES / COMMENT).
+- **CI/CD surface**: `GET .../github/actions` + `POST .../actions/rerun`;
+  Actions section per repo in the Development panel with live status;
+  `check_run`/`check_suite`/`workflow_run` webhooks republish as
+  `github.ci` SSE frames so run lists and PR checks repaint live.
+  Manifest now requests `actions:write` + `checks:read` (existing
+  installations need the permission update approved on GitHub).
+- **Inbox**: kind chips (all/unread/mentions/reviews/threads/issues/
+  channels), project filter, search.
+- **Home/Overview/Calendar/Timeline**: 5-item caps, responsive grid,
+  searchable project picker, calendar search + kind toggles + grouped day
+  detail, cross-project timeline feed.
+
+## Phase 24 — agent GitHub write surface & inbound hooks ☑
+
+- **MCP GitHub write tools**: `github_create_issue`, `github_create_pr`,
+  `github_comment` (issues and PRs share the comments API),
+  `github_merge_pr`, `github_review_pr`, `github_pr_state`,
+  `github_ci_runs`, `github_rerun` — agents gain the same in-app GitHub
+  powers users just got, gated by `issue:write`/`issue:read` scopes.
+- **Create issues & PRs from the app**: `POST
+  /api/projects/:id/github/issues` and `.../github/pulls` create on
+  GitHub and mirror back onto the board immediately
+  (`MirrorIssue`/`MirrorPR`/`SyncMirroredIssue`);
+  `.../github/issues/comments` comments on issues and PRs alike —
+  plain PR comments land on the review thread without leaving Relay.
+  Dev panel + pulls list got the create modals.
+- **Inbound channel webhooks**: `POST /api/hooks/:token` posts a message
+  into a channel — the generic integration point for CI alerts, deploy
+  bots, external services. `inbound_hooks` table (migration 0034), token
+  sha256-stored, 30/min per-token limit, 64KiB cap, rotate/disable/delete
+  management API + UI under project webhooks.
+- **Fix**: `handlePullState`/`handlePullMerge` publish `issue.updated` so
+  mirrored lists repaint without a manual refetch.
+- **Workspace pulls**: bounded-concurrency repo fan-out + 60s cache —
+  matches the dev panel's cache contract.
+
+## Phase 25 — platform liveness ◐
+
+- **Typing indicators**: shipped — ephemeral `typing` SSE events (no DB),
+  3s composer throttle, 4s display expiry, self-events ignored. Agent
+  `typing` MCP tool still open.
+- **Presence**: who is online/viewing a channel — a periodic heartbeat via
+  the existing SSE connection; rail member list greys offline.
+- ~~**Unread per channel/thread**~~ — already shipped earlier: per-channel
+  badges live in the rail via `useUnreadConversations`.
+- **Draft attachment preservation**: shipped — upload-on-stage, ids +
+  metadata persist in localStorage, stubs restore server-URL previews
+  across reloads. Orphan sweep below.
+- **Palette breadth**: shipped — ⌘K indexes channels, threads and
+  mirrored GitHub issues/PRs; PR results deep-link into
+  `?view=pulls&pr=repo:number`.
+- **Janitor**: periodic sweeper (boot + every 10min) deletes expired
+  threads and orphaned staged attachments (row + storage object) —
+  replaces reliance on the listThreads lazy sweep.
+
+## Phase 26 — desktop & mobile parity ◐
+
+- **Linux tray**: shipped — `tray_linux.go` speaks StatusNotifierItem over
+  D-Bus via fyne/systray (pure Go, already an indirect dep). KDE/wlroots
+  render natively; GNOME needs an AppIndicator extension, otherwise the
+  icon silently never appears. macOS keeps dock conventions.
+- **Fullscreen/kiosk + always-on-top toggles** for the desktop shell
+  (requested in the activity feed).
+- **Mobile parity**: audited — the Expo app is a WebView shell around the
+  SPA, so pulls/reviews/hooks/typing/search all inherit automatically.
+  `deepLinkPath` already allows `/app/*`; share intent + notification
+  bridge work. Remaining: gesture-path polish (long-press toolbars).
+- **Deep links**: verified — `deepLinkRoute` allows `/app/**` including
+  `/app/pulls`, `?pr=` and `?thread=` params ride along in the query.
+- **GitHub deploy/release events**: `deployment_status` + `release`
+  webhooks now republish as `github.ci`; manifest requests
+  `deployments:read`. Pulls page refetches on `github.ci`; `/allpulls`
+  slash command jumps to the workspace pulls page; review links to
+  GitHub PRs route in-app.
+
+## Phase 27 — integrations beyond GitHub ☐
+
+- **GitLab/Bitbucket**: add a `provider` column on `repositories` and a
+  provider interface beside `github.Client` — repo link, issue/PR mirror,
+  dev panel, actions surface all generalise. Real work; GitHub stays the
+  reference implementation.
+- **Inbound webhook catalog widening**: message-posting hooks (P24) cover
+  CI bots; consider a generic JSON-mapping profile (path → field) so
+  non-Relay-shaped payloads (Alertmanager, Grafana, Uptime Kuma) ingest
+  without a shim.
+- **Outbound webhook events**: add `github.ci`, `thread.*`, `channel.*`,
+  `idea.*` to the server-side catalog.
+- **Slack/Discord import**: last resort — outbound webhooks + inbound
+  hooks already bridge most workflows.
+
+## Phase 28 — agent autonomy ☐
+
+- **Review ↔ PR linkage**: reviews carry an optional `github_pr` ref;
+  approving in Relay can submit the matching GitHub review, closing the
+  agent-workflow loop (Relay verdict → GitHub review state).
+- **Agent CI loop**: `github.ci` events reach agents through MCP polling
+  or a subscribe tool — "my PR's checks went red" becomes actionable
+  without a human relay.
+- **Agent-initiated threads/channels**: `create_thread` exists; add
+  `create_channel` + scoped `channel:write` permission.
+- **Work journal**: agents append to a per-project log (built on todos +
+  reviews) so "what did the agent do overnight" answers itself.
+- **Multi-agent routing**: `@agent` mentions exist; add per-channel default
+  agent + mention-targeted wake so the right agent picks up work.
+
+## Post-1.0 ideas (not committed)
+
+- Relay Cloud (hosted offering) - self-hosting stays first-class
+- iOS build of the mobile app
+- Multiple simultaneous server connections per client (per-server
+  sessions, unified rail, merged notifications)
+- In-app auto-update progress UI (plumbing shipped; polish pending)
+- Play Store distribution (EAS submit, store listing); CI APK is already
+  signed via `apps/mobile/plugins/withReleaseSigning.js`
+- DragonflyDB cache layer if hot paths need it
+- True `DELETE /conversations/:id` for threads (today: expire-now;
+  the janitor sweeps expired rows on a 10-minute cycle)

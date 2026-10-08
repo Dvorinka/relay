@@ -5,6 +5,7 @@ package attachments
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -319,6 +320,28 @@ func SniffType(data []byte, declared string) string {
 		ct = "application/octet-stream"
 	}
 	return ct
+}
+
+// SweepOrphans deletes staged uploads that never linked to a message — an
+// abandoned draft leaves both a row and a storage object. Rows older than a
+// day with no message_attachments entry are fair game; storage is removed
+// first so a failed delete doesn't orphan the object invisibly.
+func (s *Service) SweepOrphans(ctx context.Context) {
+	rows, err := s.q.ListOrphanAttachments(ctx)
+	if err != nil {
+		s.log.Warn("attachment sweep failed", zap.Error(err))
+		return
+	}
+	for _, r := range rows {
+		if err := s.store.Remove(ctx, r.StorageKey); err != nil {
+			s.log.Warn("attachment sweep storage remove", zap.String("key", r.StorageKey), zap.Error(err))
+			continue // keep the row — retry next cycle
+		}
+		_ = s.q.DeleteAttachment(ctx, r.ID)
+	}
+	if len(rows) > 0 {
+		s.log.Info("swept orphan attachments", zap.Int("count", len(rows)))
+	}
 }
 
 // JSON renders one attachment for the API.

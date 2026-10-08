@@ -18,8 +18,16 @@ personal access tokens are needed in production.
   `state=all`, paginated, capped at 500 per kind per repo. Open PRs land in
   `review`, merged in `done`, closed in `cancelled`; GitHub labels are
   imported with their colors. Re-runs refresh in place — no duplicates.
-- **MCP tools** — `github_list_issues`, `github_get_issue`,
-  `github_list_prs`, `github_get_pr` under the `issue:read` scope.
+- **MCP tools** — read: `github_list_issues`, `github_get_issue`,
+  `github_list_prs`, `github_get_pr`, `github_ci_runs` under `issue:read`.
+  Write: `github_create_issue`, `github_create_pr`, `github_comment`,
+  `github_review_pr`, `github_pr_state`, `github_merge_pr`, `github_rerun`
+  under `issue:write`. Created issues/PRs are mirrored onto the board;
+  state changes broadcast `issue.updated`.
+- **Create from Relay** — Development → "+ New issue" / "+ New PR" (or
+  `POST /api/projects/:id/github/issues`, `.../github/pulls`,
+  `.../github/issues/comments`) files directly on the linked repo as the
+  app installation and mirrors the result back to the board.
 - **In-app PR merge** — the pull-request view offers merge, squash, or
   rebase (`POST /api/projects/:id/github/pull/merge`). GitHub runs the
   merge itself and enforces branch protection, required checks, and

@@ -2,6 +2,7 @@ import { createResource, createSignal, For, Show } from "solid-js";
 import { api } from "../../lib/api";
 import { inputClass, Spinner } from "../../components/ui";
 import { markGitHub } from "./GitHub";
+import { openCommit } from "./CommitModal";
 import { timeAgo } from "../../lib/time";
 
 // GitLog: commit history for a linked repository — repo switcher when several
@@ -111,21 +112,47 @@ export function GitLog(props: { projectId: string }) {
                 >
                   {(cm) => (
                     <li class="flex items-baseline gap-3 px-5 py-2.5">
-                      <a
-                        href={cm.url}
-                        target="_blank"
-                        rel="noopener"
+                      <button
+                        type="button"
+                        onClick={() =>
+                          openCommit(
+                            props.projectId,
+                            activeRepo() ?? "",
+                            cm.sha,
+                          )
+                        }
                         class="shrink-0 font-mono text-[12px] text-accent hover:underline"
                       >
                         {cm.sha.slice(0, 7)}
-                      </a>
+                      </button>
                       <div class="min-w-0 flex-1">
-                        <p class="truncate text-[13px]">{cm.message}</p>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            openCommit(
+                              props.projectId,
+                              activeRepo() ?? "",
+                              cm.sha,
+                            )
+                          }
+                          class="block w-full truncate text-left text-[13px] hover:underline"
+                        >
+                          {cm.message}
+                        </button>
                         <p class="mt-0.5 flex items-center gap-1.5 text-[11.5px] text-muted">
                           {markGitHub("", "h-3 w-3")}
                           <span>
                             {cm.author} · {timeAgo(cm.date)}
                           </span>
+                          <a
+                            href={cm.url}
+                            target="_blank"
+                            rel="noopener"
+                            class="ml-1 hover:text-fg"
+                            title="Open on GitHub"
+                          >
+                            ↗
+                          </a>
                         </p>
                       </div>
                     </li>

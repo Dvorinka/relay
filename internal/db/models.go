@@ -61,6 +61,7 @@ type AgentReview struct {
 	RespondedAt pgtype.Timestamptz `json:"responded_at"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	Scenes      []byte             `json:"scenes"`
 }
 
 type AgentTodo struct {
@@ -168,6 +169,18 @@ type Idea struct {
 	CreatedByAgent pgtype.UUID        `json:"created_by_agent"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type InboundHook struct {
+	ID             pgtype.UUID        `json:"id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	ConversationID pgtype.UUID        `json:"conversation_id"`
+	Name           string             `json:"name"`
+	TokenHash      string             `json:"token_hash"`
+	Enabled        bool               `json:"enabled"`
+	CreatedBy      pgtype.UUID        `json:"created_by"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
 }
 
 type Issue struct {

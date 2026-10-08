@@ -51,6 +51,9 @@ type Service struct {
 	log  *zap.Logger
 	pool *pgxpool.Pool
 	hc   *http.Client
+	// Bus republishes inbound-hook messages as message.created events so
+	// open clients repaint immediately. Optional — nil-safe.
+	Bus *events.Hub
 	// publicURL is the deployment's external base — managed ("relay:managed")
 	// subscriptions point at <publicURL>/api/webhooks/catch/<id>.
 	publicURL string
@@ -82,6 +85,15 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup, pub *gin.RouterGroup) {
 	// subscriptions. Unauthenticated; the delivery is already HMAC-signed,
 	// and the id being an existing subscription is the gate.
 	pub.POST("/webhooks/catch/:id", s.handleCatch)
+	// Inbound hooks — token in the path is the credential. Management lives
+	// under /inbound-hooks so the wildcard names never collide with
+	// /hooks/:token in the same method tree.
+	g.GET("/projects/:id/hooks", s.projectGate, s.handleHookList)
+	g.POST("/projects/:id/hooks", s.projectAdmin, s.handleHookCreate)
+	g.PATCH("/inbound-hooks/:id", s.hookAdmin, s.handleHookUpdate)
+	g.POST("/inbound-hooks/:id/rotate", s.hookAdmin, s.handleHookRotate)
+	g.DELETE("/inbound-hooks/:id", s.hookAdmin, s.handleHookDelete)
+	pub.POST("/hooks/:token", s.handleInbound)
 }
 
 // handleCatch is the Relay-managed listener: verify the subscription id
