@@ -123,15 +123,15 @@ jobs:
             -DOUTFILE="$GITHUB_WORKSPACE/apps/desktop/build/bin/Relay-Setup-ci.exe" \
             apps/desktop/installer/relay.nsi
           test -f apps/desktop/build/bin/Relay-Setup-ci.exe
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: relay-desktop-windows
           path: apps/desktop/build/bin/relay-desktop.exe
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: relay-installer-windows
           path: apps/desktop/build/bin/Relay-Setup-ci.exe
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: relay-desktop-linux
           path: apps/desktop/build/bin/relay-desktop
