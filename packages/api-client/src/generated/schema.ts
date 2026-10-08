@@ -758,6 +758,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/conversations/{conversationId}/typing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Broadcast an ephemeral typing event — nothing is persisted
+         * @description Publishes a "typing" SSE event naming the caller. Clients hold it for ~4s; callers should throttle to one POST per few seconds of input.
+         */
+        post: operations["sendTyping"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/messages/{messageId}": {
         parameters: {
             query?: never;
@@ -4682,6 +4702,27 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description All messages marked read */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    sendTyping: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversationId: components["parameters"]["ConversationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Broadcast */
             204: {
                 headers: {
                     [name: string]: unknown;
