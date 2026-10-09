@@ -1,4 +1,5 @@
-import { createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
+import { Portal } from "solid-js/web";
 import { A, useNavigate } from "@solidjs/router";
 import { api } from "../../lib/api";
 import { subscribe } from "../../lib/events";
@@ -12,6 +13,7 @@ import {
   IssueIcon,
   ReviewIcon,
   SearchIcon,
+  XIcon,
 } from "../../components/icons";
 import { statusColor } from "./meta";
 import type { AgentReview, DevelopmentPanel, Issue, Project } from "@relay/api-client";
@@ -185,6 +187,16 @@ export function Calendar(props: { project?: Project; projects?: Project[] }) {
   );
   const [query, setQuery] = createSignal("");
   const [openDay, setOpenDay] = createSignal<string | null>(null);
+
+  // Esc closes the day modal.
+  createEffect(() => {
+    if (!openDay()) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpenDay(null);
+    };
+    window.addEventListener("keydown", onKey);
+    onCleanup(() => window.removeEventListener("keydown", onKey));
+  });
 
   const projList = () => props.projects ?? (props.project ? [props.project] : []);
   const multi = () => props.projects !== undefined;
@@ -476,11 +488,15 @@ export function Calendar(props: { project?: Project; projects?: Project[] }) {
           </div>
         }
       >
-        <div class="min-h-0 flex-1 overflow-y-auto px-6 py-3">
-          <div class="grid grid-cols-7 gap-px rounded-lg border border-border bg-border/60 text-[10.5px]">
+        <div class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 py-3 sm:px-6">
+          {/* Narrower, taller grid: centred with a max width, cells grow
+              tall instead of stretching edge-to-edge. Horizontal scroll on
+              narrow screens keeps seven columns readable. */}
+          <div class="mx-auto w-full max-w-4xl overflow-x-auto">
+            <div class="grid min-w-[560px] grid-cols-7 gap-px overflow-hidden rounded-lg border border-border bg-border/60 text-[10.5px]">
             <For each={["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]}>
               {(d) => (
-                <div class="bg-bg px-2 py-1 font-medium uppercase tracking-wide text-muted">
+                <div class="bg-bg px-2 py-1.5 text-center font-medium uppercase tracking-wide text-muted">
                   {d}
                 </div>
               )}
@@ -489,20 +505,29 @@ export function Calendar(props: { project?: Project; projects?: Project[] }) {
               {(day) => (
                 <Show
                   when={day}
-                  fallback={<div class="min-h-20 bg-bg/60" />}
+                  fallback={<div class="min-h-24 bg-bg/60 sm:min-h-28 lg:min-h-32" />}
                 >
                   {(d) => {
                     const items = () => byDay().get(d()) ?? [];
-                    const extra = () => items().length - 3;
+                    const extra = () => items().length - 4;
                     return (
                       <div
-                        class={`min-h-20 cursor-pointer bg-bg p-1 transition-colors hover:bg-surface/60 ${
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`${d()}, ${items().length} entr${items().length === 1 ? "y" : "ies"}`}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            setOpenDay(d());
+                          }
+                        }}
+                        class={`flex min-h-24 cursor-pointer flex-col bg-bg p-1.5 transition-colors hover:bg-surface/70 sm:min-h-28 lg:min-h-32 ${
                           d() === todayKey ? "bg-accent/5" : ""
                         }`}
-                        onClick={() => setOpenDay(openDay() === d() ? null : d())}
+                        onClick={() => setOpenDay(d())}
                       >
                         <span
-                          class={`mb-0.5 inline-flex h-4.5 min-w-4.5 items-center justify-center rounded-full px-1 text-[10px] font-medium ${
+                          class={`mb-1 inline-flex h-4.5 min-w-4.5 items-center justify-center self-start rounded-full px-1 text-[10px] font-medium ${
                             d() === todayKey
                               ? "bg-accent text-white"
                               : "text-muted"
@@ -511,9 +536,9 @@ export function Calendar(props: { project?: Project; projects?: Project[] }) {
                           {Number(d().slice(8))}
                         </span>
                         <div class="flex flex-col">
-                          <For each={items().slice(0, 3)}>{chip}</For>
+                          <For each={items().slice(0, 4)}>{chip}</For>
                           <Show when={extra() > 0}>
-                            <span class="px-1 text-[10px] text-muted">
+                            <span class="mt-0.5 w-fit rounded px-1 text-[10px] font-medium text-accent-ink transition-colors hover:underline">
                               +{extra()} more
                             </span>
                           </Show>
@@ -524,63 +549,92 @@ export function Calendar(props: { project?: Project; projects?: Project[] }) {
                 </Show>
               )}
             </For>
+            </div>
           </div>
         </div>
       </Show>
 
-      {/* day detail strip */}
+      {/* day detail modal — centred, all entries grouped by kind */}
       <Show when={openDay()}>
         {(d) => (
-          <div class="shrink-0 border-t border-border bg-surface/40 px-6 py-3">
-            <div class="mb-1.5 flex items-center justify-between">
-              <span class="text-[12px] font-semibold">
-                {new Date(`${d()}T12:00:00`).toLocaleDateString(undefined, {
-                  weekday: "long",
-                  month: "long",
-                  day: "numeric",
-                })}
-              </span>
-              <button
-                type="button"
-                aria-label="Close day detail"
-                onClick={() => setOpenDay(null)}
-                class="rounded-md p-0.5 text-muted hover:bg-hover hover:text-fg"
-              >
-                <ChevronLeftIcon class="h-3.5 w-3.5 rotate-90" />
-              </button>
-            </div>
-            <Show
-              when={openDayEntries().length > 0}
-              fallback={<p class="text-[12px] text-muted">Nothing this day.</p>}
+          <Portal>
+            <div
+              class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+              onClick={(e) => {
+                if (e.target === e.currentTarget) setOpenDay(null);
+              }}
             >
-              <div class="max-h-56 space-y-2.5 overflow-y-auto">
-                <For each={Object.keys(KIND_LABEL) as Kind[]}>
-                  {(k) => {
-                    const group = () =>
-                      openDayEntries().filter((e) => e.kind === k);
-                    return (
-                      <Show when={group().length > 0}>
-                        <div>
-                          <p class="mb-1 text-[10.5px] font-semibold uppercase tracking-wider text-muted">
-                            {KIND_LABEL[k]} · {group().length}
-                          </p>
-                          <ul class="flex flex-col gap-1">
-                            <For each={group()}>
-                              {(e) => (
-                                <li>
-                                  {e.href ? dayRow(e, "link") : dayRow(e, "a")}
-                                </li>
-                              )}
-                            </For>
-                          </ul>
-                        </div>
-                      </Show>
-                    );
-                  }}
-                </For>
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-label={new Date(`${d()}T12:00:00`).toLocaleDateString(
+                  undefined,
+                  { weekday: "long", month: "long", day: "numeric" },
+                )}
+                class="flex max-h-[75vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-2xl"
+              >
+                <div class="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
+                  <div class="flex items-baseline gap-2">
+                    <span class="text-[14px] font-semibold">
+                      {new Date(`${d()}T12:00:00`).toLocaleDateString(
+                        undefined,
+                        { weekday: "long", month: "long", day: "numeric" },
+                      )}
+                    </span>
+                    <span class="text-[11.5px] text-muted">
+                      {openDayEntries().length} entr
+                      {openDayEntries().length === 1 ? "y" : "ies"}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    aria-label="Close day detail"
+                    onClick={() => setOpenDay(null)}
+                    class="rounded-md p-1 text-muted transition-colors hover:bg-hover hover:text-fg"
+                  >
+                    <XIcon class="h-4 w-4" />
+                  </button>
+                </div>
+                <Show
+                  when={openDayEntries().length > 0}
+                  fallback={
+                    <p class="p-4 text-[12.5px] text-muted">
+                      Nothing this day.
+                    </p>
+                  }
+                >
+                  <div class="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+                    <For each={Object.keys(KIND_LABEL) as Kind[]}>
+                      {(k) => {
+                        const group = () =>
+                          openDayEntries().filter((e) => e.kind === k);
+                        return (
+                          <Show when={group().length > 0}>
+                            <div>
+                              <p class="mb-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-muted">
+                                {KIND_LABEL[k]} · {group().length}
+                              </p>
+                              <ul class="flex flex-col gap-1.5">
+                                <For each={group()}>
+                                  {(e) => (
+                                    <li>
+                                      {e.href
+                                        ? dayRow(e, "link")
+                                        : dayRow(e, "a")}
+                                    </li>
+                                  )}
+                                </For>
+                              </ul>
+                            </div>
+                          </Show>
+                        );
+                      }}
+                    </For>
+                  </div>
+                </Show>
               </div>
-            </Show>
-          </div>
+            </div>
+          </Portal>
         )}
       </Show>
     </div>
