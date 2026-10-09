@@ -260,8 +260,8 @@ func (s *Service) handleInbound(c *gin.Context) {
 		body = req.Body
 	}
 	body = strings.TrimSpace(body)
-	if body == "" || len(body) > 20000 {
-		httpx.Error(c, http.StatusBadRequest, "bad_request", "message is required (1–20000 chars)")
+	if body == "" || len(body) > conversations.MaxMessageBodyChars {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "message is required and must not be too large")
 		return
 	}
 	mid, err := s.q.CreateMessage(c.Request.Context(), db.CreateMessageParams{

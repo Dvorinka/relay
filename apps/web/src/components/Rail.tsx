@@ -84,23 +84,32 @@ function ProjectRow(props: { project: Project }) {
   const location = useLocation();
   const n = () => unread()[props.project.id] ?? 0;
   const pending = () => pendingReviews()[props.project.id] ?? 0;
-  // Channels nest under the project Discord-style. The viewed project is
-  // always open; others expand on demand so the rail stays quiet.
+  // Channels nest under the project Discord-style. The viewed project
+  // opens by default; others expand on demand so the rail stays quiet.
   const active = () =>
     location.pathname.startsWith(`/app/p/${props.project.id}`);
-  const [open, setOpen] = createSignal(false);
+  // null = follow the route (the viewed project stays open); an explicit
+  // toggle wins until the project is re-entered, so the arrow can actually
+  // minimise the project you're looking at.
+  const [manual, setManual] = createSignal<boolean | null>(null);
+  const expanded = () => manual() ?? active();
+  createEffect((was: boolean) => {
+    const now = active();
+    if (now && !was) setManual(null);
+    return now;
+  }, active());
   return (
     <div>
       <div class="flex items-center">
         <button
           type="button"
-          aria-label={open() || active() ? "Hide channels" : "Show channels"}
-          aria-expanded={open() || active()}
-          onClick={() => setOpen((v) => !v)}
+          aria-label={expanded() ? "Hide channels" : "Show channels"}
+          aria-expanded={expanded()}
+          onClick={() => setManual(!expanded())}
           class="hidden shrink-0 rounded p-0.5 text-faint transition-colors hover:text-fg sm:block"
         >
           <ChevronDownIcon
-            class={`h-3 w-3 transition-transform ${open() || active() ? "" : "-rotate-90"}`}
+            class={`h-3 w-3 transition-transform ${expanded() ? "" : "-rotate-90"}`}
           />
         </button>
         <div class="min-w-0 flex-1">
@@ -149,7 +158,7 @@ function ProjectRow(props: { project: Project }) {
         </NavItem>
         </div>
       </div>
-      <Show when={open() || active()}>
+      <Show when={expanded()}>
         <ProjectChildren project={props.project} />
       </Show>
     </div>
@@ -369,19 +378,27 @@ function ProjectChildren(props: { project: Project }) {
           <FormError message={error()} />
         </form>
       </Show>
-      <A
-        href={`/app/p/${props.project.id}/ideas`}
-        class={`flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] transition-colors hover:bg-hover ${
-          location.pathname === `/app/p/${props.project.id}/ideas`
-            ? "bg-hover text-fg"
-            : "text-muted hover:text-fg"
-        }`}
-      >
-        <BulbIcon class="h-3 w-3 shrink-0 text-faint" />
-        <span class="min-w-0 flex-1 truncate">Ideas</span>
-      </A>
     </div>
   );
+}
+
+// The rail's bottom-pinned items (Ideas) need a "current project" that
+// follows whatever project page is open and survives reloads — the route
+// params aren't reachable from the rail, so the pathname is parsed and
+// the pick is remembered in localStorage.
+function useLastProject() {
+  const location = useLocation();
+  const [last, setLast] = createSignal(
+    localStorage.getItem("relay.lastProject") ?? "",
+  );
+  createEffect(() => {
+    const m = /^\/app\/p\/([^/]+)/.exec(location.pathname);
+    if (m && m[1] !== last()) {
+      setLast(m[1]!);
+      localStorage.setItem("relay.lastProject", m[1]!);
+    }
+  });
+  return last;
 }
 
 function NewProjectForm(props: { onDone: () => void }) {
@@ -556,6 +573,7 @@ function CollapsedRail(props: { onExpand: () => void }) {
   const session = useSession();
   const { unread } = useUnread();
   const { pendingReviews } = usePendingReviews();
+  const lastProject = useLastProject();
   const active = activeWorkspace(session.workspaces);
   const list = () =>
     projects
@@ -589,6 +607,19 @@ function CollapsedRail(props: { onExpand: () => void }) {
           </Show>
         </A>
       </Tip>
+      <Show when={lastProject()}>
+        {(pid) => (
+          <Tip text="Ideas" hint="">
+            <A
+              href={`/app/p/${pid()}/ideas`}
+              aria-label="Ideas"
+              class="flex h-9 w-9 items-center justify-center rounded-md text-muted transition-colors hover:bg-hover hover:text-fg"
+            >
+              <BulbIcon class="h-4 w-4" />
+            </A>
+          </Tip>
+        )}
+      </Show>
       <For each={list()}>
         {(p) => {
           const n = () => unread()[p.id] ?? 0;
@@ -682,6 +713,8 @@ export function Rail() {
   const { unread } = useUnread();
   const totalUnread = () =>
     Object.values(unread()).reduce((s, n) => s + n, 0);
+  const lastProject = useLastProject();
+  const ideasProject = () => lastProject() || list()[0]?.id || "";
 
   // Width + collapse persist; dragging the right edge resizes (left rail, so
   // dragging right grows it). The mobile drawer ignores both and stays w-64.
@@ -820,6 +853,14 @@ export function Rail() {
       </div>
 
       <div class="mt-auto flex flex-col gap-0.5 border-t border-border p-2">
+        <Show when={ideasProject()}>
+          {(pid) => (
+            <NavItem href={`/app/p/${pid()}/ideas`}>
+              <BulbIcon class="h-3.5 w-3.5" />
+              Ideas
+            </NavItem>
+          )}
+        </Show>
         <VersionFooter />
         <NavItem href="/app/settings">
           <SettingsIcon class="h-3.5 w-3.5" />

@@ -1348,8 +1348,8 @@ func (s *Service) sendMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 	if err != nil {
 		return errResult(err)
 	}
-	if strings.TrimSpace(body) == "" || len(body) > 40000 {
-		return mcp.NewToolResultError("body must be 1..40000 chars"), nil
+	if strings.TrimSpace(body) == "" || len(body) > conversations.MaxMessageBodyChars {
+		return mcp.NewToolResultError("body is empty or too large"), nil
 	}
 	var parent pgtype.UUID
 	if v := req.GetString("reply_to", ""); v != "" {
@@ -1533,8 +1533,8 @@ func (s *Service) editMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 	if err != nil {
 		return errResult(err)
 	}
-	if strings.TrimSpace(body) == "" || len(body) > 40000 {
-		return mcp.NewToolResultError("body must be 1..40000 chars"), nil
+	if strings.TrimSpace(body) == "" || len(body) > conversations.MaxMessageBodyChars {
+		return mcp.NewToolResultError("body is empty or too large"), nil
 	}
 	if _, err := s.q.UpdateMessageBodyAgent(ctx, db.UpdateMessageBodyAgentParams{
 		ID: mid, AuthorAgentID: agent(ctx).ID, Body: body,

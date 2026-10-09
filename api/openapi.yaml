@@ -1204,7 +1204,7 @@ paths:
               properties:
                 body:
                   type: string
-                  maxLength: 20000
+                  maxLength: 1000000
                   description: "May be empty when attachment_ids is non-empty."
                 attachment_ids:
                   type: array
@@ -1279,7 +1279,7 @@ paths:
               type: object
               required: [body]
               properties:
-                body: { type: string, minLength: 1, maxLength: 20000 }
+                body: { type: string, minLength: 1, maxLength: 1000000 }
                 attachment_ids:
                   type: array
                   items: { type: string, format: uuid }

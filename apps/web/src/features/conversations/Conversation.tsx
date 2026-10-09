@@ -24,7 +24,10 @@ import { Portal } from "solid-js/web";
 import {
   CheckIcon,
   ClockIcon,
+  CopyIcon,
   DotsIcon,
+  DownloadIcon,
+  ExternalLinkIcon,
   FileIcon,
   FolderIcon,
   ForwardIcon,
@@ -383,11 +386,158 @@ function AttachmentView(props: { projectId: string; attachment: Attachment }) {
   );
 }
 
+// Right-click menu for image attachments, shown on the inline thumb and
+// inside the lightbox: view, copy the image bytes, save, copy the link.
+function ImageMenu(props: {
+  x: number;
+  y: number;
+  url: string;
+  filename: string;
+  onView?: () => void;
+  onClose: () => void;
+}) {
+  createEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") props.onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    onCleanup(() => window.removeEventListener("keydown", onKey));
+  });
+  const item =
+    "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] text-fg transition-colors hover:bg-hover";
+
+  async function copyImage() {
+    props.onClose();
+    try {
+      const blob = await (await fetch(props.url)).blob();
+      try {
+        await navigator.clipboard.write([
+          new ClipboardItem({ [blob.type]: blob }),
+        ]);
+      } catch {
+        // Only image/png is reliably writable — transcode everything else.
+        const bmp = await createImageBitmap(blob);
+        const canvas = document.createElement("canvas");
+        canvas.width = bmp.width;
+        canvas.height = bmp.height;
+        canvas.getContext("2d")!.drawImage(bmp, 0, 0);
+        const png = await new Promise<Blob>((ok, fail) =>
+          canvas.toBlob((b) => (b ? ok(b) : fail()), "image/png"),
+        );
+        await navigator.clipboard.write([
+          new ClipboardItem({ "image/png": png }),
+        ]);
+      }
+    } catch {
+      await copyText(props.url);
+    }
+  }
+
+  async function save() {
+    props.onClose();
+    try {
+      const blob = await (await fetch(props.url)).blob();
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = href;
+      a.download = props.filename || "image";
+      a.click();
+      URL.revokeObjectURL(href);
+    } catch {
+      window.open(props.url, "_blank", "noopener");
+    }
+  }
+
+  return (
+    <>
+      <div
+        class="fixed inset-0 z-[60]"
+        onPointerDown={props.onClose}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          props.onClose();
+        }}
+      />
+      <div
+        class="fixed z-[61] w-48 overflow-hidden rounded-xl border border-border bg-surface p-1 shadow-xl"
+        style={{
+          left: `${Math.min(props.x, window.innerWidth - 200)}px`,
+          top: `${Math.min(props.y, window.innerHeight - 240)}px`,
+        }}
+      >
+        <Show when={props.onView}>
+          {(view) => (
+            <button
+              type="button"
+              onClick={() => {
+                props.onClose();
+                view()();
+              }}
+              class={item}
+            >
+              <MaximizeIcon class="h-4 w-4 text-faint" />
+              View image
+            </button>
+          )}
+        </Show>
+        <button
+          type="button"
+          onClick={() => {
+            props.onClose();
+            window.open(props.url, "_blank", "noopener");
+          }}
+          class={item}
+        >
+          <ExternalLinkIcon class="h-4 w-4 text-faint" />
+          Open original
+        </button>
+        <button type="button" onClick={() => void copyImage()} class={item}>
+          <CopyIcon class="h-4 w-4 text-faint" />
+          Copy image
+        </button>
+        <button type="button" onClick={() => void save()} class={item}>
+          <DownloadIcon class="h-4 w-4 text-faint" />
+          Save image
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            props.onClose();
+            void copyText(props.url);
+          }}
+          class={item}
+        >
+          <LinkIcon class="h-4 w-4 text-faint" />
+          Copy image link
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            props.onClose();
+            void copyText(props.filename);
+          }}
+          class={item}
+        >
+          <FileIcon class="h-4 w-4 text-faint" />
+          Copy filename
+        </button>
+      </div>
+    </>
+  );
+}
+
 // Click-to-zoom for image attachments: inline thumb opens a lightbox modal
 // instead of navigating away. Esc/backdrop close; "Open original" is the
-// escape hatch for a full-tab view.
+// escape hatch for a full-tab view. Right-click offers the quick-action
+// menu on both surfaces.
 function ImageLightbox(props: { url: string | undefined; filename: string }) {
   const [open, setOpen] = createSignal(false);
+  const [menu, setMenu] = createSignal<{ x: number; y: number } | null>(null);
+  const openMenu = (e: MouseEvent) => {
+    if (!props.url) return;
+    e.preventDefault();
+    setMenu({ x: e.clientX, y: e.clientY });
+  };
   createEffect(() => {
     if (!open()) return;
     const onKey = (e: KeyboardEvent) => {
@@ -402,6 +552,7 @@ function ImageLightbox(props: { url: string | undefined; filename: string }) {
         type="button"
         disabled={!props.url}
         onClick={() => setOpen(true)}
+        onContextMenu={openMenu}
         aria-label={`View ${props.filename}`}
         class="block w-fit cursor-zoom-in"
       >
@@ -426,6 +577,7 @@ function ImageLightbox(props: { url: string | undefined; filename: string }) {
               <img
                 src={props.url}
                 alt={props.filename}
+                onContextMenu={openMenu}
                 class="max-h-[85vh] max-w-full rounded-lg object-contain"
               />
               <div class="flex items-center gap-3 text-[12px]">
@@ -444,6 +596,20 @@ function ImageLightbox(props: { url: string | undefined; filename: string }) {
             </div>
           </div>
         </Portal>
+      </Show>
+      <Show when={menu()}>
+        {(pos) => (
+          <Portal>
+            <ImageMenu
+              x={pos().x}
+              y={pos().y}
+              url={props.url!}
+              filename={props.filename}
+              onView={open() ? undefined : () => setOpen(true)}
+              onClose={() => setMenu(null)}
+            />
+          </Portal>
+        )}
       </Show>
     </>
   );
@@ -2776,6 +2942,12 @@ function ConversationThread(props: {
   }
 
   function addFiles(files: readonly File[]) {
+    // [image N] / [filename] markers anchor each staged attachment in the
+    // draft so readers (and agents) can tell which file maps to which
+    // words. Runs for every attach path — picker, folder, drop, paste.
+    let imgN = pending().filter(
+      (p) => p.file.type.startsWith("image/") && p.status !== "error",
+    ).length;
     for (const file of files) {
       const localId = newLocalId();
       let entry: PendingAttachment;
@@ -2811,6 +2983,18 @@ function ConversationThread(props: {
       setPending((cur) => [...cur, entry]);
       if (entry.status === "uploading") {
         void upload(localId, file);
+        if (inputEl) {
+          if (document.activeElement !== inputEl) {
+            // Never-focused textareas report caret 0 — append at the end.
+            inputEl.selectionStart = inputEl.selectionEnd = draft().length;
+          }
+          insertAtCursor(
+            inputEl,
+            file.type.startsWith("image/")
+              ? `[image ${++imgN}]`
+              : `[${file.name.replaceAll("[", "").replaceAll("]", "")}]`,
+          );
+        }
       }
     }
   }
@@ -2830,6 +3014,10 @@ function ConversationThread(props: {
     setMention(null);
     if (inputEl) inputEl.style.height = "auto";
   }
+
+  // The textarea is disabled while sending() — a same-tick focus() is a
+  // no-op, so refocus on the next frame once it has re-enabled.
+  const refocus = () => requestAnimationFrame(() => inputEl?.focus());
 
   async function send() {
     const body = draft().trim();
@@ -2876,6 +3064,7 @@ function ConversationThread(props: {
             );
           } finally {
             setSending(false);
+            refocus();
           }
           return;
         }
@@ -2948,6 +3137,7 @@ function ConversationThread(props: {
             );
           } finally {
             setSending(false);
+            refocus();
           }
           return;
         }
@@ -2977,6 +3167,7 @@ function ConversationThread(props: {
             );
           } finally {
             setSending(false);
+            refocus();
           }
           return;
         }
@@ -2998,6 +3189,7 @@ function ConversationThread(props: {
           }
           toggleDraftTag(t);
           clearDraft();
+          refocus();
           return;
         }
         case "/inbox":
@@ -3065,7 +3257,6 @@ function ConversationThread(props: {
       setPending(keep);
       if (inputEl) {
         inputEl.style.height = "auto";
-        inputEl.focus();
       }
       markLatestRead();
     } catch (err) {
@@ -3088,6 +3279,7 @@ function ConversationThread(props: {
       );
     } finally {
       setSending(false);
+      refocus();
     }
   }
 
@@ -3691,19 +3883,7 @@ function ConversationThread(props: {
                 const files = Array.from(e.clipboardData?.files ?? []);
                 if (files.length === 0) return;
                 e.preventDefault();
-                // [image N] markers anchor each pasted image in the text so
-                // agents can tell which screenshot maps to which words.
-                let n = pending().filter(
-                  (p) =>
-                    p.file.type.startsWith("image/") && p.status !== "error",
-                ).length;
-                for (const file of files) {
-                  addFiles([file]);
-                  if (file.type.startsWith("image/")) {
-                    n += 1;
-                    insertAtCursor(e.currentTarget, `[image ${n}]`);
-                  }
-                }
+                addFiles(files);
               }}
               class="max-h-40 flex-1 resize-none bg-transparent px-1.5 py-2.5 text-[14.5px] leading-6 outline-none placeholder:text-faint disabled:opacity-50"
             />
