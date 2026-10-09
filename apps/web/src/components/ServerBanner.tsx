@@ -11,6 +11,7 @@ import { desktopServerUrl, isDesktop, isMobileShell } from "../lib/desktop";
 import { net } from "../lib/net";
 import {
   onServerUp,
+  outboxPending,
   probeNow,
   serverState,
   watchServer,
@@ -108,6 +109,11 @@ export function ServerBanner() {
           <span class="min-w-0 flex-1 truncate">
             Can't reach {host(activeOrigin())} — showing last saved data.
             Reconnecting automatically.
+            <Show when={outboxPending() > 0}>
+              {" "}
+              {outboxPending()} change{outboxPending() === 1 ? "" : "s"}{" "}
+              queued.
+            </Show>
           </span>
           <button
             type="button"

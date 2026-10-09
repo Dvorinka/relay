@@ -1,11 +1,12 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Asset } from "expo-asset";
 import { fetch } from "expo/fetch";
 import { Directory, File, Paths } from "expo-file-system";
 import * as MediaLibrary from "expo-media-library";
 import * as Notifications from "expo-notifications";
 import * as Sharing from "expo-sharing";
 import { useShareIntent } from "expo-share-intent";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -129,6 +130,25 @@ if (!window.__rnSwipeNav) {
 true;
 `;
 
+// Cold-start local mode: apps/web ships a single-file SPA build as
+// assets/relay-app.html (see apps/web/scripts/inline-bundle.mjs). Rendered
+// with baseUrl = the server origin, the bundled page shares localStorage
+// with the real site — so seeding relay.local puts it straight into the
+// web app's existing local mode, and the remembered serverUrl powers its
+// reconnect flow. Seeded once: after the user reconnects, a pull-to-refresh
+// must not drop them back into local mode.
+function localSeed(server: string): string {
+  return `
+try {
+  localStorage.setItem("relay.serverUrl", ${JSON.stringify(server)});
+  if (!localStorage.getItem("relay.appSeeded")) {
+    localStorage.setItem("relay.appSeeded", "1");
+    localStorage.setItem("relay.local", "1");
+  }
+} catch (e) {}
+`;
+}
+
 function toast(msg: string) {
   if (Platform.OS === "android") ToastAndroid.show(msg, ToastAndroid.SHORT);
   else Alert.alert(msg);
@@ -186,6 +206,10 @@ export default function Shell() {
   const [canGoForward, setCanGoForward] = useState(false);
   const [failed, setFailed] = useState(false);
   const [notifyGranted, setNotifyGranted] = useState(false);
+  // Cold-start local mode: bundled single-file SPA loaded on demand.
+  const [localMode, setLocalMode] = useState(false);
+  const [localHtml, setLocalHtml] = useState<string | null>(null);
+  const [localBusy, setLocalBusy] = useState(false);
   const { hasShareIntent, shareIntent, resetShareIntent } = useShareIntent();
 
   useEffect(() => {
@@ -266,6 +290,33 @@ export default function Shell() {
     return () => clearInterval(t);
   }, [failed]);
 
+  // "Work locally" from the down overlay: load the bundled SPA once, then
+  // swap the WebView to it. The committed stub asset keeps the require
+  // resolvable in builds that skipped `npm run build:bundle`.
+  const workLocally = useCallback(async () => {
+    if (!server || localBusy) return;
+    setLocalBusy(true);
+    try {
+      const asset = Asset.fromModule(require("../../assets/relay-app.html"));
+      await asset.downloadAsync();
+      const uri = asset.localUri ?? asset.uri;
+      if (!uri) throw new Error("no asset uri");
+      const html = await new File(uri).text();
+      if (html.includes("relay-app-stub")) {
+        toast("This build has no offline app bundle");
+        return;
+      }
+      setLocalHtml(html);
+      setLocalMode(true);
+      setFailed(false);
+    } catch (e) {
+      if (__DEV__) console.warn("local bundle load failed", e);
+      toast("Local mode is unavailable in this build");
+    } finally {
+      setLocalBusy(false);
+    }
+  }, [server, localBusy]);
+
   // relay:// links (registered in app.json) open routes inside the web UI.
   // relay://server is the escape hatch back to the connect screen now that
   // the shell has no visible chrome. A link arriving before the WebView has
@@ -291,6 +342,7 @@ export default function Shell() {
         void AsyncStorage.removeItem(STORE_KEY).then(() => {
           setServer(null);
           setFailed(false);
+          setLocalMode(false);
         });
         return;
       }
@@ -349,6 +401,17 @@ export default function Shell() {
     }
   }, []);
 
+  // Memoized so re-renders don't hand the WebView a new source object and
+  // force a reload. baseUrl = the server origin keeps the bundled page's
+  // localStorage/IndexedDB on the same origin as the real site.
+  const source = useMemo(
+    () =>
+      localMode && localHtml && server
+        ? { html: localHtml, baseUrl: server }
+        : { uri: server ?? "" },
+    [localMode, localHtml, server],
+  );
+
   if (!ready) {
     return (
       <View style={[styles.fill, styles.center]}>
@@ -372,7 +435,7 @@ export default function Shell() {
     >
       <WebView
         ref={web}
-        source={{ uri: server }}
+        source={source}
         style={styles.fill}
         domStorageEnabled
         pullToRefreshEnabled
@@ -382,7 +445,9 @@ export default function Shell() {
         scalesPageToFit={false}
         sharedCookiesEnabled
         textZoom={100}
-        injectedJavaScriptBeforeContentLoaded={notifyBridge(notifyGranted)}
+        injectedJavaScriptBeforeContentLoaded={
+          notifyBridge(notifyGranted) + (localMode ? localSeed(server) : "")
+        }
         onMessage={onWebMessage}
         onFileDownload={onFileDownload}
         allowsBackForwardNavigationGestures
@@ -403,7 +468,9 @@ export default function Shell() {
         }}
         onShouldStartLoadWithRequest={(req) => {
           // Same-origin stays inside; anything else goes to the real
-          // browser (auth providers, downloads, external links).
+          // browser (auth providers, downloads, external links). The
+          // bundled local page loads as about:blank/baseUrl — let it.
+          if (localMode && req.url === "about:blank") return true;
           if (req.url.startsWith(server)) return true;
           if (/^https?:\/\//.test(req.url)) void Linking.openURL(req.url);
           return false;
@@ -433,8 +500,8 @@ export default function Shell() {
           <Text style={styles.errTitle}>Cannot reach {host}</Text>
           <Text style={styles.errText}>
             The server is not responding. Retrying automatically — the app
-            reconnects on its own when it is back. Signed-in sessions can
-            also keep working locally on this device once the app loads.
+            reconnects on its own when it is back, or work locally on this
+            device meanwhile.
           </Text>
           <Pressable
             style={styles.errBtn}
@@ -447,10 +514,20 @@ export default function Shell() {
           </Pressable>
           <Pressable
             style={styles.errBtn}
+            onPress={() => void workLocally()}
+            disabled={localBusy}
+          >
+            <Text style={styles.errBtnText}>
+              {localBusy ? "Loading…" : "Work locally — this device"}
+            </Text>
+          </Pressable>
+          <Pressable
+            style={styles.errBtn}
             onPress={() =>
               AsyncStorage.removeItem(STORE_KEY).then(() => {
                 setServer(null);
                 setFailed(false);
+                setLocalMode(false);
               })
             }
           >

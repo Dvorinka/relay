@@ -5,7 +5,7 @@
 import { createClient } from "@relay/api-client";
 import { createSignal } from "solid-js";
 import { clearApiCache } from "./cache";
-import { resilientFetch } from "./offline";
+import { clearOutbox, resilientFetch } from "./offline";
 
 const K_URL = "relay.serverUrl";
 const K_TOKEN = "relay.token";
@@ -43,8 +43,10 @@ export const net = {
     localStorage.removeItem(K_LOCAL);
     setIsLocal(false);
     // keep serverUrl so the login form stays prefilled
-    // Cached GET bodies are per-principal — drop them with the session.
+    // Cached GET bodies and queued mutations are per-principal — drop them
+    // with the session.
     void clearApiCache();
+    void clearOutbox();
   },
 
   /** Client bound to the current connection. */

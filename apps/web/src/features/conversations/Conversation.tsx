@@ -57,6 +57,7 @@ import { openProfile } from "../../components/ProfileModal";
 import { subscribe } from "../../lib/events";
 import { loadNameColors, nameColorFor } from "../../lib/namecolors";
 import { mediaURL, net } from "../../lib/net";
+import { isQueuedError } from "../../lib/offline";
 import { Markdown, renderMarkdown } from "../../lib/markdown";
 import { formatBytes, initials, messagePreview } from "../../lib/text";
 import { useProjects } from "../../stores/projects";
@@ -3068,6 +3069,20 @@ function ConversationThread(props: {
       }
       markLatestRead();
     } catch (err) {
+      if (isQueuedError(err)) {
+        // Never left the device — the outbox replays it on reconnect. Clear
+        // the composer exactly like a sent message so it isn't sent twice;
+        // it lands in the list via SSE/refetch after replay.
+        setDraft("");
+        setDraftTags([]);
+        setReplyTo(null);
+        const sentIds = new Set(ids);
+        setPending((cur) =>
+          cur.filter(
+            (p) => p.attachmentId === undefined || !sentIds.has(p.attachmentId),
+          ),
+        );
+      }
       setSendError(
         err instanceof Error ? err.message : "Could not send message",
       );

@@ -58,7 +58,8 @@
           "disableIOS": true
         }
       ],
-      "expo-media-library"
+      "expo-media-library",
+      "expo-asset"
     ]
   }
 }

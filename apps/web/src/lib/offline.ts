@@ -4,8 +4,9 @@
 // the UI keeps last-known data instead of emptying, and ServerBanner shows
 // the outage. A backoff probe loop per down origin flips it back up (and
 // fires onServerUp) the moment /api/health answers again.
+import { createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
-import { cacheGet, cachePut } from "./cache";
+import { cacheGet, cachePut, kvDel, kvGet, kvPut } from "./cache";
 
 export type ServerState = "up" | "down" | "unknown";
 
@@ -45,7 +46,13 @@ export function markUp(rawUrl: string): void {
   const was = states[origin];
   if (was === "up") return;
   setStates(origin, "up");
-  if (was === "down") for (const cb of upListeners) cb(origin);
+  if (was === "down") {
+    // Replay queued mutations first — listeners refetch and should see the
+    // server state after the outbox has landed.
+    void drainOutbox(origin).then(() => {
+      for (const cb of upListeners) cb(origin);
+    });
+  }
 }
 
 async function probe(origin: string): Promise<boolean> {
@@ -104,6 +111,119 @@ export async function probeNow(rawUrl: string): Promise<boolean> {
   return ok;
 }
 
+// --- Mutation outbox -------------------------------------------------------
+// Once an origin is marked down, non-GET requests are queued instead of
+// fired into the void, then replayed FIFO the moment the server answers
+// again. Two deliberate bounds:
+// - Only requests made *after* the down-mark queue. The request that marks
+//   the origin down may have reached the server before the connection
+//   dropped — silently replaying it could duplicate (a sent message twice).
+// - Only string bodies queue. FormData uploads can't round-trip through
+//   storage; they fail immediately like before.
+export class QueuedError extends Error {
+  constructor() {
+    super("Server unreachable — change queued, sends on reconnect");
+    this.name = "queued";
+  }
+}
+
+export function isQueuedError(e: unknown): boolean {
+  return e instanceof QueuedError || (e instanceof Error && e.name === "queued");
+}
+
+interface OutboxEntry {
+  id: string;
+  origin: string;
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body?: string;
+}
+
+const OUTBOX_KEY = "outbox:v1";
+const OUTBOX_CAP = 100;
+let outboxSeq = 0;
+const [outboxPending, setOutboxPending] = createSignal(0);
+export { outboxPending };
+void refreshOutboxCount();
+
+async function refreshOutboxCount(): Promise<void> {
+  setOutboxPending((await outboxList()).length);
+}
+
+async function outboxList(): Promise<OutboxEntry[]> {
+  try {
+    return JSON.parse((await kvGet(OUTBOX_KEY)) ?? "[]") as OutboxEntry[];
+  } catch {
+    return [];
+  }
+}
+
+async function outboxSave(list: OutboxEntry[]): Promise<void> {
+  if (list.length === 0) await kvDel(OUTBOX_KEY);
+  else await kvPut(OUTBOX_KEY, JSON.stringify(list));
+  setOutboxPending(list.length);
+}
+
+async function enqueueOutbox(
+  url: string,
+  method: string,
+  init?: RequestInit,
+): Promise<boolean> {
+  if (init?.body !== undefined && typeof init.body !== "string") return false;
+  const list = await outboxList();
+  if (list.length >= OUTBOX_CAP) return false;
+  const headers: Record<string, string> = {};
+  new Headers(init?.headers ?? {}).forEach((v, k) => {
+    headers[k] = v;
+  });
+  list.push({
+    id: `${Date.now()}-${outboxSeq++}`,
+    origin: originOf(url),
+    url,
+    method,
+    headers,
+    body: init?.body as string | undefined,
+  });
+  await outboxSave(list);
+  return true;
+}
+
+// Replay in order. Any answered request (<500, even a rejection) consumed
+// the change — drop it. A 5xx or transport error means the server is still
+// sick: stop and leave the rest queued for the next recovery.
+async function drainOutbox(origin: string): Promise<void> {
+  const list = await outboxList();
+  if (!list.some((e) => e.origin === origin)) return;
+  const keep: OutboxEntry[] = [];
+  let stopped = false;
+  for (const e of list) {
+    if (stopped || e.origin !== origin) {
+      keep.push(e);
+      continue;
+    }
+    try {
+      const res = await fetch(e.url, {
+        method: e.method,
+        headers: e.headers,
+        body: e.body,
+      });
+      if (res.status >= 500) {
+        stopped = true;
+        keep.push(e);
+      }
+    } catch {
+      stopped = true;
+      keep.push(e);
+    }
+  }
+  await outboxSave(keep);
+}
+
+export async function clearOutbox(): Promise<void> {
+  await outboxSave([]);
+}
+
 // Cache keys are per-principal: the bearer token distinguishes sessions on
 // the same origin, and net.disconnect() clears everything on sign-out.
 function cacheKey(url: string, init?: RequestInit): string {
@@ -135,6 +255,15 @@ export async function resilientFetch(
         : input.url;
   const method = (init?.method ?? "GET").toUpperCase();
   const key = method === "GET" ? cacheKey(url, init) : "";
+  // Already known down: mutations queue instead of dying on the wire (auth
+  // calls excluded — a queued login firing later would be confusing).
+  if (
+    method !== "GET" &&
+    states[originOf(url)] === "down" &&
+    !url.includes("/api/auth/")
+  ) {
+    if (await enqueueOutbox(url, method, init)) throw new QueuedError();
+  }
   try {
     const res = await fetch(input, init);
     if (res.status >= 500) {
