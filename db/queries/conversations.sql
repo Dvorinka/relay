@@ -339,17 +339,23 @@ where r.agent_id is not null
 order by r.read_at asc;
 
 -- name: MarkMessageRead :exec
+-- own posts excluded — the author is never one of their own readers
 insert into message_reads (message_id, user_id)
-values ($1, $2)
+select m.id, sqlc.arg(user_id)
+from messages m
+where m.id = sqlc.arg(message_id)
+  and (m.author_user_id is null or m.author_user_id <> sqlc.arg(user_id))
 on conflict (message_id, user_id) where user_id is not null do nothing;
 
 -- name: MarkConversationRead :exec
--- mark every message in the conversation read for the user (bulk, on view)
+-- mark every message in the conversation read for the user (bulk, on view);
+-- own posts excluded — the author's receipt is meaningless
 insert into message_reads (message_id, user_id)
-select m.id, $2
+select m.id, sqlc.arg(user_id)
 from messages m
-where m.conversation_id = $1
+where m.conversation_id = sqlc.arg(conversation_id)
   and m.deleted_at is null
+  and (m.author_user_id is null or m.author_user_id <> sqlc.arg(user_id))
 on conflict (message_id, user_id) where user_id is not null do nothing;
 
 -- name: FirstUnreadMessageID :one
@@ -381,9 +387,10 @@ from conversations c
 join messages m on m.conversation_id = c.id
 join projects p on p.id = c.project_id
 join workspace_members wm on wm.workspace_id = p.workspace_id
-where c.id = $1
-   or c.parent_message_id in
-      (select id from messages where conversation_id = $1)
+where (c.id = $1
+       or c.parent_message_id in
+         (select id from messages where conversation_id = $1))
+  and (m.author_user_id is null or m.author_user_id <> wm.user_id)
 on conflict (message_id, user_id) where user_id is not null do nothing;
 
 -- name: ClearReadStateAgents :exec
@@ -400,6 +407,7 @@ where (c.id = $1
        or c.parent_message_id in
          (select id from messages where conversation_id = $1))
   and (a.grant_all or g.agent_id is not null)
+  and (m.author_agent_id is null or m.author_agent_id <> a.id)
 on conflict (message_id, agent_id) where agent_id is not null do nothing;
 
 -- name: AddReactionUser :exec

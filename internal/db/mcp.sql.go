@@ -526,17 +526,21 @@ func (q *Queries) ListProjectIssuesForAgent(ctx context.Context, arg ListProject
 
 const markMessageReadAgent = `-- name: MarkMessageReadAgent :exec
 insert into message_reads (message_id, agent_id)
-values ($1, $2)
+select m.id, $1
+from messages m
+where m.id = $2
+  and (m.author_agent_id is null or m.author_agent_id <> $1)
 on conflict (message_id, agent_id) where agent_id is not null do nothing
 `
 
 type MarkMessageReadAgentParams struct {
-	MessageID pgtype.UUID `json:"message_id"`
 	AgentID   pgtype.UUID `json:"agent_id"`
+	MessageID pgtype.UUID `json:"message_id"`
 }
 
+// own posts excluded — the author is never one of their own readers
 func (q *Queries) MarkMessageReadAgent(ctx context.Context, arg MarkMessageReadAgentParams) error {
-	_, err := q.db.Exec(ctx, markMessageReadAgent, arg.MessageID, arg.AgentID)
+	_, err := q.db.Exec(ctx, markMessageReadAgent, arg.AgentID, arg.MessageID)
 	return err
 }
 
@@ -544,6 +548,7 @@ const markMessagesReadAgent = `-- name: MarkMessagesReadAgent :exec
 insert into message_reads (message_id, agent_id)
 select m.id, $1 from messages m
 where m.id = any($2::uuid[]) and m.deleted_at is null
+  and (m.author_agent_id is null or m.author_agent_id <> $1)
 on conflict (message_id, agent_id) where agent_id is not null do nothing
 `
 
@@ -552,7 +557,8 @@ type MarkMessagesReadAgentParams struct {
 	Ids     []pgtype.UUID `json:"ids"`
 }
 
-// batch read receipt: fetching messages marks them read by this agent
+// batch read receipt: fetching messages marks them read by this agent;
+// own posts excluded — the author's receipt is meaningless
 func (q *Queries) MarkMessagesReadAgent(ctx context.Context, arg MarkMessagesReadAgentParams) error {
 	_, err := q.db.Exec(ctx, markMessagesReadAgent, arg.AgentID, arg.Ids)
 	return err

@@ -2503,6 +2503,7 @@ function ConversationThread(props: {
         setMessages((cur) =>
           cur.map((x) =>
             ids.includes(x.id) &&
+            x.author.id !== receipt.id &&
             !(x.read_by ?? []).some((r) => r.id === receipt.id)
               ? { ...x, read_by: [...(x.read_by ?? []), receipt], agent_read: true }
               : x,

@@ -132,6 +132,7 @@ where (c.id = $1
        or c.parent_message_id in
          (select id from messages where conversation_id = $1))
   and (a.grant_all or g.agent_id is not null)
+  and (m.author_agent_id is null or m.author_agent_id <> a.id)
 on conflict (message_id, agent_id) where agent_id is not null do nothing
 `
 
@@ -148,9 +149,10 @@ from conversations c
 join messages m on m.conversation_id = c.id
 join projects p on p.id = c.project_id
 join workspace_members wm on wm.workspace_id = p.workspace_id
-where c.id = $1
-   or c.parent_message_id in
-      (select id from messages where conversation_id = $1)
+where (c.id = $1
+       or c.parent_message_id in
+         (select id from messages where conversation_id = $1))
+  and (m.author_user_id is null or m.author_user_id <> wm.user_id)
 on conflict (message_id, user_id) where user_id is not null do nothing
 `
 
@@ -1159,37 +1161,43 @@ func (q *Queries) ListReactionsForMessages(ctx context.Context, ids []pgtype.UUI
 
 const markConversationRead = `-- name: MarkConversationRead :exec
 insert into message_reads (message_id, user_id)
-select m.id, $2
+select m.id, $1
 from messages m
-where m.conversation_id = $1
+where m.conversation_id = $2
   and m.deleted_at is null
+  and (m.author_user_id is null or m.author_user_id <> $1)
 on conflict (message_id, user_id) where user_id is not null do nothing
 `
 
 type MarkConversationReadParams struct {
-	ConversationID pgtype.UUID `json:"conversation_id"`
 	UserID         pgtype.UUID `json:"user_id"`
+	ConversationID pgtype.UUID `json:"conversation_id"`
 }
 
-// mark every message in the conversation read for the user (bulk, on view)
+// mark every message in the conversation read for the user (bulk, on view);
+// own posts excluded — the author's receipt is meaningless
 func (q *Queries) MarkConversationRead(ctx context.Context, arg MarkConversationReadParams) error {
-	_, err := q.db.Exec(ctx, markConversationRead, arg.ConversationID, arg.UserID)
+	_, err := q.db.Exec(ctx, markConversationRead, arg.UserID, arg.ConversationID)
 	return err
 }
 
 const markMessageRead = `-- name: MarkMessageRead :exec
 insert into message_reads (message_id, user_id)
-values ($1, $2)
+select m.id, $1
+from messages m
+where m.id = $2
+  and (m.author_user_id is null or m.author_user_id <> $1)
 on conflict (message_id, user_id) where user_id is not null do nothing
 `
 
 type MarkMessageReadParams struct {
-	MessageID pgtype.UUID `json:"message_id"`
 	UserID    pgtype.UUID `json:"user_id"`
+	MessageID pgtype.UUID `json:"message_id"`
 }
 
+// own posts excluded — the author is never one of their own readers
 func (q *Queries) MarkMessageRead(ctx context.Context, arg MarkMessageReadParams) error {
-	_, err := q.db.Exec(ctx, markMessageRead, arg.MessageID, arg.UserID)
+	_, err := q.db.Exec(ctx, markMessageRead, arg.UserID, arg.MessageID)
 	return err
 }
 
