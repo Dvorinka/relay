@@ -56,6 +56,35 @@ func TestStreamEventsDispatchesFrames(t *testing.T) {
 	}
 }
 
+// A stream that accepts the connection then goes silent must not block
+// ReadString forever — the read deadline returns so the pump reconnects.
+func TestStreamEventsAbandonsIdleStream(t *testing.T) {
+	done := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"type\":\"heartbeat\"}\n\n")
+		if fl, ok := w.(http.Flusher); ok {
+			fl.Flush()
+		}
+		<-done // never write again
+	}))
+	defer srv.Close()
+	defer close(done)
+
+	prev := sseIdleTimeout
+	sseIdleTimeout = 150 * time.Millisecond
+	defer func() { sseIdleTimeout = prev }()
+
+	start := time.Now()
+	connected := (&App{}).streamEvents(context.Background(), srv.URL, func(string) {})
+	if !connected {
+		t.Fatal("idle timeout reported as never-connected")
+	}
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("read blocked %v on idle stream", d)
+	}
+}
+
 func TestStreamEventsRejectsNon200(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)

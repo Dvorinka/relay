@@ -2426,6 +2426,31 @@ function ConversationThread(props: {
 
   const unsub = subscribe((e) => {
     const data = e.data as Record<string, unknown> | undefined;
+    if (e.type === "stream.resync") {
+      // Frames may have been missed while the stream was dead — replace the
+      // tail with a fresh latest page so new, edited and deleted messages
+      // all reconcile in one pass.
+      void api
+        .listMessages(props.conversationId, {
+          limit: PAGE_SIZE,
+          tag: tagFilter() || undefined,
+        })
+        .then((page) => {
+          if (page.messages.length === 0) {
+            if (!tagFilter()) setMessages([]);
+            return;
+          }
+          const oldest = page.messages[0]!.created_at;
+          setMessages((cur) => [
+            ...cur.filter((m) => m.created_at < oldest),
+            ...page.messages,
+          ]);
+          void refetchPins();
+          markLatestRead();
+        })
+        .catch(() => {});
+      return;
+    }
     if (!data || data.conversation_id !== props.conversationId) return;
     if (e.type === "typing") {
       const u = data.user as { id: string; name: string } | undefined;

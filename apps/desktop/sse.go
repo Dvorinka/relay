@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"context"
+	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strings"
 	"sync"
@@ -11,6 +13,11 @@ import (
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
+
+// sseIdleTimeout bounds how long a single read may block waiting for the
+// next line. The server emits heartbeat data frames every 25s, so silence
+// beyond this means the stream is silently dead — reconnect.
+var sseIdleTimeout = 90 * time.Second
 
 // Server-sent events do not reach the webview: the asset-server proxy hands
 // the response to WebView2/WebKitGTK as a buffered stream, so EventSource
@@ -90,6 +97,13 @@ func (a *App) streamEvents(
 	if err != nil {
 		return false
 	}
+	// Grab the conn so reads get an idle deadline — a half-open stream
+	// (NAT/proxy drop, tunnel restart) blocks ReadString forever, and only
+	// ctx cancellation would ever unblock it.
+	var conn net.Conn
+	req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
+		GotConn: func(info httptrace.GotConnInfo) { conn = info.Conn },
+	}))
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
 	resp, err := http.DefaultClient.Do(req)
@@ -101,6 +115,12 @@ func (a *App) streamEvents(
 		return false
 	}
 	br := bufio.NewReaderSize(resp.Body, 64<<10)
+	defer func() {
+		if conn != nil {
+			// Clear the deadline so a keep-alive-reused conn isn't poisoned.
+			_ = conn.SetReadDeadline(time.Time{})
+		}
+	}()
 	var data strings.Builder
 	dispatch := func() {
 		if data.Len() == 0 {
@@ -110,6 +130,9 @@ func (a *App) streamEvents(
 		data.Reset()
 	}
 	for {
+		if conn != nil {
+			_ = conn.SetReadDeadline(time.Now().Add(sseIdleTimeout))
+		}
 		line, err := br.ReadString('\n')
 		if len(line) > 0 {
 			line = strings.TrimRight(line, "\r\n")

@@ -689,7 +689,9 @@ export function Rail() {
   const [creating, setCreating] = createSignal(false);
   onMount(refreshUnread);
   const unsub = subscribe((e) => {
-    if (e.type === "message.created") void refreshUnread();
+    if (e.type === "message.created" || e.type === "stream.resync") {
+      void refreshUnread();
+    }
     if (e.type === "review.created" || e.type === "review.responded") {
       void refreshUnread();
     }
