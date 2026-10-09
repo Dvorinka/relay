@@ -14,6 +14,12 @@ mobile without a rebuild.
 - Same-origin links stay inside; everything else (auth providers, external
   links) opens in the system browser.
 - Hardware back walks WebView history; pull-to-refresh is enabled.
+- Server down: a connection failure or a 5xx answer (a killed Cloudflare
+  tunnel returns an HTTP 530 page) shows a "Cannot reach" screen that
+  retries every 15 s. The web app's service worker caches the app shell, so
+  a previously-visited server still boots the SPA while down — the login
+  screen then offers **Work locally** (the client-side "This device"
+  workspace).
 - `relay://open/<path>` links (scheme `relay` in `app.json`) deep-link into
   the matching web route.
 

@@ -201,6 +201,84 @@ func TestDesktopConfigFromSPA(t *testing.T) {
 	}
 }
 
+// A dead server used to leave the webview on a bare 502. Navigations now get
+// a page that names the server and offers retry + local mode; API calls keep
+// a plain 502 so client code sees an error instead of HTML.
+func TestServerDownPage(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	upstream.Close() // guaranteed connection refused
+
+	app := &App{cfg: &Config{ServerURL: upstream.URL}}
+	app.handler.Store(app.buildHandler())
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml")
+	rr := httptest.NewRecorder()
+	app.ServeHTTP(rr, req)
+	body := rr.Body.String()
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502, got %d", rr.Code)
+	}
+	for _, want := range []string{"Can't reach the Relay server", "Try again"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("down page missing %q", want)
+		}
+	}
+	if offlineAvailable() && !strings.Contains(body, "Work locally") {
+		t.Fatal("down page should offer local mode when the bundle is embedded")
+	}
+
+	rr = httptest.NewRecorder()
+	app.ServeHTTP(rr, httptest.NewRequest("GET", "/api/auth/session", nil))
+	if rr.Code != http.StatusBadGateway || strings.Contains(rr.Body.String(), "<html") {
+		t.Fatalf("API fetch should get a plain 502, got %d %q", rr.Code, rr.Body.String())
+	}
+}
+
+// Gateway errors arrive as responses, not transport failures — a dead
+// Cloudflare tunnel returns a 530 page. Navigations get the down page too.
+func TestServerDownPageOnHTTPError(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(530)
+		_, _ = w.Write([]byte("<html>cloudflare error</html>"))
+	}))
+	defer upstream.Close()
+
+	app := &App{cfg: &Config{ServerURL: upstream.URL}}
+	app.handler.Store(app.buildHandler())
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Accept", "text/html")
+	rr := httptest.NewRecorder()
+	app.ServeHTTP(rr, req)
+	if !strings.Contains(rr.Body.String(), "Can't reach the Relay server") {
+		t.Fatalf("530 upstream should render the down page, got %q", rr.Body.String())
+	}
+}
+
+// "Work locally" from the down page flips to the embedded SPA but keeps the
+// configured server so reconnecting after the outage isn't a re-type.
+func TestWorkOfflineKeepsServerURL(t *testing.T) {
+	if !offlineAvailable() {
+		t.Skip("test build has no embedded SPA bundle")
+	}
+	t.Setenv("HOME", t.TempDir())
+	app := &App{cfg: &Config{ServerURL: "http://relay.test"}}
+	app.handler.Store(app.buildHandler())
+
+	rr := httptest.NewRecorder()
+	app.ServeHTTP(rr, httptest.NewRequest("GET", "/~desktop-offline", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected bridge page, got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "setItem('relay.local','1')") {
+		t.Fatal("bridge must set local-mode flag")
+	}
+	if !app.cfg.Offline || app.cfg.ServerURL != "http://relay.test" {
+		t.Fatalf("offline should keep the server URL for reconnect: %+v", app.cfg)
+	}
+}
+
 func TestDesktopOpen(t *testing.T) {
 	app := &App{cfg: &Config{ServerURL: "http://relay.test"}}
 	app.handler.Store(app.buildHandler())

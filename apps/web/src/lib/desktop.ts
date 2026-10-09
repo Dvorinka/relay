@@ -60,6 +60,15 @@ export function isDesktop(): boolean {
   );
 }
 
+// Synchronous "am I inside the React Native shell" check: the mobile app
+// injects ReactNativeWebView for postMessage before any page JS runs.
+export function isMobileShell(): boolean {
+  return (
+    (window as unknown as { ReactNativeWebView?: unknown })
+      .ReactNativeWebView !== undefined
+  );
+}
+
 // The webview's Notification API either doesn't exist (WebKitGTK without an
 // embedder handler) or silently drops calls — App.Notify on the Go side
 // pipes to the OS notification daemon instead.

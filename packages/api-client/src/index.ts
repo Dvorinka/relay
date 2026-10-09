@@ -370,7 +370,11 @@ export class ApiClientError extends Error {
   }
 }
 
-export function createClient(baseUrl: string, token?: string) {
+export function createClient(
+  baseUrl: string,
+  token?: string,
+  opts?: { fetch?: typeof fetch },
+) {
   // Cross-origin and bearer-token clients carry no cookies: CORS '*' stays
   // valid and SameSite never bites. Same-origin keeps cookie sessions.
   const crossOrigin =
@@ -379,6 +383,7 @@ export function createClient(baseUrl: string, token?: string) {
     new URL(baseUrl, window.location.href).origin !== window.location.origin;
   const credentials: RequestCredentials =
     token || crossOrigin ? "omit" : "include";
+  const doFetch = opts?.fetch ?? fetch;
 
   async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // Keep headers undefined when empty so FormData requests let the browser
@@ -386,7 +391,7 @@ export function createClient(baseUrl: string, token?: string) {
     const headers =
       token || init?.headers ? new Headers(init?.headers) : undefined;
     if (token) headers!.set("Authorization", `Bearer ${token}`);
-    const res = await fetch(`${baseUrl}${path}`, {
+    const res = await doFetch(`${baseUrl}${path}`, {
       ...init,
       credentials,
       ...(headers ? { headers } : {}),

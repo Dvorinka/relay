@@ -6,6 +6,7 @@
 import { createClient } from "@relay/api-client";
 import { createSignal } from "solid-js";
 import { net } from "./net";
+import { resilientFetch } from "./offline";
 
 export interface SavedConnection {
   id: string;
@@ -89,10 +90,14 @@ export function activateConnection(c: SavedConnection, path: string) {
   location.href = path;
 }
 
-/** Fetch a foreign server's project list; null when unreachable/unauthed. */
+/** Fetch a foreign server's project list; null when unreachable/unauthed.
+ *  Goes through resilientFetch so the call also stamps the server's
+ *  up/down state for the rail badge. */
 export async function foreignProjects(c: SavedConnection) {
   try {
-    const { projects } = await createClient(c.url, c.token).listProjects();
+    const { projects } = await createClient(c.url, c.token, {
+      fetch: resilientFetch,
+    }).listProjects();
     return projects;
   } catch {
     return null;

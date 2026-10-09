@@ -6,6 +6,7 @@ import {
   browserAuth,
   desktopServerUrl,
   isDesktop,
+  isMobileShell,
 } from "../../lib/desktop";
 import { net } from "../../lib/net";
 import { useSession } from "../../stores/session";
@@ -32,9 +33,9 @@ export default function Login() {
   // fetched once for the browser sign-in open URL.
   const [shellUrl, setShellUrl] = createSignal("");
   // "Different server" and "Work locally" only exist where the API isn't
-  // same-origin: the desktop app or a cross-origin SPA. On a hosted
-  // server's own web UI they would point at itself — meaningless.
-  const altPaths = () => isDesktop() || !!net.serverUrl();
+  // same-origin: the desktop or mobile shell, or a cross-origin SPA. On a
+  // hosted server's own web UI they would point at itself — meaningless.
+  const altPaths = () => isDesktop() || isMobileShell() || !!net.serverUrl();
 
   onMount(() => {
     if (isDesktop() && !net.serverUrl()) {
@@ -108,11 +109,11 @@ export default function Login() {
       );
     } catch (err) {
       setError(
-        err instanceof ApiClientError && err.status === 401
-          ? "Invalid email or password"
-          : err instanceof Error
-            ? err.message
-            : "Sign in failed",
+        err instanceof ApiClientError
+          ? err.status === 401
+            ? "Invalid email or password"
+            : err.message
+          : "Can't reach that server — check the URL or try again shortly",
       );
     } finally {
       setPending(false);

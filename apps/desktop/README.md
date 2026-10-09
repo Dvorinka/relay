@@ -18,6 +18,12 @@ The app embeds no UI assets. `AssetServer.Handler` receives every request —
 deliberately: an embedded `index.html` would win the asset server's
 file-first lookup and shadow `/` forever.
 
+When the configured server is unreachable, the proxy's error handler serves
+a "Can't reach the Relay server" page instead of a bare 502: it retries every
+15 s and offers **Work locally** (`/~desktop-offline`). Falling back to local
+mode keeps `server_url` in the config, so reconnecting after the outage
+doesn't mean retyping the URL.
+
 ## Build
 
 ```bash

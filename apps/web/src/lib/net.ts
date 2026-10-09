@@ -4,6 +4,8 @@
 //   lib/local.ts. Sync pushes the local store to a real server on demand.
 import { createClient } from "@relay/api-client";
 import { createSignal } from "solid-js";
+import { clearApiCache } from "./cache";
+import { resilientFetch } from "./offline";
 
 const K_URL = "relay.serverUrl";
 const K_TOKEN = "relay.token";
@@ -41,11 +43,15 @@ export const net = {
     localStorage.removeItem(K_LOCAL);
     setIsLocal(false);
     // keep serverUrl so the login form stays prefilled
+    // Cached GET bodies are per-principal — drop them with the session.
+    void clearApiCache();
   },
 
   /** Client bound to the current connection. */
   client() {
-    return createClient(net.serverUrl(), net.token() || undefined);
+    return createClient(net.serverUrl(), net.token() || undefined, {
+      fetch: resilientFetch,
+    });
   },
 };
 
