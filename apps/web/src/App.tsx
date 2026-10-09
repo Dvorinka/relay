@@ -6,6 +6,7 @@ import { ProfileModalHost } from "./components/ProfileModal";
 import { CommitModalHost } from "./features/github/CommitModal";
 import { GitHubCreateModalHost } from "./features/github/CreateModals";
 import { Rail } from "./components/Rail";
+import { ServerBanner } from "./components/ServerBanner";
 import { TopBar } from "./components/TopBar";
 import { RequireAuth } from "./features/auth/guards";
 import { setFaviconBadge } from "./lib/favicon";
@@ -36,6 +37,7 @@ export default function App(props: ParentProps) {
         <TitleBadge />
         <div class="flex h-full flex-col">
           <TopBar />
+          <ServerBanner />
           <div class="flex min-h-0 flex-1">
             <Rail />
             <main

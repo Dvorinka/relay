@@ -49,6 +49,7 @@ export const localStore = {
   getBlob: (id: string) =>
     tx<Blob | undefined>("blobs", "readonly", (s) => s.get(id)),
   delBlob: (id: string) => tx("blobs", "readwrite", (s) => s.delete(id)),
+  del: (key: string) => tx("kv", "readwrite", (s) => s.delete(key)),
 };
 
 export async function dataUrlToBlob(dataUrl: string): Promise<Blob> {

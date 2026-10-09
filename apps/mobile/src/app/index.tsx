@@ -258,12 +258,23 @@ export default function Shell() {
     return () => sub.remove();
   }, [canGoBack]);
 
+  // Server down: keep retrying in the background — the app reconnects on
+  // its own when the server comes back (same 15s cadence as desktop).
+  useEffect(() => {
+    if (!failed) return;
+    const t = setInterval(() => web.current?.reload(), 15000);
+    return () => clearInterval(t);
+  }, [failed]);
+
   // relay:// links (registered in app.json) open routes inside the web UI.
   // relay://server is the escape hatch back to the connect screen now that
   // the shell has no visible chrome. A link arriving before the WebView has
   // loaded is queued — injectJavaScript into a blank page is discarded.
   const webReady = useRef(false);
   const pendingLink = useRef<string | null>(null);
+  // Set when the main request answers 5xx — onLoad still completes for the
+  // error page, so clearing `failed` there must check this first.
+  const navErr = useRef(false);
   const applyDeepLink = useCallback(
     (raw: string) => {
       if (!server) return;
@@ -381,6 +392,7 @@ export default function Shell() {
         }}
         onLoadStart={() => {
           webReady.current = false;
+          navErr.current = false;
         }}
         onLoadEnd={() => {
           webReady.current = true;
@@ -397,6 +409,18 @@ export default function Shell() {
           return false;
         }}
         onError={() => setFailed(true)}
+        // A dead server can answer an error page instead of failing the
+        // connection — a killed Cloudflare tunnel returns HTTP 530, which
+        // loads "successfully". 5xx on the main request is still down.
+        onHttpError={(e) => {
+          if (e.nativeEvent.statusCode >= 500) {
+            navErr.current = true;
+            setFailed(true);
+          }
+        }}
+        onLoad={() => {
+          if (!navErr.current) setFailed(false);
+        }}
         renderLoading={() => (
           <View style={[styles.fill, styles.center, styles.overlay]}>
             <ActivityIndicator color={C.accent} size="large" />
@@ -408,7 +432,9 @@ export default function Shell() {
         <View style={[styles.overlay, styles.center, styles.fill]}>
           <Text style={styles.errTitle}>Cannot reach {host}</Text>
           <Text style={styles.errText}>
-            Check the URL and that the server is up.
+            The server is not responding. Retrying automatically — the app
+            reconnects on its own when it is back. Signed-in sessions can
+            also keep working locally on this device once the app loads.
           </Text>
           <Pressable
             style={styles.errBtn}

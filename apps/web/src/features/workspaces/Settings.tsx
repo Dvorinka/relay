@@ -8,6 +8,7 @@ import {
   createSignal,
   For,
   onCleanup,
+  onMount,
   Show,
   type ParentProps,
 } from "solid-js";
@@ -60,7 +61,9 @@ import {
   desktopQuit,
   desktopSetAutostart,
   desktopSetBackground,
+  desktopServerUrl,
   isDesktop,
+  isMobileShell,
 } from "../../lib/desktop";
 import {
   syncToServer,
@@ -781,7 +784,15 @@ function ConnectionSection() {
   // Local mode and server switching only make sense off the server's own
   // hosted UI — the desktop app or a cross-origin client. Same rule as
   // the login page.
-  const altPaths = () => isDesktop() || !!net.serverUrl();
+  const altPaths = () => isDesktop() || isMobileShell() || !!net.serverUrl();
+
+  // Prefill the connect form with the last server this device used — held
+  // in localStorage for cross-origin sessions, or the desktop shell's
+  // config after a server-outage fallback into local mode.
+  const [remembered, setRemembered] = createSignal(net.serverUrl());
+  onMount(() => {
+    if (!net.serverUrl()) void desktopServerUrl().then(setRemembered);
+  });
 
   const mode = () =>
     net.isLocal()
@@ -994,6 +1005,7 @@ function ConnectionSection() {
             required
             placeholder="https://relay.example.com"
             aria-label="Server URL"
+            value={remembered()}
             class={inputClass}
           />
           <input

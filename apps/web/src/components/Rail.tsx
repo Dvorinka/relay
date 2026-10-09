@@ -41,6 +41,7 @@ import {
   foreignConnections,
   foreignProjects,
 } from "../lib/connections";
+import { serverState, watchServer } from "../lib/offline";
 import {
   BulbIcon,
   CheckIcon,
@@ -995,7 +996,9 @@ function WorkspaceSwitcher() {
 }
 
 // Other signed-in servers contribute their project lists under a labeled
-// group; a click swaps the session onto that server (connections.ts).
+// group; a click swaps the session onto that server (connections.ts). A
+// server that stops answering keeps its label with an "offline" chip
+// instead of vanishing silently (watchServer keeps the state live).
 function ForeignProjects() {
   const conns = foreignConnections;
   return (
@@ -1003,16 +1006,27 @@ function ForeignProjects() {
       {(c) => {
         const [remote] = createResource(() => c.id, () => foreignProjects(c));
         const hue = connectionHue(c.url);
+        onMount(() => watchServer(c.url));
+        const down = () => serverState(c.url) === "down";
         return (
-          <Show when={(remote() ?? []).length > 0}>
+          <Show when={down() || (remote() ?? []).length > 0}>
             <div class="flex items-center gap-1.5 px-2 pb-1 pt-3">
               <span
                 class="h-1.5 w-1.5 shrink-0 rounded-full"
-                style={{ "background-color": `hsl(${hue} 65% 55%)` }}
+                style={{
+                  "background-color": down()
+                    ? "var(--faint, #9c9fa7)"
+                    : `hsl(${hue} 65% 55%)`,
+                }}
               />
               <span class="truncate text-[11px] font-medium uppercase tracking-wider text-muted">
                 {c.label}
               </span>
+              <Show when={down()}>
+                <span class="ml-auto shrink-0 rounded border border-amber-500/40 px-1 py-px text-[9px] uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                  offline
+                </span>
+              </Show>
             </div>
             <div class="flex flex-col gap-0.5">
               <For each={remote() ?? []}>

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"io/fs"
 	"net/http"
@@ -235,12 +236,80 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	a.handler.Load().(http.Handler).ServeHTTP(w, r)
 }
 
+var errServerDown = errors.New("relay server unreachable")
+
+// serverDownStatus covers both real gateway errors and Cloudflare's 5xx
+// origin-error codes (520–530).
+func serverDownStatus(code int) bool {
+	return code == http.StatusBadGateway ||
+		code == http.StatusServiceUnavailable ||
+		code == http.StatusGatewayTimeout ||
+		(code >= 520 && code <= 530)
+}
+
+// serverDown replaces the proxy's bare "502 Bad Gateway" when the configured
+// server can't be reached. Navigations get a page naming the dead server,
+// retrying on a timer, and offering local mode; API fetches keep a plain 502
+// so client code sees an error, not HTML.
+func (a *App) serverDown(w http.ResponseWriter, r *http.Request, _ error) {
+	if !strings.Contains(r.Header.Get("Accept"), "text/html") {
+		http.Error(w, "relay server unreachable", http.StatusBadGateway)
+		return
+	}
+	host := a.cfg.ServerURL
+	if u, err := url.Parse(host); err == nil && u.Host != "" {
+		host = u.Host
+	}
+	// Local mode is always offered; without the embedded SPA bundle the
+	// button explains why it's missing instead of dead-ending the user.
+	offline := `<small>Local mode needs a bundled web app — release builds include one.</small>`
+	if offlineAvailable() {
+		offline = `<button type="button" class="alt" onclick="location.href='/~desktop-offline'">Work locally — this device only</button>`
+	}
+	w.Header().Set("Content-Type", "text/html")
+	w.WriteHeader(http.StatusBadGateway)
+	_, _ = fmt.Fprintf(w, `<!doctype html>
+<meta charset="utf-8">
+<title>Relay — server unreachable</title>
+<style>
+  body{background:#0a0a0b;color:#e9e9eb;font:14px/1.5 system-ui;display:flex;
+       align-items:center;justify-content:center;min-height:100vh;margin:0}
+  .wrap{display:flex;flex-direction:column;gap:10px;width:320px}
+  h2{margin:0;font-size:18px}
+  button{font:inherit;padding:10px 12px;border-radius:8px;border:1px solid #232427;
+         background:#06b6d4;color:#062a30;font-weight:600;cursor:pointer}
+  button.alt{background:transparent;color:#9c9fa7;border-color:#232427}
+  small{color:#9c9fa7}
+  small strong{color:#e9e9eb;font-weight:600}
+</style>
+<div class="wrap">
+  <h2>Can't reach the Relay server</h2>
+  <small><strong>%s</strong> is not responding. Retrying every 15 seconds —
+  the app reconnects on its own when the server is back.</small>
+  <button onclick="location.reload()">Try again</button>
+  %s
+</div>
+<script>setTimeout(function(){location.reload()},15000)</script>`, html.EscapeString(host), offline)
+}
+
+// workOffline is the "Work locally" button on the server-down page: flips to
+// the embedded SPA and reloads through the choice bridge so the SPA boots
+// its "This device" workspace.
+func (a *App) workOffline(w http.ResponseWriter, r *http.Request) {
+	if err := a.applyChoice("", true); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	serveChoiceBridge(w, true)
+}
+
 func (a *App) buildHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/~desktop-open", a.openExternal)
 	mux.HandleFunc("/~desktop-config", a.configFromSPA)
 	mux.HandleFunc("/~desktop-autostart", a.autostart)
 	mux.HandleFunc("/~desktop-background", a.background)
+	mux.HandleFunc("/~desktop-offline", a.workOffline)
 	switch {
 	case a.cfg.Offline:
 		mux.Handle("/", spaHandler(webDist()))
@@ -255,6 +324,16 @@ func (a *App) buildHandler() http.Handler {
 			},
 			// SSE (GET /api/events) needs immediate flushing.
 			FlushInterval: -1,
+			// Gateway errors arrive as ordinary responses — a dead tunnel
+			// returns Cloudflare's 530 page, not a transport failure — so
+			// surface them through the same down page.
+			ModifyResponse: func(res *http.Response) error {
+				if serverDownStatus(res.StatusCode) {
+					return errServerDown
+				}
+				return nil
+			},
+			ErrorHandler: a.serverDown,
 		}
 		mux.Handle("/", proxy)
 	}
@@ -510,7 +589,9 @@ func (a *App) applyChoice(serverURL string, offline bool) error {
 		if !offlineAvailable() {
 			return fmt.Errorf("offline bundle not included in this build")
 		}
-		a.cfg.ServerURL = ""
+		// ServerURL stays: local mode is usually a fallback for an outage,
+		// and forgetting the server forces a re-type to reconnect. The
+		// offline branch wins in buildHandler while the flag is set.
 		a.cfg.Offline = true
 	} else {
 		raw := strings.TrimSpace(serverURL)
