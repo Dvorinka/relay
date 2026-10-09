@@ -19,6 +19,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// heartbeatFrame is emitted on both streams every 25s. It goes out as a
+// data: frame rather than an SSE comment so clients can watchdog on it —
+// comment lines never reach EventSource.onmessage or frame parsers.
+const heartbeatFrame = "data: {\"type\":\"heartbeat\",\"project_id\":\"\"}\n\n"
+
 type Service struct {
 	q   *db.Queries
 	hub *events.Hub
@@ -68,7 +73,9 @@ func (s *Service) handleStream(c *gin.Context) {
 		case <-ctx.Done():
 			return
 		case <-keepalive.C:
-			if _, err := w.WriteString(": ka\n\n"); err != nil {
+			// A real data frame, not an SSE comment: clients watchdog on it —
+			// three missed beats means the stream is silently dead.
+			if _, err := w.WriteString(heartbeatFrame); err != nil {
 				return
 			}
 			w.Flush()
@@ -194,7 +201,7 @@ func (s *Service) handleAgentStream(c *gin.Context) {
 		case <-ctx.Done():
 			return
 		case <-keepalive.C:
-			if _, err := w.WriteString(": ka\n\n"); err != nil {
+			if _, err := w.WriteString(heartbeatFrame); err != nil {
 				return
 			}
 			w.Flush()

@@ -114,15 +114,21 @@ where id = sqlc.arg(id)
 returning id;
 
 -- name: MarkMessageReadAgent :exec
+-- own posts excluded — the author is never one of their own readers
 insert into message_reads (message_id, agent_id)
-values (sqlc.arg(message_id), sqlc.arg(agent_id))
+select m.id, sqlc.arg(agent_id)
+from messages m
+where m.id = sqlc.arg(message_id)
+  and (m.author_agent_id is null or m.author_agent_id <> sqlc.arg(agent_id))
 on conflict (message_id, agent_id) where agent_id is not null do nothing;
 
 -- name: MarkMessagesReadAgent :exec
--- batch read receipt: fetching messages marks them read by this agent
+-- batch read receipt: fetching messages marks them read by this agent;
+-- own posts excluded — the author's receipt is meaningless
 insert into message_reads (message_id, agent_id)
 select m.id, sqlc.arg(agent_id) from messages m
 where m.id = any(sqlc.arg(ids)::uuid[]) and m.deleted_at is null
+  and (m.author_agent_id is null or m.author_agent_id <> sqlc.arg(agent_id))
 on conflict (message_id, agent_id) where agent_id is not null do nothing;
 
 -- name: AgentOwnReadMessageIDs :many

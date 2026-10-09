@@ -995,9 +995,10 @@ func (s *Service) getMessages(ctx context.Context, req mcp.CallToolRequest) (*mc
 		s.log.Warn("mark agent read", zap.Error(err))
 	}
 	newlyRead := make([]pgtype.UUID, 0, len(ids))
-	for _, id := range ids {
-		if !readBefore[id.String()] {
-			newlyRead = append(newlyRead, id)
+	for _, r := range rows {
+		// own posts never get a receipt — the author is not a reader
+		if !readBefore[r.ID.String()] && r.AuthorAgentID != agent(ctx).ID {
+			newlyRead = append(newlyRead, r.ID)
 		}
 	}
 	s.publishRead(ctx, cid, newlyRead)
@@ -1029,17 +1030,20 @@ func (s *Service) getMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	if err != nil {
 		return errResult(err)
 	}
-	wasUnread := true
+	own := m.AuthorAgentID == agent(ctx).ID
+	wasUnread := !own
 	if rids, err := s.q.AgentOwnReadMessageIDs(ctx, db.AgentOwnReadMessageIDsParams{
 		AgentID: agent(ctx).ID, Ids: []pgtype.UUID{mid},
 	}); err == nil && len(rids) > 0 {
 		wasUnread = false
 	}
-	_ = s.q.MarkMessageReadAgent(ctx, db.MarkMessageReadAgentParams{
-		MessageID: mid, AgentID: agent(ctx).ID,
-	})
-	if wasUnread {
-		s.publishRead(ctx, m.ConversationID, []pgtype.UUID{mid})
+	if !own {
+		_ = s.q.MarkMessageReadAgent(ctx, db.MarkMessageReadAgentParams{
+			MessageID: mid, AgentID: agent(ctx).ID,
+		})
+		if wasUnread {
+			s.publishRead(ctx, m.ConversationID, []pgtype.UUID{mid})
+		}
 	}
 	out := s.messageJSONFull(ctx, m)
 	out["was_unread"] = wasUnread
@@ -1348,8 +1352,8 @@ func (s *Service) sendMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 	if err != nil {
 		return errResult(err)
 	}
-	if strings.TrimSpace(body) == "" || len(body) > 40000 {
-		return mcp.NewToolResultError("body must be 1..40000 chars"), nil
+	if strings.TrimSpace(body) == "" || len(body) > conversations.MaxMessageBodyChars {
+		return mcp.NewToolResultError("body is empty or too large"), nil
 	}
 	var parent pgtype.UUID
 	if v := req.GetString("reply_to", ""); v != "" {
@@ -1533,8 +1537,8 @@ func (s *Service) editMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 	if err != nil {
 		return errResult(err)
 	}
-	if strings.TrimSpace(body) == "" || len(body) > 40000 {
-		return mcp.NewToolResultError("body must be 1..40000 chars"), nil
+	if strings.TrimSpace(body) == "" || len(body) > conversations.MaxMessageBodyChars {
+		return mcp.NewToolResultError("body is empty or too large"), nil
 	}
 	if _, err := s.q.UpdateMessageBodyAgent(ctx, db.UpdateMessageBodyAgentParams{
 		ID: mid, AuthorAgentID: agent(ctx).ID, Body: body,
@@ -2214,15 +2218,21 @@ func (s *Service) markRead(ctx context.Context, req mcp.CallToolRequest) (*mcp.C
 	if err := s.scope(ctx, pid, "message:read"); err != nil {
 		return errResult(err)
 	}
+	m, err := s.q.GetMessageFull(ctx, mid)
+	if err != nil {
+		return errResult(err)
+	}
+	// own post — the author is not a reader, so no receipt at all
+	if m.AuthorAgentID == agent(ctx).ID {
+		return jsonResult(gin.H{"ok": true})
+	}
 	err = s.q.MarkMessageReadAgent(ctx, db.MarkMessageReadAgentParams{
 		MessageID: mid, AgentID: agent(ctx).ID,
 	})
 	if err != nil {
 		return errResult(err)
 	}
-	if conv, cerr := s.q.GetMessageConversation(ctx, mid); cerr == nil {
-		s.publishRead(ctx, conv, []pgtype.UUID{mid})
-	}
+	s.publishRead(ctx, m.ConversationID, []pgtype.UUID{mid})
 	return jsonResult(gin.H{"ok": true})
 }
 

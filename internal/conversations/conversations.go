@@ -27,6 +27,11 @@ import (
 	"go.uber.org/zap"
 )
 
+// MaxMessageBodyChars is the shared body ceiling for messages across the
+// REST API, inbound hooks and MCP tools — high enough that pasted logs and
+// MIME dumps don't trip it, bounded so a single request stays sane.
+const MaxMessageBodyChars = 1_000_000
+
 type Service struct {
 	q   *db.Queries
 	log *zap.Logger
@@ -259,8 +264,8 @@ func (s *Service) handlePostMessage(c *gin.Context) {
 			return
 		}
 	}
-	if len(req.Body) > 20000 || (len(req.Body) == 0 && len(req.AttachmentIDs) == 0) {
-		httpx.Error(c, http.StatusBadRequest, "bad_request", "body must be <= 20000 characters; an empty body needs at least one attachment")
+	if len(req.Body) > MaxMessageBodyChars || (len(req.Body) == 0 && len(req.AttachmentIDs) == 0) {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "body is too large; an empty body needs at least one attachment")
 		return
 	}
 	if len(req.AttachmentIDs) > 20 {
@@ -359,8 +364,8 @@ func (s *Service) handleEditMessage(c *gin.Context) {
 	if !httpx.BindJSON(c, &req) {
 		return
 	}
-	if n := len(strings.TrimSpace(req.Body)); n == 0 || len(req.Body) > 20000 {
-		httpx.Error(c, http.StatusBadRequest, "bad_request", "body must be 1-20000 characters")
+	if n := len(strings.TrimSpace(req.Body)); n == 0 || len(req.Body) > MaxMessageBodyChars {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "body is empty or too large")
 		return
 	}
 	if _, err := s.q.GetMessageForUser(c.Request.Context(), db.GetMessageForUserParams{
