@@ -15,7 +15,7 @@ const CAP = 400;
 const mem = new Map<string, string>();
 let idbBroken = false;
 
-async function kvGet(key: string): Promise<string | undefined> {
+export async function kvGet(key: string): Promise<string | undefined> {
   if (idbBroken) return mem.get(key);
   try {
     return await localStore.get<string>(key);
@@ -25,7 +25,7 @@ async function kvGet(key: string): Promise<string | undefined> {
   }
 }
 
-async function kvPut(key: string, value: string): Promise<void> {
+export async function kvPut(key: string, value: string): Promise<void> {
   mem.set(key, value);
   if (idbBroken) return;
   try {
@@ -35,7 +35,7 @@ async function kvPut(key: string, value: string): Promise<void> {
   }
 }
 
-async function kvDel(key: string): Promise<void> {
+export async function kvDel(key: string): Promise<void> {
   mem.delete(key);
   if (idbBroken) return;
   try {
@@ -71,9 +71,18 @@ export async function cachePut(key: string, body: string): Promise<void> {
 }
 
 // Sign-out / server switch drops every cached body — a different user or
-// server must never see another principal's stale responses.
+// server must never see another principal's stale responses. The service
+// worker keeps avatars/attachments in its own media cache; clear that too.
 export async function clearApiCache(): Promise<void> {
   for (const key of await index()) await kvDel(PREFIX + key);
   await kvDel(INDEX);
   mem.clear();
+  if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
+    void navigator.serviceWorker
+      .getRegistration()
+      .then((r) =>
+        r?.active?.postMessage({ type: "relay-clear-media" }),
+      )
+      .catch(() => {});
+  }
 }

@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --port 5173",
     "build": "vite build",
+    "build:bundle": "vite build --mode singlefile && node scripts/inline-bundle.mjs",
     "preview": "vite preview",
     "lint": "oxlint",
     "test": "vitest run",
