@@ -26,7 +26,11 @@ import {
 import { subscribe } from "../lib/events";
 import { deriveKey, initials } from "../lib/text";
 import { useNav } from "../stores/nav";
-import { useProjects } from "../stores/projects";
+import {
+  setProjectOrder,
+  setProjectSort,
+  useProjects,
+} from "../stores/projects";
 import { useSession } from "../stores/session";
 import { activeWorkspace, setActiveWorkspace } from "../stores/workspace";
 import {
@@ -49,6 +53,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   GitPullRequestIcon,
+  GripIcon,
   InboxIcon,
   IssueIcon,
   LockIcon,
@@ -78,7 +83,11 @@ function NavItem(props: ParentProps<{ href: string }>) {
   );
 }
 
-function ProjectRow(props: { project: Project }) {
+function ProjectRow(props: {
+  project: Project;
+  dragging: boolean;
+  onGripDown: (e: PointerEvent) => void;
+}) {
   const { unread } = useUnread();
   const { pendingReviews } = usePendingReviews();
   const location = useLocation();
@@ -100,7 +109,10 @@ function ProjectRow(props: { project: Project }) {
   }, active());
   return (
     <div>
-      <div class="flex items-center">
+      <div
+        data-rail-pid={props.project.id}
+        class={`group flex items-center ${props.dragging ? "opacity-50" : ""}`}
+      >
         <button
           type="button"
           aria-label={expanded() ? "Hide channels" : "Show channels"}
@@ -157,6 +169,15 @@ function ProjectRow(props: { project: Project }) {
           </Show>
         </NavItem>
         </div>
+        <button
+          type="button"
+          aria-label={`Reorder ${props.project.name}`}
+          title="Drag to reorder"
+          onPointerDown={(e) => props.onGripDown(e)}
+          class="shrink-0 cursor-grab touch-none rounded p-1 text-faint opacity-0 transition-opacity hover:text-fg focus-visible:opacity-100 group-hover:opacity-100 active:cursor-grabbing"
+        >
+          <GripIcon class="h-3 w-3" />
+        </button>
       </div>
       <Show when={expanded()}>
         <ProjectChildren project={props.project} />
@@ -712,6 +733,40 @@ export function Rail() {
     projects
       .sorted()
       .filter((p) => !active() || p.workspace_id === active()!.id);
+  // Manual ordering by grip-drag, same scheme as the Home cards: pointermove
+  // rewrites the stored order live so the rows reshuffle mid-drag. The
+  // baseline is the full sorted list, not the workspace-filtered view —
+  // hidden projects keep their slots. First move flips the sort to manual,
+  // otherwise the new order would be invisible under activity/name sorts.
+  const [dragId, setDragId] = createSignal<string | null>(null);
+  function startProjectDrag(e: PointerEvent, id: string) {
+    e.preventDefault();
+    setDragId(id);
+    let order = projects.sorted().map((p) => p.id);
+    const move = (ev: PointerEvent) => {
+      const over = document
+        .elementFromPoint(ev.clientX, ev.clientY)
+        ?.closest("[data-rail-pid]")
+        ?.getAttribute("data-rail-pid");
+      if (!over || over === id) return;
+      const from = order.indexOf(id);
+      const to = order.indexOf(over);
+      if (from < 0 || to < 0) return;
+      order = [...order];
+      order.splice(to, 0, order.splice(from, 1)[0]!);
+      setProjectOrder(order);
+      setProjectSort("manual");
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      setDragId(null);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+  }
   const { unread } = useUnread();
   const totalUnread = () =>
     Object.values(unread()).reduce((s, n) => s + n, 0);
@@ -843,7 +898,13 @@ export function Rail() {
 
         <div class="flex flex-col gap-0.5">
           <For each={list()}>
-            {(p) => <ProjectRow project={p} />}
+            {(p) => (
+              <ProjectRow
+                project={p}
+                dragging={dragId() === p.id}
+                onGripDown={(e) => startProjectDrag(e, p.id)}
+              />
+            )}
           </For>
         </div>
 

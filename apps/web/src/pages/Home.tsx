@@ -11,7 +11,7 @@ import type { ActivityIssue, ActivityMessage, Project } from "@relay/api-client"
 import { api } from "../lib/api";
 import { subscribe } from "../lib/events";
 import { FullPageSpinner, inputClass } from "../components/ui";
-import { SearchIcon } from "../components/icons";
+import { GripIcon, SearchIcon } from "../components/icons";
 import { mediaURL } from "../lib/net";
 import { messagePreview } from "../lib/text";
 import { timeAgo } from "../lib/time";
@@ -363,14 +363,7 @@ function ProjectCard(props: {
           onPointerDown={(e) => props.onDragStart(e)}
           class="absolute left-1.5 top-3.5 z-10 cursor-grab touch-none rounded p-1 text-faint transition-colors hover:text-fg"
         >
-          <svg viewBox="0 0 16 16" class="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
-            <circle cx="5.5" cy="4" r="1.4" />
-            <circle cx="10.5" cy="4" r="1.4" />
-            <circle cx="5.5" cy="8" r="1.4" />
-            <circle cx="10.5" cy="8" r="1.4" />
-            <circle cx="5.5" cy="12" r="1.4" />
-            <circle cx="10.5" cy="12" r="1.4" />
-          </svg>
+          <GripIcon class="h-3.5 w-3.5" />
         </button>
       </Show>
       <A

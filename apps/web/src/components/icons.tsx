@@ -468,6 +468,25 @@ export function DotsIcon(props: IconProps): JSX.Element {
   );
 }
 
+// Six-dot drag grip for reorder handles.
+export function GripIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="currentColor"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <circle cx="5.5" cy="4" r="1.4" />
+      <circle cx="10.5" cy="4" r="1.4" />
+      <circle cx="5.5" cy="8" r="1.4" />
+      <circle cx="10.5" cy="8" r="1.4" />
+      <circle cx="5.5" cy="12" r="1.4" />
+      <circle cx="10.5" cy="12" r="1.4" />
+    </svg>
+  );
+}
+
 export function LinkIcon(props: IconProps): JSX.Element {
   return (
     <svg

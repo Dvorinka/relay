@@ -54,7 +54,7 @@ import {
   Tip,
 } from "../../components/ui";
 import { api } from "../../lib/api";
-import { copyText } from "../../lib/clipboard";
+import { copyImage, copyText } from "../../lib/clipboard";
 import { confirmDestructive } from "../../components/Confirm";
 import { openProfile } from "../../components/ProfileModal";
 import { subscribe } from "../../lib/events";
@@ -406,31 +406,9 @@ function ImageMenu(props: {
   const item =
     "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] text-fg transition-colors hover:bg-hover";
 
-  async function copyImage() {
+  async function copy() {
     props.onClose();
-    try {
-      const blob = await (await fetch(props.url)).blob();
-      try {
-        await navigator.clipboard.write([
-          new ClipboardItem({ [blob.type]: blob }),
-        ]);
-      } catch {
-        // Only image/png is reliably writable — transcode everything else.
-        const bmp = await createImageBitmap(blob);
-        const canvas = document.createElement("canvas");
-        canvas.width = bmp.width;
-        canvas.height = bmp.height;
-        canvas.getContext("2d")!.drawImage(bmp, 0, 0);
-        const png = await new Promise<Blob>((ok, fail) =>
-          canvas.toBlob((b) => (b ? ok(b) : fail()), "image/png"),
-        );
-        await navigator.clipboard.write([
-          new ClipboardItem({ "image/png": png }),
-        ]);
-      }
-    } catch {
-      await copyText(props.url);
-    }
+    if (!(await copyImage(props.url))) await copyText(props.url);
   }
 
   async function save() {
@@ -491,7 +469,7 @@ function ImageMenu(props: {
           <ExternalLinkIcon class="h-4 w-4 text-faint" />
           Open original
         </button>
-        <button type="button" onClick={() => void copyImage()} class={item}>
+        <button type="button" onClick={() => void copy()} class={item}>
           <CopyIcon class="h-4 w-4 text-faint" />
           Copy image
         </button>
