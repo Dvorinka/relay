@@ -1,5 +1,5 @@
-import { A, useNavigate, useParams } from "@solidjs/router";
-import { createResource, createSignal, For, Show } from "solid-js";
+import { useNavigate, useSearchParams } from "@solidjs/router";
+import { createEffect, createResource, createSignal, For, Show } from "solid-js";
 import type { Idea } from "@relay/api-client";
 import { api } from "../../lib/api";
 import { timeAgo } from "../../lib/time";
@@ -13,10 +13,13 @@ import {
   TrashIcon,
 } from "../../components/icons";
 import { inputClass, primaryButtonClass, Spinner } from "../../components/ui";
+import { Select } from "../../components/Select";
 import { SceneEditor } from "../briefs/SceneEditor";
 import { BoardCanvas, type BoardDoc } from "./BoardCanvas";
 import { Markdown } from "../../lib/markdown";
 import { useProjects } from "../../stores/projects";
+import { useSession } from "../../stores/session";
+import { activeWorkspace } from "../../stores/workspace";
 
 const STATUS_STYLE: Record<string, string> = {
   open: "bg-accent/15 text-accent",
@@ -24,28 +27,48 @@ const STATUS_STYLE: Record<string, string> = {
   archived: "bg-surface-2 text-muted",
 };
 
-// IdeasPage — a project's brainstorm shelf. Each idea pairs a title/summary
-// with an Excalidraw canvas (mindmaps, sketches); once it turns into real
-// work it converts into an issue or a new project.
+// IdeasPage — the workspace's brainstorm shelf. Ideas are workspace-scoped:
+// platform-wide by default, optionally attached to one project. Once an idea
+// turns into real work it converts into an issue or a new project.
 export default function IdeasPage() {
-  const params = useParams<{ projectId: string }>();
+  const session = useSession();
+  const projects = useProjects();
+  const active = activeWorkspace(session.workspaces);
+  const [searchParams] = useSearchParams<{ project?: string }>();
+
+  const wsProjects = () =>
+    projects
+      .sorted()
+      .filter((p) => !active() || p.workspace_id === active()!.id);
+
+  // "" = all, "none" = platform-wide only, else a project id.
+  const [filter, setFilter] = createSignal("");
+  createEffect(() => {
+    const want = searchParams.project;
+    if (want && wsProjects().some((p) => p.id === want)) setFilter(want);
+  });
+
   const [ideas, { refetch }] = createResource(
-    () => params.projectId,
-    async (id) => (await api.listIdeas(id)).ideas,
+    () => active()?.id,
+    async (wsId) => {
+      if (!wsId) return [] as Idea[];
+      return (await api.listWorkspaceIdeas(wsId)).ideas;
+    },
   );
   const [open, setOpen] = createSignal<Idea | null>(null);
   const [creating, setCreating] = createSignal(false);
 
+  const filtered = () => {
+    const f = filter();
+    const list = ideas.latest ?? [];
+    if (f === "") return list;
+    if (f === "none") return list.filter((i) => !i.project_id);
+    return list.filter((i) => i.project_id === f);
+  };
+
   return (
     <div class="flex h-full flex-col">
       <header class="flex shrink-0 items-center gap-3 border-b border-border px-6 py-4">
-        <A
-          href={`/app/p/${params.projectId}`}
-          aria-label="Back to project"
-          class="rounded-md p-1 text-muted transition-colors hover:bg-hover hover:text-fg"
-        >
-          <ChevronLeftIcon class="h-4 w-4" />
-        </A>
         <div class="min-w-0 flex-1">
           <h1 class="flex items-center gap-2 text-[15px] font-semibold tracking-tight">
             <BulbIcon class="h-4 w-4 text-muted" />
@@ -56,6 +79,17 @@ export default function IdeasPage() {
             projects
           </p>
         </div>
+        <Select
+          value={filter()}
+          onChange={setFilter}
+          options={[
+            { value: "", label: "All ideas" },
+            { value: "none", label: "Platform-wide" },
+            ...wsProjects().map((p) => ({ value: p.id, label: p.name })),
+          ]}
+          ariaLabel="Filter ideas by project"
+          class="w-44"
+        />
         <button
           type="button"
           onClick={() => setCreating(true)}
@@ -78,7 +112,11 @@ export default function IdeasPage() {
         >
           <Show when={creating()}>
             <NewIdea
-              projectId={params.projectId}
+              workspaceId={active()?.id ?? ""}
+              projects={wsProjects()}
+              initialProject={
+                filter() !== "" && filter() !== "none" ? filter() : ""
+              }
               onDone={(i) => {
                 setCreating(false);
                 if (i) {
@@ -90,7 +128,7 @@ export default function IdeasPage() {
           </Show>
           <ul class="mt-1 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
             <For
-              each={ideas.latest}
+              each={filtered()}
               fallback={
                 <Show when={!creating()}>
                   <li class="col-span-full rounded-lg border border-dashed border-border px-4 py-10 text-center text-[13px] text-muted">
@@ -123,6 +161,18 @@ export default function IdeasPage() {
                       </span>
                     </Show>
                     <span class="mt-auto flex items-center gap-2 pt-1 text-[11px] text-faint">
+                      <Show
+                        when={i.project_id}
+                        fallback={
+                          <span class="rounded-full bg-surface-2 px-1.5 py-px text-[10px] font-medium text-muted">
+                            Platform-wide
+                          </span>
+                        }
+                      >
+                        <span class="rounded-full bg-accent/10 px-1.5 py-px text-[10px] font-medium text-accent">
+                          {i.project_name ?? i.project_key}
+                        </span>
+                      </Show>
                       <Show when={i.author_name}>
                         <span class="truncate">{i.author_name}</span>
                       </Show>
@@ -159,11 +209,14 @@ export default function IdeasPage() {
 // Minimal composer — a canvas is what makes an idea, so "New" creates the
 // record and drops straight into the Excalidraw editor.
 function NewIdea(props: {
-  projectId: string;
+  workspaceId: string;
+  projects: { id: string; name: string }[];
+  initialProject: string;
   onDone: (i: Idea | null) => void;
 }) {
   const [title, setTitle] = createSignal("");
   const [summary, setSummary] = createSignal("");
+  const [projectId, setProjectId] = createSignal(props.initialProject);
   const [busy, setBusy] = createSignal(false);
   const [err, setErr] = createSignal("");
   return (
@@ -171,14 +224,15 @@ function NewIdea(props: {
       class="mb-1 flex flex-col gap-2 rounded-lg border border-accent/40 bg-accent/5 p-3"
       onSubmit={async (e) => {
         e.preventDefault();
-        if (!title().trim() || busy()) return;
+        if (!title().trim() || busy() || !props.workspaceId) return;
         setBusy(true);
         setErr("");
         try {
-          const i = await api.createIdea(props.projectId, {
+          const i = await api.createWorkspaceIdea(props.workspaceId, {
             title: title().trim(),
             summary: summary(),
             scene: {},
+            project_id: projectId() || undefined,
           });
           props.onDone(i);
         } catch (ex) {
@@ -188,13 +242,25 @@ function NewIdea(props: {
         }
       }}
     >
-      <input
-        value={title()}
-        onInput={(e) => setTitle(e.currentTarget.value)}
-        placeholder="Idea title — what are we exploring?"
-        class={inputClass}
-        autofocus
-      />
+      <div class="flex items-center gap-2">
+        <input
+          value={title()}
+          onInput={(e) => setTitle(e.currentTarget.value)}
+          placeholder="Idea title — what are we exploring?"
+          class={inputClass}
+          autofocus
+        />
+        <Select
+          value={projectId()}
+          onChange={setProjectId}
+          options={[
+            { value: "", label: "Platform-wide" },
+            ...props.projects.map((p) => ({ value: p.id, label: p.name })),
+          ]}
+          ariaLabel="Attach idea to project"
+          class="w-44 shrink-0"
+        />
+      </div>
       <textarea
         value={summary()}
         onInput={(e) => setSummary(e.currentTarget.value)}
@@ -232,9 +298,15 @@ function IdeaView(props: {
 }) {
   const navigate = useNavigate();
   const projects = useProjects();
-  const project = () =>
-    projects.projects()?.find((p) => p.id === props.idea.project_id);
   const [idea, setIdea] = createSignal(props.idea);
+  // Canvas + markdown need a project context (issue refs link there). Use
+  // the attached project, else any project in the idea's workspace.
+  const wsProjects = () =>
+    (projects.projects() ?? []).filter(
+      (p) => p.workspace_id === idea().workspace_id,
+    );
+  const project = () =>
+    wsProjects().find((p) => p.id === idea().project_id) ?? wsProjects()[0];
   const [editing, setEditing] = createSignal(false);
   const [convertOpen, setConvertOpen] = createSignal(false);
   const [detailsOpen, setDetailsOpen] = createSignal(false);
@@ -292,6 +364,28 @@ function IdeaView(props: {
           </div>
         </div>
         <div class="flex shrink-0 items-center gap-2">
+          <Select
+            value={idea().project_id ?? ""}
+            onChange={(v) => {
+              if (!v) return;
+              void api
+                .updateIdea(idea().id, { project_id: v })
+                .then(setIdea);
+            }}
+            options={
+              idea().project_id
+                ? wsProjects().map((p) => ({ value: p.id, label: p.name }))
+                : [
+                    { value: "", label: "Platform-wide" },
+                    ...wsProjects().map((p) => ({
+                      value: p.id,
+                      label: p.name,
+                    })),
+                  ]
+            }
+            ariaLabel="Idea project"
+            class="w-40"
+          />
           <button
             type="button"
             onClick={() => setDetailsOpen((o) => !o)}
@@ -354,17 +448,18 @@ function IdeaView(props: {
           <Show when={convertOpen()}>
             <ConvertForm
               idea={idea()}
+              projects={wsProjects()}
               onDone={(dest) => {
                 setConvertOpen(false);
                 if (dest === "issue" || dest === "project") {
                   props.onChanged();
                 }
               }}
-              onConverted={async (kind, ref) => {
+              onConverted={async (kind, ref, projectId) => {
                 props.onChanged();
-                if (kind === "issue") {
-                  navigate(`/app/p/${idea().project_id}/i/${ref}`);
-                } else {
+                if (kind === "issue" && projectId) {
+                  navigate(`/app/p/${projectId}/i/${ref}`);
+                } else if (kind === "project") {
                   navigate(`/app/p/${ref}`);
                 }
               }}
@@ -378,7 +473,10 @@ function IdeaView(props: {
           </Show>
           <Show when={detailsOpen() && idea().summary}>
             <div class="rounded-lg border border-border bg-surface-2/40 px-3 py-2 text-[13px]">
-              <Markdown body={idea().summary} projectId={idea().project_id} />
+              <Markdown
+                body={idea().summary}
+                projectId={idea().project_id ?? project()?.id}
+              />
             </div>
           </Show>
           <Show when={detailsOpen() && !idea().summary}>
@@ -430,18 +528,26 @@ function IdeaView(props: {
   );
 }
 
-// ConvertForm turns the idea into real work — an issue on this project, or a
-// new project in the workspace. The idea is kept, marked "converted".
+// ConvertForm turns the idea into real work — an issue on a chosen project,
+// or a new project in the workspace. The idea is kept, marked "converted".
 function ConvertForm(props: {
   idea: Idea;
+  projects: { id: string; name: string }[];
   onDone: (dest: "issue" | "project" | null) => void;
-  onConverted: (kind: "issue" | "project", id: string) => void;
+  onConverted: (
+    kind: "issue" | "project",
+    id: string,
+    projectId?: string,
+  ) => void;
   onError: (msg: string) => void;
 }) {
   const [kind, setKind] = createSignal<"issue" | "project">("issue");
   const [title, setTitle] = createSignal(props.idea.title);
   const [description, setDescription] = createSignal(props.idea.summary);
   const [key, setKey] = createSignal("");
+  const [target, setTarget] = createSignal(
+    props.idea.project_id ?? props.projects[0]?.id ?? "",
+  );
   const [busy, setBusy] = createSignal(false);
 
   const submit = async (e: SubmitEvent) => {
@@ -455,8 +561,9 @@ function ConvertForm(props: {
         title: title().trim() || undefined,
         description: description().trim() || undefined,
         key: kind() === "project" ? key().trim() || undefined : undefined,
+        project_id: kind() === "issue" ? target() : undefined,
       });
-      if (r.issue) props.onConverted("issue", r.issue.id);
+      if (r.issue) props.onConverted("issue", r.issue.id, target());
       else if (r.project) props.onConverted("project", r.project.id);
       else props.onDone(null);
     } catch (ex) {
@@ -482,7 +589,7 @@ function ConvertForm(props: {
             onChange={() => setKind("issue")}
             class="accent-accent"
           />
-          Issue in this project
+          Issue
         </label>
         <label class="flex items-center gap-1.5">
           <input
@@ -510,6 +617,17 @@ function ConvertForm(props: {
         rows={2}
         class={`${inputClass} resize-none`}
       />
+      <Show when={kind() === "issue"}>
+        <Select
+          value={target()}
+          onChange={setTarget}
+          options={props.projects.map((p) => ({
+            value: p.id,
+            label: p.name,
+          }))}
+          ariaLabel="Target project"
+        />
+      </Show>
       <Show when={kind() === "project"}>
         <input
           value={key()}
@@ -529,7 +647,11 @@ function ConvertForm(props: {
         >
           Cancel
         </button>
-        <button type="submit" disabled={busy()} class={primaryButtonClass}>
+        <button
+          type="submit"
+          disabled={busy() || (kind() === "issue" && !target())}
+          class={primaryButtonClass}
+        >
           {busy() ? "Converting…" : "Convert"}
         </button>
       </div>

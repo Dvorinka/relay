@@ -226,9 +226,18 @@ where id = sqlc.arg(id) and deleted_at is null
 returning id, conversation_id;
 
 -- name: CreateMessage :one
-insert into messages (conversation_id, author_user_id, body, parent_id, mentions, forwarded_from, tags, silent)
-values ($1, $2, $3, sqlc.narg(parent_id), coalesce(sqlc.narg(mentions), '[]'::jsonb), sqlc.narg(forwarded_from), coalesce(sqlc.narg(tags), '{}'::text[]), coalesce(sqlc.narg(silent), false))
+-- client_msg_id dedupes offline-outbox replays: a second insert with the
+-- same key no-ops (zero rows) and the caller returns the stored message.
+insert into messages (conversation_id, author_user_id, body, parent_id, mentions, forwarded_from, tags, silent, client_msg_id)
+values ($1, $2, $3, sqlc.narg(parent_id), coalesce(sqlc.narg(mentions), '[]'::jsonb), sqlc.narg(forwarded_from), coalesce(sqlc.narg(tags), '{}'::text[]), coalesce(sqlc.narg(silent), false), sqlc.narg(client_msg_id))
+on conflict (conversation_id, client_msg_id) where client_msg_id is not null do nothing
 returning id;
+
+-- name: GetMessageIDByClientMsgID :one
+select id from messages
+where conversation_id = sqlc.arg(conversation_id)
+  and client_msg_id = sqlc.arg(client_msg_id)
+  and deleted_at is null;
 
 -- name: CopyMessageAttachments :exec
 -- a forward reuses the same attachment objects behind the new message

@@ -23,6 +23,7 @@ import {
   inputClass,
   Tip,
 } from "../../components/ui";
+import { Select } from "../../components/Select";
 import { api } from "../../lib/api";
 import { subscribe } from "../../lib/events";
 import { confirmDestructive } from "../../components/Confirm";
@@ -255,28 +256,22 @@ function AgentRow(props: {
                 <div>
                   <h3 class="mb-2 text-[12px] font-semibold">Review mode</h3>
                   <div class="flex items-center gap-2 text-[13px]">
-                    <select
-                      class={inputClass}
+                    <Select
                       value={d().agent.review_mode ?? "notify"}
                       disabled={!props.canManage}
-                      aria-label="Review mode"
-                      onChange={(e) =>
+                      ariaLabel="Review mode"
+                      onChange={(v) =>
                         run(() =>
                           api.updateAgent(props.agent.id, {
-                            review_mode: e.currentTarget.value as
-                              | "notify"
-                              | "gate",
+                            review_mode: v as "notify" | "gate",
                           }),
                         )
                       }
-                    >
-                      <option value="notify">
-                        Notify - agent reports after finishing work
-                      </option>
-                      <option value="gate">
-                        Gate - agent waits for approval on each review
-                      </option>
-                    </select>
+                      options={[
+                        { value: "notify", label: "Notify - agent reports after finishing work" },
+                        { value: "gate", label: "Gate - agent waits for approval on each review" },
+                      ]}
+                    />
                   </div>
                   <p class="mt-1 text-[11px] text-muted">
                     Gate makes the agent block on <code>await_review</code>{" "}
@@ -394,21 +389,17 @@ function AgentRow(props: {
                       }
                     >
                       <form onSubmit={onGrant} class="flex flex-col gap-2">
-                      <select
-                        class={inputClass}
+                      <Select
                         value={grantProject()}
-                        onChange={(e) => setGrantProject(e.currentTarget.value)}
-                        aria-label="Project"
-                      >
-                        <option value="">Grant a project...</option>
-                        <For
-                          each={props.projects.filter(
-                            (p) => !grantedIds().has(p.id),
-                          )}
-                        >
-                          {(p) => <option value={p.id}>{p.name}</option>}
-                        </For>
-                      </select>
+                        onChange={setGrantProject}
+                        ariaLabel="Project"
+                        options={[
+                          { value: "", label: "Grant a project..." },
+                          ...props.projects
+                            .filter((p) => !grantedIds().has(p.id))
+                            .map((p) => ({ value: p.id, label: p.name })),
+                        ]}
+                      />
                       <div class="flex flex-wrap gap-x-3 gap-y-1">
                         <For each={ALL_SCOPES}>
                           {(s) => (

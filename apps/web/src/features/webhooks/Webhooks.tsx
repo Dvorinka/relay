@@ -19,6 +19,7 @@ import {
   Spinner,
   Tip,
 } from "../../components/ui";
+import { Select } from "../../components/Select";
 import { api } from "../../lib/api";
 import { net } from "../../lib/net";
 import { timeAgo } from "../../lib/time";
@@ -577,16 +578,15 @@ function InboundHooksSection(props: { projectId: string }) {
           value={name()}
           onInput={(e) => setName(e.currentTarget.value)}
         />
-        <select
-          class={inputClass}
+        <Select
+          ariaLabel="Channel"
           value={convId()}
-          onChange={(e) => setConvId(e.currentTarget.value)}
-        >
-          <option value="">channel…</option>
-          <For each={channels() ?? []}>
-            {(ch) => <option value={ch.id}>{ch.name}</option>}
-          </For>
-        </select>
+          onChange={setConvId}
+          options={[
+            { value: "", label: "channel…" },
+            ...(channels() ?? []).map((ch) => ({ value: ch.id, label: ch.name ?? "" })),
+          ]}
+        />
         <button
           type="button"
           disabled={busy() || !name().trim() || !convId()}

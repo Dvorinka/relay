@@ -841,7 +841,7 @@ paths:
   /api/workspaces/{workspaceId}/ideas:
     get:
       operationId: listWorkspaceIdeas
-      summary: Every idea across the workspace's projects — the Ideas page feed
+      summary: Every idea in the workspace — the Ideas page feed
       tags: [ideas]
       parameters:
         - { $ref: "#/components/parameters/WorkspaceId" }
@@ -856,6 +856,30 @@ paths:
                   ideas:
                     type: array
                     items: { $ref: "#/components/schemas/Idea" }
+    post:
+      operationId: createWorkspaceIdea
+      summary: Create an idea scoped to the workspace; project_id optional (omit for platform-wide)
+      tags: [ideas]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string, minLength: 1, maxLength: 200 }
+                summary: { type: string }
+                scene: { type: object, additionalProperties: true, description: "Excalidraw-compatible scene" }
+                project_id: { type: string, format: uuid, description: "Attach to this project; omit for platform-wide" }
+      responses:
+        "201":
+          description: Created idea
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Idea" }
 
   /api/ideas/{ideaId}:
     get:
@@ -888,6 +912,7 @@ paths:
                 summary: { type: string }
                 status: { type: string, enum: [open, converted, archived] }
                 scene: { type: object, additionalProperties: true }
+                project_id: { type: string, format: uuid, description: "Attach to a project in the idea's workspace" }
       responses:
         "200":
           description: Updated idea
@@ -924,6 +949,7 @@ paths:
                 title: { type: string, description: "Defaults to the idea title" }
                 description: { type: string, description: "Defaults to the idea summary" }
                 key: { type: string, pattern: "^[A-Z0-9]{2,6}$", description: "Required for kind=project" }
+                project_id: { type: string, format: uuid, description: "Target project — required for kind=issue on platform-wide ideas" }
       responses:
         "201":
           description: Created issue or project
@@ -1083,6 +1109,42 @@ paths:
                 type: object
                 properties: { subscribed: { type: boolean } }
 
+  /api/me/digest:
+    get:
+      operationId: getDigestMode
+      summary: Whether the caller's notifications batch into a periodic digest
+      tags: [push]
+      responses:
+        "200":
+          description: Preference
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { digest_enabled: { type: boolean } }
+    put:
+      operationId: setDigestMode
+      summary: Toggle digest mode — enabled notifications queue and flush as one batched push every ~30 minutes
+      tags: [push]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { digest_enabled: { type: boolean } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
   /api/projects/{projectId}/conversation:
     get:
       operationId: projectConversation
@@ -1225,6 +1287,13 @@ paths:
                     Post without notifications (the /silent command) — lands
                     in history and unread lists but toasts and push are
                     suppressed unless the body mentions the recipient
+                client_msg_id:
+                  type: string
+                  maxLength: 80
+                  description: >-
+                    Idempotency key generated per send (the offline outbox
+                    reuses it on replay) — a duplicate within the same
+                    conversation returns the stored message, no double-post
       responses:
         "201":
           description: Posted
@@ -1240,6 +1309,70 @@ paths:
       parameters: [ { $ref: "#/components/parameters/ConversationId" } ]
       responses:
         "200": { description: Conversation cleared }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/conversations/{conversationId}/messages/scheduled:
+    get:
+      operationId: listScheduledMessages
+      summary: The caller's pending scheduled sends in this conversation
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/ConversationId" } ]
+      responses:
+        "200":
+          description: Scheduled messages, soonest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [scheduled]
+                properties:
+                  scheduled:
+                    type: array
+                    items: { $ref: "#/components/schemas/ScheduledMessage" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: createScheduledMessage
+      summary: Park a draft to post at send_at — the sweep fires it through the normal message path
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/ConversationId" } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body, send_at]
+              properties:
+                body: { type: string, minLength: 1, maxLength: 1000000 }
+                parent_id:
+                  type: string
+                  format: uuid
+                  description: Optional message this reply threads under (same conversation)
+                send_at:
+                  type: string
+                  format: date-time
+                  description: "RFC3339; must be 1 minute to 90 days out"
+      responses:
+        "201":
+          description: Scheduled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScheduledMessage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/scheduled/{scheduledId}:
+    delete:
+      operationId: cancelScheduledMessage
+      summary: Cancel a pending scheduled send - owner only
+      tags: [conversations]
+      parameters:
+        - name: scheduledId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Cancelled }
         "403": { $ref: "#/components/responses/Forbidden" }
 
   /api/conversations/{conversationId}/read:
@@ -1311,6 +1444,33 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+
+  /api/messages/{messageId}/edits:
+    get:
+      operationId: listMessageEdits
+      summary: Prior bodies of an edited message, oldest first
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/MessageId" } ]
+      responses:
+        "200":
+          description: Edit history (empty when the message was never edited)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [edits]
+                properties:
+                  edits:
+                    type: array
+                    items:
+                      type: object
+                      required: [body, edited_by, edited_at]
+                      properties:
+                        body: { type: string }
+                        edited_by: { type: string, format: uuid }
+                        editor_name: { type: string }
+                        edited_at: { type: string, format: date-time }
+        "403": { $ref: "#/components/responses/Forbidden" }
 
   /api/messages/{messageId}/thread:
     post:
@@ -1529,6 +1689,26 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Message" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/messages/{messageId}/save:
+    put:
+      operationId: saveMessage
+      summary: Save a message to the caller's personal list - per-user, unlike pins
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/MessageId" } ]
+      responses:
+        "204": { description: Saved }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: unsaveMessage
+      summary: Remove a message from the caller's saved list
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/MessageId" } ]
+      responses:
+        "204": { description: Removed }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
@@ -3520,6 +3700,130 @@ paths:
       responses:
         "200": { description: "Grouped, ranked results" }
 
+  /api/unfurl:
+    get:
+      operationId: unfurl
+      summary: Open Graph preview for a URL, fetched server-side and cached
+      description: >-
+        Returns found=false for non-html pages, unreachable hosts, and
+        private/reserved targets — the server refuses to dial anything
+        outside global unicast space. Successful lookups cache 7 days,
+        failures 1 hour.
+      tags: [conversations]
+      parameters:
+        - { name: url, in: query, required: true, schema: { type: string, format: uri, maxLength: 2048 } }
+      responses:
+        "200":
+          description: Preview when found, otherwise just the URL
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [found, url]
+                properties:
+                  found: { type: boolean }
+                  url: { type: string }
+                  title: { type: string }
+                  description: { type: string }
+                  image_url: { type: string }
+                  site_name: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /api/me/saved:
+    get:
+      operationId: listSaved
+      summary: Messages the caller saved for later, newest first
+      tags: [conversations]
+      responses:
+        "200":
+          description: Saved messages with project context for deep links
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [messages]
+                properties:
+                  messages:
+                    type: array
+                    items: { $ref: "#/components/schemas/SavedMessage" }
+
+  /api/me/presence:
+    get:
+      operationId: presence
+      summary: User ids with at least one open event stream — i.e. online now
+      tags: [realtime]
+      responses:
+        "200":
+          description: Online user ids
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [online]
+                properties:
+                  online:
+                    type: array
+                    items: { type: string, format: uuid }
+
+  /api/reminders:
+    get:
+      operationId: listReminders
+      summary: The caller's pending reminders plus anything fired in the last 24h
+      tags: [conversations]
+      responses:
+        "200":
+          description: Reminders, pending first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reminders]
+                properties:
+                  reminders:
+                    type: array
+                    items: { $ref: "#/components/schemas/Reminder" }
+    post:
+      operationId: createReminder
+      summary: Remind the caller about a message at a future time
+      description: >-
+        fire_at must be between 1 minute and 90 days out. On fire the server
+        pushes a notification and emits a reminder.fired SSE event.
+      tags: [conversations]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message_id, fire_at]
+              properties:
+                message_id: { type: string, format: uuid }
+                fire_at: { type: string, format: date-time }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, fire_at]
+                properties:
+                  id: { type: string, format: uuid }
+                  fire_at: { type: string, format: date-time }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/reminders/{reminderId}:
+    delete:
+      operationId: deleteReminder
+      summary: Cancel a pending reminder
+      tags: [conversations]
+      parameters:
+        - { name: reminderId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Deleted }
+
   /api/me/activity:
     get:
       operationId: myActivity
@@ -3885,12 +4189,13 @@ components:
 
     Idea:
       type: object
-      required: [id, project_id, title, summary, scene, status]
+      required: [id, workspace_id, title, summary, scene, status]
       properties:
         id: { type: string, format: uuid }
-        project_id: { type: string, format: uuid }
-        project_key: { type: string }
-        project_name: { type: string }
+        workspace_id: { type: string, format: uuid }
+        project_id: { type: ["string", "null"], format: uuid }
+        project_key: { type: ["string", "null"] }
+        project_name: { type: ["string", "null"] }
         title: { type: string }
         summary: { type: string }
         scene: { type: object, additionalProperties: true, description: "Excalidraw-compatible scene JSON" }
@@ -4103,6 +4408,42 @@ components:
             - $ref: "#/components/schemas/MessageForwarded"
             - type: "null"
           description: "Present on forwarded copies; credits the original message"
+
+    SavedMessage:
+      allOf:
+        - $ref: "#/components/schemas/Message"
+        - type: object
+          required: [project_id, project_name, saved_at]
+          properties:
+            project_id: { type: string, format: uuid }
+            project_name: { type: string }
+            saved_at: { type: string, format: date-time }
+
+    Reminder:
+      type: object
+      required: [id, message_id, conversation_id, project_id, snippet, author_name, fire_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        message_id: { type: string, format: uuid }
+        conversation_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        snippet: { type: string, description: "First ~140 chars of the message body" }
+        author_name: { type: string }
+        fire_at: { type: string, format: date-time }
+        fired_at: { type: ["string", "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+
+    ScheduledMessage:
+      type: object
+      required: [id, conversation_id, project_id, body, send_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        conversation_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        body: { type: string }
+        parent_id: { type: ["string", "null"], format: uuid }
+        send_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
 
     MessageForwarded:
       type: object

@@ -218,8 +218,9 @@ func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (C
 }
 
 const createMessage = `-- name: CreateMessage :one
-insert into messages (conversation_id, author_user_id, body, parent_id, mentions, forwarded_from, tags, silent)
-values ($1, $2, $3, $4, coalesce($5, '[]'::jsonb), $6, coalesce($7, '{}'::text[]), coalesce($8, false))
+insert into messages (conversation_id, author_user_id, body, parent_id, mentions, forwarded_from, tags, silent, client_msg_id)
+values ($1, $2, $3, $4, coalesce($5, '[]'::jsonb), $6, coalesce($7, '{}'::text[]), coalesce($8, false), $9)
+on conflict (conversation_id, client_msg_id) where client_msg_id is not null do nothing
 returning id
 `
 
@@ -232,8 +233,11 @@ type CreateMessageParams struct {
 	ForwardedFrom  pgtype.UUID `json:"forwarded_from"`
 	Tags           interface{} `json:"tags"`
 	Silent         interface{} `json:"silent"`
+	ClientMsgID    pgtype.Text `json:"client_msg_id"`
 }
 
+// client_msg_id dedupes offline-outbox replays: a second insert with the
+// same key no-ops (zero rows) and the caller returns the stored message.
 func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, createMessage,
 		arg.ConversationID,
@@ -244,6 +248,7 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (p
 		arg.ForwardedFrom,
 		arg.Tags,
 		arg.Silent,
+		arg.ClientMsgID,
 	)
 	var id pgtype.UUID
 	err := row.Scan(&id)
@@ -606,6 +611,25 @@ type GetMessageForUserParams struct {
 // message id only when the user may see its workspace
 func (q *Queries) GetMessageForUser(ctx context.Context, arg GetMessageForUserParams) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, getMessageForUser, arg.ID, arg.UserID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const getMessageIDByClientMsgID = `-- name: GetMessageIDByClientMsgID :one
+select id from messages
+where conversation_id = $1
+  and client_msg_id = $2
+  and deleted_at is null
+`
+
+type GetMessageIDByClientMsgIDParams struct {
+	ConversationID pgtype.UUID `json:"conversation_id"`
+	ClientMsgID    pgtype.Text `json:"client_msg_id"`
+}
+
+func (q *Queries) GetMessageIDByClientMsgID(ctx context.Context, arg GetMessageIDByClientMsgIDParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, getMessageIDByClientMsgID, arg.ConversationID, arg.ClientMsgID)
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err

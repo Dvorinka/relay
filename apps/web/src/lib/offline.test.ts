@@ -153,6 +153,61 @@ describe("mutation outbox", () => {
     off();
   });
 
+  it("queues the marking request when replay is provably safe", async () => {
+    // A transport failure carrying client_msg_id queues like any parked
+    // mutation — the server dedupes the replay if the first send landed.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new TypeError("fetch failed")),
+    );
+    const err = await resilientFetch("http://q.test/api/conv/1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: `{"body":"hi","client_msg_id":"cm-1"}`,
+    }).catch((e) => e);
+    expect(isQueuedError(err)).toBe(true);
+    expect(serverState("http://q.test")).toBe("down");
+    expect(outboxPending()).toBe(1);
+
+    // PUT/DELETE are idempotent by method — the marking failure queues too.
+    await resilientFetch("http://q.test/api/msg/2/reactions", {
+      method: "PUT",
+      body: `{"emoji":"✅"}`,
+    }).catch(() => {});
+    expect(outboxPending()).toBe(2);
+
+    // Recovery replays both in order.
+    const sent: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (u: RequestInfo | URL, i?: RequestInit) => {
+        sent.push(`${i?.method} ${u}`);
+        return new Response("{}", { status: 200 });
+      }),
+    );
+    markUp("http://q.test");
+    await vi.waitFor(() => expect(outboxPending()).toBe(0));
+    expect(sent).toEqual([
+      "POST http://q.test/api/conv/1/messages",
+      "PUT http://q.test/api/msg/2/reactions",
+    ]);
+  });
+
+  it("still drops a marking POST without an idempotency key", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new TypeError("fetch failed")),
+    );
+    await expect(
+      resilientFetch("http://r.test/api/conv/1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: `{"body":"no key"}`,
+      }),
+    ).rejects.toThrow("fetch failed");
+    expect(outboxPending()).toBe(0);
+  });
+
   it("does not queue FormData bodies or auth calls", async () => {
     vi.stubGlobal(
       "fetch",

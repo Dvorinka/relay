@@ -22,6 +22,7 @@ import (
 	"github.com/Dvorinka/relay/internal/push"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
@@ -55,6 +56,7 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
 	g.POST("/conversations/:id/typing", s.memberOnly, s.handleTyping)
 	g.POST("/conversations/:id/messages", s.memberOnly, s.handlePostMessage)
 	g.PATCH("/messages/:id", s.handleEditMessage)
+	g.GET("/messages/:id/edits", s.handleListEdits)
 	g.DELETE("/messages/:id", s.handleDeleteMessage)
 	g.POST("/messages/:id/thread", s.handleCreateThread)
 	g.PATCH("/conversations/:id/expiry", s.memberOnly, s.handleSetExpiry)
@@ -71,6 +73,7 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
 	g.POST("/messages/:id/read", s.handleMarkRead)
 	g.POST("/conversations/:id/read", s.memberOnly, s.handleMarkConversationRead)
 	g.DELETE("/conversations/:id/messages", s.memberOnly, s.handleClearConversation)
+	s.registerScheduledRoutes(g)
 }
 
 // --- access gate ---
@@ -199,7 +202,7 @@ func (s *Service) handleListMessages(c *gin.Context) {
 	for _, m := range rows {
 		ids = append(ids, m.ID)
 	}
-	atts := s.attachmentsFor(c, ids)
+	atts := s.attachmentsFor(c.Request.Context(), ids)
 	rxns := s.reactionsFor(c, ids)
 	readBy := s.readByFor(c, ids)
 	msgs := make([]gin.H, 0, len(rows))
@@ -248,6 +251,7 @@ func (s *Service) handlePostMessage(c *gin.Context) {
 		ParentID      string   `json:"parent_id"`
 		Tags          []string `json:"tags"`
 		Silent        bool     `json:"silent"`
+		ClientMsgID   string   `json:"client_msg_id"`
 	}
 	if !httpx.BindJSON(c, &req) {
 		return
@@ -291,32 +295,91 @@ func (s *Service) handlePostMessage(c *gin.Context) {
 		return
 	}
 	user := auth.CurrentUser(c)
-	refs := s.resolveMentions(c, conv.ProjectID, mentions.Extract(req.Body))
-	mj, _ := json.Marshal(refs)
-	id, err := s.q.CreateMessage(c.Request.Context(), db.CreateMessageParams{
-		ConversationID: conv.ID, AuthorUserID: user.ID, Body: req.Body,
-		ParentID: parent, Mentions: mj, Tags: tags, Silent: req.Silent,
-	})
+	var clientMsgID pgtype.Text
+	if t := strings.TrimSpace(req.ClientMsgID); t != "" && len(t) <= 80 {
+		clientMsgID = pgtype.Text{String: t, Valid: true}
+	}
+	out, _, err := s.createMessage(c.Request.Context(), conv, user.ID,
+		req.Body, parent, ids, tags, req.Silent, clientMsgID)
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
-	for i, aid := range ids {
-		if err := s.q.LinkMessageAttachment(c.Request.Context(), db.LinkMessageAttachmentParams{
+	// 201 covers both the fresh insert and a deduped outbox replay —
+	// idempotent create semantics keep the response identical.
+	c.JSON(http.StatusCreated, out)
+}
+
+// createMessage is the shared user-authored insert + fan-out: mentions,
+// attachments, read receipt, SSE frame, thread counters, push. The HTTP
+// handler and the scheduled-send sweep both run through it.
+// deduped=true means client_msg_id matched a stored message — the caller
+// returns it without re-emitting events or push.
+func (s *Service) createMessage(ctx context.Context, conv db.Conversation,
+	authorID pgtype.UUID, body string, parent pgtype.UUID,
+	attachmentIDs []pgtype.UUID, tags []string, silent bool,
+	clientMsgID pgtype.Text) (out gin.H, deduped bool, err error) {
+	refs := s.resolveMentions(ctx, conv.ProjectID, mentions.Extract(body))
+	mj, _ := json.Marshal(refs)
+	id, err := s.q.CreateMessage(ctx, db.CreateMessageParams{
+		ConversationID: conv.ID, AuthorUserID: authorID, Body: body,
+		ParentID: parent, Mentions: mj, Tags: tags, Silent: silent,
+		ClientMsgID: clientMsgID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) && clientMsgID.Valid {
+			// conflict no-op: the first send already inserted this message
+			storedID, ferr := s.q.GetMessageIDByClientMsgID(ctx,
+				db.GetMessageIDByClientMsgIDParams{
+					ConversationID: conv.ID, ClientMsgID: clientMsgID,
+				})
+			if ferr != nil {
+				return nil, false, ferr
+			}
+			m, ferr := s.q.GetMessageByID(ctx, storedID)
+			if ferr != nil {
+				return nil, false, ferr
+			}
+			return s.messageView(ctx, m), true, nil
+		}
+		return nil, false, err
+	}
+	for i, aid := range attachmentIDs {
+		if err := s.q.LinkMessageAttachment(ctx, db.LinkMessageAttachmentParams{
 			MessageID: id, AttachmentID: aid, Position: int32(i),
 		}); err != nil {
 			s.log.Error("link attachment failed", zap.Error(err))
 		}
 	}
-	m, err := s.q.GetMessageByID(c.Request.Context(), id)
+	m, err := s.q.GetMessageByID(ctx, id)
 	if err != nil {
-		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
-		return
+		return nil, false, err
 	}
 	// send == read
-	_ = s.q.MarkMessageRead(c.Request.Context(), db.MarkMessageReadParams{MessageID: m.ID, UserID: user.ID})
-	atts := s.attachmentsFor(c, []pgtype.UUID{m.ID})
-	out := MessageJSON(MessageView{
+	_ = s.q.MarkMessageRead(ctx, db.MarkMessageReadParams{MessageID: m.ID, UserID: authorID})
+	out = s.messageView(ctx, m)
+	if s.Bus != nil {
+		pid, _ := uuid.FromBytes(conv.ProjectID.Bytes[:])
+		s.Bus.Publish(events.Event{Type: "message.created", ProjectID: pid,
+			Data: map[string]any{"conversation_id": m.ConversationID.String(), "message": out}})
+	}
+	if conv.Kind == "thread" {
+		// reply count on the parent message's chip moves live
+		s.publishThreadEvent(ctx, conv.ID, "thread.updated")
+	}
+	if s.Push != nil {
+		s.Push.NotifyMessage(conv.ProjectID, authorID, body, m.ID,
+			"/app/p/"+conv.ProjectID.String(), m.AuthorName,
+			mentions.UserIDs(refs))
+	}
+	return out, false, nil
+}
+
+// messageView renders the stored row into the wire shape — extracted from
+// createMessage so the dedupe path returns the identical body.
+func (s *Service) messageView(ctx context.Context, m db.GetMessageByIDRow) gin.H {
+	atts := s.attachmentsFor(ctx, []pgtype.UUID{m.ID})
+	return MessageJSON(MessageView{
 		ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
 		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Silent: m.Silent, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 		AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
@@ -331,21 +394,6 @@ func (s *Service) handlePostMessage(c *gin.Context) {
 		FwdProjectID: m.FwdProjectID, FwdAuthorName: m.FwdAuthorName,
 		Attachments: atts[m.ID.String()],
 	})
-	if s.Bus != nil {
-		pid, _ := uuid.FromBytes(conv.ProjectID.Bytes[:])
-		s.Bus.Publish(events.Event{Type: "message.created", ProjectID: pid,
-			Data: map[string]any{"conversation_id": m.ConversationID.String(), "message": out}})
-	}
-	if conv.Kind == "thread" {
-		// reply count on the parent message's chip moves live
-		s.publishThreadEvent(c, conv.ID, "thread.updated")
-	}
-	if s.Push != nil {
-		s.Push.NotifyMessage(conv.ProjectID, user.ID, req.Body, m.ID,
-			"/app/p/"+conv.ProjectID.String(), m.AuthorName,
-			mentions.UserIDs(refs))
-	}
-	c.JSON(http.StatusCreated, out)
 }
 
 // handleEditMessage lets the author rewrite a message's body - but only
@@ -407,11 +455,19 @@ func (s *Service) handleEditMessage(c *gin.Context) {
 			return
 		}
 	}
+	// Snapshot the outgoing body for the edit-history timeline before it
+	// changes hands; written only once the update lands.
+	prev, perr := s.q.GetMessageByID(c.Request.Context(), id)
 	if _, err := s.q.UpdateMessageBody(c.Request.Context(), db.UpdateMessageBodyParams{
 		ID: id, AuthorUserID: user.ID, Body: req.Body,
 	}); err != nil {
 		httpx.Error(c, http.StatusForbidden, "forbidden", "only the author can edit a message")
 		return
+	}
+	if perr == nil && prev.Body != req.Body {
+		_ = s.q.CreateMessageEdit(c.Request.Context(), db.CreateMessageEditParams{
+			MessageID: id, Body: prev.Body, EditedBy: user.ID,
+		})
 	}
 	if len(attIDs) > 0 {
 		base, _ := s.q.CountMessageAttachments(c.Request.Context(), id)
@@ -429,7 +485,7 @@ func (s *Service) handleEditMessage(c *gin.Context) {
 		return
 	}
 	// Mentions shift with the body — re-extract and persist.
-	refs := s.resolveMentions(c, s.convProjectID(c, m.ConversationID),
+	refs := s.resolveMentions(c.Request.Context(), s.convProjectID(c, m.ConversationID),
 		mentions.Extract(req.Body))
 	if mj, merr := json.Marshal(refs); merr == nil {
 		_ = s.q.UpdateMessageMentions(c.Request.Context(),
@@ -449,7 +505,7 @@ func (s *Service) handleEditMessage(c *gin.Context) {
 		PinnedAt:         m.PinnedAt,
 		ForwardedFrom:    m.ForwardedFrom, FwdConversationID: m.FwdConversationID,
 		FwdProjectID: m.FwdProjectID, FwdAuthorName: m.FwdAuthorName,
-		Attachments: s.attachmentsFor(c, []pgtype.UUID{m.ID})[m.ID.String()],
+		Attachments: s.attachmentsFor(c.Request.Context(), []pgtype.UUID{m.ID})[m.ID.String()],
 		Reactions:   s.reactionsFor(c, []pgtype.UUID{m.ID})[m.ID.String()],
 	})
 	s.publishMessageUpdated(c, m.ConversationID, out)
@@ -498,10 +554,40 @@ func (s *Service) handleDeleteMessage(c *gin.Context) {
 		}
 		// a reply removed inside a thread drops the parent's reply count
 		if conv, err := s.q.GetConversationByID(c.Request.Context(), row.ConversationID); err == nil && conv.Kind == "thread" {
-			s.publishThreadEvent(c, conv.ID, "thread.updated")
+			s.publishThreadEvent(c.Request.Context(), conv.ID, "thread.updated")
 		}
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// handleListEdits returns prior bodies of a message, oldest first — the
+// "edited · view history" popover. Same membership gate as reads.
+func (s *Service) handleListEdits(c *gin.Context) {
+	id, ok := httpx.PathUUID(c, "id")
+	if !ok {
+		return
+	}
+	if _, err := s.q.GetMessageForUser(c.Request.Context(), db.GetMessageForUserParams{
+		ID: id, UserID: auth.CurrentUser(c).ID,
+	}); err != nil {
+		httpx.Error(c, http.StatusForbidden, "forbidden", "not a member of this workspace")
+		return
+	}
+	rows, err := s.q.ListMessageEdits(c.Request.Context(), id)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	out := make([]gin.H, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, gin.H{
+			"body":        r.Body,
+			"edited_by":   r.EditedBy.String(),
+			"editor_name": r.EditorName.String,
+			"edited_at":   r.EditedAt.Time,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"edits": out})
 }
 
 // messagePayload re-renders one message for responses and SSE frames.
@@ -510,7 +596,7 @@ func (s *Service) messagePayload(c *gin.Context, id pgtype.UUID) (gin.H, bool) {
 	if err != nil {
 		return nil, false
 	}
-	atts := s.attachmentsFor(c, []pgtype.UUID{m.ID})
+	atts := s.attachmentsFor(c.Request.Context(), []pgtype.UUID{m.ID})
 	rxns := s.reactionsFor(c, []pgtype.UUID{m.ID})
 	readers := s.readByFor(c, []pgtype.UUID{m.ID})[m.ID.String()]
 	return MessageJSON(MessageView{
@@ -595,7 +681,7 @@ func (s *Service) handleListPins(c *gin.Context) {
 	for _, m := range rows {
 		ids = append(ids, m.ID)
 	}
-	atts := s.attachmentsFor(c, ids)
+	atts := s.attachmentsFor(c.Request.Context(), ids)
 	rxns := s.reactionsFor(c, ids)
 	readBy := s.readByFor(c, ids)
 	msgs := make([]gin.H, 0, len(rows))
@@ -785,7 +871,7 @@ func (s *Service) handleCreateThread(c *gin.Context) {
 	} else {
 		s.postThreadNotice(c, parentConv, conv.ID, title, user.ID, pgtype.UUID{})
 		if s.Bus != nil {
-			s.publishThreadEvent(c, conv.ID, "thread.created")
+			s.publishThreadEvent(c.Request.Context(), conv.ID, "thread.created")
 		}
 	}
 	tr, err := s.q.GetThread(c.Request.Context(), conv.ID)
@@ -1090,8 +1176,8 @@ func (s *Service) postThreadNotice(c *gin.Context, parent db.Conversation, threa
 
 // publishThreadEvent emits a thread.* frame keyed to the parent channel so
 // open clients can bump the parent message's thread chip live.
-func (s *Service) publishThreadEvent(c *gin.Context, threadID pgtype.UUID, typ string) {
-	tr, err := s.q.GetThread(c.Request.Context(), threadID)
+func (s *Service) publishThreadEvent(ctx context.Context, threadID pgtype.UUID, typ string) {
+	tr, err := s.q.GetThread(ctx, threadID)
 	if err != nil || s.Bus == nil {
 		return
 	}
@@ -1281,12 +1367,12 @@ func (s *Service) handleClearConversation(c *gin.Context) {
 
 // attachmentsFor batches attachment rows for a page of messages, keyed by
 // message id. Missing/failed lookups degrade to empty lists.
-func (s *Service) attachmentsFor(c *gin.Context, ids []pgtype.UUID) map[string][]gin.H {
+func (s *Service) attachmentsFor(ctx context.Context, ids []pgtype.UUID) map[string][]gin.H {
 	out := make(map[string][]gin.H, len(ids))
 	if len(ids) == 0 {
 		return out
 	}
-	rows, err := s.q.ListAttachmentsForMessages(c.Request.Context(), ids)
+	rows, err := s.q.ListAttachmentsForMessages(ctx, ids)
 	if err != nil {
 		return out
 	}
@@ -1593,8 +1679,7 @@ func (s *Service) convProjectID(c *gin.Context, convID pgtype.UUID) pgtype.UUID 
 // resolveMentions binds extracted refs to real rows so readers (agents via
 // MCP, notifications, UI chips) get ids and URLs, not just text. Refs that
 // don't resolve are kept with found=false — the intent still reads.
-func (s *Service) resolveMentions(c *gin.Context, projectID pgtype.UUID, refs []mentions.Ref) []mentions.Ref {
-	ctx := c.Request.Context()
+func (s *Service) resolveMentions(ctx context.Context, projectID pgtype.UUID, refs []mentions.Ref) []mentions.Ref {
 	if len(refs) == 0 {
 		return []mentions.Ref{}
 	}

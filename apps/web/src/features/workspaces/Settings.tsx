@@ -23,6 +23,7 @@ import {
   primaryButtonClass,
   Tip,
 } from "../../components/ui";
+import { Select } from "../../components/Select";
 import {
   DownloadIcon,
   MoonIcon,
@@ -168,6 +169,7 @@ function MemberList(props: { workspaceId: string; canInvite: boolean }) {
     async (id) => (await api.listWorkspaceMembers(id)).members,
   );
   const [inviteError, setInviteError] = createSignal<string | null>(null);
+  const [inviteRole, setInviteRole] = createSignal("member");
   const [pending, setPending] = createSignal(false);
 
   async function onInvite(e: SubmitEvent) {
@@ -232,10 +234,16 @@ function MemberList(props: { workspaceId: string; canInvite: boolean }) {
               aria-label="Invite email"
               class={inputClass}
             />
-            <select name="role" class={inputClass} aria-label="Role">
-              <option value="member">member</option>
-              <option value="admin">admin</option>
-            </select>
+            <input type="hidden" name="role" value={inviteRole()} />
+            <Select
+              value={inviteRole()}
+              onChange={setInviteRole}
+              ariaLabel="Role"
+              options={[
+                { value: "member", label: "member" },
+                { value: "admin", label: "admin" },
+              ]}
+            />
           </div>
           <FormError message={inviteError()} />
           <div>
@@ -504,6 +512,51 @@ function urlB64ToUint8Array(b64: string): Uint8Array {
   return out;
 }
 
+// DigestRow is the server-side batching toggle — with it on, push for this
+// user queues and flushes as one bundled notification roughly every half
+// hour instead of per event.
+function DigestRow() {
+  const [on, setOn] = createSignal<boolean | null>(null);
+  const [busy, setBusy] = createSignal(false);
+  onMount(() => {
+    void api
+      .getDigestMode()
+      .then((r) => setOn(r.digest_enabled))
+      .catch(() => setOn(false));
+  });
+  async function toggleDigest() {
+    if (on() === null || busy()) return;
+    setBusy(true);
+    try {
+      const r = await api.setDigestMode(!on());
+      setOn(r.digest_enabled);
+    } catch {
+      // Leave the toggle as it was — a failed flip reads as unchanged.
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Show when={on() !== null}>
+      <div class="flex items-center gap-3 border-t border-border/60 pt-3">
+        <button
+          type="button"
+          onClick={() => void toggleDigest()}
+          disabled={busy()}
+          class="h-8 rounded-md border border-border bg-surface px-3 text-[12.5px] transition-colors hover:bg-hover disabled:opacity-50"
+        >
+          {on() ? "Disable digest" : "Enable digest"}
+        </button>
+        <span class="text-[12px] text-muted">
+          {on()
+            ? "Digest on — push batches into one summary every ~30 min"
+            : "Digest mode — batch push alerts into a periodic summary"}
+        </span>
+      </div>
+    </Show>
+  );
+}
+
 function NotificationsSection() {
   const supported = () =>
     "serviceWorker" in navigator &&
@@ -686,6 +739,7 @@ function NotificationsSection() {
           desktop webview. There, "Keep running in the background" (Settings →
           Desktop) plays the same role: toasts arrive while the app runs
           hidden. */}
+      <DigestRow />
       <Show when={supported() && !isDesktop()}>
         <div class="flex items-center gap-3 border-t border-border/60 pt-3">
           <button

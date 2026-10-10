@@ -11,6 +11,7 @@ import {
 import { Avatar } from "@ark-ui/solid";
 import type { UnreadConversation } from "@relay/api-client";
 import { inputClass, Spinner } from "../components/ui";
+import { Select } from "../components/Select";
 import { SearchIcon, XIcon } from "../components/icons";
 import { api } from "../lib/api";
 import { mediaURL } from "../lib/net";
@@ -456,17 +457,18 @@ export default function Inbox() {
               )}
             </For>
           </div>
-          <select
+          <Select
             value={projectId()}
-            onChange={(e) => setProjectId(e.currentTarget.value)}
-            aria-label="Filter by project"
-            class={`${inputClass} w-auto`}
-          >
-            <option value="all">All projects</option>
-            <For each={projects.projects() ?? []}>
-              {(p) => <option value={p.id}>{p.name}</option>}
-            </For>
-          </select>
+            onChange={setProjectId}
+            ariaLabel="Filter by project"
+            options={[
+              { value: "all", label: "All projects" },
+              ...(projects.projects() ?? []).map((p) => ({
+                value: p.id,
+                label: p.name,
+              })),
+            ]}
+          />
           <Show when={hasFilters()}>
             <button
               type="button"

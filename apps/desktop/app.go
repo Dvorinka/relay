@@ -83,6 +83,8 @@ type App struct {
 	handler     atomic.Value // stores http.Handler; swapped when a URL is saved
 	quitting    atomic.Bool  // set by Quit — lets OnBeforeClose distinguish "close window" from "exit app"
 	trayStarted atomic.Bool  // guards systray.Register — it can only run once
+	trayLive    atomic.Bool  // set by trayReady — systray calls are unsafe before it
+	unread      atomic.Int64 // last count the SPA reported; applied on trayReady
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -115,6 +117,32 @@ func (a *App) emitDeepLink(raw string) {
 		time.Sleep(1200 * time.Millisecond)
 		wailsruntime.EventsEmit(a.ctx, "relay:deeplink", raw)
 	}()
+}
+
+// SetUnreadCount is the SPA's unread bridge — bound as
+// window.go.main.App.SetUnreadCount. Feeds every badge surface: window
+// title (taskbar/dock label) and the tray tooltip/title.
+func (a *App) SetUnreadCount(n int) {
+	if n < 0 {
+		n = 0
+	}
+	a.unread.Store(int64(n))
+	a.applyUnread()
+}
+
+// applyUnread pushes the stored count to the window title and whatever
+// tray surface the platform offers. Safe to call before the tray exists —
+// trayReady re-applies once it comes up.
+func (a *App) applyUnread() {
+	n := a.unread.Load()
+	if a.ctx != nil {
+		title := "Relay"
+		if n > 0 {
+			title = fmt.Sprintf("Relay (%d)", n)
+		}
+		wailsruntime.WindowSetTitle(a.ctx, title)
+	}
+	a.setTrayUnread(n)
 }
 
 // Version reports the binary's release tag ("dev" on plain builds). Bound as

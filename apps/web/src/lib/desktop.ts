@@ -33,6 +33,7 @@ type WailsApp = {
     token: string,
   ) => Promise<{ status: number; body: string }>;
   Notify?: (title: string, body: string) => Promise<void>;
+  SetUnreadCount?: (n: number) => Promise<void>;
   Quit?: () => Promise<void>;
   ServerConfig?: () => Promise<{ server_url?: string; offline?: boolean }>;
   Version?: () => Promise<string>;
@@ -84,6 +85,14 @@ export async function desktopNotify(
   } catch {
     return false;
   }
+}
+
+// Pushes the unread total into the shell — the Go side mirrors it onto the
+// window title (taskbar/dock label) and tray tooltip. No-op in a browser.
+export function desktopSetUnread(n: number): void {
+  const app = wailsApp();
+  if (typeof app?.SetUnreadCount !== "function") return;
+  void app.SetUnreadCount(n).catch(() => {});
 }
 
 function bytesToB64(buf: ArrayBuffer): string {

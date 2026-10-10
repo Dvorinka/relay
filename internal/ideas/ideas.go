@@ -36,6 +36,7 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
 	g.GET("/projects/:id/ideas", s.projectGate, s.handleList)
 	g.POST("/projects/:id/ideas", s.projectGate, s.handleCreate)
 	g.GET("/workspaces/:id/ideas", s.workspaceGate, s.handleWorkspaceList)
+	g.POST("/workspaces/:id/ideas", s.workspaceGate, s.handleWorkspaceCreate)
 	g.GET("/ideas/:id", s.ideaGate, s.handleGet)
 	g.PATCH("/ideas/:id", s.ideaGate, s.handleUpdate)
 	g.DELETE("/ideas/:id", s.ideaGate, s.handleDelete)
@@ -87,9 +88,10 @@ func (s *Service) ideaGate(c *gin.Context) {
 		httpx.Error(c, http.StatusNotFound, "not_found", "idea not found")
 		return
 	}
-	if _, err := s.q.GetProjectForUser(c.Request.Context(), db.GetProjectForUserParams{
-		ID: i.ProjectID, UserID: auth.CurrentUser(c).ID,
-	}); err != nil {
+	role, err := s.q.GetWorkspaceRole(c.Request.Context(), db.GetWorkspaceRoleParams{
+		WorkspaceID: i.WorkspaceID, UserID: auth.CurrentUser(c).ID,
+	})
+	if err != nil || role == "" {
 		httpx.Error(c, http.StatusForbidden, "forbidden", "not a member of this workspace")
 		return
 	}
@@ -122,9 +124,31 @@ func (s *Service) handleWorkspaceList(c *gin.Context) {
 	}
 	out := make([]gin.H, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, ideaJSON(wsToIdea(r), r.ProjectKey, r.ProjectName, r.AuthorName))
+		out = append(out, ideaJSON(wsToIdea(r), r.ProjectKey.String, r.ProjectName.String, r.AuthorName))
 	}
 	c.JSON(http.StatusOK, gin.H{"ideas": out})
+}
+
+// projectInWorkspace resolves an optional project_id body field to a project
+// the caller can see inside wsID — platform-wide ideas carry none.
+func (s *Service) projectInWorkspace(c *gin.Context, wsID pgtype.UUID, raw string) (db.GetProjectForUserRow, bool) {
+	var p db.GetProjectForUserRow
+	if strings.TrimSpace(raw) == "" {
+		return p, true
+	}
+	var pid pgtype.UUID
+	if err := pid.Scan(raw); err != nil {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "invalid project_id")
+		return p, false
+	}
+	p, err := s.q.GetProjectForUser(c.Request.Context(), db.GetProjectForUserParams{
+		ID: pid, UserID: auth.CurrentUser(c).ID,
+	})
+	if err != nil || p.WorkspaceID != wsID {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "project_id must be a project in this workspace")
+		return p, false
+	}
+	return p, true
 }
 
 func (s *Service) handleCreate(c *gin.Context) {
@@ -138,24 +162,50 @@ func (s *Service) handleCreate(c *gin.Context) {
 		httpx.Error(c, http.StatusBadRequest, "bad_request", "title is required")
 		return
 	}
-	title := strings.TrimSpace(req.Title)
+	s.create(c, p.WorkspaceID, p.ID, p.Key, p.Name, req.Title, req.Summary, req.Scene)
+}
+
+// handleWorkspaceCreate is the workspace-level entry: project_id in the body
+// is optional — omit for a platform-wide idea.
+func (s *Service) handleWorkspaceCreate(c *gin.Context) {
+	wsID := c.MustGet(ctxProjectKey).(pgtype.UUID)
+	var req struct {
+		Title     string          `json:"title" binding:"required"`
+		Summary   string          `json:"summary"`
+		Scene     json.RawMessage `json:"scene"`
+		ProjectID string          `json:"project_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "title is required")
+		return
+	}
+	p, ok := s.projectInWorkspace(c, wsID, req.ProjectID)
+	if !ok {
+		return
+	}
+	s.create(c, wsID, p.ID, p.Key, p.Name, req.Title, req.Summary, req.Scene)
+}
+
+func (s *Service) create(c *gin.Context, wsID, projectID pgtype.UUID, key, name, title, summary string, rawScene json.RawMessage) {
+	title = strings.TrimSpace(title)
 	if title == "" || len(title) > 200 {
 		httpx.Error(c, http.StatusBadRequest, "bad_request", "title must be 1-200 chars")
 		return
 	}
 	scene := []byte("{}")
-	if len(req.Scene) > 0 {
+	if len(rawScene) > 0 {
 		var probe any
-		if json.Unmarshal(req.Scene, &probe) != nil {
+		if json.Unmarshal(rawScene, &probe) != nil {
 			httpx.Error(c, http.StatusBadRequest, "bad_request", "scene must be valid JSON")
 			return
 		}
-		scene = req.Scene
+		scene = rawScene
 	}
 	i, err := s.q.CreateIdea(c.Request.Context(), db.CreateIdeaParams{
-		ProjectID:     p.ID,
+		WorkspaceID:   wsID,
+		ProjectID:     projectID,
 		Title:         title,
-		Summary:       req.Summary,
+		Summary:       summary,
 		Scene:         scene,
 		CreatedByUser: auth.CurrentUser(c).ID,
 	})
@@ -164,21 +214,22 @@ func (s *Service) handleCreate(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "could not create idea")
 		return
 	}
-	c.JSON(http.StatusCreated, ideaJSON(i, p.Key, p.Name, auth.CurrentUser(c).Name))
+	c.JSON(http.StatusCreated, ideaJSON(i, key, name, auth.CurrentUser(c).Name))
 }
 
 func (s *Service) handleGet(c *gin.Context) {
 	i := c.MustGet(ctxIdeaKey).(db.GetIdeaRow)
-	c.JSON(http.StatusOK, ideaJSON(getToIdea(i), i.ProjectKey, i.ProjectName, i.AuthorName))
+	c.JSON(http.StatusOK, ideaJSON(getToIdea(i), i.ProjectKey.String, i.ProjectName.String, i.AuthorName))
 }
 
 func (s *Service) handleUpdate(c *gin.Context) {
 	i := c.MustGet(ctxIdeaKey).(db.GetIdeaRow)
 	var req struct {
-		Title   *string          `json:"title"`
-		Summary *string          `json:"summary"`
-		Status  *string          `json:"status"`
-		Scene   *json.RawMessage `json:"scene"`
+		Title     *string          `json:"title"`
+		Summary   *string          `json:"summary"`
+		Status    *string          `json:"status"`
+		Scene     *json.RawMessage `json:"scene"`
+		ProjectID *string          `json:"project_id"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httpx.Error(c, http.StatusBadRequest, "bad_request", "invalid body")
@@ -209,14 +260,25 @@ func (s *Service) handleUpdate(c *gin.Context) {
 		}
 		scene = *req.Scene
 	}
+	var projectID pgtype.UUID
+	key, name := i.ProjectKey.String, i.ProjectName.String
+	if req.ProjectID != nil {
+		p, ok := s.projectInWorkspace(c, i.WorkspaceID, *req.ProjectID)
+		if !ok {
+			return
+		}
+		projectID = p.ID
+		key, name = p.Key, p.Name
+	}
 	updated, err := s.q.UpdateIdea(c.Request.Context(), db.UpdateIdeaParams{
 		ID: i.ID, Title: title, Summary: summary, Scene: scene, Status: status,
+		ProjectID: projectID,
 	})
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "could not update idea")
 		return
 	}
-	c.JSON(http.StatusOK, ideaJSON(updated, i.ProjectKey, i.ProjectName, i.AuthorName))
+	c.JSON(http.StatusOK, ideaJSON(updated, key, name, i.AuthorName))
 }
 
 func (s *Service) handleDelete(c *gin.Context) {
@@ -238,7 +300,8 @@ func (s *Service) handleConvert(c *gin.Context) {
 		Kind        string `json:"kind" binding:"required"` // issue | project
 		Title       string `json:"title"`
 		Description string `json:"description"`
-		Key         string `json:"key"` // project kind only
+		Key         string `json:"key"`        // project kind only
+		ProjectID   string `json:"project_id"` // issue kind on a platform idea
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httpx.Error(c, http.StatusBadRequest, "bad_request", "kind is required")
@@ -254,13 +317,26 @@ func (s *Service) handleConvert(c *gin.Context) {
 	}
 	switch req.Kind {
 	case "issue":
-		num, err := s.q.NextIssueNumber(c.Request.Context(), i.ProjectID)
+		pid := i.ProjectID
+		if !pid.Valid {
+			// platform-wide ideas pick a target project at convert time
+			p, ok := s.projectInWorkspace(c, i.WorkspaceID, req.ProjectID)
+			if !ok {
+				return
+			}
+			if !p.ID.Valid {
+				httpx.Error(c, http.StatusBadRequest, "bad_request", "project_id is required for platform-wide ideas")
+				return
+			}
+			pid = p.ID
+		}
+		num, err := s.q.NextIssueNumber(c.Request.Context(), pid)
 		if err != nil {
 			httpx.Error(c, http.StatusInternalServerError, "internal", "could not create issue")
 			return
 		}
 		issue, err := s.q.CreateIssue(c.Request.Context(), db.CreateIssueParams{
-			ProjectID: i.ProjectID, Number: num, Title: title,
+			ProjectID: pid, Number: num, Title: title,
 			Description: desc, Status: "backlog", Priority: "medium",
 			CreatedBy: user.ID,
 		})
@@ -269,25 +345,20 @@ func (s *Service) handleConvert(c *gin.Context) {
 			return
 		}
 		_, _ = s.q.CreateIssueConversation(c.Request.Context(), db.CreateIssueConversationParams{
-			ProjectID: i.ProjectID, IssueID: issue.ID,
+			ProjectID: pid, IssueID: issue.ID,
 		})
 		s.markConverted(c, i.ID)
 		c.JSON(http.StatusCreated, gin.H{
 			"issue": gin.H{"id": issue.ID.String(), "number": issue.Number},
 		})
 	case "project":
-		proj, err := s.q.GetProjectByID(c.Request.Context(), i.ProjectID)
-		if err != nil {
-			httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
-			return
-		}
 		key := strings.ToUpper(strings.TrimSpace(req.Key))
 		if !keyPattern.MatchString(key) {
 			httpx.Error(c, http.StatusBadRequest, "bad_request", "key must match ^[A-Z0-9]{2,6}$")
 			return
 		}
 		np, err := s.q.CreateProject(c.Request.Context(), db.CreateProjectParams{
-			WorkspaceID: proj.WorkspaceID, Key: key, Name: title,
+			WorkspaceID: i.WorkspaceID, Key: key, Name: title,
 			Description: desc, CreatedBy: user.ID,
 		})
 		if err != nil {
@@ -328,9 +399,14 @@ func uid(u pgtype.UUID) string {
 }
 
 func ideaJSON(i db.Idea, projectKey, projectName, authorName string) gin.H {
+	var pid any
+	if i.ProjectID.Valid {
+		pid = uid(i.ProjectID)
+	}
 	return gin.H{
 		"id":           uid(i.ID),
-		"project_id":   uid(i.ProjectID),
+		"workspace_id": uid(i.WorkspaceID),
+		"project_id":   pid,
 		"project_key":  projectKey,
 		"project_name": projectName,
 		"title":        i.Title,
@@ -345,7 +421,8 @@ func ideaJSON(i db.Idea, projectKey, projectName, authorName string) gin.H {
 
 func listToIdea(r db.ListProjectIdeasRow) db.Idea {
 	return db.Idea{
-		ID: r.ID, ProjectID: r.ProjectID, Title: r.Title, Summary: r.Summary,
+		ID: r.ID, WorkspaceID: r.WorkspaceID, ProjectID: r.ProjectID,
+		Title: r.Title, Summary: r.Summary,
 		Scene: r.Scene, Status: r.Status, CreatedByUser: r.CreatedByUser,
 		CreatedByAgent: r.CreatedByAgent, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
@@ -353,7 +430,8 @@ func listToIdea(r db.ListProjectIdeasRow) db.Idea {
 
 func wsToIdea(r db.ListWorkspaceIdeasRow) db.Idea {
 	return db.Idea{
-		ID: r.ID, ProjectID: r.ProjectID, Title: r.Title, Summary: r.Summary,
+		ID: r.ID, WorkspaceID: r.WorkspaceID, ProjectID: r.ProjectID,
+		Title: r.Title, Summary: r.Summary,
 		Scene: r.Scene, Status: r.Status, CreatedByUser: r.CreatedByUser,
 		CreatedByAgent: r.CreatedByAgent, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
@@ -361,7 +439,8 @@ func wsToIdea(r db.ListWorkspaceIdeasRow) db.Idea {
 
 func getToIdea(r db.GetIdeaRow) db.Idea {
 	return db.Idea{
-		ID: r.ID, ProjectID: r.ProjectID, Title: r.Title, Summary: r.Summary,
+		ID: r.ID, WorkspaceID: r.WorkspaceID, ProjectID: r.ProjectID,
+		Title: r.Title, Summary: r.Summary,
 		Scene: r.Scene, Status: r.Status, CreatedByUser: r.CreatedByUser,
 		CreatedByAgent: r.CreatedByAgent, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}

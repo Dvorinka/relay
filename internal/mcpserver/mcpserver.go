@@ -188,6 +188,22 @@ func (s *Service) scope(ctx context.Context, projectID pgtype.UUID, required str
 	return nil
 }
 
+// ideaScope authorizes against the idea's project, or — for platform-wide
+// ideas with no project — the union of scopes the agent holds in its
+// workspace.
+func (s *Service) ideaScope(ctx context.Context, i db.GetIdeaRow, required string) error {
+	if i.ProjectID.Valid {
+		return s.scope(ctx, i.ProjectID, required)
+	}
+	scopes, err := s.q.AgentScopeForWorkspace(ctx, db.AgentScopeForWorkspaceParams{
+		AgentID: agent(ctx).ID, WorkspaceID: i.WorkspaceID,
+	})
+	if err != nil || !hasScope(scopes, required) {
+		return errors.New("missing scope: " + required)
+	}
+	return nil
+}
+
 func hasScope(granted []string, required string) bool {
 	for _, s := range granted {
 		if s == required {
@@ -3580,8 +3596,12 @@ func (s *Service) deleteBrief(ctx context.Context, req mcp.CallToolRequest) (*mc
 // brief:read / brief:write grant scopes.
 
 func ideaJSONMCP(i db.Idea, projectKey, authorName string) gin.H {
+	var pid any
+	if i.ProjectID.Valid {
+		pid = i.ProjectID.String()
+	}
 	return gin.H{
-		"id": i.ID, "project_id": i.ProjectID, "project_key": projectKey,
+		"id": i.ID, "project_id": pid, "project_key": projectKey,
 		"title": i.Title, "summary": i.Summary,
 		"scene": json.RawMessage(i.Scene), "status": i.Status,
 		"author_name": authorName,
@@ -3621,14 +3641,14 @@ func (s *Service) getIdea(ctx context.Context, req mcp.CallToolRequest) (*mcp.Ca
 	if err != nil {
 		return mcp.NewToolResultError("idea not found"), nil
 	}
-	if err := s.scope(ctx, i.ProjectID, "brief:read"); err != nil {
+	if err := s.ideaScope(ctx, i, "brief:read"); err != nil {
 		return errResult(err)
 	}
 	return jsonResult(ideaJSONMCP(db.Idea{
-		ID: i.ID, ProjectID: i.ProjectID, Title: i.Title, Summary: i.Summary,
+		ID: i.ID, ProjectID: i.ProjectID, WorkspaceID: i.WorkspaceID, Title: i.Title, Summary: i.Summary,
 		Scene: i.Scene, Status: i.Status, CreatedByUser: i.CreatedByUser,
 		CreatedByAgent: i.CreatedByAgent, CreatedAt: i.CreatedAt, UpdatedAt: i.UpdatedAt,
-	}, i.ProjectKey, i.AuthorName))
+	}, i.ProjectKey.String, i.AuthorName))
 }
 
 func (s *Service) createIdea(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -3657,8 +3677,12 @@ func (s *Service) createIdea(ctx context.Context, req mcp.CallToolRequest) (*mcp
 		scene = []byte(v)
 	}
 	agentID := agent(ctx).ID
+	proj, err := s.q.GetProjectByID(ctx, pid)
+	if err != nil {
+		return errResult(err)
+	}
 	i, err := s.q.CreateIdea(ctx, db.CreateIdeaParams{
-		ProjectID: pid, Title: title,
+		WorkspaceID: proj.WorkspaceID, ProjectID: pid, Title: title,
 		Summary: req.GetString("summary", ""), Scene: scene,
 		CreatedByAgent: agentID,
 	})
@@ -3677,7 +3701,7 @@ func (s *Service) updateIdea(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	if err != nil {
 		return mcp.NewToolResultError("idea not found"), nil
 	}
-	if err := s.scope(ctx, i.ProjectID, "brief:write"); err != nil {
+	if err := s.ideaScope(ctx, i, "brief:write"); err != nil {
 		return errResult(err)
 	}
 	var title, summary, status pgtype.Text
@@ -3707,7 +3731,7 @@ func (s *Service) updateIdea(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	if err != nil {
 		return errResult(err)
 	}
-	return jsonResult(ideaJSONMCP(updated, i.ProjectKey, i.AuthorName))
+	return jsonResult(ideaJSONMCP(updated, i.ProjectKey.String, i.AuthorName))
 }
 
 func (s *Service) deleteIdea(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -3719,7 +3743,7 @@ func (s *Service) deleteIdea(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	if err != nil {
 		return mcp.NewToolResultError("idea not found"), nil
 	}
-	if err := s.scope(ctx, i.ProjectID, "brief:write"); err != nil {
+	if err := s.ideaScope(ctx, i, "brief:write"); err != nil {
 		return errResult(err)
 	}
 	if err := s.q.DeleteIdea(ctx, id); err != nil {
@@ -3737,8 +3761,11 @@ func (s *Service) ideaToIssue(ctx context.Context, req mcp.CallToolRequest) (*mc
 	if err != nil {
 		return mcp.NewToolResultError("idea not found"), nil
 	}
-	if err := s.scope(ctx, i.ProjectID, "issue:write"); err != nil {
+	if err := s.ideaScope(ctx, i, "issue:write"); err != nil {
 		return errResult(err)
+	}
+	if !i.ProjectID.Valid {
+		return mcp.NewToolResultError("platform-wide idea — convert to issue needs a project idea; attach a project first"), nil
 	}
 	title := strings.TrimSpace(req.GetString("title", ""))
 	if title == "" {

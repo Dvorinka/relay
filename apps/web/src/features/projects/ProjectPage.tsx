@@ -46,6 +46,7 @@ import {
   SubmitButton,
   Tip,
 } from "../../components/ui";
+import { Select } from "../../components/Select";
 import { api } from "../../lib/api";
 import { copyText } from "../../lib/clipboard";
 import { confirmDestructive } from "../../components/Confirm";
@@ -55,6 +56,7 @@ import { subscribe } from "../../lib/events";
 import { initials } from "../../lib/text";
 import { timeAgo } from "../../lib/time";
 import { useProjects } from "../../stores/projects";
+import { isOnline } from "../../stores/presence";
 import { useSession } from "../../stores/session";
 import { RepoPicker } from "../../components/RepoPicker";
 import { Conversation } from "../conversations/Conversation";
@@ -748,20 +750,17 @@ function SearchResultsView(props: {
                 {empty() ? `No results for “${props.query}”` : "Results"}
               </p>
               <Show when={r().messages.length > 1}>
-                <select
-                  aria-label="Sort results"
+                <Select
+                  ariaLabel="Sort results"
                   value={sort()}
-                  onChange={(e) =>
-                    setSort(
-                      e.currentTarget.value as "relevant" | "newest" | "oldest",
-                    )
-                  }
-                  class="h-6 rounded border border-border bg-surface px-1 text-[10.5px] text-muted focus:border-accent focus:outline-none"
-                >
-                  <option value="relevant">Relevant</option>
-                  <option value="newest">Newest</option>
-                  <option value="oldest">Oldest</option>
-                </select>
+                  onChange={(v) => setSort(v as "relevant" | "newest" | "oldest")}
+                  triggerClass="h-6 rounded border border-border bg-surface px-1 text-[10.5px] text-muted focus:border-accent focus:outline-none"
+                  options={[
+                    { value: "relevant", label: "Relevant" },
+                    { value: "newest", label: "Newest" },
+                    { value: "oldest", label: "Oldest" },
+                  ]}
+                />
               </Show>
             </div>
             <For each={r().issues.slice(0, 5)}>
@@ -1166,16 +1165,21 @@ function ContextRail(props: {
                 onClick={() => openProfile(m.user.id, "user")}
                 class="flex items-center gap-2.5 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-hover"
               >
-                <Avatar.Root class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface">
-                  <Avatar.Fallback class="text-[10px] font-semibold text-muted">
-                    {initials(m.user.name)}
-                  </Avatar.Fallback>
-                  <Avatar.Image
-                    src={mediaURL(m.user.avatar_url)}
-                    alt=""
-                    class="h-full w-full rounded-full object-cover"
-                  />
-                </Avatar.Root>
+                <span class="relative shrink-0">
+                  <Avatar.Root class="flex h-6 w-6 items-center justify-center rounded-full bg-surface">
+                    <Avatar.Fallback class="text-[10px] font-semibold text-muted">
+                      {initials(m.user.name)}
+                    </Avatar.Fallback>
+                    <Avatar.Image
+                      src={mediaURL(m.user.avatar_url)}
+                      alt=""
+                      class="h-full w-full rounded-full object-cover"
+                    />
+                  </Avatar.Root>
+                  <Show when={isOnline(m.user.id)}>
+                    <span class="absolute -bottom-px -right-px h-2 w-2 rounded-full border border-surface bg-emerald-500" />
+                  </Show>
+                </span>
                 <span class="min-w-0 flex-1 truncate text-[12.5px]">
                   {m.user.name}
                   <Show when={m.user.id === session.user()?.id}>
@@ -1788,7 +1792,7 @@ export default function ProjectPage() {
             <HeadButton
               title="Ideas"
               hint="Brainstorm boards — sketches and mindmaps that convert into issues."
-              onClick={() => navigate(`/app/p/${params.projectId}/ideas`)}
+              onClick={() => navigate(`/app/ideas?project=${params.projectId}`)}
             >
               <BulbIcon class="h-4 w-4" />
             </HeadButton>

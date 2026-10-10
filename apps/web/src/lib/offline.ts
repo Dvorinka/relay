@@ -114,10 +114,11 @@ export async function probeNow(rawUrl: string): Promise<boolean> {
 // --- Mutation outbox -------------------------------------------------------
 // Once an origin is marked down, non-GET requests are queued instead of
 // fired into the void, then replayed FIFO the moment the server answers
-// again. Two deliberate bounds:
-// - Only requests made *after* the down-mark queue. The request that marks
-//   the origin down may have reached the server before the connection
-//   dropped — silently replaying it could duplicate (a sent message twice).
+// again. Deliberate bounds:
+// - The request that *marks* the origin down also queues — but only when
+//   replay provably can't duplicate: PUT/DELETE are idempotent by method,
+//   and POSTs must carry a client_msg_id the server dedupes on. Anything
+//   else keeps the old fail-and-report behaviour.
 // - Only string bodies queue. FormData uploads can't round-trip through
 //   storage; they fail immediately like before.
 export class QueuedError extends Error {
@@ -224,6 +225,30 @@ export async function clearOutbox(): Promise<void> {
   await outboxSave([]);
 }
 
+// replaySafe decides whether a request that just failed (and may or may
+// not have reached the server) can be re-sent without side effects.
+// PUT/DELETE replace or remove — replaying lands the same end state. POST
+// is only safe when the body carries client_msg_id, which the server
+// dedupes per conversation.
+function replaySafe(method: string, init?: RequestInit): boolean {
+  if (method === "PUT" || method === "DELETE") return true;
+  if (method !== "POST") return false;
+  try {
+    const body: unknown = JSON.parse(
+      typeof init?.body === "string" ? init.body : "{}",
+    );
+    return (
+      typeof body === "object" &&
+      body !== null &&
+      typeof (body as { client_msg_id?: unknown }).client_msg_id ===
+        "string" &&
+      (body as { client_msg_id: string }).client_msg_id.length > 0
+    );
+  } catch {
+    return false;
+  }
+}
+
 // Cache keys are per-principal: the bearer token distinguishes sessions on
 // the same origin, and net.disconnect() clears everything on sign-out.
 function cacheKey(url: string, init?: RequestInit): string {
@@ -284,6 +309,17 @@ export async function resilientFetch(
     if (method === "GET") {
       const hit = await cacheGet(key);
       if (hit !== undefined) return jsonResponse(hit);
+    }
+    // The failure that flipped the origin down may never have left the
+    // device — or landed a beat before the drop. Queue it when replay
+    // can't double the effect; callers see the same QueuedError flow as
+    // any other parked mutation.
+    if (
+      !url.includes("/api/auth/") &&
+      replaySafe(method, init) &&
+      (await enqueueOutbox(url, method, init))
+    ) {
+      throw new QueuedError();
     }
     throw err;
   }

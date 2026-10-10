@@ -28,10 +28,13 @@ import (
 	"github.com/Dvorinka/relay/internal/projects"
 	"github.com/Dvorinka/relay/internal/push"
 	"github.com/Dvorinka/relay/internal/realtime"
+	"github.com/Dvorinka/relay/internal/reminders"
 	"github.com/Dvorinka/relay/internal/reviews"
+	"github.com/Dvorinka/relay/internal/saved"
 	"github.com/Dvorinka/relay/internal/search"
 	"github.com/Dvorinka/relay/internal/storage"
 	"github.com/Dvorinka/relay/internal/todos"
+	"github.com/Dvorinka/relay/internal/unfurl"
 	"github.com/Dvorinka/relay/internal/webhooks"
 	"github.com/Dvorinka/relay/internal/workspaces"
 	"github.com/gin-gonic/gin"
@@ -84,8 +87,16 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	pushSvc := push.NewService(log, pool, cfg)
 	briefSvc := briefs.NewService(log, pool)
 	ideaSvc := ideas.NewService(log, pool)
+	savedSvc := saved.NewService(log, pool)
+	remSvc := reminders.NewService(log, pool)
+	remSvc.Bus = hub
+	remSvc.Push = pushSvc
+	unfurlSvc := unfurl.NewService(log, pool)
 	convSvc.Push = pushSvc
 	hookSvc.Start(context.Background(), hub)
+	go remSvc.Start(context.Background())
+	go convSvc.StartScheduledSweep(context.Background())
+	go pushSvc.StartDigestSweep(context.Background())
 	// Janitor: expired threads and abandoned staged attachments were only
 	// swept lazily on read paths. Run a first pass at boot — downtime may
 	// have stranded both — then every ten minutes. Guarded: pgx panics on a
@@ -152,6 +163,9 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	pushSvc.RegisterRoutes(priv)
 	briefSvc.RegisterRoutes(priv)
 	ideaSvc.RegisterRoutes(priv)
+	savedSvc.RegisterRoutes(priv)
+	remSvc.RegisterRoutes(priv)
+	unfurlSvc.RegisterRoutes(priv)
 
 	// external agents: bearer-token MCP, not session cookies
 	r.POST("/mcp", mcpHandler)

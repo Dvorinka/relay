@@ -1,9 +1,10 @@
-import { Navigate, Route, Router, useNavigate } from "@solidjs/router";
+import { Navigate, Route, Router, useNavigate, useParams } from "@solidjs/router";
 import type { RouteSectionProps } from "@solidjs/router";
 import { render } from "solid-js/web";
 import App from "./App";
 import { deepLinkRoute, desktopOpen, onDeepLink } from "./lib/desktop";
 import { initNotify } from "./lib/notify";
+import { initPresence } from "./stores/presence";
 import { initNavSwipe } from "./stores/nav";
 import ForgotPassword from "./features/auth/ForgotPassword";
 import Login from "./features/auth/Login";
@@ -21,6 +22,7 @@ import Home from "./pages/Home";
 import Inbox from "./pages/Inbox";
 import Overview from "./pages/Overview";
 import Pulls from "./pages/Pulls";
+import Saved from "./pages/Saved";
 import AgentProfile from "./pages/AgentProfile";
 import Connect from "./pages/Connect";
 import UserProfile from "./pages/UserProfile";
@@ -31,7 +33,15 @@ import { SessionProvider, useSession } from "./stores/session";
 function NotificationsRoot() {
   const session = useSession();
   initNotify(() => session.user());
+  initPresence();
   return null;
+}
+
+// Old per-project ideas links land on the workspace page, pre-filtered to
+// that project.
+function IdeasRedirect() {
+  const params = useParams();
+  return <Navigate href={`/app/ideas?project=${params.projectId}`} />;
 }
 
 // relay:// links opened while the desktop shell runs arrive here as wails
@@ -97,6 +107,7 @@ render(
         <Route path="/app" component={App}>
           <Route path="/" component={Home} />
           <Route path="/inbox" component={Inbox} />
+          <Route path="/saved" component={Saved} />
           <Route path="/overview" component={Overview} />
           <Route path="/pulls" component={Pulls} />
           <Route path="/p/:projectId" component={ProjectPage} />
@@ -104,7 +115,8 @@ render(
           <Route path="/p/:projectId/board" component={BoardPage} />
           <Route path="/p/:projectId/i/:issueId" component={IssuePage} />
           <Route path="/p/:projectId/k/:key" component={IssueKeyRedirect} />
-          <Route path="/p/:projectId/ideas" component={IdeasPage} />
+          <Route path="/ideas" component={IdeasPage} />
+          <Route path="/p/:projectId/ideas" component={IdeasRedirect} />
           <Route path="/u/:userId" component={UserProfile} />
           <Route path="/ag/:agentId" component={AgentProfile} />
           <Route path="/settings" component={Settings} />

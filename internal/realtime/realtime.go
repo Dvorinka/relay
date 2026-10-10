@@ -3,11 +3,13 @@
 package realtime
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Dvorinka/relay/internal/auth"
@@ -15,6 +17,7 @@ import (
 	"github.com/Dvorinka/relay/internal/events"
 	"github.com/Dvorinka/relay/internal/httpx"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -27,10 +30,14 @@ const heartbeatFrame = "data: {\"type\":\"heartbeat\",\"project_id\":\"\"}\n\n"
 type Service struct {
 	q   *db.Queries
 	hub *events.Hub
+	// online counts open /events streams per user — a user with at least
+	// one live stream is "online". In-memory like the hub itself.
+	mu     sync.Mutex
+	online map[[16]byte]int
 }
 
 func NewService(hub *events.Hub, pool *pgxpool.Pool) *Service {
-	return &Service{q: db.New(pool), hub: hub}
+	return &Service{q: db.New(pool), hub: hub, online: map[[16]byte]int{}}
 }
 
 func (s *Service) RegisterRoutes(priv gin.IRoutes) {
@@ -38,7 +45,61 @@ func (s *Service) RegisterRoutes(priv gin.IRoutes) {
 	priv.GET("/me/unread", s.handleUnread)
 	priv.GET("/me/mentions", s.handleMentions)
 	priv.GET("/me/activity", s.handleActivity)
+	priv.GET("/me/presence", s.handlePresence)
 	priv.GET("/users/:id/profile", s.handleUserProfile)
+}
+
+// mark tracks an /events stream open or close. On an online/offline
+// transition it stamps last_seen_at and fans presence.update out to every
+// project the user belongs to — the SSE membership gate does the rest.
+func (s *Service) mark(userID pgtype.UUID, up bool) {
+	var changed bool
+	s.mu.Lock()
+	n := s.online[userID.Bytes]
+	if up {
+		n++
+	} else {
+		n--
+	}
+	if n <= 0 {
+		delete(s.online, userID.Bytes)
+		changed = !up
+	} else {
+		s.online[userID.Bytes] = n
+		changed = up && n == 1
+	}
+	s.mu.Unlock()
+	if !changed {
+		return
+	}
+	ctx := context.Background()
+	_ = s.q.StampUserLastSeen(ctx, userID)
+	projects, err := s.q.ListUserProjectIDs(ctx, userID)
+	if err != nil {
+		return
+	}
+	for _, pid := range projects {
+		pu, _ := uuid.FromBytes(pid.Bytes[:])
+		s.hub.Publish(events.Event{Type: "presence.update", ProjectID: pu,
+			Data: map[string]any{"user_id": userID.String(), "online": up}})
+	}
+}
+
+func (s *Service) handlePresence(c *gin.Context) {
+	visible, err := s.q.ListVisibleUserIDs(c, auth.CurrentUser(c).ID)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	s.mu.Lock()
+	ids := make([]string, 0, len(s.online))
+	for _, v := range visible {
+		if _, ok := s.online[v.Bytes]; ok {
+			ids = append(ids, v.String())
+		}
+	}
+	s.mu.Unlock()
+	c.JSON(http.StatusOK, gin.H{"online": ids})
 }
 
 // RegisterAgentRoutes mounts the agent-facing SSE stream outside session
@@ -63,6 +124,9 @@ func (s *Service) handleStream(c *gin.Context) {
 
 	id, ch := s.hub.Subscribe()
 	defer s.hub.Unsubscribe(id)
+
+	s.mark(user.ID, true)
+	defer s.mark(user.ID, false)
 
 	ctx := c.Request.Context()
 	keepalive := time.NewTicker(25 * time.Second)
