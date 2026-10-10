@@ -4,6 +4,7 @@ package main
 
 import (
 	_ "embed"
+	"fmt"
 	"runtime"
 
 	systray "fyne.io/systray"
@@ -48,9 +49,11 @@ func (a *App) stopTray() {
 }
 
 func (a *App) trayReady() {
+	a.trayLive.Store(true)
 	systray.SetIcon(trayIcon)
 	systray.SetTooltip("Relay")
 	systray.SetOnTapped(a.showWindow)
+	a.applyUnread()
 	open := systray.AddMenuItem("Open Relay", "Restore the Relay window")
 	systray.AddSeparator()
 	updates := systray.AddMenuItem(
@@ -74,6 +77,22 @@ func (a *App) trayReady() {
 			}
 		}
 	}()
+}
+
+// setTrayUnread reflects the unread count in the tray tooltip. A real
+// taskbar overlay icon needs ITaskbarList3::SetOverlayIcon — COM work the
+// window-title badge mostly covers; add only if tooltip+title proves too
+// subtle in practice.
+// jarvis: ceiling is tooltip text, upgrade if unread visibility complaints.
+func (a *App) setTrayUnread(n int64) {
+	if !a.trayLive.Load() {
+		return
+	}
+	if n <= 0 {
+		systray.SetTooltip("Relay")
+		return
+	}
+	systray.SetTooltip(fmt.Sprintf("Relay — %d unread", n))
 }
 
 // showWindow restores a hidden/minimised window — same path the

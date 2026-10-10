@@ -267,12 +267,21 @@ type Message struct {
 	AuthorNameSnapshot string             `json:"author_name_snapshot"`
 	AuthorKindSnapshot string             `json:"author_kind_snapshot"`
 	Silent             bool               `json:"silent"`
+	ClientMsgID        pgtype.Text        `json:"client_msg_id"`
 }
 
 type MessageAttachment struct {
 	MessageID    pgtype.UUID `json:"message_id"`
 	AttachmentID pgtype.UUID `json:"attachment_id"`
 	Position     int32       `json:"position"`
+}
+
+type MessageEdit struct {
+	ID        pgtype.UUID        `json:"id"`
+	MessageID pgtype.UUID        `json:"message_id"`
+	Body      string             `json:"body"`
+	EditedBy  pgtype.UUID        `json:"edited_by"`
+	EditedAt  pgtype.Timestamptz `json:"edited_at"`
 }
 
 type MessageReaction struct {
@@ -325,6 +334,16 @@ type ProjectMember struct {
 	ProjectID pgtype.UUID        `json:"project_id"`
 	UserID    pgtype.UUID        `json:"user_id"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type PushDigest struct {
+	ID        pgtype.UUID        `json:"id"`
+	UserID    pgtype.UUID        `json:"user_id"`
+	Title     string             `json:"title"`
+	Body      string             `json:"body"`
+	Url       string             `json:"url"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	FlushedAt pgtype.Timestamptz `json:"flushed_at"`
 }
 
 type PushSubscription struct {
@@ -380,6 +399,19 @@ type SavedMessage struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type ScheduledMessage struct {
+	ID             pgtype.UUID        `json:"id"`
+	UserID         pgtype.UUID        `json:"user_id"`
+	ConversationID pgtype.UUID        `json:"conversation_id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	Body           string             `json:"body"`
+	ParentID       pgtype.UUID        `json:"parent_id"`
+	Tags           []byte             `json:"tags"`
+	SendAt         pgtype.Timestamptz `json:"send_at"`
+	SentAt         pgtype.Timestamptz `json:"sent_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
 type Session struct {
 	ID         pgtype.UUID        `json:"id"`
 	UserID     pgtype.UUID        `json:"user_id"`
@@ -392,15 +424,16 @@ type Session struct {
 }
 
 type User struct {
-	ID           pgtype.UUID        `json:"id"`
-	Email        string             `json:"email"`
-	PasswordHash string             `json:"password_hash"`
-	Name         string             `json:"name"`
-	AvatarKey    pgtype.Text        `json:"avatar_key"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
-	NameColor    pgtype.Text        `json:"name_color"`
-	LastSeenAt   pgtype.Timestamptz `json:"last_seen_at"`
+	ID            pgtype.UUID        `json:"id"`
+	Email         string             `json:"email"`
+	PasswordHash  string             `json:"password_hash"`
+	Name          string             `json:"name"`
+	AvatarKey     pgtype.Text        `json:"avatar_key"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	NameColor     pgtype.Text        `json:"name_color"`
+	LastSeenAt    pgtype.Timestamptz `json:"last_seen_at"`
+	DigestEnabled bool               `json:"digest_enabled"`
 }
 
 type WebhookDelivery struct {

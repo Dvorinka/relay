@@ -1,6 +1,7 @@
-import { createMemo, createSignal } from "solid-js";
+import { createEffect, createMemo, createSignal } from "solid-js";
 import type { UnreadConversation } from "@relay/api-client";
 import { api } from "../lib/api";
+import { desktopSetUnread } from "../lib/desktop";
 
 const [unread, setUnread] = createSignal<Record<string, number>>({});
 const [unreadConversations, setUnreadConversations] = createSignal<
@@ -32,6 +33,13 @@ const unreadByIssueMap = createMemo(() => {
 export function useUnreadByIssue() {
   return unreadByIssueMap;
 }
+
+// Total unread across conversations — bridged to the desktop shell's
+// window title and tray badge. The effect is a no-op in a plain browser.
+const unreadTotal = createMemo(() =>
+  unreadConversations().reduce((sum, c) => sum + c.unread, 0),
+);
+createEffect(() => desktopSetUnread(unreadTotal()));
 
 export function usePendingReviews() {
   return { pendingReviews };

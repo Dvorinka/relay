@@ -95,6 +95,8 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	convSvc.Push = pushSvc
 	hookSvc.Start(context.Background(), hub)
 	go remSvc.Start(context.Background())
+	go convSvc.StartScheduledSweep(context.Background())
+	go pushSvc.StartDigestSweep(context.Background())
 	// Janitor: expired threads and abandoned staged attachments were only
 	// swept lazily on read paths. Run a first pass at boot — downtime may
 	// have stranded both — then every ten minutes. Guarded: pgx panics on a

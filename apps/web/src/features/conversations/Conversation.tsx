@@ -5,7 +5,9 @@ import {
   type Conversation as ApiConversation,
   type Mentionables,
   type Message,
+  type MessageEdit,
   type Reaction,
+  type ScheduledMessage,
   type ReadReceipt,
   type Thread,
   type ThreadSummary,
@@ -760,6 +762,204 @@ function MessageMoreMenu(props: {
   );
 }
 
+// ScheduleSendMenu is the composer's clock-button popover: presets or a
+// custom time parks the current draft server-side; the bottom half lists
+// this conversation's pending sends with cancel.
+function ScheduleSendMenu(props: {
+  conversationId: string;
+  canSchedule: boolean;
+  onSchedule: (sendAt: Date) => void;
+  onClose: () => void;
+}) {
+  const [custom, setCustom] = createSignal("");
+  const [pending, setPending] = createSignal<ScheduledMessage[]>([]);
+  const item =
+    "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] text-fg transition-colors hover:bg-hover";
+  createEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") props.onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    onCleanup(() => window.removeEventListener("keydown", onKey));
+  });
+  onMount(() => {
+    void api
+      .listScheduledMessages(props.conversationId)
+      .then((r) => setPending(r.scheduled))
+      .catch(() => {});
+  });
+
+  const presets = () => {
+    const now = new Date();
+    const at = (d: Date, h: number, m = 0) => {
+      const t = new Date(d);
+      t.setHours(h, m, 0, 0);
+      return t;
+    };
+    const tomorrow = at(now, 9);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const monday = at(now, 9);
+    monday.setDate(monday.getDate() + ((8 - monday.getDay()) % 7 || 7));
+    return [
+      { label: "In 1 hour", at: new Date(now.getTime() + 3600_000) },
+      { label: "In 3 hours", at: new Date(now.getTime() + 3 * 3600_000) },
+      { label: "Tomorrow 9:00", at: tomorrow },
+      { label: "Next week (Mon 9:00)", at: monday },
+    ];
+  };
+
+  const customDate = () => {
+    const v = custom();
+    return v ? new Date(v) : null;
+  };
+
+  async function cancel(id: string) {
+    setPending((cur) => cur.filter((x) => x.id !== id));
+    try {
+      await api.cancelScheduledMessage(id);
+    } catch {
+      // Optimistic — a stale row does nothing on the next sweep.
+    }
+  }
+
+  return (
+    <>
+      <div
+        class="fixed inset-0 z-[60]"
+        onPointerDown={props.onClose}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          props.onClose();
+        }}
+      />
+      <div class="absolute bottom-full right-0 z-[61] mb-2 w-64 overflow-hidden rounded-xl border border-border bg-surface p-1 shadow-xl">
+        <div class="px-2.5 pb-1 pt-2 text-[10.5px] font-semibold uppercase tracking-wide text-faint">
+          Schedule send
+        </div>
+        <For each={presets()}>
+          {(p) => (
+            <button
+              type="button"
+              disabled={!props.canSchedule}
+              onClick={() => props.onSchedule(p.at)}
+              class={`${item} disabled:opacity-50`}
+            >
+              <ClockIcon class="h-4 w-4 text-faint" />
+              {p.label}
+            </button>
+          )}
+        </For>
+        <div class="mt-1 flex items-center gap-1.5 border-t border-border px-1.5 py-2">
+          <input
+            type="datetime-local"
+            value={custom()}
+            min={new Date(Date.now() + 60_000).toISOString().slice(0, 16)}
+            onInput={(e) => setCustom(e.currentTarget.value)}
+            class={`${inputClass} !h-8 flex-1 !px-2 text-[12.5px]`}
+          />
+          <button
+            type="button"
+            disabled={!props.canSchedule || !customDate()}
+            onClick={() => {
+              const d = customDate();
+              if (d) props.onSchedule(d);
+            }}
+            class={`${primaryButtonClass} !h-8 rounded-lg text-[12px]`}
+          >
+            Set
+          </button>
+        </div>
+        <Show when={pending().length > 0}>
+          <div class="border-t border-border px-2.5 pb-1 pt-2 text-[10.5px] font-semibold uppercase tracking-wide text-faint">
+            Pending
+          </div>
+          <For each={pending()}>
+            {(s) => (
+              <div class="group flex items-center gap-2 rounded-lg px-2.5 py-1.5 hover:bg-hover">
+                <div class="min-w-0 flex-1">
+                  <div class="truncate text-[12.5px] text-fg">{s.body}</div>
+                  <div class="text-[10.5px] text-faint">
+                    {new Date(s.send_at).toLocaleString()} · {timeUntil(s.send_at)}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  title="Cancel scheduled send"
+                  aria-label="Cancel scheduled send"
+                  onClick={() => void cancel(s.id)}
+                  class="rounded p-1 text-faint transition-colors hover:bg-surface hover:text-fg"
+                >
+                  <XIcon class="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+          </For>
+        </Show>
+      </div>
+    </>
+  );
+}
+
+// EditHistoryPopover lists a message's prior bodies — the "(edited)" marker
+// becomes a button opening it.
+function EditHistoryPopover(props: {
+  messageId: string;
+  onClose: () => void;
+}) {
+  const [edits, setEdits] = createSignal<MessageEdit[] | null>(null);
+  createEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") props.onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    onCleanup(() => window.removeEventListener("keydown", onKey));
+  });
+  onMount(() => {
+    void api
+      .listMessageEdits(props.messageId)
+      .then((r) => setEdits(r.edits))
+      .catch(() => setEdits([]));
+  });
+  return (
+    <>
+      <div
+        class="fixed inset-0 z-[60]"
+        onPointerDown={props.onClose}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          props.onClose();
+        }}
+      />
+      <div class="absolute bottom-full left-0 z-[61] mb-1 w-72 overflow-hidden rounded-xl border border-border bg-surface p-1 shadow-xl">
+        <div class="px-2.5 pb-1 pt-2 text-[10.5px] font-semibold uppercase tracking-wide text-faint">
+          Edit history
+        </div>
+        <Show when={edits() !== null} fallback={<div class="px-2.5 pb-2 text-[12px] text-faint">Loading…</div>}>
+          <Show
+            when={edits()!.length > 0}
+            fallback={<div class="px-2.5 pb-2 text-[12px] text-faint">No earlier versions.</div>}
+          >
+            <div class="max-h-60 overflow-y-auto">
+              <For each={edits()}>
+                {(e) => (
+                  <div class="border-t border-border/60 px-2.5 py-2 first:border-t-0">
+                    <div class="whitespace-pre-wrap break-words text-[12.5px] text-fg">
+                      {e.body}
+                    </div>
+                    <div class="mt-1 text-[10.5px] text-faint">
+                      {e.editor_name ?? "you"} · {new Date(e.edited_at).toLocaleString()}
+                    </div>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
+        </Show>
+      </div>
+    </>
+  );
+}
+
 function ConvertToIssueDialog(props: {
   projectId: string;
   message: Message;
@@ -1330,6 +1530,7 @@ function MessageRow(props: {
   const [moreMenu, setMoreMenu] = createSignal<{ x: number; y: number } | null>(
     null,
   );
+  const [histOpen, setHistOpen] = createSignal(false);
   const [editing, setEditing] = createSignal(false);
   const [editDraft, setEditDraft] = createSignal("");
   const [editError, setEditError] = createSignal<string | null>(null);
@@ -1762,8 +1963,21 @@ function MessageRow(props: {
                 {(url) => <LinkPreview url={url()} />}
               </Show>
               <Show when={m().edited_at && !bubbles()}>
-                <span class="ml-0 align-middle text-[10.5px] text-faint">
-                  (edited)
+                <span class="relative ml-0 align-middle">
+                  <button
+                    type="button"
+                    title="View edit history"
+                    onClick={() => setHistOpen(true)}
+                    class="text-[10.5px] text-faint transition-colors hover:text-fg hover:underline"
+                  >
+                    (edited)
+                  </button>
+                  <Show when={histOpen()}>
+                    <EditHistoryPopover
+                      messageId={m().id}
+                      onClose={() => setHistOpen(false)}
+                    />
+                  </Show>
                 </span>
               </Show>
               <Show when={m().silent}>
@@ -1922,7 +2136,22 @@ function MessageRow(props: {
               </span>
             </Show>
             <Show when={m().edited_at}>
-              <span>(edited)</span>
+              <span class="relative">
+                <button
+                  type="button"
+                  title="View edit history"
+                  onClick={() => setHistOpen(true)}
+                  class="transition-colors hover:text-fg hover:underline"
+                >
+                  (edited)
+                </button>
+                <Show when={histOpen()}>
+                  <EditHistoryPopover
+                    messageId={m().id}
+                    onClose={() => setHistOpen(false)}
+                  />
+                </Show>
+              </span>
             </Show>
             <span title={new Date(m().created_at).toLocaleString()}>
               {shortTime(m().created_at)}
@@ -2436,6 +2665,7 @@ function ConversationThread(props: {
     return [...s].sort();
   });
   const [sendError, setSendError] = createSignal<string | null>(null);
+  const [schedOpen, setSchedOpen] = createSignal(false);
   // Messages that arrived while the reader was scrolled up — drives the
   // Discord-style "New messages" jump pill above the composer.
   const [newBelow, setNewBelow] = createSignal(0);
@@ -3426,10 +3656,43 @@ function ConversationThread(props: {
     await postBody(body, false);
   }
 
+  // Scheduled sends carry body + optional reply only — attachments and tags
+  // stay out of the parked payload, so the affordance hides for those.
+  const canSchedule = () =>
+    draft().trim().length > 0 && pending().length === 0 && !sending();
+
+  async function doSchedule(sendAt: Date) {
+    setSchedOpen(false);
+    setSendError(null);
+    try {
+      await api.createScheduledMessage(
+        props.conversationId,
+        draft(),
+        sendAt.toISOString(),
+        replyTo()?.id,
+      );
+      setDraft("");
+      setReplyTo(null);
+      if (inputEl) {
+        inputEl.style.height = "auto";
+      }
+    } catch (err) {
+      setSendError(
+        err instanceof Error ? err.message : "Could not schedule message",
+      );
+    } finally {
+      refocus();
+    }
+  }
+
   async function postBody(body: string, silent: boolean) {
     const ids = readyIds();
     setSendError(null);
     setSending(true);
+    // Idempotency key: generated per send before the request exists, so an
+    // outbox replay carries the same key and the server dedupes instead of
+    // double-posting a send that already landed before the drop.
+    const clientMsgId = crypto.randomUUID();
     try {
       const message = await api.postMessage(
         props.conversationId,
@@ -3438,6 +3701,7 @@ function ConversationThread(props: {
         replyTo()?.id,
         draftTags(),
         silent,
+        clientMsgId,
       );
       // The SSE message.created frame can land before this POST resolves;
       // skip the local append when it already arrived.
@@ -3486,10 +3750,11 @@ function ConversationThread(props: {
             (p) => p.attachmentId === undefined || !sentIds.has(p.attachmentId),
           ),
         );
+      } else {
+        setSendError(
+          err instanceof Error ? err.message : "Could not send message",
+        );
       }
-      setSendError(
-        err instanceof Error ? err.message : "Could not send message",
-      );
     } finally {
       setSending(false);
       refocus();
@@ -4112,6 +4377,25 @@ function ConversationThread(props: {
               }}
               class="max-h-40 flex-1 resize-none bg-transparent px-1.5 py-2.5 text-[14.5px] leading-6 outline-none placeholder:text-faint disabled:opacity-50"
             />
+            <div class="relative">
+              <button
+                type="button"
+                title="Schedule send"
+                aria-label="Schedule send"
+                onClick={() => setSchedOpen((v) => !v)}
+                class="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-surface text-faint transition-colors hover:bg-hover hover:text-fg disabled:opacity-50"
+              >
+                <ClockIcon class="h-4 w-4" />
+              </button>
+              <Show when={schedOpen()}>
+                <ScheduleSendMenu
+                  conversationId={props.conversationId}
+                  canSchedule={canSchedule()}
+                  onSchedule={(d) => void doSchedule(d)}
+                  onClose={() => setSchedOpen(false)}
+                />
+              </Show>
+            </div>
             <button
               type="button"
               onClick={() => void send()}

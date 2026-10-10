@@ -50,6 +50,8 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
 	g.GET("/push/vapid", s.handleVAPID)
 	g.PUT("/push/subscriptions", s.handleSubscribe)
 	g.DELETE("/push/subscriptions", s.handleUnsubscribe)
+	g.GET("/me/digest", s.handleGetDigest)
+	g.PUT("/me/digest", s.SetDigest)
 }
 
 // handleVAPID hands the browser the application-server key it must subscribe
@@ -109,16 +111,32 @@ type Payload struct {
 	Tag   string `json:"tag"`
 }
 
-// Notify sends p to each user's subscriptions; dead endpoints are pruned.
+// Notify delivers a payload to each user's push subscriptions — unless the
+// user opted into digest mode, in which case it parks in push_digests for
+// the sweep to bundle.
 func (s *Service) Notify(ctx context.Context, users []pgtype.UUID, p Payload) {
 	if s.pub == "" {
 		return
 	}
 	body, _ := json.Marshal(p)
 	for _, u := range users {
+		if on, err := s.q.UserDigestEnabled(ctx, u); err == nil && on {
+			_ = s.q.CreatePushDigest(ctx, db.CreatePushDigestParams{
+				UserID: u, Title: p.Title, Body: p.Body, Url: p.URL,
+			})
+			continue
+		}
+		s.deliver(ctx, u, body)
+	}
+}
+
+// deliver sends a pre-marshalled payload to one user's subscriptions —
+// the raw send path both Notify and the digest flush share.
+func (s *Service) deliver(ctx context.Context, u pgtype.UUID, body []byte) {
+	{
 		subs, err := s.q.ListPushSubscriptions(ctx, u)
 		if err != nil {
-			continue
+			return
 		}
 		for _, sub := range subs {
 			var keys struct {

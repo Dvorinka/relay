@@ -686,6 +686,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/me/digest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Whether the caller's notifications batch into a periodic digest */
+        get: operations["getDigestMode"];
+        /** Toggle digest mode — enabled notifications queue and flush as one batched push every ~30 minutes */
+        put: operations["setDigestMode"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{projectId}/conversation": {
         parameters: {
             query?: never;
@@ -737,6 +755,41 @@ export interface paths {
         post: operations["postMessage"];
         /** Delete every message in the conversation - owner/admin only (the /clear and /new commands) */
         delete: operations["clearConversation"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/conversations/{conversationId}/messages/scheduled": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's pending scheduled sends in this conversation */
+        get: operations["listScheduledMessages"];
+        put?: never;
+        /** Park a draft to post at send_at — the sweep fires it through the normal message path */
+        post: operations["createScheduledMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scheduled/{scheduledId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Cancel a pending scheduled send - owner only */
+        delete: operations["cancelScheduledMessage"];
         options?: never;
         head?: never;
         patch?: never;
@@ -795,6 +848,23 @@ export interface paths {
         head?: never;
         /** Edit a message's body and append attachments - author only, locked once any agent has read it */
         patch: operations["editMessage"];
+        trace?: never;
+    };
+    "/api/messages/{messageId}/edits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Prior bodies of an edited message, oldest first */
+        get: operations["listMessageEdits"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/messages/{messageId}/thread": {
@@ -2797,6 +2867,21 @@ export interface components {
             /** Format: date-time */
             created_at: string;
         };
+        ScheduledMessage: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            conversation_id: string;
+            /** Format: uuid */
+            project_id: string;
+            body: string;
+            /** Format: uuid */
+            parent_id?: string | null;
+            /** Format: date-time */
+            send_at: string;
+            /** Format: date-time */
+            created_at: string;
+        };
         MessageForwarded: {
             /** Format: uuid */
             message_id: string;
@@ -4705,6 +4790,57 @@ export interface operations {
             };
         };
     };
+    getDigestMode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Preference */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        digest_enabled?: boolean;
+                    };
+                };
+            };
+        };
+    };
+    setDigestMode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    enabled: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        digest_enabled?: boolean;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
     projectConversation: {
         parameters: {
             query?: never;
@@ -4839,6 +4975,8 @@ export interface operations {
                     tags?: string[];
                     /** @description Post without notifications (the /silent command) — lands in history and unread lists but toasts and push are suppressed unless the body mentions the recipient */
                     silent?: boolean;
+                    /** @description Idempotency key generated per send (the offline outbox reuses it on replay) — a duplicate within the same conversation returns the stored message, no double-post */
+                    client_msg_id?: string;
                 };
             };
         };
@@ -4869,6 +5007,92 @@ export interface operations {
         responses: {
             /** @description Conversation cleared */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listScheduledMessages: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversationId: components["parameters"]["ConversationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Scheduled messages, soonest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        scheduled: components["schemas"]["ScheduledMessage"][];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createScheduledMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversationId: components["parameters"]["ConversationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    body: string;
+                    /**
+                     * Format: uuid
+                     * @description Optional message this reply threads under (same conversation)
+                     */
+                    parent_id?: string;
+                    /**
+                     * Format: date-time
+                     * @description RFC3339; must be 1 minute to 90 days out
+                     */
+                    send_at: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Scheduled */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduledMessage"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    cancelScheduledMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scheduledId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cancelled */
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4989,6 +5213,38 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+        };
+    };
+    listMessageEdits: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                messageId: components["parameters"]["MessageId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Edit history (empty when the message was never edited) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        edits: {
+                            body: string;
+                            /** Format: uuid */
+                            edited_by: string;
+                            editor_name?: string;
+                            /** Format: date-time */
+                            edited_at: string;
+                        }[];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
         };
     };
     createThread: {

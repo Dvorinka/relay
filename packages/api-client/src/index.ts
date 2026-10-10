@@ -38,6 +38,13 @@ export type Reaction = components["schemas"]["Reaction"];
 export type ReadReceipt = components["schemas"]["ReadReceipt"];
 export type SavedMessage = components["schemas"]["SavedMessage"];
 export type Reminder = components["schemas"]["Reminder"];
+export type ScheduledMessage = components["schemas"]["ScheduledMessage"];
+export type MessageEdit = {
+  body: string;
+  edited_by: string;
+  editor_name?: string;
+  edited_at: string;
+};
 export interface UnfurlResult {
   found: boolean;
   url: string;
@@ -541,6 +548,7 @@ export function createClient(
       parentId?: string,
       tags?: string[],
       silent?: boolean,
+      clientMsgId?: string,
     ) =>
       post<Message>(`/api/conversations/${conversationId}/messages`, {
         body,
@@ -548,6 +556,7 @@ export function createClient(
         parent_id: parentId,
         ...(tags && tags.length ? { tags } : {}),
         ...(silent ? { silent } : {}),
+        ...(clientMsgId ? { client_msg_id: clientMsgId } : {}),
       }),
     editMessage: (messageId: string, body: string, attachmentIds?: string[]) =>
       patch<Message>(`/api/messages/${messageId}`, {
@@ -617,6 +626,28 @@ export function createClient(
       request<{ reminders: Reminder[] }>("/api/reminders"),
     deleteReminder: (reminderId: string) =>
       request<void>(`/api/reminders/${reminderId}`, { method: "DELETE" }),
+    listMessageEdits: (messageId: string) =>
+      request<{ edits: MessageEdit[] }>(`/api/messages/${messageId}/edits`),
+    listScheduledMessages: (conversationId: string) =>
+      request<{ scheduled: ScheduledMessage[] }>(
+        `/api/conversations/${conversationId}/messages/scheduled`,
+      ),
+    createScheduledMessage: (
+      conversationId: string,
+      body: string,
+      sendAt: string,
+      parentId?: string,
+    ) =>
+      post<ScheduledMessage>(
+        `/api/conversations/${conversationId}/messages/scheduled`,
+        { body, send_at: sendAt, ...(parentId ? { parent_id: parentId } : {}) },
+      ),
+    cancelScheduledMessage: (scheduledId: string) =>
+      request<void>(`/api/scheduled/${scheduledId}`, { method: "DELETE" }),
+    getDigestMode: () =>
+      request<{ digest_enabled: boolean }>("/api/me/digest"),
+    setDigestMode: (enabled: boolean) =>
+      put<{ digest_enabled: boolean }>("/api/me/digest", { enabled }),
     unfurl: (url: string) =>
       request<UnfurlResult>(`/api/unfurl?url=${encodeURIComponent(url)}`),
     presence: () => request<{ online: string[] }>("/api/me/presence"),
