@@ -4193,9 +4193,9 @@ components:
       properties:
         id: { type: string, format: uuid }
         workspace_id: { type: string, format: uuid }
-        project_id: { type: string, format: uuid, nullable: true }
-        project_key: { type: string, nullable: true }
-        project_name: { type: string, nullable: true }
+        project_id: { type: ["string", "null"], format: uuid }
+        project_key: { type: ["string", "null"] }
+        project_name: { type: ["string", "null"] }
         title: { type: string }
         summary: { type: string }
         scene: { type: object, additionalProperties: true, description: "Excalidraw-compatible scene JSON" }
