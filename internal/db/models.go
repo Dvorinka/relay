@@ -228,6 +228,16 @@ type IssueLabelLink struct {
 	LabelID pgtype.UUID `json:"label_id"`
 }
 
+type LinkPreview struct {
+	Url         string             `json:"url"`
+	Title       string             `json:"title"`
+	Description string             `json:"description"`
+	ImageUrl    string             `json:"image_url"`
+	SiteName    string             `json:"site_name"`
+	FetchedAt   pgtype.Timestamptz `json:"fetched_at"`
+	FailedAt    pgtype.Timestamptz `json:"failed_at"`
+}
+
 type McpToken struct {
 	ID         pgtype.UUID        `json:"id"`
 	AgentID    pgtype.UUID        `json:"agent_id"`
@@ -333,6 +343,16 @@ type RateLimit struct {
 	Count       int32              `json:"count"`
 }
 
+type Reminder struct {
+	ID        pgtype.UUID        `json:"id"`
+	UserID    pgtype.UUID        `json:"user_id"`
+	MessageID pgtype.UUID        `json:"message_id"`
+	ProjectID pgtype.UUID        `json:"project_id"`
+	FireAt    pgtype.Timestamptz `json:"fire_at"`
+	FiredAt   pgtype.Timestamptz `json:"fired_at"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type Repository struct {
 	ID             pgtype.UUID        `json:"id"`
 	ProjectID      pgtype.UUID        `json:"project_id"`
@@ -350,6 +370,12 @@ type SavedFilter struct {
 	UserID    pgtype.UUID        `json:"user_id"`
 	Name      string             `json:"name"`
 	Filters   []byte             `json:"filters"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type SavedMessage struct {
+	UserID    pgtype.UUID        `json:"user_id"`
+	MessageID pgtype.UUID        `json:"message_id"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
@@ -373,6 +399,7 @@ type User struct {
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 	NameColor    pgtype.Text        `json:"name_color"`
+	LastSeenAt   pgtype.Timestamptz `json:"last_seen_at"`
 }
 
 type WebhookDelivery struct {

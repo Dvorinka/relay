@@ -3,6 +3,7 @@ import {
   ApiClientError,
   type Attachment,
   type Conversation as ApiConversation,
+  type Mentionables,
   type Message,
   type Reaction,
   type ReadReceipt,
@@ -15,14 +16,19 @@ import {
   createResource,
   createSignal,
   For,
+  Match,
   onCleanup,
   onMount,
   Show,
+  Switch,
   createMemo,
 } from "solid-js";
 import { Portal } from "solid-js/web";
 import {
+  BookmarkIcon,
+  BotIcon,
   CheckIcon,
+  ChevronLeftIcon,
   ClockIcon,
   CopyIcon,
   DotsIcon,
@@ -62,8 +68,10 @@ import { loadNameColors, nameColorFor } from "../../lib/namecolors";
 import { mediaURL, net } from "../../lib/net";
 import { isQueuedError } from "../../lib/offline";
 import { Markdown, renderMarkdown } from "../../lib/markdown";
+import { LinkPreview } from "../../components/LinkPreview";
 import { formatBytes, initials, messagePreview } from "../../lib/text";
 import { useProjects } from "../../stores/projects";
+import { isSaved, seedSaved, toggleSaved } from "../../stores/saved";
 import { useSession } from "../../stores/session";
 import { useChatStyle, useClock } from "../../stores/theme";
 import { timeAgo, timeUntil } from "../../lib/time";
@@ -76,6 +84,13 @@ const MAX_FILE_BYTES = MAX_FILE_MIB * 1024 * 1024;
 const MAX_ATTACHMENTS = 20;
 // Quick-react set on the hover toolbar.
 const QUICK_REACTIONS = ["👀", "✅", "❤️", "🎉"];
+
+// First bare http(s) link in a body — the preview card anchors to it.
+const URL_RE = /https?:\/\/[^\s<>"'`)\]]+/;
+function firstLink(body: string): string | null {
+  const m = body.match(URL_RE);
+  return m ? m[0].replace(/[.,;:!?'"’”()\]]+$/, "") : null;
+}
 
 // Slash commands typed at the start of a draft. `args` marks commands that
 // need a tail ("/todo buy milk"); the composer suggests these when the text
@@ -589,6 +604,157 @@ function ImageLightbox(props: { url: string | undefined; filename: string }) {
           </Portal>
         )}
       </Show>
+    </>
+  );
+}
+
+// The ⋯ overflow menu on a message: the personal actions (save, remind,
+// hand to an agent) that would crowd the hover bar. Remind and Ask-agent
+// swap to a preset/agent picker inside the same menu.
+function MessageMoreMenu(props: {
+  x: number;
+  y: number;
+  saved: boolean;
+  agents: Mentionables["agents"];
+  onSave: () => void;
+  onRemind: (fireAt: Date) => void;
+  onAskAgent: (agent: Mentionables["agents"][number]) => void;
+  onClose: () => void;
+}) {
+  const [view, setView] = createSignal<"main" | "remind" | "agents">("main");
+  createEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") props.onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    onCleanup(() => window.removeEventListener("keydown", onKey));
+  });
+  const item =
+    "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] text-fg transition-colors hover:bg-hover";
+
+  // Presets evaluated at render: tonight rolls to tomorrow once 20:00
+  // has passed; next week is the coming Monday 09:00.
+  const presets = () => {
+    const now = new Date();
+    const at = (d: Date, h: number, m = 0) => {
+      const t = new Date(d);
+      t.setHours(h, m, 0, 0);
+      return t;
+    };
+    const tonight = at(now, 20);
+    const tomorrow = at(now, 9);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const monday = at(now, 9);
+    monday.setDate(monday.getDate() + ((8 - monday.getDay()) % 7 || 7));
+    return [
+      { label: "In 1 hour", at: new Date(now.getTime() + 3600_000) },
+      { label: "In 3 hours", at: new Date(now.getTime() + 3 * 3600_000) },
+      {
+        label: tonight > now ? "Tonight (20:00)" : "Tomorrow evening",
+        at: tonight > now ? tonight : at(tomorrow, 20),
+      },
+      { label: "Tomorrow 9:00", at: tomorrow },
+      { label: "Next week (Mon 9:00)", at: monday },
+    ];
+  };
+
+  return (
+    <>
+      <div
+        class="fixed inset-0 z-[60]"
+        onPointerDown={props.onClose}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          props.onClose();
+        }}
+      />
+      <div
+        class="fixed z-[61] w-56 overflow-hidden rounded-xl border border-border bg-surface p-1 shadow-xl"
+        style={{
+          left: `${Math.min(props.x, window.innerWidth - 240)}px`,
+          top: `${Math.min(props.y, window.innerHeight - 300)}px`,
+        }}
+      >
+        <Switch>
+          <Match when={view() === "main"}>
+            <button
+              type="button"
+              onClick={() => {
+                props.onClose();
+                props.onSave();
+              }}
+              class={item}
+            >
+              <BookmarkIcon class="h-4 w-4 text-faint" />
+              {props.saved ? "Remove from saved" : "Save for later"}
+            </button>
+            <button type="button" onClick={() => setView("remind")} class={item}>
+              <ClockIcon class="h-4 w-4 text-faint" />
+              Remind me…
+            </button>
+            <Show when={props.agents.length > 0}>
+              <button
+                type="button"
+                onClick={() => setView("agents")}
+                class={item}
+              >
+                <BotIcon class="h-4 w-4 text-faint" />
+                Ask agent…
+              </button>
+            </Show>
+          </Match>
+          <Match when={view() === "remind"}>
+            <button
+              type="button"
+              onClick={() => setView("main")}
+              class={`${item} text-muted`}
+            >
+              <ChevronLeftIcon class="h-4 w-4 text-faint" />
+              Remind me
+            </button>
+            <For each={presets()}>
+              {(p) => (
+                <button
+                  type="button"
+                  onClick={() => {
+                    props.onClose();
+                    props.onRemind(p.at);
+                  }}
+                  class={item}
+                >
+                  <span class="w-4" />
+                  {p.label}
+                </button>
+              )}
+            </For>
+          </Match>
+          <Match when={view() === "agents"}>
+            <button
+              type="button"
+              onClick={() => setView("main")}
+              class={`${item} text-muted`}
+            >
+              <ChevronLeftIcon class="h-4 w-4 text-faint" />
+              Ask agent
+            </button>
+            <For each={props.agents}>
+              {(a) => (
+                <button
+                  type="button"
+                  onClick={() => {
+                    props.onClose();
+                    props.onAskAgent(a);
+                  }}
+                  class={item}
+                >
+                  <BotIcon class="h-4 w-4 text-faint" />
+                  <span class="min-w-0 truncate">{a.name}</span>
+                </button>
+              )}
+            </For>
+          </Match>
+        </Switch>
+      </div>
     </>
   );
 }
@@ -1146,6 +1312,7 @@ function MessageRow(props: {
   grouped: boolean;
   meId: string | undefined;
   highlighted: boolean;
+  agents: Mentionables["agents"];
   onReply: (m: Message) => void;
   onChanged: (m: Message) => void;
   onDeleted: (id: string) => void;
@@ -1153,6 +1320,7 @@ function MessageRow(props: {
   onOpenThread?: (t: ThreadSummary) => void;
   onOpenThreads?: () => void;
   onTagClick?: (tag: string) => void;
+  onAskAgent?: (m: Message, agent: Mentionables["agents"][number]) => void;
 }) {
   const m = () => props.message;
   const { chatStyle } = useChatStyle();
@@ -1161,6 +1329,9 @@ function MessageRow(props: {
   const [deleteOpen, setDeleteOpen] = createSignal(false);
   const [threadOpen, setThreadOpen] = createSignal(false);
   const [forwardOpen, setForwardOpen] = createSignal(false);
+  const [moreMenu, setMoreMenu] = createSignal<{ x: number; y: number } | null>(
+    null,
+  );
   const [editing, setEditing] = createSignal(false);
   const [editDraft, setEditDraft] = createSignal("");
   const [editError, setEditError] = createSignal<string | null>(null);
@@ -1206,6 +1377,14 @@ function MessageRow(props: {
     if (await copyText(m().id)) {
       setCopiedId(true);
       setTimeout(() => setCopiedId(false), 1500);
+    }
+  }
+
+  async function remind(fireAt: Date) {
+    try {
+      await api.createReminder(m().id, fireAt.toISOString());
+    } catch {
+      /* validation or network — leave silent like other soft actions */
     }
   }
 
@@ -1581,6 +1760,9 @@ function MessageRow(props: {
                   mentions={m().mentions}
                 />
               </Show>
+              <Show when={firstLink(m().body)}>
+                {(url) => <LinkPreview url={url()} />}
+              </Show>
               <Show when={m().edited_at && !bubbles()}>
                 <span class="ml-0 align-middle text-[10.5px] text-faint">
                   (edited)
@@ -1832,6 +2014,19 @@ function MessageRow(props: {
               <TagIcon class="h-4 w-4" />
             </Show>
           </button>
+          <button
+            type="button"
+            title="Save, remind, ask agent"
+            aria-label="More message actions"
+            onClick={(e) => {
+              seedSaved();
+              const r = e.currentTarget.getBoundingClientRect();
+              setMoreMenu({ x: r.left, y: r.bottom + 4 });
+            }}
+            class={toolBtn}
+          >
+            <BookmarkIcon class="h-4 w-4" />
+          </button>
         </Show>
         <Show when={props.onOpenThread && !m().thread}>
           <button
@@ -1912,6 +2107,22 @@ function MessageRow(props: {
         open={forwardOpen()}
         onOpenChange={setForwardOpen}
       />
+      <Show when={moreMenu()}>
+        {(pos) => (
+          <Portal>
+            <MessageMoreMenu
+              x={pos().x}
+              y={pos().y}
+              saved={isSaved(m().id)}
+              agents={props.agents}
+              onSave={() => void toggleSaved(m().id)}
+              onRemind={(at) => void remind(at)}
+              onAskAgent={(a) => props.onAskAgent?.(m(), a)}
+              onClose={() => setMoreMenu(null)}
+            />
+          </Portal>
+        )}
+      </Show>
     </div>
   );
 }
@@ -3301,6 +3512,16 @@ function ConversationThread(props: {
     inputEl?.focus();
   }
 
+  // Ask agent: reply to the message with the agent's mention already in the
+  // draft — the mention refs machinery delivers it to the agent.
+  function askAgent(m: Message, agent: Mentionables["agents"][number]) {
+    startReply(m);
+    if (inputEl) {
+      insertAtCursor(inputEl, `@agent:${agent.slug} `);
+      inputEl.focus();
+    }
+  }
+
   return (
     <div class="relative flex min-h-0 min-w-0 flex-1 flex-col">
       <Show when={newBelow() > 0}>
@@ -3592,6 +3813,8 @@ function ConversationThread(props: {
                     onOpenThread={props.onOpenThread}
                     onOpenThreads={() => setThreadsOpen(true)}
                     onTagClick={(t) => setTagFilter(t)}
+                    agents={mentionables()?.agents ?? []}
+                    onAskAgent={askAgent}
                   />
                 </>
               );

@@ -4,6 +4,7 @@ import { render } from "solid-js/web";
 import App from "./App";
 import { deepLinkRoute, desktopOpen, onDeepLink } from "./lib/desktop";
 import { initNotify } from "./lib/notify";
+import { initPresence } from "./stores/presence";
 import { initNavSwipe } from "./stores/nav";
 import ForgotPassword from "./features/auth/ForgotPassword";
 import Login from "./features/auth/Login";
@@ -21,6 +22,7 @@ import Home from "./pages/Home";
 import Inbox from "./pages/Inbox";
 import Overview from "./pages/Overview";
 import Pulls from "./pages/Pulls";
+import Saved from "./pages/Saved";
 import AgentProfile from "./pages/AgentProfile";
 import Connect from "./pages/Connect";
 import UserProfile from "./pages/UserProfile";
@@ -31,6 +33,7 @@ import { SessionProvider, useSession } from "./stores/session";
 function NotificationsRoot() {
   const session = useSession();
   initNotify(() => session.user());
+  initPresence();
   return null;
 }
 
@@ -97,6 +100,7 @@ render(
         <Route path="/app" component={App}>
           <Route path="/" component={Home} />
           <Route path="/inbox" component={Inbox} />
+          <Route path="/saved" component={Saved} />
           <Route path="/overview" component={Overview} />
           <Route path="/pulls" component={Pulls} />
           <Route path="/p/:projectId" component={ProjectPage} />

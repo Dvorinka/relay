@@ -1532,6 +1532,26 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/messages/{messageId}/save:
+    put:
+      operationId: saveMessage
+      summary: Save a message to the caller's personal list - per-user, unlike pins
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/MessageId" } ]
+      responses:
+        "204": { description: Saved }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: unsaveMessage
+      summary: Remove a message from the caller's saved list
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/MessageId" } ]
+      responses:
+        "204": { description: Removed }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /api/conversations/{conversationId}/pins:
     get:
       operationId: listPins
@@ -3520,6 +3540,130 @@ paths:
       responses:
         "200": { description: "Grouped, ranked results" }
 
+  /api/unfurl:
+    get:
+      operationId: unfurl
+      summary: Open Graph preview for a URL, fetched server-side and cached
+      description: >-
+        Returns found=false for non-html pages, unreachable hosts, and
+        private/reserved targets — the server refuses to dial anything
+        outside global unicast space. Successful lookups cache 7 days,
+        failures 1 hour.
+      tags: [conversations]
+      parameters:
+        - { name: url, in: query, required: true, schema: { type: string, format: uri, maxLength: 2048 } }
+      responses:
+        "200":
+          description: Preview when found, otherwise just the URL
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [found, url]
+                properties:
+                  found: { type: boolean }
+                  url: { type: string }
+                  title: { type: string }
+                  description: { type: string }
+                  image_url: { type: string }
+                  site_name: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /api/me/saved:
+    get:
+      operationId: listSaved
+      summary: Messages the caller saved for later, newest first
+      tags: [conversations]
+      responses:
+        "200":
+          description: Saved messages with project context for deep links
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [messages]
+                properties:
+                  messages:
+                    type: array
+                    items: { $ref: "#/components/schemas/SavedMessage" }
+
+  /api/me/presence:
+    get:
+      operationId: presence
+      summary: User ids with at least one open event stream — i.e. online now
+      tags: [realtime]
+      responses:
+        "200":
+          description: Online user ids
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [online]
+                properties:
+                  online:
+                    type: array
+                    items: { type: string, format: uuid }
+
+  /api/reminders:
+    get:
+      operationId: listReminders
+      summary: The caller's pending reminders plus anything fired in the last 24h
+      tags: [conversations]
+      responses:
+        "200":
+          description: Reminders, pending first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reminders]
+                properties:
+                  reminders:
+                    type: array
+                    items: { $ref: "#/components/schemas/Reminder" }
+    post:
+      operationId: createReminder
+      summary: Remind the caller about a message at a future time
+      description: >-
+        fire_at must be between 1 minute and 90 days out. On fire the server
+        pushes a notification and emits a reminder.fired SSE event.
+      tags: [conversations]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message_id, fire_at]
+              properties:
+                message_id: { type: string, format: uuid }
+                fire_at: { type: string, format: date-time }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, fire_at]
+                properties:
+                  id: { type: string, format: uuid }
+                  fire_at: { type: string, format: date-time }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/reminders/{reminderId}:
+    delete:
+      operationId: deleteReminder
+      summary: Cancel a pending reminder
+      tags: [conversations]
+      parameters:
+        - { name: reminderId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Deleted }
+
   /api/me/activity:
     get:
       operationId: myActivity
@@ -4103,6 +4247,30 @@ components:
             - $ref: "#/components/schemas/MessageForwarded"
             - type: "null"
           description: "Present on forwarded copies; credits the original message"
+
+    SavedMessage:
+      allOf:
+        - $ref: "#/components/schemas/Message"
+        - type: object
+          required: [project_id, project_name, saved_at]
+          properties:
+            project_id: { type: string, format: uuid }
+            project_name: { type: string }
+            saved_at: { type: string, format: date-time }
+
+    Reminder:
+      type: object
+      required: [id, message_id, conversation_id, project_id, snippet, author_name, fire_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        message_id: { type: string, format: uuid }
+        conversation_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        snippet: { type: string, description: "First ~140 chars of the message body" }
+        author_name: { type: string }
+        fire_at: { type: string, format: date-time }
+        fired_at: { type: ["string", "null"], format: date-time }
+        created_at: { type: string, format: date-time }
 
     MessageForwarded:
       type: object

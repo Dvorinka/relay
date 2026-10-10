@@ -54,6 +54,7 @@ import {
   ChevronRightIcon,
   GitPullRequestIcon,
   GripIcon,
+  BookmarkIcon,
   InboxIcon,
   IssueIcon,
   LockIcon,
@@ -628,6 +629,15 @@ function CollapsedRail(props: { onExpand: () => void }) {
           </Show>
         </A>
       </Tip>
+      <Tip text="Saved" hint="">
+        <A
+          href="/app/saved"
+          aria-label="Saved"
+          class="flex h-9 w-9 items-center justify-center rounded-md text-muted transition-colors hover:bg-hover hover:text-fg"
+        >
+          <BookmarkIcon class="h-4 w-4" />
+        </A>
+      </Tip>
       <Show when={lastProject()}>
         {(pid) => (
           <Tip text="Ideas" hint="">
@@ -865,6 +875,10 @@ export function Rail() {
               {totalUnread() > 99 ? "99+" : totalUnread()}
             </span>
           </Show>
+        </NavItem>
+        <NavItem href="/app/saved">
+          <BookmarkIcon class="h-3.5 w-3.5" />
+          Saved
         </NavItem>
         <NavItem href="/app/overview">
           <IssueIcon class="h-3.5 w-3.5" />

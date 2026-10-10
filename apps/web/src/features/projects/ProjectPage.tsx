@@ -55,6 +55,7 @@ import { subscribe } from "../../lib/events";
 import { initials } from "../../lib/text";
 import { timeAgo } from "../../lib/time";
 import { useProjects } from "../../stores/projects";
+import { isOnline } from "../../stores/presence";
 import { useSession } from "../../stores/session";
 import { RepoPicker } from "../../components/RepoPicker";
 import { Conversation } from "../conversations/Conversation";
@@ -1166,16 +1167,21 @@ function ContextRail(props: {
                 onClick={() => openProfile(m.user.id, "user")}
                 class="flex items-center gap-2.5 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-hover"
               >
-                <Avatar.Root class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface">
-                  <Avatar.Fallback class="text-[10px] font-semibold text-muted">
-                    {initials(m.user.name)}
-                  </Avatar.Fallback>
-                  <Avatar.Image
-                    src={mediaURL(m.user.avatar_url)}
-                    alt=""
-                    class="h-full w-full rounded-full object-cover"
-                  />
-                </Avatar.Root>
+                <span class="relative shrink-0">
+                  <Avatar.Root class="flex h-6 w-6 items-center justify-center rounded-full bg-surface">
+                    <Avatar.Fallback class="text-[10px] font-semibold text-muted">
+                      {initials(m.user.name)}
+                    </Avatar.Fallback>
+                    <Avatar.Image
+                      src={mediaURL(m.user.avatar_url)}
+                      alt=""
+                      class="h-full w-full rounded-full object-cover"
+                    />
+                  </Avatar.Root>
+                  <Show when={isOnline(m.user.id)}>
+                    <span class="absolute -bottom-px -right-px h-2 w-2 rounded-full border border-surface bg-emerald-500" />
+                  </Show>
+                </span>
                 <span class="min-w-0 flex-1 truncate text-[12.5px]">
                   {m.user.name}
                   <Show when={m.user.id === session.user()?.id}>

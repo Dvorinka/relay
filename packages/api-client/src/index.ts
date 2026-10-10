@@ -36,6 +36,16 @@ export interface Mentionables {
 }
 export type Reaction = components["schemas"]["Reaction"];
 export type ReadReceipt = components["schemas"]["ReadReceipt"];
+export type SavedMessage = components["schemas"]["SavedMessage"];
+export type Reminder = components["schemas"]["Reminder"];
+export interface UnfurlResult {
+  found: boolean;
+  url: string;
+  title?: string;
+  description?: string;
+  image_url?: string;
+  site_name?: string;
+}
 // One unread conversation: which channel/issue/brief/thread holds unread
 // messages, with the ids needed to deep-link straight to them.
 export interface UnreadConversation {
@@ -593,6 +603,23 @@ export function createClient(
       request<{ messages: Message[] }>(
         `/api/conversations/${conversationId}/pins`,
       ),
+    saveMessage: (messageId: string, saved: boolean) =>
+      request<void>(`/api/messages/${messageId}/save`, {
+        method: saved ? "PUT" : "DELETE",
+      }),
+    listSaved: () => request<{ messages: SavedMessage[] }>("/api/me/saved"),
+    createReminder: (messageId: string, fireAt: string) =>
+      post<{ id: string; fire_at: string }>("/api/reminders", {
+        message_id: messageId,
+        fire_at: fireAt,
+      }),
+    listReminders: () =>
+      request<{ reminders: Reminder[] }>("/api/reminders"),
+    deleteReminder: (reminderId: string) =>
+      request<void>(`/api/reminders/${reminderId}`, { method: "DELETE" }),
+    unfurl: (url: string) =>
+      request<UnfurlResult>(`/api/unfurl?url=${encodeURIComponent(url)}`),
+    presence: () => request<{ online: string[] }>("/api/me/presence"),
     forwardMessage: (messageId: string, projectId: string) =>
       post<{ message: Message }>(`/api/messages/${messageId}/forward`, {
         project_id: projectId,

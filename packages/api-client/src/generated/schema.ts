@@ -916,6 +916,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/messages/{messageId}/save": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Save a message to the caller's personal list - per-user, unlike pins */
+        put: operations["saveMessage"];
+        post?: never;
+        /** Remove a message from the caller's saved list */
+        delete: operations["unsaveMessage"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/conversations/{conversationId}/pins": {
         parameters: {
             query?: never;
@@ -2224,6 +2242,98 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/unfurl": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Open Graph preview for a URL, fetched server-side and cached
+         * @description Returns found=false for non-html pages, unreachable hosts, and private/reserved targets — the server refuses to dial anything outside global unicast space. Successful lookups cache 7 days, failures 1 hour.
+         */
+        get: operations["unfurl"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/saved": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Messages the caller saved for later, newest first */
+        get: operations["listSaved"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/me/presence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** User ids with at least one open event stream — i.e. online now */
+        get: operations["presence"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reminders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's pending reminders plus anything fired in the last 24h */
+        get: operations["listReminders"];
+        put?: never;
+        /**
+         * Remind the caller about a message at a future time
+         * @description fire_at must be between 1 minute and 90 days out. On fire the server pushes a notification and emits a reminder.fired SSE event.
+         */
+        post: operations["createReminder"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reminders/{reminderId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Cancel a pending reminder */
+        delete: operations["deleteReminder"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/activity": {
         parameters: {
             query?: never;
@@ -2657,6 +2767,32 @@ export interface components {
             pinned_at?: string | null;
             /** @description Present on forwarded copies; credits the original message */
             forwarded?: components["schemas"]["MessageForwarded"] | null;
+        };
+        SavedMessage: components["schemas"]["Message"] & {
+            /** Format: uuid */
+            project_id: string;
+            project_name: string;
+            /** Format: date-time */
+            saved_at: string;
+        };
+        Reminder: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            message_id: string;
+            /** Format: uuid */
+            conversation_id: string;
+            /** Format: uuid */
+            project_id: string;
+            /** @description First ~140 chars of the message body */
+            snippet: string;
+            author_name: string;
+            /** Format: date-time */
+            fire_at: string;
+            /** Format: date-time */
+            fired_at?: string | null;
+            /** Format: date-time */
+            created_at: string;
         };
         MessageForwarded: {
             /** Format: uuid */
@@ -5074,6 +5210,50 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Message"];
                 };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    saveMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                messageId: components["parameters"]["MessageId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Saved */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    unsaveMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                messageId: components["parameters"]["MessageId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
@@ -7870,6 +8050,159 @@ export interface operations {
         responses: {
             /** @description Grouped, ranked results */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    unfurl: {
+        parameters: {
+            query: {
+                url: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Preview when found, otherwise just the URL */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        found: boolean;
+                        url: string;
+                        title?: string;
+                        description?: string;
+                        image_url?: string;
+                        site_name?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    listSaved: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Saved messages with project context for deep links */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        messages: components["schemas"]["SavedMessage"][];
+                    };
+                };
+            };
+        };
+    };
+    presence: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Online user ids */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        online: string[];
+                    };
+                };
+            };
+        };
+    };
+    listReminders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Reminders, pending first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        reminders: components["schemas"]["Reminder"][];
+                    };
+                };
+            };
+        };
+    };
+    createReminder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    message_id: string;
+                    /** Format: date-time */
+                    fire_at: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        id: string;
+                        /** Format: date-time */
+                        fire_at: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteReminder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                reminderId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -114,6 +114,19 @@ export function initNotify(me: () => Me | null) {
       void deliver("Relay", "An agent requested a work review");
       return;
     }
+    // Reminders fire for their owner regardless of category — the user
+    // explicitly asked for this one.
+    if (e.type === "reminder.fired") {
+      const d = e.data as
+        | { user_id?: string; author?: string; snippet?: string }
+        | undefined;
+      if (d?.user_id && d.user_id !== me()?.id) return;
+      void deliver(
+        `Reminder${d?.author ? `: ${d.author}` : ""}`,
+        d?.snippet ?? "A message you saved for later",
+      );
+      return;
+    }
     if (e.type !== "message.created") return;
     const user = me();
     if (!user) return;

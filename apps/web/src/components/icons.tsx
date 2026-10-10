@@ -436,6 +436,23 @@ export function ClockIcon(props: IconProps): JSX.Element {
   );
 }
 
+export function BookmarkIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      class={props.class}
+      aria-hidden="true"
+    >
+      <path d="M4.5 2.5h7a.5.5 0 01.5.5v10.5l-4-2.8-4 2.8V3a.5.5 0 01.5-.5z" />
+    </svg>
+  );
+}
+
 export function PinIcon(props: IconProps): JSX.Element {
   return (
     <svg
