@@ -841,7 +841,7 @@ paths:
   /api/workspaces/{workspaceId}/ideas:
     get:
       operationId: listWorkspaceIdeas
-      summary: Every idea across the workspace's projects — the Ideas page feed
+      summary: Every idea in the workspace — the Ideas page feed
       tags: [ideas]
       parameters:
         - { $ref: "#/components/parameters/WorkspaceId" }
@@ -856,6 +856,30 @@ paths:
                   ideas:
                     type: array
                     items: { $ref: "#/components/schemas/Idea" }
+    post:
+      operationId: createWorkspaceIdea
+      summary: Create an idea scoped to the workspace; project_id optional (omit for platform-wide)
+      tags: [ideas]
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string, minLength: 1, maxLength: 200 }
+                summary: { type: string }
+                scene: { type: object, additionalProperties: true, description: "Excalidraw-compatible scene" }
+                project_id: { type: string, format: uuid, description: "Attach to this project; omit for platform-wide" }
+      responses:
+        "201":
+          description: Created idea
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Idea" }
 
   /api/ideas/{ideaId}:
     get:
@@ -888,6 +912,7 @@ paths:
                 summary: { type: string }
                 status: { type: string, enum: [open, converted, archived] }
                 scene: { type: object, additionalProperties: true }
+                project_id: { type: string, format: uuid, description: "Attach to a project in the idea's workspace" }
       responses:
         "200":
           description: Updated idea
@@ -924,6 +949,7 @@ paths:
                 title: { type: string, description: "Defaults to the idea title" }
                 description: { type: string, description: "Defaults to the idea summary" }
                 key: { type: string, pattern: "^[A-Z0-9]{2,6}$", description: "Required for kind=project" }
+                project_id: { type: string, format: uuid, description: "Target project — required for kind=issue on platform-wide ideas" }
       responses:
         "201":
           description: Created issue or project
@@ -4029,12 +4055,13 @@ components:
 
     Idea:
       type: object
-      required: [id, project_id, title, summary, scene, status]
+      required: [id, workspace_id, title, summary, scene, status]
       properties:
         id: { type: string, format: uuid }
-        project_id: { type: string, format: uuid }
-        project_key: { type: string }
-        project_name: { type: string }
+        workspace_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid, nullable: true }
+        project_key: { type: string, nullable: true }
+        project_name: { type: string, nullable: true }
         title: { type: string }
         summary: { type: string }
         scene: { type: object, additionalProperties: true, description: "Excalidraw-compatible scene JSON" }

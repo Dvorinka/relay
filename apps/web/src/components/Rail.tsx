@@ -404,25 +404,6 @@ function ProjectChildren(props: { project: Project }) {
   );
 }
 
-// The rail's bottom-pinned items (Ideas) need a "current project" that
-// follows whatever project page is open and survives reloads — the route
-// params aren't reachable from the rail, so the pathname is parsed and
-// the pick is remembered in localStorage.
-function useLastProject() {
-  const location = useLocation();
-  const [last, setLast] = createSignal(
-    localStorage.getItem("relay.lastProject") ?? "",
-  );
-  createEffect(() => {
-    const m = /^\/app\/p\/([^/]+)/.exec(location.pathname);
-    if (m && m[1] !== last()) {
-      setLast(m[1]!);
-      localStorage.setItem("relay.lastProject", m[1]!);
-    }
-  });
-  return last;
-}
-
 function NewProjectForm(props: { onDone: () => void }) {
   const session = useSession();
   const projects = useProjects();
@@ -595,7 +576,6 @@ function CollapsedRail(props: { onExpand: () => void }) {
   const session = useSession();
   const { unread } = useUnread();
   const { pendingReviews } = usePendingReviews();
-  const lastProject = useLastProject();
   const active = activeWorkspace(session.workspaces);
   const list = () =>
     projects
@@ -638,19 +618,15 @@ function CollapsedRail(props: { onExpand: () => void }) {
           <BookmarkIcon class="h-4 w-4" />
         </A>
       </Tip>
-      <Show when={lastProject()}>
-        {(pid) => (
-          <Tip text="Ideas" hint="">
-            <A
-              href={`/app/p/${pid()}/ideas`}
-              aria-label="Ideas"
-              class="flex h-9 w-9 items-center justify-center rounded-md text-muted transition-colors hover:bg-hover hover:text-fg"
-            >
-              <BulbIcon class="h-4 w-4" />
-            </A>
-          </Tip>
-        )}
-      </Show>
+      <Tip text="Ideas" hint="">
+        <A
+          href="/app/ideas"
+          aria-label="Ideas"
+          class="flex h-9 w-9 items-center justify-center rounded-md text-muted transition-colors hover:bg-hover hover:text-fg"
+        >
+          <BulbIcon class="h-4 w-4" />
+        </A>
+      </Tip>
       <For each={list()}>
         {(p) => {
           const n = () => unread()[p.id] ?? 0;
@@ -780,8 +756,6 @@ export function Rail() {
   const { unread } = useUnread();
   const totalUnread = () =>
     Object.values(unread()).reduce((s, n) => s + n, 0);
-  const lastProject = useLastProject();
-  const ideasProject = () => lastProject() || list()[0]?.id || "";
 
   // Width + collapse persist; dragging the right edge resizes (left rail, so
   // dragging right grows it). The mobile drawer ignores both and stays w-64.
@@ -930,14 +904,10 @@ export function Rail() {
       </div>
 
       <div class="mt-auto flex flex-col gap-0.5 border-t border-border p-2">
-        <Show when={ideasProject()}>
-          {(pid) => (
-            <NavItem href={`/app/p/${pid()}/ideas`}>
-              <BulbIcon class="h-3.5 w-3.5" />
-              Ideas
-            </NavItem>
-          )}
-        </Show>
+        <NavItem href="/app/ideas">
+          <BulbIcon class="h-3.5 w-3.5" />
+          Ideas
+        </NavItem>
         <VersionFooter />
         <NavItem href="/app/settings">
           <SettingsIcon class="h-3.5 w-3.5" />

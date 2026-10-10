@@ -48,6 +48,34 @@ func (q *Queries) AgentScopeForProject(ctx context.Context, arg AgentScopeForPro
 	return scopes, err
 }
 
+const agentScopeForWorkspace = `-- name: AgentScopeForWorkspace :one
+select coalesce(array_agg(distinct s), '{}'::text[])::text[] as scopes
+from (
+    select unnest(case when a.grant_all then a.grant_scopes
+                       else coalesce(g.scopes, '{}'::text[]) end) as s
+    from agents a
+    left join agent_project_permissions g on g.agent_id = a.id
+    left join projects p on p.id = g.project_id
+    where a.id = $1
+      and (p.workspace_id = $2
+           or (a.grant_all and a.workspace_id = $2))
+) t
+`
+
+type AgentScopeForWorkspaceParams struct {
+	AgentID     pgtype.UUID `json:"agent_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// union of scopes the agent holds anywhere in a workspace — used for
+// workspace-level resources (platform ideas) that no single project owns.
+func (q *Queries) AgentScopeForWorkspace(ctx context.Context, arg AgentScopeForWorkspaceParams) ([]string, error) {
+	row := q.db.QueryRow(ctx, agentScopeForWorkspace, arg.AgentID, arg.WorkspaceID)
+	var scopes []string
+	err := row.Scan(&scopes)
+	return scopes, err
+}
+
 const agentSlugExists = `-- name: AgentSlugExists :one
 select exists (select 1 from agents where workspace_id = $1 and slug = $2)
 `

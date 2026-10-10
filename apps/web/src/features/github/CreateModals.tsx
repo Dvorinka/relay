@@ -1,13 +1,13 @@
 import {
   createResource,
   createSignal,
-  For,
   onCleanup,
   Show,
 } from "solid-js";
 import { api } from "../../lib/api";
 import { XIcon } from "../../components/icons";
 import { inputClass, Spinner } from "../../components/ui";
+import { Select } from "../../components/Select";
 
 // In-app "file a GitHub issue" / "open a pull request" modals — the created
 // item is mirrored back as a Relay issue server-side, so it appears on the
@@ -190,33 +190,35 @@ function CreatePullModal(props: {
         </p>
       </Show>
       <div class="flex items-center gap-2">
-        <select
-          class={`${inputClass} flex-1`}
+        <Select
+          class="flex-1"
+          ariaLabel="Head branch"
           value={head()}
-          onChange={(e) => setHead(e.currentTarget.value)}
-        >
-          <option value="">head branch…</option>
-          <For each={branches()?.branches ?? []}>
-            {(b) => <option value={b.name}>{b.name}</option>}
-          </For>
-        </select>
+          onChange={setHead}
+          options={[
+            { value: "", label: "head branch…" },
+            ...(branches()?.branches ?? []).map((b) => ({
+              value: b.name,
+              label: b.name,
+            })),
+          ]}
+        />
         <span class="text-muted">→</span>
-        <select
-          class={`${inputClass} flex-1`}
+        <Select
+          class="flex-1"
+          ariaLabel="Base branch"
           value={base()}
-          onChange={(e) => setBase(e.currentTarget.value)}
-        >
-          <option value={branches()?.default_branch ?? "main"}>
-            {branches()?.default_branch ?? "main"} (default)
-          </option>
-          <For
-            each={(branches()?.branches ?? []).filter(
-              (b) => b.name !== branches()?.default_branch,
-            )}
-          >
-            {(b) => <option value={b.name}>{b.name}</option>}
-          </For>
-        </select>
+          onChange={setBase}
+          options={[
+            {
+              value: branches()?.default_branch ?? "main",
+              label: `${branches()?.default_branch ?? "main"} (default)`,
+            },
+            ...(branches()?.branches ?? [])
+              .filter((b) => b.name !== branches()?.default_branch)
+              .map((b) => ({ value: b.name, label: b.name })),
+          ]}
+        />
       </div>
       <input
         class={`${inputClass} mt-2 w-full`}

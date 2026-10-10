@@ -11,6 +11,7 @@ import { subscribe } from "../../lib/events";
 import { Markdown } from "../../lib/markdown";
 import { timeAgo } from "../../lib/time";
 import { FormError, Spinner } from "../../components/ui";
+import { Select } from "../../components/Select";
 import { confirmDestructive } from "../../components/Confirm";
 import { markGitHub } from "./GitHub";
 import { openCommit } from "./CommitModal";
@@ -251,19 +252,17 @@ function PRBody(props: {
             when={!confirming()}
             fallback={
               <>
-                <select
+                <Select
                   value={method()}
-                  onChange={(e) =>
-                    setMethod(
-                      e.currentTarget.value as "merge" | "squash" | "rebase",
-                    )
-                  }
-                  class="rounded border border-border bg-transparent px-2 py-1 text-[12px]"
-                >
-                  <option value="merge">Merge commit</option>
-                  <option value="squash">Squash and merge</option>
-                  <option value="rebase">Rebase and merge</option>
-                </select>
+                  onChange={(v) => setMethod(v as "merge" | "squash" | "rebase")}
+                  ariaLabel="Merge method"
+                  triggerClass="rounded border border-border bg-transparent px-2 py-1 text-[12px]"
+                  options={[
+                    { value: "merge", label: "Merge commit" },
+                    { value: "squash", label: "Squash and merge" },
+                    { value: "rebase", label: "Rebase and merge" },
+                  ]}
+                />
                 <button
                   type="button"
                   disabled={!canMerge()}

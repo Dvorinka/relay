@@ -7,6 +7,7 @@ import type {
 import { A, useParams } from "@solidjs/router";
 import { createResource, createSignal, For, Show } from "solid-js";
 import { FormError, Spinner } from "../../components/ui";
+import { Select } from "../../components/Select";
 import { api } from "../../lib/api";
 import { Markdown } from "../../lib/markdown";
 import { timeAgo } from "../../lib/time";
@@ -200,16 +201,16 @@ function PushToGitHub(props: {
     <Show when={repos() && repos()!.length > 0}>
       <div class="flex items-center gap-1.5">
         <Show when={repos()!.length > 1}>
-          <select
-            class="rounded border border-border bg-surface px-1.5 py-0.5 text-[11px] text-muted"
+          <Select
+            ariaLabel="Repository"
             value={repoId()}
-            onChange={(e) => setRepoId(e.currentTarget.value)}
-          >
-            <option value="">Pick repo…</option>
-            <For each={repos()}>
-              {(r) => <option value={r.id}>{r.full_name}</option>}
-            </For>
-          </select>
+            onChange={setRepoId}
+            triggerClass="rounded border border-border bg-surface px-1.5 py-0.5 text-[11px] text-muted"
+            options={[
+              { value: "", label: "Pick repo…" },
+              ...repos()!.map((r) => ({ value: r.id, label: r.full_name })),
+            ]}
+          />
         </Show>
         <button
           type="button"

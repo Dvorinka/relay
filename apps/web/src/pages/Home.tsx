@@ -11,6 +11,7 @@ import type { ActivityIssue, ActivityMessage, Project } from "@relay/api-client"
 import { api } from "../lib/api";
 import { subscribe } from "../lib/events";
 import { FullPageSpinner, inputClass } from "../components/ui";
+import { Select } from "../components/Select";
 import { GripIcon, SearchIcon } from "../components/icons";
 import { mediaURL } from "../lib/net";
 import { messagePreview } from "../lib/text";
@@ -150,16 +151,16 @@ export default function Home() {
                 class={`${inputClass} !pl-8`}
               />
             </div>
-            <select
+            <Select
               value={projectSort()}
-              onChange={(e) => setProjectSort(e.currentTarget.value as ProjectSort)}
-              aria-label="Sort projects"
-              class={`${inputClass} !w-auto`}
-            >
-              <option value="activity">Active first</option>
-              <option value="name">Name</option>
-              <option value="manual">Manual</option>
-            </select>
+              onChange={(v) => setProjectSort(v as ProjectSort)}
+              ariaLabel="Sort projects"
+              options={[
+                { value: "activity", label: "Active first" },
+                { value: "name", label: "Name" },
+                { value: "manual", label: "Manual" },
+              ]}
+            />
           </div>
 
           <Show when={projectSort() === "manual"}>
@@ -407,13 +408,14 @@ function ProjectCard(props: {
           {p().description}
         </p>
       </A>
-      <div class="flex items-center gap-x-3 gap-y-1 border-t border-border/60 px-4 py-2 text-[11.5px] text-muted">
-        <Show when={stats().length > 0} fallback={<span>empty</span>}>
-          <For each={stats()}>
-            {(s) => <span class="whitespace-nowrap">{s}</span>}
-          </For>
-        </Show>
-        <span class="ml-auto shrink-0 text-faint">
+      <div class="flex items-center gap-2 border-t border-border/60 px-4 py-2 text-[11.5px] text-muted">
+        <span
+          class="min-w-0 flex-1 truncate"
+          title={stats().join(" · ")}
+        >
+          {stats().length > 0 ? stats().join(" · ") : "empty"}
+        </span>
+        <span class="shrink-0 text-faint">
           {p().last_activity_at ? `active ${timeAgo(p().last_activity_at!)}` : ""}
         </span>
       </div>

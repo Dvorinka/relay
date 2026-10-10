@@ -5,6 +5,7 @@ import { ApiClientError } from "@relay/api-client";
 import { statusDefs } from "./meta";
 import { CheckIcon, PlusIcon, XIcon } from "../../components/icons";
 import { ColorField, inputClass, primaryButtonClass } from "../../components/ui";
+import { Select } from "../../components/Select";
 
 // Project-level customization: issue lanes (custom statuses), the linked
 // local folder and the visual-brief policy. Rendered inside the project's
@@ -163,18 +164,16 @@ export function ProjectConfigSections(props: {
       </p>
 
       <h3 class="mb-2 mt-6 text-[13px] font-semibold">Visual briefs</h3>
-      <select
+      <Select
         value={policy()}
-        onChange={(e) =>
-          setPolicy(e.currentTarget.value as BriefPolicy)
-        }
-        aria-label="Brief policy"
-        class={inputClass}
-      >
-        <option value="on_request">On request — agents explain when asked</option>
-        <option value="pre_merge">Pre-merge — expected before approvals</option>
-        <option value="never">Never — briefs disabled</option>
-      </select>
+        onChange={(v) => setPolicy(v as BriefPolicy)}
+        ariaLabel="Brief policy"
+        options={[
+          { value: "on_request", label: "On request — agents explain when asked" },
+          { value: "pre_merge", label: "Pre-merge — expected before approvals" },
+          { value: "never", label: "Never — briefs disabled" },
+        ]}
+      />
       <p class="mt-1.5 text-[11px] text-muted/70">
         Controls when agents should post Excalidraw-style diagrams
         explaining their work. Agents read this through the{" "}

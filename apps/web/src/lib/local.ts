@@ -1084,9 +1084,41 @@ const impl = {
     if (!p) notFound();
     const i: Idea = {
       id: uuid(),
+      workspace_id: p.workspace_id,
       project_id: projectId,
       project_key: p.key,
       project_name: p.name,
+      title: input.title,
+      summary: input.summary ?? "",
+      scene: input.scene ?? {},
+      status: "open",
+      author_name: db.user.name,
+      created_at: now(),
+      updated_at: now(),
+    };
+    db.ideas.push(i);
+    save();
+    return i;
+  },
+  createWorkspaceIdea: async (
+    workspaceId: string,
+    input: {
+      title: string;
+      summary?: string;
+      scene?: Record<string, unknown>;
+      project_id?: string;
+    },
+  ): Promise<Idea> => {
+    const p = input.project_id
+      ? db.projects.find((x) => x.id === input.project_id)
+      : undefined;
+    if (input.project_id && !p) notFound();
+    const i: Idea = {
+      id: uuid(),
+      workspace_id: workspaceId,
+      project_id: p?.id ?? null,
+      project_key: p?.key ?? null,
+      project_name: p?.name ?? null,
       title: input.title,
       summary: input.summary ?? "",
       scene: input.scene ?? {},
@@ -1111,6 +1143,7 @@ const impl = {
       summary?: string;
       status?: "open" | "converted" | "archived";
       scene?: Record<string, unknown>;
+      project_id?: string;
     },
   ) => {
     const i = db.ideas.find((x) => x.id === ideaId);
@@ -1119,6 +1152,13 @@ const impl = {
     if (input.summary != null) i.summary = input.summary;
     if (input.status != null) i.status = input.status;
     if (input.scene != null) i.scene = input.scene;
+    if (input.project_id != null) {
+      const p = db.projects.find((x) => x.id === input.project_id);
+      if (!p) notFound();
+      i.project_id = p.id;
+      i.project_key = p.key;
+      i.project_name = p.name;
+    }
     i.updated_at = now();
     save();
     return i;
@@ -1134,6 +1174,7 @@ const impl = {
       title?: string;
       description?: string;
       key?: string;
+      project_id?: string;
     },
   ) => {
     const i = db.ideas.find((x) => x.id === ideaId);
@@ -1143,7 +1184,9 @@ const impl = {
     i.status = "converted";
     i.updated_at = now();
     if (input.kind === "issue") {
-      const issue = await local.createIssue(i.project_id, {
+      const pid = input.project_id ?? i.project_id;
+      if (!pid) throw new Error("target project required");
+      const issue = await local.createIssue(pid, {
         title,
         description: desc,
       });

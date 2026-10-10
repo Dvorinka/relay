@@ -23,6 +23,7 @@ import {
   primaryButtonClass,
   Tip,
 } from "../../components/ui";
+import { Select } from "../../components/Select";
 import {
   DownloadIcon,
   MoonIcon,
@@ -168,6 +169,7 @@ function MemberList(props: { workspaceId: string; canInvite: boolean }) {
     async (id) => (await api.listWorkspaceMembers(id)).members,
   );
   const [inviteError, setInviteError] = createSignal<string | null>(null);
+  const [inviteRole, setInviteRole] = createSignal("member");
   const [pending, setPending] = createSignal(false);
 
   async function onInvite(e: SubmitEvent) {
@@ -232,10 +234,16 @@ function MemberList(props: { workspaceId: string; canInvite: boolean }) {
               aria-label="Invite email"
               class={inputClass}
             />
-            <select name="role" class={inputClass} aria-label="Role">
-              <option value="member">member</option>
-              <option value="admin">admin</option>
-            </select>
+            <input type="hidden" name="role" value={inviteRole()} />
+            <Select
+              value={inviteRole()}
+              onChange={setInviteRole}
+              ariaLabel="Role"
+              options={[
+                { value: "member", label: "member" },
+                { value: "admin", label: "admin" },
+              ]}
+            />
           </div>
           <FormError message={inviteError()} />
           <div>

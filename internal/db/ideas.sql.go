@@ -12,13 +12,14 @@ import (
 )
 
 const createIdea = `-- name: CreateIdea :one
-insert into ideas (project_id, title, summary, scene, created_by_user, created_by_agent)
-values ($1, $2, $3, $4,
-        $5, $6)
-returning id, project_id, title, summary, scene, status, created_by_user, created_by_agent, created_at, updated_at
+insert into ideas (workspace_id, project_id, title, summary, scene, created_by_user, created_by_agent)
+values ($1, $2, $3, $4, $5,
+        $6, $7)
+returning id, project_id, title, summary, scene, status, created_by_user, created_by_agent, created_at, updated_at, workspace_id
 `
 
 type CreateIdeaParams struct {
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
 	ProjectID      pgtype.UUID `json:"project_id"`
 	Title          string      `json:"title"`
 	Summary        string      `json:"summary"`
@@ -29,6 +30,7 @@ type CreateIdeaParams struct {
 
 func (q *Queries) CreateIdea(ctx context.Context, arg CreateIdeaParams) (Idea, error) {
 	row := q.db.QueryRow(ctx, createIdea,
+		arg.WorkspaceID,
 		arg.ProjectID,
 		arg.Title,
 		arg.Summary,
@@ -48,6 +50,7 @@ func (q *Queries) CreateIdea(ctx context.Context, arg CreateIdeaParams) (Idea, e
 		&i.CreatedByAgent,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.WorkspaceID,
 	)
 	return i, err
 }
@@ -62,11 +65,11 @@ func (q *Queries) DeleteIdea(ctx context.Context, id pgtype.UUID) error {
 }
 
 const getIdea = `-- name: GetIdea :one
-select i.id, i.project_id, i.title, i.summary, i.scene, i.status, i.created_by_user, i.created_by_agent, i.created_at, i.updated_at, p.key as project_key, p.name as project_name,
+select i.id, i.project_id, i.title, i.summary, i.scene, i.status, i.created_by_user, i.created_by_agent, i.created_at, i.updated_at, i.workspace_id, p.key as project_key, p.name as project_name,
        coalesce(u.name, a.name, '') as author_name,
        coalesce(u.id is not null, false) as author_is_user
 from ideas i
-join projects p on p.id = i.project_id
+left join projects p on p.id = i.project_id
 left join users u on u.id = i.created_by_user
 left join agents a on a.id = i.created_by_agent
 where i.id = $1
@@ -83,8 +86,9 @@ type GetIdeaRow struct {
 	CreatedByAgent pgtype.UUID        `json:"created_by_agent"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-	ProjectKey     string             `json:"project_key"`
-	ProjectName    string             `json:"project_name"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	ProjectKey     pgtype.Text        `json:"project_key"`
+	ProjectName    pgtype.Text        `json:"project_name"`
 	AuthorName     string             `json:"author_name"`
 	AuthorIsUser   interface{}        `json:"author_is_user"`
 }
@@ -103,6 +107,7 @@ func (q *Queries) GetIdea(ctx context.Context, id pgtype.UUID) (GetIdeaRow, erro
 		&i.CreatedByAgent,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.WorkspaceID,
 		&i.ProjectKey,
 		&i.ProjectName,
 		&i.AuthorName,
@@ -112,7 +117,7 @@ func (q *Queries) GetIdea(ctx context.Context, id pgtype.UUID) (GetIdeaRow, erro
 }
 
 const listProjectIdeas = `-- name: ListProjectIdeas :many
-select i.id, i.project_id, i.title, i.summary, i.scene, i.status, i.created_by_user, i.created_by_agent, i.created_at, i.updated_at, p.key as project_key, p.name as project_name,
+select i.id, i.project_id, i.title, i.summary, i.scene, i.status, i.created_by_user, i.created_by_agent, i.created_at, i.updated_at, i.workspace_id, p.key as project_key, p.name as project_name,
        coalesce(u.name, a.name, '') as author_name
 from ideas i
 join projects p on p.id = i.project_id
@@ -133,6 +138,7 @@ type ListProjectIdeasRow struct {
 	CreatedByAgent pgtype.UUID        `json:"created_by_agent"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
 	ProjectKey     string             `json:"project_key"`
 	ProjectName    string             `json:"project_name"`
 	AuthorName     string             `json:"author_name"`
@@ -158,6 +164,7 @@ func (q *Queries) ListProjectIdeas(ctx context.Context, projectID pgtype.UUID) (
 			&i.CreatedByAgent,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.WorkspaceID,
 			&i.ProjectKey,
 			&i.ProjectName,
 			&i.AuthorName,
@@ -173,13 +180,13 @@ func (q *Queries) ListProjectIdeas(ctx context.Context, projectID pgtype.UUID) (
 }
 
 const listWorkspaceIdeas = `-- name: ListWorkspaceIdeas :many
-select i.id, i.project_id, i.title, i.summary, i.scene, i.status, i.created_by_user, i.created_by_agent, i.created_at, i.updated_at, p.key as project_key, p.name as project_name,
+select i.id, i.project_id, i.title, i.summary, i.scene, i.status, i.created_by_user, i.created_by_agent, i.created_at, i.updated_at, i.workspace_id, p.key as project_key, p.name as project_name,
        coalesce(u.name, a.name, '') as author_name
 from ideas i
-join projects p on p.id = i.project_id
+left join projects p on p.id = i.project_id
 left join users u on u.id = i.created_by_user
 left join agents a on a.id = i.created_by_agent
-where p.workspace_id = $1
+where i.workspace_id = $1
 order by i.updated_at desc
 `
 
@@ -194,13 +201,14 @@ type ListWorkspaceIdeasRow struct {
 	CreatedByAgent pgtype.UUID        `json:"created_by_agent"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-	ProjectKey     string             `json:"project_key"`
-	ProjectName    string             `json:"project_name"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	ProjectKey     pgtype.Text        `json:"project_key"`
+	ProjectName    pgtype.Text        `json:"project_name"`
 	AuthorName     string             `json:"author_name"`
 }
 
-// every idea across the projects in one workspace — the Ideas page feed.
-// Membership is enforced by the route gate; the query just scopes the rows.
+// every idea in the workspace, platform-wide ones (null project) included —
+// the Ideas page feed. Membership is enforced by the route gate.
 func (q *Queries) ListWorkspaceIdeas(ctx context.Context, workspaceID pgtype.UUID) ([]ListWorkspaceIdeasRow, error) {
 	rows, err := q.db.Query(ctx, listWorkspaceIdeas, workspaceID)
 	if err != nil {
@@ -221,6 +229,7 @@ func (q *Queries) ListWorkspaceIdeas(ctx context.Context, workspaceID pgtype.UUI
 			&i.CreatedByAgent,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.WorkspaceID,
 			&i.ProjectKey,
 			&i.ProjectName,
 			&i.AuthorName,
@@ -241,17 +250,19 @@ update ideas set
   summary = coalesce($2, summary),
   scene   = coalesce($3, scene),
   status  = coalesce($4, status),
+  project_id = coalesce($5, project_id),
   updated_at = now()
-where id = $5
-returning id, project_id, title, summary, scene, status, created_by_user, created_by_agent, created_at, updated_at
+where id = $6
+returning id, project_id, title, summary, scene, status, created_by_user, created_by_agent, created_at, updated_at, workspace_id
 `
 
 type UpdateIdeaParams struct {
-	Title   pgtype.Text `json:"title"`
-	Summary pgtype.Text `json:"summary"`
-	Scene   []byte      `json:"scene"`
-	Status  pgtype.Text `json:"status"`
-	ID      pgtype.UUID `json:"id"`
+	Title     pgtype.Text `json:"title"`
+	Summary   pgtype.Text `json:"summary"`
+	Scene     []byte      `json:"scene"`
+	Status    pgtype.Text `json:"status"`
+	ProjectID pgtype.UUID `json:"project_id"`
+	ID        pgtype.UUID `json:"id"`
 }
 
 func (q *Queries) UpdateIdea(ctx context.Context, arg UpdateIdeaParams) (Idea, error) {
@@ -260,6 +271,7 @@ func (q *Queries) UpdateIdea(ctx context.Context, arg UpdateIdeaParams) (Idea, e
 		arg.Summary,
 		arg.Scene,
 		arg.Status,
+		arg.ProjectID,
 		arg.ID,
 	)
 	var i Idea
@@ -274,6 +286,7 @@ func (q *Queries) UpdateIdea(ctx context.Context, arg UpdateIdeaParams) (Idea, e
 		&i.CreatedByAgent,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.WorkspaceID,
 	)
 	return i, err
 }

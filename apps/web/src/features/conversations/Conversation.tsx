@@ -59,6 +59,7 @@ import {
   SubmitButton,
   Tip,
 } from "../../components/ui";
+import { Select } from "../../components/Select";
 import { api } from "../../lib/api";
 import { copyImage, copyText } from "../../lib/clipboard";
 import { confirmDestructive } from "../../components/Confirm";
@@ -864,19 +865,16 @@ function ConvertToIssueDialog(props: {
                   />
                   Also open on GitHub
                   <Show when={(repos() ?? []).length > 1}>
-                    <select
+                    <Select
+                      ariaLabel="Repository"
                       value={repoId()}
-                      onChange={(e) => setRepoId(e.currentTarget.value)}
-                      class={`${inputClass} !h-7 !w-auto !py-0 text-[12px]`}
-                    >
-                      <For each={repos() ?? []}>
-                        {(r) => (
-                          <option value={r.id}>
-                            {r.owner}/{r.name}
-                          </option>
-                        )}
-                      </For>
-                    </select>
+                      onChange={setRepoId}
+                      triggerClass={`${inputClass} !h-7 !w-auto !py-0 text-[12px]`}
+                      options={(repos() ?? []).map((r) => ({
+                        value: r.id,
+                        label: `${r.owner}/${r.name}`,
+                      }))}
+                    />
                   </Show>
                 </label>
               </Show>
@@ -3327,7 +3325,7 @@ function ConversationThread(props: {
           return;
         case "/ideas":
           clearDraft();
-          navigate(`/app/p/${props.projectId}/ideas`);
+          navigate(`/app/ideas?project=${props.projectId}`);
           return;
         case "/overview":
           clearDraft();

@@ -169,6 +169,7 @@ type Idea struct {
 	CreatedByAgent pgtype.UUID        `json:"created_by_agent"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
 }
 
 type InboundHook struct {

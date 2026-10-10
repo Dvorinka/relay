@@ -1142,6 +1142,15 @@ export function createClient(
         scene?: Record<string, unknown>;
       },
     ) => post<Idea>(`/api/projects/${projectId}/ideas`, input),
+    createWorkspaceIdea: (
+      workspaceId: string,
+      input: {
+        title: string;
+        summary?: string;
+        scene?: Record<string, unknown>;
+        project_id?: string;
+      },
+    ) => post<Idea>(`/api/workspaces/${workspaceId}/ideas`, input),
     getIdea: (ideaId: string) => request<Idea>(`/api/ideas/${ideaId}`),
     updateIdea: (
       ideaId: string,
@@ -1150,6 +1159,7 @@ export function createClient(
         summary?: string;
         status?: "open" | "converted" | "archived";
         scene?: Record<string, unknown>;
+        project_id?: string;
       },
     ) => patch<Idea>(`/api/ideas/${ideaId}`, input),
     deleteIdea: (ideaId: string) =>
@@ -1161,6 +1171,7 @@ export function createClient(
         title?: string;
         description?: string;
         key?: string;
+        project_id?: string;
       },
     ) =>
       post<{

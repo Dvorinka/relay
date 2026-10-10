@@ -1,6 +1,7 @@
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api } from "../../lib/api";
 import { inputClass, Spinner } from "../../components/ui";
+import { Select } from "../../components/Select";
 import { markGitHub } from "./GitHub";
 import { openCommit } from "./CommitModal";
 import { timeAgo } from "../../lib/time";
@@ -58,31 +59,31 @@ export function GitLog(props: { projectId: string }) {
       >
         <div class="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2">
           <Show when={(repos()?.length ?? 0) > 1}>
-            <select
-              aria-label="Repository"
+            <Select
+              ariaLabel="Repository"
               value={activeRepo() ?? ""}
-              onChange={(e) => {
-                setRepo(e.currentTarget.value);
+              onChange={(v) => {
+                setRepo(v);
                 setBranch(null);
               }}
-              class={`${inputClass} w-auto !py-1 font-mono text-[12px]`}
-            >
-              <For each={repos()}>
-                {(r) => <option value={r.full_name}>{r.full_name}</option>}
-              </For>
-            </select>
+              triggerClass={`${inputClass} !w-auto !py-1 font-mono text-[12px]`}
+              options={(repos() ?? []).map((r) => ({
+                value: r.full_name,
+                label: r.full_name,
+              }))}
+            />
           </Show>
           <Show when={(branches()?.branches.length ?? 0) > 0}>
-            <select
-              aria-label="Branch"
+            <Select
+              ariaLabel="Branch"
               value={activeBranch() ?? ""}
-              onChange={(e) => setBranch(e.currentTarget.value)}
-              class={`${inputClass} w-auto !py-1 font-mono text-[12px]`}
-            >
-              <For each={branches()?.branches}>
-                {(b) => <option value={b.name}>{b.name}</option>}
-              </For>
-            </select>
+              onChange={setBranch}
+              triggerClass={`${inputClass} !w-auto !py-1 font-mono text-[12px]`}
+              options={(branches()?.branches ?? []).map((b) => ({
+                value: b.name,
+                label: b.name,
+              }))}
+            />
           </Show>
         </div>
         <div class="min-h-0 flex-1 overflow-y-auto">

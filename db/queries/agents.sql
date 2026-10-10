@@ -114,6 +114,21 @@ left join agent_project_permissions g
        on g.agent_id = a.id and g.project_id = sqlc.arg(project_id)
 where a.id = sqlc.arg(agent_id);
 
+-- name: AgentScopeForWorkspace :one
+-- union of scopes the agent holds anywhere in a workspace — used for
+-- workspace-level resources (platform ideas) that no single project owns.
+select coalesce(array_agg(distinct s), '{}'::text[])::text[] as scopes
+from (
+    select unnest(case when a.grant_all then a.grant_scopes
+                       else coalesce(g.scopes, '{}'::text[]) end) as s
+    from agents a
+    left join agent_project_permissions g on g.agent_id = a.id
+    left join projects p on p.id = g.project_id
+    where a.id = sqlc.arg(agent_id)
+      and (p.workspace_id = sqlc.arg(workspace_id)
+           or (a.grant_all and a.workspace_id = sqlc.arg(workspace_id)))
+) t;
+
 -- name: SetAgentGrantAll :one
 update agents set
     grant_all = sqlc.arg(grant_all),

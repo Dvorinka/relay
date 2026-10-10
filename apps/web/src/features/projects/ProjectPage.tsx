@@ -46,6 +46,7 @@ import {
   SubmitButton,
   Tip,
 } from "../../components/ui";
+import { Select } from "../../components/Select";
 import { api } from "../../lib/api";
 import { copyText } from "../../lib/clipboard";
 import { confirmDestructive } from "../../components/Confirm";
@@ -749,20 +750,17 @@ function SearchResultsView(props: {
                 {empty() ? `No results for “${props.query}”` : "Results"}
               </p>
               <Show when={r().messages.length > 1}>
-                <select
-                  aria-label="Sort results"
+                <Select
+                  ariaLabel="Sort results"
                   value={sort()}
-                  onChange={(e) =>
-                    setSort(
-                      e.currentTarget.value as "relevant" | "newest" | "oldest",
-                    )
-                  }
-                  class="h-6 rounded border border-border bg-surface px-1 text-[10.5px] text-muted focus:border-accent focus:outline-none"
-                >
-                  <option value="relevant">Relevant</option>
-                  <option value="newest">Newest</option>
-                  <option value="oldest">Oldest</option>
-                </select>
+                  onChange={(v) => setSort(v as "relevant" | "newest" | "oldest")}
+                  triggerClass="h-6 rounded border border-border bg-surface px-1 text-[10.5px] text-muted focus:border-accent focus:outline-none"
+                  options={[
+                    { value: "relevant", label: "Relevant" },
+                    { value: "newest", label: "Newest" },
+                    { value: "oldest", label: "Oldest" },
+                  ]}
+                />
               </Show>
             </div>
             <For each={r().issues.slice(0, 5)}>
@@ -1794,7 +1792,7 @@ export default function ProjectPage() {
             <HeadButton
               title="Ideas"
               hint="Brainstorm boards — sketches and mindmaps that convert into issues."
-              onClick={() => navigate(`/app/p/${params.projectId}/ideas`)}
+              onClick={() => navigate(`/app/ideas?project=${params.projectId}`)}
             >
               <BulbIcon class="h-4 w-4" />
             </HeadButton>

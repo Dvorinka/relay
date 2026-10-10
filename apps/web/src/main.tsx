@@ -1,4 +1,4 @@
-import { Navigate, Route, Router, useNavigate } from "@solidjs/router";
+import { Navigate, Route, Router, useNavigate, useParams } from "@solidjs/router";
 import type { RouteSectionProps } from "@solidjs/router";
 import { render } from "solid-js/web";
 import App from "./App";
@@ -35,6 +35,13 @@ function NotificationsRoot() {
   initNotify(() => session.user());
   initPresence();
   return null;
+}
+
+// Old per-project ideas links land on the workspace page, pre-filtered to
+// that project.
+function IdeasRedirect() {
+  const params = useParams();
+  return <Navigate href={`/app/ideas?project=${params.projectId}`} />;
 }
 
 // relay:// links opened while the desktop shell runs arrive here as wails
@@ -108,7 +115,8 @@ render(
           <Route path="/p/:projectId/board" component={BoardPage} />
           <Route path="/p/:projectId/i/:issueId" component={IssuePage} />
           <Route path="/p/:projectId/k/:key" component={IssueKeyRedirect} />
-          <Route path="/p/:projectId/ideas" component={IdeasPage} />
+          <Route path="/ideas" component={IdeasPage} />
+          <Route path="/p/:projectId/ideas" component={IdeasRedirect} />
           <Route path="/u/:userId" component={UserProfile} />
           <Route path="/ag/:agentId" component={AgentProfile} />
           <Route path="/settings" component={Settings} />

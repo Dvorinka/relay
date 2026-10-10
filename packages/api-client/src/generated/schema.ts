@@ -553,10 +553,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Every idea across the workspace's projects — the Ideas page feed */
+        /** Every idea in the workspace — the Ideas page feed */
         get: operations["listWorkspaceIdeas"];
         put?: never;
-        post?: never;
+        /** Create an idea scoped to the workspace; project_id optional (omit for platform-wide) */
+        post: operations["createWorkspaceIdea"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2570,9 +2571,11 @@ export interface components {
             /** Format: uuid */
             id: string;
             /** Format: uuid */
-            project_id: string;
-            project_key?: string;
-            project_name?: string;
+            workspace_id: string;
+            /** Format: uuid */
+            project_id?: string | null;
+            project_key?: string | null;
+            project_name?: string | null;
             title: string;
             summary: string;
             /** @description Excalidraw-compatible scene JSON */
@@ -4349,6 +4352,44 @@ export interface operations {
             };
         };
     };
+    createWorkspaceIdea: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["WorkspaceId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    title: string;
+                    summary?: string;
+                    /** @description Excalidraw-compatible scene */
+                    scene?: {
+                        [key: string]: unknown;
+                    };
+                    /**
+                     * Format: uuid
+                     * @description Attach to this project; omit for platform-wide
+                     */
+                    project_id?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Created idea */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Idea"];
+                };
+            };
+        };
+    };
     getIdea: {
         parameters: {
             query?: never;
@@ -4412,6 +4453,11 @@ export interface operations {
                     scene?: {
                         [key: string]: unknown;
                     };
+                    /**
+                     * Format: uuid
+                     * @description Attach to a project in the idea's workspace
+                     */
+                    project_id?: string;
                 };
             };
         };
@@ -4448,6 +4494,11 @@ export interface operations {
                     description?: string;
                     /** @description Required for kind=project */
                     key?: string;
+                    /**
+                     * Format: uuid
+                     * @description Target project — required for kind=issue on platform-wide ideas
+                     */
+                    project_id?: string;
                 };
             };
         };
