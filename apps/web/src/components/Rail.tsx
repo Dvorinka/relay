@@ -1197,13 +1197,11 @@ function VersionFooter() {
           {(m) => <span class="truncate text-faint/80">{m()}</span>}
         </Show>
       </div>
-      <Show
-        when={!checked()}
-        fallback={
-          <Show
-            when={!checkError()}
-            fallback={<span class="text-faint/80">Update check failed</span>}
-          >
+      <Show when={checked()}>
+        <Show
+          when={!checkError()}
+          fallback={<span class="text-faint/80">Update check failed</span>}
+        >
             <Show
               when={updateAvailable()}
               fallback={
@@ -1258,17 +1256,15 @@ function VersionFooter() {
               </Show>
             </Show>
           </Show>
-        }
-      >
-        <button
-          type="button"
-          onClick={() => void checkForUpdates()}
-          disabled={checking()}
-          class="self-start text-faint transition-colors hover:text-fg disabled:opacity-60"
-        >
-          {checking() ? "Checking…" : "Check for updates"}
-        </button>
       </Show>
+      <button
+        type="button"
+        onClick={() => void checkForUpdates(true)}
+        disabled={checking()}
+        class="self-start text-faint transition-colors hover:text-fg disabled:opacity-60"
+      >
+        {checking() ? "Checking…" : "Check for updates"}
+      </button>
       <Show when={canSelfUpdate()}>
         <label class="flex cursor-pointer items-center gap-1.5 self-start text-faint transition-colors hover:text-fg">
           <input

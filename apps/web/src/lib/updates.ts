@@ -63,8 +63,10 @@ if (isDesktop()) {
     // long-lived desktop windows surface a badge without a manual check;
     // installing still waits for the next launch
     setInterval(() => void checkForUpdates(), 6 * 60 * 60 * 1000);
-    // tray → "Check for updates" lights the same badge/flow
-    onCheckUpdates(() => void checkForUpdates());
+    // tray → "Check for updates" is an explicit ask — bypass the 5-min
+    // cache so a click always re-queries GitHub instead of replaying a
+    // cached "up to date".
+    onCheckUpdates(() => void checkForUpdates(true));
   });
 }
 
@@ -150,10 +152,11 @@ export function updateAvailable(): boolean {
   return false;
 }
 
-/** Query GitHub for the newest release. Cached for 5 minutes. */
-export async function checkForUpdates() {
+/** Query GitHub for the newest release. Cached for 5 minutes — forced
+ * (manual/tray) checks skip the cache so the answer is always live. */
+export async function checkForUpdates(force = false) {
   if (checking()) return;
-  const cached = sessionStorage.getItem(CACHE_KEY);
+  const cached = force ? null : sessionStorage.getItem(CACHE_KEY);
   if (cached) {
     try {
       const { tag, at } = JSON.parse(cached) as { tag: string; at: number };
