@@ -152,7 +152,14 @@ just test      # all tests
 
 All configuration lives in `.env` - see [.env.example](.env.example) for the
 annotated list: `DATABASE_URL`, `AUTH_SECRET`, `STORAGE_*` (MinIO, S3, R2),
-`GITHUB_APP_*`, and `RELAY_PUBLIC_URL`.
+`GITHUB_APP_*`, `RESEND_API_KEY` or `SMTP_*` (transactional mail), and
+`RELAY_PUBLIC_URL`.
+
+Running a **limited free tier** for others? `RELAY_LIMITED=true` caps
+uploads at `RELAY_LIMITED_UPLOAD_MIB` (8 MiB default), re-encodes jpeg/png
+uploads to a bounded size on every path (UI, inbound hooks, MCP), and marks
+`/api/health` `limited: true` so clients show the "self-host for the full
+thing" notice.
 
 ## MCP integration
 

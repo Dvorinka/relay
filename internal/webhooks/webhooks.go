@@ -59,6 +59,9 @@ type Service struct {
 	// log files, screenshots). nil Store → attachment payloads get 503.
 	Store     *storage.Store
 	MaxUpload int64
+	// Limited enables the hosted tier's image re-encode on inbound
+	// attachments — same treatment as UI uploads.
+	Limited bool
 	// publicURL is the deployment's external base — managed ("relay:managed")
 	// subscriptions point at <publicURL>/api/webhooks/catch/<id>.
 	publicURL string

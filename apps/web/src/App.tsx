@@ -7,6 +7,7 @@ import { CommitModalHost } from "./features/github/CommitModal";
 import { GitHubCreateModalHost } from "./features/github/CreateModals";
 import { Rail } from "./components/Rail";
 import { ServerBanner } from "./components/ServerBanner";
+import { LimitedBanner } from "./components/LimitedBanner";
 import { TopBar } from "./components/TopBar";
 import { RequireAuth } from "./features/auth/guards";
 import { setFaviconBadge } from "./lib/favicon";
@@ -38,6 +39,7 @@ export default function App(props: ParentProps) {
         <div class="flex h-full flex-col">
           <TopBar />
           <ServerBanner />
+          <LimitedBanner />
           <div class="flex min-h-0 flex-1">
             <Rail />
             <main

@@ -3382,6 +3382,12 @@ export interface operations {
                         /** @enum {string} */
                         status: "ok";
                         version?: string;
+                        /** @description True on capacity-capped hosted tiers (RELAY_LIMITED) — clients should surface the free-instance notice */
+                        limited?: boolean;
+                        limits?: {
+                            /** @description Effective upload cap in MiB (tighter on limited instances) */
+                            upload_mib?: number;
+                        };
                     };
                 };
             };

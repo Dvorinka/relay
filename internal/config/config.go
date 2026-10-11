@@ -42,6 +42,22 @@ type Config struct {
 	// GITHUB_TOKEN is a dev fallback so the development panel works without a
 	// registered GitHub App. Installation tokens take precedence once an app exists.
 	GitHubToken string
+
+	// Transactional mail: Resend for the hosted tier, SMTP for self-hosters,
+	// log mailer when neither is set.
+	ResendAPIKey string
+	ResendFrom   string
+	SMTPHost     string
+	SMTPPort     string
+	SMTPUser     string
+	SMTPPass     string
+	SMTPFrom     string
+
+	// RELAY_LIMITED marks a capacity-capped hosted instance (the free tier):
+	// tighter upload cap and image re-encoding on upload. Surfaced to clients
+	// via /api/health so the app can show the "limited" notice.
+	Limited          bool
+	LimitedUploadMiB int64
 }
 
 func Load() (Config, error) {
@@ -70,6 +86,17 @@ func Load() (Config, error) {
 		StorageMaxUploadMiB: int64(getInt("STORAGE_MAX_UPLOAD_MIB", 25)),
 		StoragePresignTTL:   getInt("STORAGE_PRESIGN_TTL", 300),
 		GitHubToken:         os.Getenv("GITHUB_TOKEN"),
+
+		ResendAPIKey: os.Getenv("RESEND_API_KEY"),
+		ResendFrom:   getEnv("RESEND_FROM", "Relay <onboarding@resend.dev>"),
+		SMTPHost:     os.Getenv("SMTP_HOST"),
+		SMTPPort:     getEnv("SMTP_PORT", "587"),
+		SMTPUser:     os.Getenv("SMTP_USER"),
+		SMTPPass:     os.Getenv("SMTP_PASS"),
+		SMTPFrom:     getEnv("SMTP_FROM", "relay@example.com"),
+
+		Limited:          getBool("RELAY_LIMITED"),
+		LimitedUploadMiB: int64(getInt("RELAY_LIMITED_UPLOAD_MIB", 8)),
 	}
 
 	var missing []string
@@ -98,6 +125,15 @@ func (c Config) Logger() (*zap.Logger, error) {
 		cfg.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
 	}
 	return cfg.Build()
+}
+
+// EffectiveUploadMiB is the cap upload handlers enforce: the limited tier's
+// tighter cap when it beats the storage one.
+func (c Config) EffectiveUploadMiB() int64 {
+	if c.Limited && c.LimitedUploadMiB < c.StorageMaxUploadMiB {
+		return c.LimitedUploadMiB
+	}
+	return c.StorageMaxUploadMiB
 }
 
 func getEnv(key, fallback string) string {
