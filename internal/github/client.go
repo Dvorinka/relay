@@ -17,6 +17,15 @@ import (
 // apiBase is a var (not const) so tests can point the client at httptest.
 var apiBase = "https://api.github.com"
 
+// SetAPIBaseForTest redirects every REST call to a stub server and returns
+// a restore func. The var itself serves same-package tests; this seam is
+// for e2e tests in other packages (internal/server).
+func SetAPIBaseForTest(u string) func() {
+	old := apiBase
+	apiBase = u
+	return func() { apiBase = old }
+}
+
 // Client talks to api.github.com. It carries the app's private key so it
 // can mint JWTs and exchange them for per-installation access tokens,
 // which are cached until shortly before expiry.

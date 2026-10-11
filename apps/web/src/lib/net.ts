@@ -5,7 +5,7 @@
 import { createClient } from "@relay/api-client";
 import { createSignal } from "solid-js";
 import { clearApiCache } from "./cache";
-import { clearOutbox, resilientFetch } from "./offline";
+import { clearOutbox, resilientFetch, serverState } from "./offline";
 
 const K_URL = "relay.serverUrl";
 const K_TOKEN = "relay.token";
@@ -56,6 +56,14 @@ export const net = {
     });
   },
 };
+
+/** The active server's reachability — drives "offline-capable" UI: reads
+ *  still serve last-known data, mutations park in the outbox. False in
+ *  local mode (there is no server to be down). */
+export function activeDown(): boolean {
+  if (net.isLocal()) return false;
+  return serverState(net.serverUrl() || location.origin) === "down";
+}
 
 /** Resolve an API media path ("/api/files/…", attachment downloads) for
  *  <img>/<a href>. Bare requests can't send an Authorization header, so

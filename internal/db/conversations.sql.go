@@ -11,6 +11,29 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const addMessageTag = `-- name: AddMessageTag :execrows
+update messages
+set tags = array_append(tags, $1::text)
+where id = $2
+  and deleted_at is null
+  and not ($1::text = any(tags))
+`
+
+type AddMessageTagParams struct {
+	Tag string      `json:"tag"`
+	ID  pgtype.UUID `json:"id"`
+}
+
+// atomic claim: appends the tag only when absent, so a 0-row result means
+// another filer already holds it (filing dedup, not just UI hiding)
+func (q *Queries) AddMessageTag(ctx context.Context, arg AddMessageTagParams) (int64, error) {
+	result, err := q.db.Exec(ctx, addMessageTag, arg.Tag, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const addReactionUser = `-- name: AddReactionUser :exec
 insert into message_reactions (message_id, user_id, emoji)
 values ($1, $2, $3)
@@ -1467,6 +1490,22 @@ func (q *Queries) RecentProjectMessages(ctx context.Context, projectID pgtype.UU
 		return nil, err
 	}
 	return items, nil
+}
+
+const removeMessageTag = `-- name: RemoveMessageTag :exec
+update messages
+set tags = array_remove(tags, $1::text)
+where id = $2
+`
+
+type RemoveMessageTagParams struct {
+	Tag string      `json:"tag"`
+	ID  pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) RemoveMessageTag(ctx context.Context, arg RemoveMessageTagParams) error {
+	_, err := q.db.Exec(ctx, removeMessageTag, arg.Tag, arg.ID)
+	return err
 }
 
 const removeReactionUser = `-- name: RemoveReactionUser :execrows

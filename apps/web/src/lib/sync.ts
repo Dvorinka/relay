@@ -2,6 +2,11 @@
 // then replays its conversation messages (with replies and attachments) and
 // issues in order. Server assigns fresh IDs — we keep old→new maps so reply
 // links stay intact.
+//
+// Snapshot-imported entities (remote_ids matching this origin) already exist
+// there: skip creating them, seed the id maps with themselves, and only push
+// the work done locally on top — a reply in an imported thread lands under
+// the real remote parent.
 import { createClient } from "@relay/api-client";
 import { dumpLocal, localReady, markSynced } from "./local";
 
@@ -46,6 +51,7 @@ export async function syncWithToken(
   await localReady;
   const db = dumpLocal();
   const url = serverUrl.replace(/\/+$/, "");
+  const origin = new URL(url, location.origin).origin;
   const remote = createClient(url, token);
   const ws = (await remote.session()).workspaces[0];
   if (!ws) throw new Error("account has no workspace");
@@ -58,72 +64,118 @@ export async function syncWithToken(
     briefs: 0,
   };
 
+  // True when the entity came from THIS server's snapshot — it exists
+  // remotely already. A different origin gets the full create path.
+  const isRemote = (id: string | undefined | null) =>
+    !!id && db.remote_ids?.[id] === origin;
+
   for (const p of db.projects) {
     onStep?.(`Project ${p.name}`);
-    const created = await remote.createProject({
-      workspace_id: ws.id,
-      name: p.name,
-      key: p.key,
-      description: p.description,
-      ...(p.icon ? { icon: p.icon } : {}),
-      ...(p.color ? { color: p.color } : {}),
-    });
-    result.projects++;
+    let remotePid = p.id;
+    if (!isRemote(p.id)) {
+      const created = await remote.createProject({
+        workspace_id: ws.id,
+        name: p.name,
+        key: p.key,
+        description: p.description,
+        ...(p.icon ? { icon: p.icon } : {}),
+        ...(p.color ? { color: p.color } : {}),
+      });
+      remotePid = created.id;
+      result.projects++;
+    }
 
-    // Lanes must exist before issues that reference them.
+    // Lanes must exist before issues that reference them. Idempotent end
+    // state — safe to push even for imported projects (covers local edits).
     if (p.statuses && p.statuses.length > 0) {
-      await remote.setProjectStatuses(created.id, p.statuses);
+      await remote.setProjectStatuses(remotePid, p.statuses);
     }
     for (const f of db.savedFilters[p.id] ?? []) {
-      await remote.createSavedFilter(created.id, {
+      if (isRemote(f.id)) continue;
+      await remote.createSavedFilter(remotePid, {
         name: f.name,
         filters: f.filters,
       });
     }
     for (const b of db.boards[p.id] ?? []) {
-      await remote.createBoard(created.id, {
+      if (isRemote(b.id)) continue;
+      await remote.createBoard(remotePid, {
         name: b.name,
         filters: b.filters,
       });
     }
     // local_path deliberately stays local — it's a path on *that* machine.
 
-    // Attachments first so message posts can reference the new IDs.
-    const conv = db.conversations.find(
-      (c) => c.project_id === p.id && !c.issue_id,
-    );
-    const msgs = db.messages
-      .filter((m) => m.conversation_id === conv?.id)
-      .sort((a, b) => a.created_at.localeCompare(b.created_at));
-
-    const remoteConv = await remote.projectConversation(created.id);
+    // One shared map per project: a reply can reference a message in a
+    // sibling conversation (a thread's parent lives in the project conv).
     const msgIdMap = new Map<string, string>();
-    for (const m of msgs) {
-      onStep?.(`Message in ${p.name}`);
-      const attIds: string[] = [];
-      for (const a of m.attachments) {
-        const local = db.attachments[a.id];
-        if (!local) continue;
-        const up = await remote.uploadAttachment(
-          created.id,
-          await attachmentFile(local),
+
+    // Replay one conversation's missing messages in order. Imported
+    // messages skip the POST but seed the map so local replies to them
+    // still thread under the real remote parent.
+    const replayConv = async (
+      localConvId: string,
+      remoteConvId: string,
+      withAttachments: boolean,
+    ) => {
+      const list = db.messages
+        .filter((m) => m.conversation_id === localConvId)
+        .sort((a, b) => a.created_at.localeCompare(b.created_at));
+      for (const m of list) {
+        if (isRemote(m.id)) {
+          msgIdMap.set(m.id, m.id);
+          continue;
+        }
+        const attIds: string[] = [];
+        if (withAttachments) {
+          for (const a of m.attachments) {
+            const local = db.attachments[a.id];
+            if (!local || isRemote(a.id)) continue;
+            const up = await remote.uploadAttachment(
+              remotePid,
+              await attachmentFile(local),
+            );
+            attIds.push(up.id);
+          }
+        }
+        const posted = await remote.postMessage(
+          remoteConvId,
+          m.body,
+          attIds.length ? attIds : undefined,
+          m.parent ? msgIdMap.get(m.parent.id) : undefined,
         );
-        attIds.push(up.id);
+        msgIdMap.set(m.id, posted.id);
+        result.messages++;
       }
-      const posted = await remote.postMessage(
-        remoteConv.id,
-        m.body,
-        attIds.length ? attIds : undefined,
-        m.parent ? msgIdMap.get(m.parent.id) : undefined,
-      );
-      msgIdMap.set(m.id, posted.id);
-      result.messages++;
+    };
+
+    const conv = db.conversations.find(
+      (c) =>
+        c.project_id === p.id &&
+        !c.issue_id &&
+        c.kind !== "thread" &&
+        c.kind !== "channel",
+    );
+    const hasMsgs = db.messages.some((m) => m.conversation_id === conv?.id);
+    // For imported projects the conv id already IS the remote one; only
+    // fall back to the lookup when it was never cached.
+    const remoteConvId = isRemote(p.id)
+      ? (conv?.id ??
+        (hasMsgs ? (await remote.projectConversation(remotePid)).id : ""))
+      : (await remote.projectConversation(remotePid)).id;
+    if (conv && remoteConvId) {
+      onStep?.(`Messages in ${p.name}`);
+      await replayConv(conv.id, remoteConvId, true);
     }
 
     const issueIdMap = new Map<string, string>();
     for (const i of db.issues.filter((x) => x.project_id === p.id)) {
+      if (isRemote(i.id)) {
+        issueIdMap.set(i.id, i.id);
+        continue;
+      }
       onStep?.(`Issue ${i.key}`);
-      const ni = await remote.createIssue(created.id, {
+      const ni = await remote.createIssue(remotePid, {
         title: i.title,
         description: i.description,
         priority: i.priority,
@@ -135,52 +187,81 @@ export async function syncWithToken(
       result.issues++;
     }
 
+    // Issue comment threads — each issue's own conversation. Previously
+    // dropped entirely; imported issues keep their remote conversation id.
+    for (const i of db.issues.filter((x) => x.project_id === p.id)) {
+      const remoteIssueId = issueIdMap.get(i.id);
+      const iconv = db.conversations.find((c) => c.issue_id === i.id);
+      if (!remoteIssueId || !iconv) continue;
+      const remoteIconv = await remote.getIssueConversation(remoteIssueId);
+      await replayConv(iconv.id, remoteIconv.id, false);
+    }
+
+    // Local threads: create the remote thread off the (already mapped)
+    // parent message, then replay its replies. Imported threads keep their
+    // remote conversation id.
+    for (const t of db.threads.filter((t) => {
+      const parentConv = db.conversations.find(
+        (c) => c.id === t.parent_conversation,
+      );
+      return parentConv?.project_id === p.id;
+    })) {
+      let remoteThreadConvId = t.id;
+      if (!isRemote(t.id)) {
+        const remoteParent = msgIdMap.get(t.parent_message_id);
+        if (!remoteParent) continue; // parent never synced — skip the thread
+        remoteThreadConvId = (
+          await remote.createThread(
+            remoteParent,
+            t.title ?? undefined,
+          )
+        ).thread.id;
+      }
+      await replayConv(t.id, remoteThreadConvId, true);
+    }
+
     // jarvis: todo→issue links don't survive sync (remote IDs differ);
     // recreate them by key if it ever matters.
     for (const t of db.todos.filter(
       (x) => (x as { project_id?: string }).project_id === p.id,
     )) {
-      await remote.createTodo(created.id, t.content);
+      if (isRemote(t.id)) continue;
+      await remote.createTodo(remotePid, t.content);
       if (t.done) {
-        const list = await remote.listTodos(created.id);
+        const list = await remote.listTodos(remotePid);
         const match = list.todos.find((x) => x.content === t.content);
         if (match) await remote.updateTodo(match.id, { done: true });
       }
       result.todos++;
     }
 
-    // Briefs carry their own comment conversations — replay both.
+    // Briefs carry their own comment conversations — replay both. Imported
+    // briefs skip the create; their conversation id is already remote.
     for (const b of db.briefs.filter((x) => x.project_id === p.id)) {
-      onStep?.(`Brief ${b.title}`);
-      const nb = await remote.createBrief(created.id, {
-        title: b.title,
-        summary: b.summary,
-        scene: b.scene,
-        ...(b.issue_id && issueIdMap.has(b.issue_id)
-          ? { issue_id: issueIdMap.get(b.issue_id)! }
-          : {}),
-      });
-      result.briefs++;
-      if (b.status !== "open") {
-        await remote.updateBrief(nb.id, { status: b.status });
-      }
       const localConvId = b.conversation_id;
-      if (!localConvId) continue;
-      const remoteConv = await remote.briefConversation(nb.id);
-      const bMsgs = db.messages
-        .filter((m) => m.conversation_id === localConvId)
-        .sort((a, c) => a.created_at.localeCompare(c.created_at));
-      const bMsgIdMap = new Map<string, string>();
-      for (const m of bMsgs) {
-        const posted = await remote.postMessage(
-          remoteConv.id,
-          m.body,
-          undefined,
-          m.parent ? bMsgIdMap.get(m.parent.id) : undefined,
-        );
-        bMsgIdMap.set(m.id, posted.id);
-        result.messages++;
+      let remoteConvId: string | undefined;
+      if (isRemote(b.id)) {
+        remoteConvId = localConvId ?? undefined;
+      } else {
+        onStep?.(`Brief ${b.title}`);
+        const nb = await remote.createBrief(remotePid, {
+          title: b.title,
+          summary: b.summary,
+          scene: b.scene,
+          ...(b.issue_id && issueIdMap.has(b.issue_id)
+            ? { issue_id: issueIdMap.get(b.issue_id)! }
+            : {}),
+        });
+        result.briefs++;
+        if (b.status !== "open") {
+          await remote.updateBrief(nb.id, { status: b.status });
+        }
+        if (localConvId) {
+          remoteConvId = (await remote.briefConversation(nb.id)).id;
+        }
       }
+      if (!localConvId || !remoteConvId) continue;
+      await replayConv(localConvId, remoteConvId, false);
     }
   }
 

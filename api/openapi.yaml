@@ -3902,6 +3902,46 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/messages/{messageId}/github:
+    post:
+      operationId: fileMessageOnGitHub
+      summary: >-
+        File a message as an issue on the project's linked GitHub repo.
+        When several repos are linked, repo_id picks one explicitly. The
+        source message keeps a `filed` tag, so repeat calls 409 instead of
+        duplicating the issue.
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/MessageId" } ]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                repo_id: { type: string, format: uuid }
+                title: { type: string, maxLength: 200 }
+      responses:
+        "201":
+          description: Filed — the issue also mirrors onto the Relay board
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [issue]
+                properties:
+                  issue:
+                    type: object
+                    required: [number, url, state]
+                    properties:
+                      number: { type: integer }
+                      url: { type: string }
+                      state: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "502": { description: GitHub upstream call failed }
+
   /api/projects/{projectId}/labels:
     get:
       operationId: listLabels

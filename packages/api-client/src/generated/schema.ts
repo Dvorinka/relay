@@ -2490,6 +2490,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/messages/{messageId}/github": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** File a message as an issue on the project's linked GitHub repo. When several repos are linked, repo_id picks one explicitly. The source message keeps a `filed` tag, so repeat calls 409 instead of duplicating the issue. */
+        post: operations["fileMessageOnGitHub"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{projectId}/labels": {
         parameters: {
             query?: never;
@@ -8643,6 +8660,53 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    fileMessageOnGitHub: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                messageId: components["parameters"]["MessageId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    repo_id?: string;
+                    title?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Filed — the issue also mirrors onto the Relay board */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        issue: {
+                            number: number;
+                            url: string;
+                            state: string;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            /** @description GitHub upstream call failed */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     listLabels: {

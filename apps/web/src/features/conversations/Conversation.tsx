@@ -5,6 +5,7 @@ import {
   type Conversation as ApiConversation,
   type Mentionables,
   type Message,
+  type LinkedRepo,
   type MessageEdit,
   type Reaction,
   type ScheduledMessage,
@@ -69,8 +70,15 @@ import { openProfile } from "../../components/ProfileModal";
 import { subscribe } from "../../lib/events";
 import { loadNameColors, nameColorFor } from "../../lib/namecolors";
 import { mediaURL, net } from "../../lib/net";
-import { isQueuedError } from "../../lib/offline";
+import {
+  isQueuedError,
+  queuedMessages,
+  queuedUploadBlob,
+  removeOutboxEntry,
+  type QueuedMessage,
+} from "../../lib/offline";
 import { Markdown, renderMarkdown } from "../../lib/markdown";
+import { markGitHub } from "../github/GitHub";
 import { LinkPreview } from "../../components/LinkPreview";
 import { formatBytes, initials, messagePreview } from "../../lib/text";
 import { useProjects } from "../../stores/projects";
@@ -104,6 +112,8 @@ const SLASH_COMMANDS: { name: string; desc: string; args?: string }[] = [
   { name: "threads", desc: "list all threads" },
   { name: "todo", desc: "add a task to this project", args: "<task>" },
   { name: "issue", desc: "create an issue and link it here", args: "<title>" },
+  { name: "bug", desc: "file a bug on the linked GitHub repo", args: "<what's broken>" },
+  { name: "enhancement", desc: "file an enhancement on the linked GitHub repo", args: "<what to add>" },
   { name: "silent", desc: "post without notifying anyone", args: "<message>" },
   { name: "me", desc: "post an action line — /me waves", args: "<action>" },
   { name: "tag", desc: "tag your next message", args: "<tag>" },
@@ -143,7 +153,9 @@ type PendingAttachment = {
   localId: string;
   file: File;
   previewUrl: string | null;
-  status: "uploading" | "ready" | "error";
+  // "queued" = bytes parked in the outbox; replays on reconnect. The
+  // attachmentId is the outbox placeholder ("att:…"), not a server id.
+  status: "uploading" | "ready" | "queued" | "error";
   attachmentId?: string;
   error?: string;
   // Restored-from-localStorage entries carry a stub File (0 bytes); size
@@ -619,12 +631,66 @@ function MessageMoreMenu(props: {
   y: number;
   saved: boolean;
   agents: Mentionables["agents"];
+  fileable: { projectId: string; messageId: string } | null;
   onSave: () => void;
   onRemind: (fireAt: Date) => void;
   onAskAgent: (agent: Mentionables["agents"][number]) => void;
   onClose: () => void;
 }) {
-  const [view, setView] = createSignal<"main" | "remind" | "agents">("main");
+  const [view, setView] = createSignal<"main" | "remind" | "agents" | "github">(
+    "main",
+  );
+  const [ghRepos, setGhRepos] = createSignal<LinkedRepo[] | null>(null);
+  const [ghBusy, setGhBusy] = createSignal(false);
+  const [ghError, setGhError] = createSignal<string | null>(null);
+  const [ghDone, setGhDone] = createSignal<{
+    number: number;
+    url: string;
+  } | null>(null);
+
+  async function fileOnGitHub(repoId?: string) {
+    const f = props.fileable;
+    if (!f || ghBusy()) return;
+    setGhBusy(true);
+    setGhError(null);
+    try {
+      const res = await api.fileMessageOnGitHub(
+        f.messageId,
+        repoId ? { repo_id: repoId } : undefined,
+      );
+      setGhDone(res.issue);
+    } catch (err) {
+      setGhError(
+        err instanceof ApiClientError ? err.message : "filing failed",
+      );
+    } finally {
+      setGhBusy(false);
+    }
+  }
+
+  // Repo picker rows only render when there is an actual choice to make.
+  const pickRepos = () => {
+    const r = ghRepos();
+    return r && r.length > 1 ? r : [];
+  };
+
+  // One linked repo files immediately; several offer a picker inside the
+  // menu; none surface the server's no_repo error verbatim anyway.
+  async function openGitHub() {
+    setView("github");
+    setGhError(null);
+    try {
+      const repos =
+        ghRepos() ??
+        (await api.listProjectRepos(props.fileable?.projectId ?? "")).repos;
+      setGhRepos(repos);
+      if (repos.length === 1) void fileOnGitHub();
+    } catch (err) {
+      setGhError(
+        err instanceof ApiClientError ? err.message : "couldn't load repos",
+      );
+    }
+  }
   createEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") props.onClose();
@@ -705,6 +771,16 @@ function MessageMoreMenu(props: {
                 Ask agent…
               </button>
             </Show>
+            <Show when={props.fileable}>
+              <button
+                type="button"
+                onClick={() => void openGitHub()}
+                class={item}
+              >
+                {markGitHub("", "h-4 w-4 text-faint")}
+                File on GitHub
+              </button>
+            </Show>
           </Match>
           <Match when={view() === "remind"}>
             <button
@@ -755,6 +831,70 @@ function MessageMoreMenu(props: {
                 </button>
               )}
             </For>
+          </Match>
+          <Match when={view() === "github"}>
+            <button
+              type="button"
+              onClick={() => setView("main")}
+              class={`${item} text-muted`}
+            >
+              <ChevronLeftIcon class="h-4 w-4 text-faint" />
+              File on GitHub
+            </button>
+            <Show
+              when={ghDone()}
+              fallback={
+                <>
+                  <Show when={ghRepos()?.length === 0 && !ghError()}>
+                    <div class="px-2.5 py-2 text-[13px] text-muted">
+                      No GitHub repository linked to this project
+                    </div>
+                  </Show>
+                  <For each={pickRepos()}>
+                    {(r) => (
+                      <button
+                        type="button"
+                        disabled={ghBusy()}
+                        onClick={() => void fileOnGitHub(r.id)}
+                        class={`${item} disabled:opacity-50`}
+                      >
+                        {markGitHub("", "h-4 w-4 text-faint")}
+                        <span class="min-w-0 truncate">
+                          {r.owner}/{r.name}
+                        </span>
+                      </button>
+                    )}
+                  </For>
+                  <Show when={ghBusy()}>
+                    <div class="flex items-center gap-2 px-2.5 py-2 text-[13px] text-muted">
+                      <Spinner class="h-3.5 w-3.5" />
+                      Filing issue…
+                    </div>
+                  </Show>
+                  <Show when={ghError()}>
+                    {(e) => (
+                      <div class="px-2.5 py-2 text-[13px] leading-snug text-danger">
+                        {e()}
+                      </div>
+                    )}
+                  </Show>
+                </>
+              }
+            >
+              {(issue) => (
+                <a
+                  href={issue().url}
+                  target="_blank"
+                  rel="noreferrer"
+                  class={item}
+                >
+                  {markGitHub("", "h-4 w-4 text-faint")}
+                  <span class="min-w-0 truncate">
+                    Issue #{issue().number} filed — open
+                  </span>
+                </a>
+              )}
+            </Show>
           </Match>
         </Switch>
       </div>
@@ -2342,6 +2482,12 @@ function MessageRow(props: {
               y={pos().y}
               saved={isSaved(m().id)}
               agents={props.agents}
+              fileable={
+                m().author.kind === "user" &&
+                !(m().tags ?? []).some((t) => t === "autofile" || t === "filed")
+                  ? { projectId: props.projectId, messageId: m().id }
+                  : null
+              }
               onSave={() => void toggleSaved(m().id)}
               onRemind={(at) => void remind(at)}
               onAskAgent={(a) => props.onAskAgent?.(m(), a)}
@@ -2350,6 +2496,146 @@ function MessageRow(props: {
           </Portal>
         )}
       </Show>
+    </div>
+  );
+}
+
+// One queued file's own preview — the bytes sit in the outbox blob store,
+// so the lane shows the real image/file, not an attachment count.
+function QueuedAttachment(props: { placeholderId: string }) {
+  const [res] = createResource(
+    () => props.placeholderId,
+    async (id) => {
+      const got = await queuedUploadBlob(id);
+      if (!got) return null;
+      return {
+        url: URL.createObjectURL(got.blob),
+        name: got.filename,
+        type: got.blob.type,
+        size: got.blob.size,
+      };
+    },
+  );
+  onCleanup(() => {
+    const r = res();
+    if (r) URL.revokeObjectURL(r.url);
+  });
+  return (
+    <Show when={res()}>
+      {(f) => (
+        <Show
+          when={f().type.startsWith("image/")}
+          fallback={
+            <span class="inline-flex max-w-full items-center gap-2 rounded-lg border border-dashed border-amber-500/40 bg-surface px-3 py-2 text-[13px]">
+              <FileIcon class="h-4 w-4 shrink-0 text-muted" />
+              <span class="truncate">{f().name}</span>
+              <span class="shrink-0 text-muted">{formatBytes(f().size)}</span>
+            </span>
+          }
+        >
+          <img
+            src={f().url}
+            alt={f().name}
+            class="max-h-48 max-w-full rounded-lg border border-border object-cover opacity-80"
+          />
+        </Show>
+      )}
+    </Show>
+  );
+}
+
+// A parked send, drawn under the real messages. The outbox replays it the
+// moment the server answers and the real message lands via SSE/refetch —
+// the amber chip says "not there yet", the row itself says "not lost".
+function QueuedRow(props: {
+  q: QueuedMessage;
+  meName: string;
+  meAvatar: string | null;
+  projectId: string;
+}) {
+  const { chatStyle } = useChatStyle();
+  const bubbles = () => chatStyle() === "bubbles";
+  const q = () => props.q;
+  return (
+    <div
+      class={`group relative flex px-4 opacity-75 ${
+        bubbles() ? "mt-3 justify-end py-[1px]" : "mt-3 gap-3 py-1"
+      }`}
+    >
+      <Show when={!bubbles()}>
+        <Avatar.Root class="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border">
+          <Avatar.Fallback
+            class="text-[13px] font-semibold"
+            style={{
+              color: authorColor(props.meName),
+              "background-color": `color-mix(in srgb, ${authorColor(props.meName)} 14%, transparent)`,
+            }}
+          >
+            {initials(props.meName)}
+          </Avatar.Fallback>
+          <Avatar.Image
+            src={mediaURL(props.meAvatar)}
+            alt=""
+            class="h-full w-full rounded-full object-cover"
+          />
+        </Avatar.Root>
+      </Show>
+      <div
+        class={
+          bubbles()
+            ? "min-w-0 max-w-[78%] rounded-2xl rounded-br-md border border-dashed border-amber-500/50 bg-accent-soft px-3 py-1.5"
+            : "min-w-0 flex-1"
+        }
+      >
+        <div class="flex flex-wrap items-baseline gap-2">
+          <Show when={!bubbles()}>
+            <span
+              class="text-[14.5px] font-semibold"
+              style={{ color: authorColor(props.meName) }}
+            >
+              {props.meName}
+            </span>
+          </Show>
+          <span class="inline-flex items-center gap-1 rounded border border-amber-500/40 px-1 py-px text-[9.5px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
+            <ClockIcon class="h-2.5 w-2.5" />
+            Queued — sends on reconnect
+          </span>
+        </div>
+        <Show when={q().body.trim().length > 0}>
+          <Markdown body={q().body} projectId={props.projectId} />
+        </Show>
+        <div class="mt-1 flex flex-wrap items-center gap-2">
+          <For each={q().attachmentIds.filter((id) => id.startsWith("att:"))}>
+            {(id) => <QueuedAttachment placeholderId={id} />}
+          </For>
+          <Show
+            when={
+              q().attachmentIds.filter((id) => !id.startsWith("att:")).length >
+              0
+            }
+          >
+            <p class="flex items-center gap-1.5 text-[12px] italic text-muted">
+              <PaperclipIcon class="h-3 w-3" />
+              {q().attachmentIds.filter((id) => !id.startsWith("att:")).length}{" "}
+              attachment
+              {q().attachmentIds.filter((id) => !id.startsWith("att:"))
+                .length === 1
+                ? ""
+                : "s"}{" "}
+              uploaded
+            </p>
+          </Show>
+        </div>
+      </div>
+      <button
+        type="button"
+        title="Discard queued message"
+        aria-label="Discard queued message"
+        onClick={() => void removeOutboxEntry(q().entryId)}
+        class="absolute right-3 top-1 rounded-md p-1 text-faint opacity-0 transition-opacity hover:bg-hover hover:text-red-500 group-hover:opacity-100"
+      >
+        <XIcon class="h-3.5 w-3.5" />
+      </button>
     </div>
   );
 }
@@ -2366,6 +2652,7 @@ function PendingChip(props: {
       return item().error ?? "Upload failed";
     }
     const size = formatBytes(item().file.size || item().size || 0);
+    if (item().status === "queued") return `${size} · ${ext} · queued`;
     return item().status === "uploading"
       ? "uploading…"
       : `${size} · ${ext} · ready`;
@@ -3342,13 +3629,23 @@ function ConversationThread(props: {
     if (item?.previewUrl) {
       URL.revokeObjectURL(item.previewUrl);
     }
+    // A placeholder id IS the outbox entry id — removing the chip drops
+    // the parked upload so it never replays.
+    if (item?.attachmentId?.startsWith("att:")) {
+      void removeOutboxEntry(item.attachmentId);
+    }
     setPending((cur) => cur.filter((p) => p.localId !== localId));
   }
 
   async function upload(localId: string, file: File) {
     try {
       const attachment = await api.uploadAttachment(props.projectId, file);
-      updatePending(localId, { status: "ready", attachmentId: attachment.id });
+      // Parked uploads come back with an outbox placeholder id — the chip
+      // says "queued" and the message can still send behind it.
+      updatePending(localId, {
+        status: attachment.id.startsWith("att:") ? "queued" : "ready",
+        attachmentId: attachment.id,
+      });
     } catch (err) {
       updatePending(localId, {
         status: "error",
@@ -4082,6 +4379,16 @@ function ConversationThread(props: {
                 </>
               );
             }}
+          </For>
+          <For each={queuedMessages(props.conversationId)}>
+            {(q) => (
+              <QueuedRow
+                q={q}
+                meName={session.user()?.name ?? "You"}
+                meAvatar={session.user()?.avatar_url ?? null}
+                projectId={props.projectId}
+              />
+            )}
           </For>
         </div>
       </div>

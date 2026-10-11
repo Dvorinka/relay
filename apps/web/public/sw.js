@@ -73,19 +73,25 @@ self.addEventListener("fetch", (event) => {
   // the server) are covered too. An opaque response can't be inspected, but
   // a missing file 404s the same whether cached or not.
   if (isMediaPath(url)) {
+    // no-cors requests get opaque responses whose status is invisible — a
+    // transient 401/503 cached this way would serve a dead image forever.
+    // Go to the network first so a recovered server self-heals the entry;
+    // only when the network itself fails is the cached copy the best answer.
+    const opaque = request.mode === "no-cors";
     event.respondWith(
       caches.open(MEDIA_CACHE).then((c) =>
-        c.match(request).then(
-          (hit) =>
-            hit ||
-            fetch(request).then((res) => {
+        c.match(request).then((hit) => {
+          if (hit && !opaque) return hit;
+          return fetch(request)
+            .then((res) => {
               if (res.ok || res.type === "opaque") {
                 const copy = res.clone();
                 c.put(request, copy).then(() => trimMedia(c));
               }
               return res;
-            }),
-        ),
+            })
+            .catch(() => hit || Response.error());
+        }),
       ),
     );
     return;

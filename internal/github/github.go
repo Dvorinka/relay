@@ -35,6 +35,7 @@ import (
 	"github.com/Dvorinka/relay/internal/db"
 	"github.com/Dvorinka/relay/internal/events"
 	"github.com/Dvorinka/relay/internal/httpx"
+	"github.com/Dvorinka/relay/internal/storage"
 )
 
 type Service struct {
@@ -44,9 +45,10 @@ type Service struct {
 	pool *pgxpool.Pool
 
 	mu     sync.Mutex
-	client *Client     // built lazily from the stored app row
-	cache  sync.Map    // dev-panel cache: key -> {data, expiry}
-	Bus    *events.Hub // optional — CI webhook events republish to subscribers
+	client *Client        // built lazily from the stored app row
+	cache  sync.Map       // dev-panel cache: key -> {data, expiry}
+	Bus    *events.Hub    // optional — CI webhook events republish to subscribers
+	Store  *storage.Store // optional — presigned URLs for auto-filed attachments
 
 	// dispatchMu serializes webhook processing: GitHub delivers resource events
 	// in order, and concurrent handlers would race read-modify-write.
@@ -77,6 +79,7 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup, pub *gin.RouterGroup) {
 	g.GET("/projects/:id/github/pull", s.projectMemberOnly, s.handlePullDetail)
 	g.POST("/projects/:id/github/pulls", s.projectMemberOnly, s.handleCreatePull)
 	g.POST("/projects/:id/github/issues", s.projectMemberOnly, s.handleCreateGitHubIssue)
+	g.POST("/messages/:id/github", s.handleFileMessage)
 	g.POST("/projects/:id/github/issues/comments", s.projectMemberOnly, s.handleIssueComment)
 	g.POST("/projects/:id/github/pull/merge", s.projectMemberOnly, s.handlePullMerge)
 	g.POST("/projects/:id/github/pull/state", s.projectMemberOnly, s.handlePullState)

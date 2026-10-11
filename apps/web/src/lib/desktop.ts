@@ -95,7 +95,9 @@ export function desktopSetUnread(n: number): void {
   void app.SetUnreadCount(n).catch(() => {});
 }
 
-function bytesToB64(buf: ArrayBuffer): string {
+// Exported for offline.ts — the outbox replays queued uploads through the
+// same {name,data} base64 JSON shape (multipart can't round-trip storage).
+export function bytesToB64(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);
   let s = "";
   for (let i = 0; i < bytes.length; i += 0x8000) {

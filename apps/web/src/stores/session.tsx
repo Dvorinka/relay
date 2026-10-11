@@ -17,6 +17,7 @@ import {
 import { api } from "../lib/api";
 import { rememberConnection } from "../lib/connections";
 import { desktopApplyConfig } from "../lib/desktop";
+import { importRemoteSnapshot } from "../lib/local";
 import { net } from "../lib/net";
 
 export interface SessionStore {
@@ -80,6 +81,15 @@ export function SessionProvider(props: ParentProps) {
       mutate(res);
     },
     enterLocal: async () => {
+      // Carry the server's last-synced data in first — must run while the
+      // token still exists, since cache keys are per-principal.
+      const origin = net.serverUrl() || location.origin;
+      const auth = net.token() ? `Bearer ${net.token()}` : "";
+      try {
+        await importRemoteSnapshot(origin, auth);
+      } catch {
+        /* no usable cache — local mode starts empty like before */
+      }
       net.enterLocal();
       // Going local inside the desktop shell: it should serve the embedded
       // bundle next launch, not proxy the old server.
