@@ -13,6 +13,7 @@ import (
 	"encoding/hex"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,7 @@ import (
 const (
 	inboundBodyLimit = 64 << 10 // 64KiB — alerts and diffs fit easily
 	inboundRate      = 30       // posts per minute per token
+	inboundReadRate  = 120      // message pulls per minute — chat widgets poll
 )
 
 // inLimiter is a dead-simple per-token sliding window — hooks see spiky CI
@@ -46,7 +48,7 @@ func newInLimiter() *inLimiter {
 	return &inLimiter{epoch: map[string]int64{}, count: map[string]int{}}
 }
 
-func (l *inLimiter) allow(key string) bool {
+func (l *inLimiter) allow(key string, max int) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	win := time.Now().Unix() / 60
@@ -55,7 +57,7 @@ func (l *inLimiter) allow(key string) bool {
 		l.count[key] = 0
 	}
 	l.count[key]++
-	return l.count[key] <= inboundRate
+	return l.count[key] <= max
 }
 
 var inboundLimiter = newInLimiter()
@@ -241,12 +243,12 @@ func (s *Service) handleInbound(c *gin.Context) {
 		httpx.Error(c, http.StatusNotFound, "not_found", "hook not found")
 		return
 	}
-	if !inboundLimiter.allow(hookHash(token)) {
+	if !inboundLimiter.allow("w:"+hookHash(token), inboundRate) {
 		httpx.Error(c, http.StatusTooManyRequests, "rate_limited", "too many posts — try again in a minute")
 		return
 	}
 	hook, err := s.q.GetInboundHookByTokenHash(c.Request.Context(), hookHash(token))
-	if err != nil {
+	if err != nil || !hook.Enabled {
 		httpx.Error(c, http.StatusNotFound, "not_found", "hook not found")
 		return
 	}
@@ -383,6 +385,128 @@ func (s *Service) handleInbound(c *gin.Context) {
 		out["parent_id"] = parentID.String()
 	}
 	c.JSON(http.StatusAccepted, out)
+}
+
+// handleInboundMessages is the read half of a "chat"-mode intake channel:
+// the platform polls it to pull Relay-side replies back to the customer.
+// Same path token as POST. Gated to intake_mode='chat' — receive-only
+// channels return 403 intake_read_disabled. ?key scopes to one ticket
+// thread (root + inline replies); ?after is the polling cursor.
+func (s *Service) handleInboundMessages(c *gin.Context) {
+	token := c.Param("token")
+	if !strings.HasPrefix(token, "rlh_") || len(token) > 128 {
+		httpx.Error(c, http.StatusNotFound, "not_found", "hook not found")
+		return
+	}
+	if !inboundLimiter.allow("r:"+hookHash(token), inboundReadRate) {
+		httpx.Error(c, http.StatusTooManyRequests, "rate_limited", "too many reads — try again in a minute")
+		return
+	}
+	hook, err := s.q.GetInboundHookByTokenHash(c.Request.Context(), hookHash(token))
+	if err != nil || !hook.Enabled {
+		httpx.Error(c, http.StatusNotFound, "not_found", "hook not found")
+		return
+	}
+	conv, err := s.q.GetConversationByID(c.Request.Context(), hook.ConversationID)
+	if err != nil {
+		httpx.Error(c, http.StatusNotFound, "not_found", "channel not found")
+		return
+	}
+	if conv.IntakeMode != "chat" {
+		httpx.Error(c, http.StatusForbidden, "intake_read_disabled",
+			"this channel is receive-only — switch it to live chat to pull replies")
+		return
+	}
+	var root pgtype.UUID
+	if key := oneLine(c.Query("key"), 200); key != "" {
+		p, err := s.q.GetInboundThreadParent(c.Request.Context(), db.GetInboundThreadParentParams{
+			HookID: hook.ID, Key: key,
+		})
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{"messages": []any{}})
+			return
+		}
+		root = p
+	}
+	var after pgtype.UUID
+	if a := c.Query("after"); a != "" {
+		id, err := uuid.Parse(a)
+		if err != nil {
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "after must be a message id")
+			return
+		}
+		after = pgtype.UUID{Bytes: id, Valid: true}
+	}
+	lim := int32(50)
+	if l, err := strconv.Atoi(c.Query("limit")); err == nil && l > 0 && l <= 200 {
+		lim = int32(l)
+	}
+	rows, err := s.q.ListHookChannelMessages(c.Request.Context(), db.ListHookChannelMessagesParams{
+		ConversationID: hook.ConversationID,
+		After:          after,
+		Root:           root,
+		Lim:            lim,
+	})
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	// Attachments ride presigned GET URLs when storage is configured —
+	// the token holder can fetch the bytes without a Relay session.
+	ids := make([]pgtype.UUID, 0, len(rows))
+	for _, m := range rows {
+		ids = append(ids, m.ID)
+	}
+	attByMsg := map[pgtype.UUID][]db.ListAttachmentsForMessagesRow{}
+	if len(ids) > 0 {
+		if atts, err := s.q.ListAttachmentsForMessages(c.Request.Context(), ids); err == nil {
+			for _, a := range atts {
+				attByMsg[a.MessageID] = append(attByMsg[a.MessageID], a)
+			}
+		}
+	}
+	out := make([]gin.H, 0, len(rows))
+	for _, m := range rows {
+		viaHook := false
+		for _, t := range m.Tags {
+			if t == "webhook" {
+				viaHook = true
+				break
+			}
+		}
+		msg := gin.H{
+			"id":          m.ID.String(),
+			"body":        m.Body,
+			"author_name": m.AuthorName,
+			"author_kind": m.AuthorKindSnapshot,
+			"tags":        m.Tags,
+			"via_hook":    viaHook,
+			"created_at":  m.CreatedAt,
+		}
+		if m.ParentID.Valid {
+			msg["parent_id"] = m.ParentID.String()
+		}
+		var atts []gin.H
+		for _, a := range attByMsg[m.ID] {
+			att := gin.H{
+				"id":           a.ID.String(),
+				"name":         a.Filename,
+				"content_type": a.ContentType,
+				"size_bytes":   a.SizeBytes,
+			}
+			if s.Store != nil {
+				if u, err := s.Store.PresignGet(c.Request.Context(), a.StorageKey, a.Filename, a.ContentType); err == nil {
+					att["url"] = u
+				}
+			}
+			atts = append(atts, att)
+		}
+		if len(atts) > 0 {
+			msg["attachments"] = atts
+		}
+		out = append(out, msg)
+	}
+	c.JSON(http.StatusOK, gin.H{"messages": out})
 }
 
 // oneLine squashes metadata fields (from/subject/key) to a single trimmed

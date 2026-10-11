@@ -21,13 +21,17 @@ func TestInboundIntake(t *testing.T) {
 	}
 	chanID := ch["channel"].(map[string]any)["id"].(string)
 
-	// The intake flag rides the channel PATCH and round-trips in the JSON.
+	// Intake mode rides the channel PATCH and round-trips in the JSON —
+	// including the legacy boolean shim and the value validation.
+	if code, bad := c.call("PATCH", "/api/channels/"+chanID, `{"intake_mode":"bogus"}`); code != 400 {
+		t.Fatalf("bad intake_mode: %d %v", code, bad)
+	}
 	code, up := c.call("PATCH", "/api/channels/"+chanID, `{"intake":true}`)
 	if code != 200 {
 		t.Fatalf("intake patch: %d %v", code, up)
 	}
-	if up["channel"].(map[string]any)["intake"] != true {
-		t.Fatalf("intake flag not set: %v", up)
+	if up["channel"].(map[string]any)["intake_mode"] != "receive" {
+		t.Fatalf("legacy intake bool did not map to receive: %v", up)
 	}
 
 	code, hook := c.call("POST", "/api/projects/"+projID+"/hooks",
@@ -122,5 +126,72 @@ func TestInboundIntake(t *testing.T) {
 	}
 	if code, _ = c.call("POST", "/api/hooks/rlh_deadbeef", `{"body":"x"}`); code != 404 {
 		t.Fatalf("bad token: %d", code)
+	}
+
+	// --- receive-only vs chat mode -------------------------------------
+	// Receive mode: the token is write-only — pulls are refused.
+	code, rd := c.call("GET", "/api/hooks/"+hookToken+"/messages", "")
+	errObj, _ := rd["error"].(map[string]any)
+	if code != 403 || errObj["code"] != "intake_read_disabled" {
+		t.Fatalf("receive-mode read: %d %v", code, rd)
+	}
+
+	// Chat mode: the same token can pull the channel back.
+	code, _ = c.call("PATCH", "/api/channels/"+chanID, `{"intake_mode":"chat"}`)
+	if code != 200 {
+		t.Fatalf("chat patch: %d", code)
+	}
+	// A human replies inline to the ticket root — the platform pulls it.
+	code, rep := c.call("POST", "/api/conversations/"+chanID+"/messages",
+		fmt.Sprintf(`{"body":"looking into it now","parent_id":%q}`, m1))
+	if code != 201 && code != 200 {
+		t.Fatalf("staff reply: %d %v", code, rep)
+	}
+
+	get := func(qs string) (int, map[string]any) {
+		return c.call("GET", "/api/hooks/"+hookToken+"/messages"+qs, "")
+	}
+	code, rd = get("?key=ticket-42")
+	if code != 200 {
+		t.Fatalf("chat read: %d %v", code, rd)
+	}
+	msgs := rd["messages"].([]any)
+	if len(msgs) != 3 {
+		t.Fatalf("key-scoped read got %d messages, want 3: %v", len(msgs), msgs)
+	}
+	// Oldest first: root, then the hook follow-up, then the staff reply.
+	last := msgs[2].(map[string]any)
+	if last["body"] != "looking into it now" || last["via_hook"] != false {
+		t.Fatalf("staff reply shape wrong: %v", last)
+	}
+	if msgs[0].(map[string]any)["via_hook"] != true {
+		t.Fatalf("inbound post not marked via_hook: %v", msgs[0])
+	}
+
+	// ?after paginates: nothing newer than the last message.
+	code, rd = get("?after=" + last["id"].(string))
+	if code != 200 || len(rd["messages"].([]any)) != 0 {
+		t.Fatalf("after cursor: %d %v", code, rd)
+	}
+	// Unknown key is an empty thread, not an error.
+	code, rd = get("?key=nope")
+	if code != 200 || len(rd["messages"].([]any)) != 0 {
+		t.Fatalf("unknown key: %d %v", code, rd)
+	}
+	if code, _ = get("?after=not-a-uuid"); code != 400 {
+		t.Fatalf("bad after: %d", code)
+	}
+
+	// A disabled hook is dead on both paths.
+	hookID := hookObj["id"].(string)
+	code, _ = c.call("PATCH", "/api/inbound-hooks/"+hookID, `{"enabled":false}`)
+	if code != 200 {
+		t.Fatalf("disable: %d", code)
+	}
+	if code, _ = post(`{"body":"still alive?"}`); code != 404 {
+		t.Fatalf("disabled hook post: %d", code)
+	}
+	if code, _ = get(""); code != 404 {
+		t.Fatalf("disabled hook read: %d", code)
 	}
 }

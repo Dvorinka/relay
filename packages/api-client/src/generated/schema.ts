@@ -963,8 +963,8 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Rename a channel, toggle agent access, or toggle support-intake mode
-         * @description agents_blocked=true hides the channel from MCP agents entirely - its messages no longer appear in list_conversations, get_messages, send_message or search. intake=true marks the channel as a support-intake surface (setup guide + badge in the UI).
+         * Rename a channel, toggle agent access, or set support-intake mode
+         * @description agents_blocked=true hides the channel from MCP agents entirely - its messages no longer appear in list_conversations, get_messages, send_message or search. intake_mode marks the channel as a support-intake surface: 'receive' accepts hook posts; 'chat' additionally lets the hook token pull channel messages (live support chat); '' disables intake.
          */
         patch: operations["updateChannel"];
         trace?: never;
@@ -2279,6 +2279,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/hooks/{token}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pull channel messages — live-chat reply path for support-intake platforms
+         * @description Unauthenticated; the path token is the credential (rlh_...). Only works while the hook's channel is intake_mode="chat" — receive-only channels return 403 intake_read_disabled. Rate-limited to 120 reads/minute per token so widgets can poll every few seconds. Messages arrive oldest-first; posts the platform sent itself carry via_hook=true and the "webhook" tag — the rest are the support team's replies to forward to the customer.
+         */
+        get: operations["inboundHookMessages"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/me/unread": {
         parameters: {
             query?: never;
@@ -2956,7 +2976,15 @@ export interface components {
             name?: string | null;
             /** @description True hides the channel from MCP agents entirely */
             agents_blocked?: boolean;
-            /** @description True marks the channel as a support-intake surface */
+            /**
+             * @description Support-intake mode: 'receive' accepts reports; 'chat' also exposes GET /api/hooks/{token}/messages so the platform can pull replies
+             * @enum {string}
+             */
+            intake_mode?: "" | "receive" | "chat";
+            /**
+             * @deprecated
+             * @description True when intake_mode is set — kept for client compatibility
+             */
             intake?: boolean;
             /** Format: date-time */
             created_at: string;
@@ -5473,6 +5501,12 @@ export interface operations {
                 "application/json": {
                     name?: string;
                     agents_blocked?: boolean;
+                    /** @enum {string} */
+                    intake_mode?: "" | "receive" | "chat";
+                    /**
+                     * @deprecated
+                     * @description Deprecated alias: true maps to intake_mode=receive, false to ''
+                     */
                     intake?: boolean;
                 };
             };
@@ -8333,6 +8367,86 @@ export interface operations {
             };
             /** @description Attachments sent but object storage is not configured */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    inboundHookMessages: {
+        parameters: {
+            query?: {
+                /** @description Scope to one ticket: returns the key's root post plus its replies */
+                key?: string;
+                /** @description Polling cursor — only messages newer than this message id */
+                after?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Channel messages, oldest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        messages?: {
+                            /** Format: uuid */
+                            id?: string;
+                            body?: string;
+                            author_name?: string;
+                            author_kind?: string;
+                            tags?: string[];
+                            /** @description True for posts that came in through the hook — don't re-forward */
+                            via_hook?: boolean;
+                            /** Format: uuid */
+                            parent_id?: string;
+                            attachments?: {
+                                /** Format: uuid */
+                                id?: string;
+                                name?: string;
+                                content_type?: string;
+                                size_bytes?: number;
+                                /** @description presigned GET URL when storage is configured */
+                                url?: string;
+                            }[];
+                            /** Format: date-time */
+                            created_at?: string;
+                        }[];
+                    };
+                };
+            };
+            /** @description Invalid after cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description intake_read_disabled — channel is receive-only */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown or disabled token */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rate limited */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

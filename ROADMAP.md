@@ -608,22 +608,30 @@ reports straight into a per-customer channel.
 
 ## Phase 31 — intake channels & setup guide ☑
 
-`conversations.intake` marks a channel as a support-intake surface — a
-first-class "special kind of channel" rather than an ordinary channel that
-happens to have a hook.
+`conversations.intake_mode` marks a channel as a support-intake surface —
+a first-class "special kind of channel" rather than an ordinary channel
+that happens to have a hook.
 
-- **Channel flag**: `PATCH /api/channels/:id {intake: true}`; the header
-  shows an `intake` chip and the rail an inbox icon. The toggle sits next
-  to rename/agents-blocked on the channel page.
-- **Setup guide**: enabling intake (or clicking the chip) opens the
+- **Two modes, two switches**: `PATCH /api/channels/:id {intake_mode: …}` —
+  `receive` is report-only (the hook token can write, never read);
+  `chat` is live support chat — the same token additionally pulls
+  channel messages via `GET /api/hooks/<token>/messages`
+  (`?key=` scopes to a ticket thread, `?after=` is the polling cursor,
+  `via_hook` marks the platform's own posts for the echo guard). The
+  channel header carries both toggles next to rename/agents-blocked;
+  badges: `intake` chip / inbox icon for receive, `intake · chat` /
+  reply icon for chat.
+- **Setup guide**: enabling either mode (or clicking the chip) opens the
   four-step guide — the channel's inbound hook (create or rotate inline,
   token shown once), the payload contract, and copy-paste integrations.
 - **Any language**: snippet tabs cover cURL, JavaScript, Python, and Go —
   each inlines the real hook URL so it is paste-ready.
 - **AI prompt tab**: a complete instruction block to hand a coding agent —
   endpoint, payload fields, key-threading semantics, response shapes, the
-  rate limit, and the outbound-webhook reply path with the echo-loop
-  guard (`tags` containing `webhook` are inbound posts).
+  rate limit, and both reply paths (chat-mode pull and outbound-webhook
+  push) with the echo-loop guard.
+- Disabled hooks now 404 on both read and write paths — the enable
+  toggle in project webhooks is a real gate.
 
 ## Post-1.0 ideas (not committed)
 

@@ -1620,8 +1620,8 @@ paths:
   /api/channels/{channelId}:
     patch:
       operationId: updateChannel
-      summary: Rename a channel, toggle agent access, or toggle support-intake mode
-      description: "agents_blocked=true hides the channel from MCP agents entirely - its messages no longer appear in list_conversations, get_messages, send_message or search. intake=true marks the channel as a support-intake surface (setup guide + badge in the UI)."
+      summary: Rename a channel, toggle agent access, or set support-intake mode
+      description: "agents_blocked=true hides the channel from MCP agents entirely - its messages no longer appear in list_conversations, get_messages, send_message or search. intake_mode marks the channel as a support-intake surface: 'receive' accepts hook posts; 'chat' additionally lets the hook token pull channel messages (live support chat); '' disables intake."
       tags: [conversations]
       parameters:
         - name: channelId
@@ -1637,7 +1637,13 @@ paths:
               properties:
                 name: { type: string, minLength: 1, maxLength: 60 }
                 agents_blocked: { type: boolean }
-                intake: { type: boolean }
+                intake_mode:
+                  type: string
+                  enum: ["", receive, chat]
+                intake:
+                  type: boolean
+                  deprecated: true
+                  description: "Deprecated alias: true maps to intake_mode=receive, false to ''"
       responses:
         "200":
           description: Updated channel
@@ -3670,6 +3676,70 @@ paths:
         "429": { description: "Rate limited" }
         "503": { description: "Attachments sent but object storage is not configured" }
 
+  /api/hooks/{token}/messages:
+    get:
+      operationId: inboundHookMessages
+      summary: Pull channel messages — live-chat reply path for support-intake platforms
+      description: >-
+        Unauthenticated; the path token is the credential (rlh_...). Only
+        works while the hook's channel is intake_mode="chat" — receive-only
+        channels return 403 intake_read_disabled. Rate-limited to 120
+        reads/minute per token so widgets can poll every few seconds.
+        Messages arrive oldest-first; posts the platform sent itself carry
+        via_hook=true and the "webhook" tag — the rest are the support
+        team's replies to forward to the customer.
+      tags: [webhooks]
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+        - name: key
+          in: query
+          schema: { type: string }
+          description: "Scope to one ticket: returns the key's root post plus its replies"
+        - name: after
+          in: query
+          schema: { type: string, format: uuid }
+          description: "Polling cursor — only messages newer than this message id"
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: Channel messages, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        body: { type: string }
+                        author_name: { type: string }
+                        author_kind: { type: string }
+                        tags: { type: array, items: { type: string } }
+                        via_hook:
+                          type: boolean
+                          description: "True for posts that came in through the hook — don't re-forward"
+                        parent_id: { type: string, format: uuid }
+                        attachments:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              id: { type: string, format: uuid }
+                              name: { type: string }
+                              content_type: { type: string }
+                              size_bytes: { type: integer }
+                              url: { type: string, description: "presigned GET URL when storage is configured" }
+                        created_at: { type: string, format: date-time }
+        "400": { description: "Invalid after cursor" }
+        "403": { description: "intake_read_disabled — channel is receive-only" }
+        "404": { description: "Unknown or disabled token" }
+        "429": { description: "Rate limited" }
+
   /api/me/unread:
     get:
       operationId: unreadCounts
@@ -4557,9 +4627,14 @@ components:
         agents_blocked:
           type: boolean
           description: "True hides the channel from MCP agents entirely"
+        intake_mode:
+          type: string
+          enum: ["", receive, chat]
+          description: "Support-intake mode: 'receive' accepts reports; 'chat' also exposes GET /api/hooks/{token}/messages so the platform can pull replies"
         intake:
           type: boolean
-          description: "True marks the channel as a support-intake surface"
+          deprecated: true
+          description: "True when intake_mode is set — kept for client compatibility"
         created_at: { type: string, format: date-time }
 
     MentionRef:

@@ -600,7 +600,11 @@ export function createClient(
       }),
     updateChannel: (
       channelId: string,
-      input: { name?: string; agents_blocked?: boolean; intake?: boolean },
+      input: {
+        name?: string;
+        agents_blocked?: boolean;
+        intake_mode?: "" | "receive" | "chat";
+      },
     ) => patch<{ channel: Channel }>(`/api/channels/${channelId}`, input),
     deleteChannel: (channelId: string) =>
       request<void>(`/api/channels/${channelId}`, { method: "DELETE" }),

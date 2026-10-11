@@ -84,14 +84,32 @@ Handle responses: 201 {posted,message_id,threaded,attachments};
 503 storage_disabled when attachments were sent but storage is off.
 Rate limit: 30 posts/minute — queue or batch beyond that.
 
-Replies: create an outbound webhook subscription for "message.created" on
-the project. Relay POSTs { id, type, project_id, occurred_at,
-data: { conversation_id, message } } to your URL, HMAC-SHA256-signed via
-the X-Relay-Signature-256 header. Forward those messages back to the
-customer under the same key. IMPORTANT: skip messages whose tags contain
-"webhook" — those came in through the intake hook and forwarding them
-would echo-loop.`,
+Replies — pick one or both:
+  a) Pull (live chat): GET ${url}/messages?key=<ticket>&after=<last-id>
+     returns { messages: [{ id, body, author_name, author_kind, tags,
+     via_hook, parent_id, attachments, created_at }] }, oldest first,
+     up to 200. Poll every few seconds per open ticket; pass the last
+     seen message id as ?after= for deltas. Budget: 120 reads/minute.
+  b) Push: create an outbound webhook subscription for "message.created"
+     on the project. Relay POSTs { id, type, project_id, occurred_at,
+     data: { conversation_id, message } } to your URL, HMAC-SHA256-signed
+     via the X-Relay-Signature-256 header.
+Forward the support team's messages to the customer under the same key.
+IMPORTANT: skip messages whose tags contain "webhook" (or via_hook=true
+in pull mode) — those came in through the intake hook and forwarding
+them would echo-loop.`,
   };
+}
+
+// chatRepliesSnippet — the pull path shown when the channel is in
+// live-chat mode.
+function chatRepliesSnippet(url: string): string {
+  return `// Poll for replies on a ticket (chat-mode channels only)
+const r = await fetch("${url}/messages?key=ticket-4821&after=" + lastId);
+const { messages } = await r.json();
+// via_hook=true  -> our own posts coming back — don't re-render them
+// via_hook=false -> the support team's replies — show to the customer
+for (const m of messages) if (!m.via_hook) render(m);`;
 }
 
 function CopyButton(props: { text: () => string }) {
@@ -226,6 +244,7 @@ export function IntakeGuide(props: {
   channel: () => Channel | undefined;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onMode: (mode: "" | "receive" | "chat") => void;
 }) {
   const [hooks, { refetch }] = createResource(
     () => (props.open ? props.projectId : null),
@@ -257,7 +276,10 @@ export function IntakeGuide(props: {
                 <Dialog.Description class="mt-1 text-[12px] text-muted">
                   Anything that can POST JSON can file a report into this
                   channel. The path token is the credential — keep it
-                  server-side.
+                  server-side.{" "}
+                  {props.channel()?.intake_mode === "chat"
+                    ? "Live chat is on — the token can also pull replies."
+                    : "Receive-only — replies stay inside Relay."}
                 </Dialog.Description>
               </div>
               <Dialog.CloseTrigger class="rounded p-1 text-muted transition-colors hover:bg-hover hover:text-fg">
@@ -347,17 +369,62 @@ export function IntakeGuide(props: {
 
             <div class="mt-4 rounded-md border border-border bg-hover/40 px-3 py-2.5">
               <h3 class="text-[12px] font-semibold">4 · Replies back to your product</h3>
-              <p class="mt-1 text-[11.5px] leading-relaxed text-muted">
-                Create an outbound webhook subscribing to{" "}
-                <code class="font-mono">message.created</code> (project →
-                Webhooks). Relay POSTs the signed envelope — filter{" "}
-                <code class="font-mono">data.conversation_id</code> for this
-                channel and forward the message to your customer under the
-                same <code class="font-mono">key</code>. Skip messages whose{" "}
-                <code class="font-mono">tags</code> contain{" "}
-                <code class="font-mono">"webhook"</code> — they came in
-                through the intake and forwarding them would echo-loop.
+              <Show
+                when={props.channel()?.intake_mode === "chat"}
+                fallback={
+                  <p class="mt-1 text-[11.5px] leading-relaxed text-muted">
+                    This channel is{" "}
+                    <span class="font-medium text-fg">receive-only</span> —
+                    replies stay inside Relay. Flip on{" "}
+                    <span class="font-medium text-fg">live chat</span> in the
+                    channel header to let the platform pull replies, or create
+                    an outbound <code class="font-mono">message.created</code>{" "}
+                    webhook (project → Webhooks) to push them.
+                  </p>
+                }
+              >
+                <p class="mt-1 text-[11.5px] leading-relaxed text-muted">
+                  <span class="font-medium text-fg">Live chat is on.</span>{" "}
+                  Poll the same token at{" "}
+                  <code class="font-mono">
+                    GET {"<hook-url>"}/messages?key=…&after=…
+                  </code>{" "}
+                  (120 reads/min) or subscribe an outbound webhook to{" "}
+                  <code class="font-mono">message.created</code> for push.
+                  Either way, skip posts tagged{" "}
+                  <code class="font-mono">"webhook"</code> /{" "}
+                  <code class="font-mono">via_hook</code> — forwarding them
+                  back would echo-loop.
+                </p>
+                <div class="mt-2 rounded-md border border-border bg-bg">
+                  <div class="flex items-center justify-between border-b border-border/60 px-3 py-1.5">
+                    <span class="text-[10.5px] font-medium uppercase tracking-wider text-muted">
+                      pull replies
+                    </span>
+                    <CopyButton text={() => chatRepliesSnippet(url())} />
+                  </div>
+                  <pre class="overflow-auto px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre">
+                    {chatRepliesSnippet(url())}
+                  </pre>
+                </div>
+              </Show>
+            </div>
+
+            <div class="mt-5 flex items-center justify-between">
+              <p class="text-[11px] text-muted">
+                Pair with “block agents” in the header if intake should stay
+                human-only — or leave it open so agents can triage reports.
               </p>
+              <button
+                type="button"
+                class="shrink-0 rounded px-2.5 py-1 text-[11.5px] text-red-500/80 transition-colors hover:bg-hover hover:text-red-500"
+                onClick={() => {
+                  props.onMode("");
+                  props.onOpenChange(false);
+                }}
+              >
+                Disable intake
+              </button>
             </div>
           </Dialog.Content>
         </Dialog.Positioner>

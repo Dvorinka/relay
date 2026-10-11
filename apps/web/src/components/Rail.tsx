@@ -59,6 +59,7 @@ import {
   IssueIcon,
   LockIcon,
   PlusIcon,
+  ReplyIcon,
   SettingsIcon,
   ThreadIcon,
   TrashIcon,
@@ -301,13 +302,26 @@ function ProjectChildren(props: { project: Project }) {
             >
               <span class="text-faint">#</span>
               <span class="min-w-0 flex-1 truncate">{ch.name}</span>
-              <Show when={ch.intake}>
+              <Show when={ch.intake_mode}>
                 <Tip
-                  text="Support intake"
-                  hint="External reports land here via an inbound hook"
+                  text={
+                    ch.intake_mode === "chat"
+                      ? "Support intake — live chat"
+                      : "Support intake — receive only"
+                  }
+                  hint={
+                    ch.intake_mode === "chat"
+                      ? "The platform posts reports and pulls replies"
+                      : "External reports land here via an inbound hook"
+                  }
                   class="shrink-0"
                 >
-                  <InboxIcon class="h-3 w-3 shrink-0 text-faint" />
+                  <Show
+                    when={ch.intake_mode === "chat"}
+                    fallback={<InboxIcon class="h-3 w-3 shrink-0 text-faint" />}
+                  >
+                    <ReplyIcon class="h-3 w-3 shrink-0 text-faint" />
+                  </Show>
                 </Tip>
               </Show>
               <Show when={ch.agents_blocked}>

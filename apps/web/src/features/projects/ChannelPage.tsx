@@ -13,6 +13,7 @@ import {
   LinkIcon,
   LockIcon,
   PencilIcon,
+  ReplyIcon,
   TrashIcon,
 } from "../../components/icons";
 import { Conversation } from "../conversations/Conversation";
@@ -63,15 +64,14 @@ export default function ChannelPage() {
     refetch();
   }
 
-  async function toggleIntake() {
+  async function setIntake(mode: "" | "receive" | "chat") {
     const ch = channel();
     if (!ch) return;
-    const enabling = !ch.intake;
-    await api.updateChannel(ch.id, { intake: enabling }).catch(() => {});
+    await api.updateChannel(ch.id, { intake_mode: mode }).catch(() => {});
     refetch();
-    // Enabling opens the setup guide straight away — the flag is pointless
+    // Any activation opens the setup guide — the mode is pointless
     // without a hook wired to the channel.
-    if (enabling) setGuideOpen(true);
+    if (mode !== "") setGuideOpen(true);
   }
 
   async function remove() {
@@ -125,17 +125,26 @@ export default function ChannelPage() {
             </span>
           </Tip>
         </Show>
-        <Show when={channel()?.intake}>
+        <Show when={channel()?.intake_mode}>
           <Tip
-            text="Support intake"
-            hint="External reports land here via an inbound hook — click for the setup guide"
+            text={
+              channel()?.intake_mode === "chat"
+                ? "Support intake — live chat"
+                : "Support intake — receive only"
+            }
+            hint={
+              channel()?.intake_mode === "chat"
+                ? "The platform posts reports and pulls replies — click for the setup guide"
+                : "The platform posts reports; replies stay in Relay — click for the setup guide"
+            }
           >
             <button
               type="button"
               class="flex items-center gap-1 rounded-full bg-hover px-2 py-0.5 text-[10.5px] font-medium text-muted transition-colors hover:text-fg"
               onClick={() => setGuideOpen(true)}
             >
-              <InboxIcon class="h-3 w-3" /> intake
+              <InboxIcon class="h-3 w-3" />
+              {channel()?.intake_mode === "chat" ? "intake · chat" : "intake"}
             </button>
           </Tip>
         </Show>
@@ -159,28 +168,54 @@ export default function ChannelPage() {
           </Tip>
           <Tip
             text={
-              channel()?.intake
-                ? "Support intake — setup guide"
-                : "Enable support intake"
+              channel()?.intake_mode
+                ? "Receive — on · setup guide"
+                : "Enable receive — support intake"
             }
             hint="External products POST reports here via an inbound hook"
           >
             <button
               type="button"
-              aria-label="Toggle support intake"
-              aria-pressed={channel()?.intake ?? false}
-              class={`${headerBtn} ${channel()?.intake ? "text-accent" : ""}`}
+              aria-label="Toggle support intake (receive)"
+              aria-pressed={!!channel()?.intake_mode}
+              class={`${headerBtn} ${channel()?.intake_mode ? "text-accent" : ""}`}
               onClick={() => {
-                if (channel()?.intake) {
+                if (channel()?.intake_mode) {
                   setGuideOpen(true);
                 } else {
-                  void toggleIntake();
+                  void setIntake("receive");
                 }
               }}
             >
               <InboxIcon class="h-4 w-4" />
             </button>
           </Tip>
+          <Show when={channel()?.intake_mode}>
+            <Tip
+              text={
+                channel()?.intake_mode === "chat"
+                  ? "Live chat — on"
+                  : "Enable live chat — receive & send"
+              }
+              hint="The platform's users chat with your team: the hook token also pulls replies"
+            >
+              <button
+                type="button"
+                aria-label="Toggle live chat (receive & send)"
+                aria-pressed={channel()?.intake_mode === "chat"}
+                class={`${headerBtn} ${
+                  channel()?.intake_mode === "chat" ? "text-accent" : ""
+                }`}
+                onClick={() =>
+                  void setIntake(
+                    channel()?.intake_mode === "chat" ? "receive" : "chat",
+                  )
+                }
+              >
+                <ReplyIcon class="h-4 w-4" />
+              </button>
+            </Tip>
+          </Show>
           <Tip
             text={channel()?.agents_blocked ? "Allow agents" : "Block agents"}
             hint="When blocked, agents can't read or post here"
@@ -245,6 +280,7 @@ export default function ChannelPage() {
         channel={channel}
         open={guideOpen()}
         onOpenChange={setGuideOpen}
+        onMode={(m) => void setIntake(m)}
       />
     </div>
   );
