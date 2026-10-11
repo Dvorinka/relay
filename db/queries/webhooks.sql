@@ -90,3 +90,12 @@ delete from inbound_hooks where id = sqlc.arg(id);
 
 -- name: TouchInboundHook :exec
 update inbound_hooks set last_used_at = now() where id = sqlc.arg(id);
+
+-- name: GetInboundThreadParent :one
+select parent_message_id from inbound_hook_threads
+where hook_id = sqlc.arg(hook_id) and key = sqlc.arg(key);
+
+-- name: InsertInboundThread :exec
+insert into inbound_hook_threads (hook_id, key, parent_message_id)
+values (sqlc.arg(hook_id), sqlc.arg(key), sqlc.arg(parent_message_id))
+on conflict (hook_id, key) do nothing;

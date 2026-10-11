@@ -6,14 +6,18 @@ package webhooks
 // sha256 is stored.
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"net/http"
+	"path"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Dvorinka/relay/internal/attachments"
 	"github.com/Dvorinka/relay/internal/auth"
 	"github.com/Dvorinka/relay/internal/conversations"
 	"github.com/Dvorinka/relay/internal/db"
@@ -22,6 +26,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"go.uber.org/zap"
 )
 
 const (
@@ -225,8 +230,11 @@ func (s *Service) handleHookDelete(c *gin.Context) {
 }
 
 // handleInbound is the public delivery endpoint. Token in the path is the
-// credential; payload {message|text|body} becomes a channel message from
-// the hook's creator, tagged ["webhook", name] so the UI can badge it.
+// credential. Beyond {message|text|body}, support-intake fields are
+// accepted: "from" attributes an external sender, "subject" heads the
+// message, "key" threads follow-ups under the first post with that key,
+// and "attachments" (base64) rides the standard storage pipeline. The
+// message lands tagged ["webhook", hook-name, "from:…", "key:…"].
 func (s *Service) handleInbound(c *gin.Context) {
 	token := c.Param("token")
 	if !strings.HasPrefix(token, "rlh_") || len(token) > 128 {
@@ -242,14 +250,22 @@ func (s *Service) handleInbound(c *gin.Context) {
 		httpx.Error(c, http.StatusNotFound, "not_found", "hook not found")
 		return
 	}
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, inboundBodyLimit)
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, s.bodyCap())
 	var req struct {
-		Message string `json:"message"`
-		Text    string `json:"text"`
-		Body    string `json:"body"`
+		Message     string `json:"message"`
+		Text        string `json:"text"`
+		Body        string `json:"body"`
+		From        string `json:"from"`
+		Subject     string `json:"subject"`
+		Key         string `json:"key"`
+		Attachments []struct {
+			Name        string `json:"name"`
+			ContentType string `json:"content_type"`
+			Data        string `json:"data"`
+		} `json:"attachments"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		httpx.Error(c, http.StatusBadRequest, "bad_request", "invalid JSON body (64KiB max)")
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "invalid JSON body (64KiB + attachments max)")
 		return
 	}
 	body := req.Message
@@ -259,20 +275,87 @@ func (s *Service) handleInbound(c *gin.Context) {
 	if body == "" {
 		body = req.Body
 	}
+	from := oneLine(req.From, 200)
+	subject := oneLine(req.Subject, 200)
+	key := oneLine(req.Key, 200)
 	body = strings.TrimSpace(body)
+	if body == "" {
+		body = subject
+		subject = ""
+	}
 	if body == "" || len(body) > conversations.MaxMessageBodyChars {
 		httpx.Error(c, http.StatusBadRequest, "bad_request", "message is required and must not be too large")
 		return
 	}
+	if len(req.Attachments) > 5 {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "at most 5 attachments per post")
+		return
+	}
+	if len(req.Attachments) > 0 && s.Store == nil {
+		httpx.Error(c, http.StatusServiceUnavailable, "storage_disabled", "object storage is not configured")
+		return
+	}
+	// Header line: **Alice <a@b.c>** — *subject* — then the body.
+	head := ""
+	if from != "" {
+		head = "**" + from + "**"
+		if subject != "" {
+			head += " — *" + subject + "*"
+		}
+	} else if subject != "" {
+		head = "**" + subject + "**"
+	}
+	if head != "" {
+		body = head + "\n\n" + body
+	}
+	if len(body) > conversations.MaxMessageBodyChars {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "message plus subject must not be too large")
+		return
+	}
+	tags := []string{"webhook", hook.Name}
+	if from != "" {
+		tags = append(tags, "from:"+from)
+	}
+	var parentID pgtype.UUID
+	if key != "" {
+		tags = append(tags, "key:"+key)
+		if p, err := s.q.GetInboundThreadParent(c.Request.Context(), db.GetInboundThreadParentParams{
+			HookID: hook.ID, Key: key,
+		}); err == nil {
+			parentID = p
+		}
+	}
 	mid, err := s.q.CreateMessage(c.Request.Context(), db.CreateMessageParams{
 		ConversationID: hook.ConversationID,
 		AuthorUserID:   hook.CreatedBy,
+		ParentID:       parentID,
 		Body:           body,
-		Tags:           []string{"webhook", hook.Name},
+		Tags:           tags,
 	})
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
+	}
+	if key != "" && !parentID.Valid {
+		_ = s.q.InsertInboundThread(c.Request.Context(), db.InsertInboundThreadParams{
+			HookID: hook.ID, Key: key, ParentMessageID: mid,
+		})
+	}
+	attachN := 0
+	for i, a := range req.Attachments {
+		data, err := base64.StdEncoding.DecodeString(a.Data)
+		if err != nil || int64(len(data)) > s.MaxUpload {
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "attachment must be base64 under the upload size cap")
+			return
+		}
+		att, err := s.putInboundFile(c, hook, mid, a.Name, a.ContentType, data, i)
+		if err != nil {
+			s.log.Warn("inbound attachment store failed", zap.Error(err))
+			continue // post the message without it rather than lose the report
+		}
+		if att {
+			attachN++
+		}
 	}
 	_ = s.q.TouchInboundHook(c.Request.Context(), hook.ID)
 	if s.Bus != nil {
@@ -290,7 +373,70 @@ func (s *Service) handleInbound(c *gin.Context) {
 				Data: map[string]any{"conversation_id": m.ConversationID.String(), "message": out}})
 		}
 	}
-	c.JSON(http.StatusAccepted, gin.H{"posted": true, "message_id": mid.String()})
+	out := gin.H{
+		"posted":      true,
+		"message_id":  mid.String(),
+		"threaded":    parentID.Valid,
+		"attachments": attachN,
+	}
+	if parentID.Valid {
+		out["parent_id"] = parentID.String()
+	}
+	c.JSON(http.StatusAccepted, out)
+}
+
+// oneLine squashes metadata fields (from/subject/key) to a single trimmed
+// line — they land in tags and the rendered header, so newlines are out.
+func oneLine(v string, max int) string {
+	v = strings.Join(strings.Fields(v), " ")
+	if len(v) > max {
+		v = v[:max]
+	}
+	return v
+}
+
+// bodyCap is the request ceiling: 64KiB for text, plus headroom for
+// base64 attachments (~1.34× decoded) when storage allows them.
+func (s *Service) bodyCap() int64 {
+	cap := int64(inboundBodyLimit)
+	if s.MaxUpload > 0 {
+		cap += s.MaxUpload * 2
+	}
+	return cap
+}
+
+// putInboundFile runs one hook attachment through the same path as a UI
+// upload: sniffed type, project-scoped key, attachment row, link.
+func (s *Service) putInboundFile(c *gin.Context, hook db.InboundHook, mid pgtype.UUID,
+	name, declared string, data []byte, pos int) (bool, error) {
+	contentType := attachments.SniffType(data, declared)
+	filename := path.Base(strings.TrimSpace(name))
+	if filename == "." || filename == "/" || filename == "" {
+		filename = "file"
+	}
+	id := uuid.New()
+	key := hook.ProjectID.String() + "/" + id.String()
+	if err := s.Store.Put(c.Request.Context(), key, bytes.NewReader(data), int64(len(data)), contentType); err != nil {
+		return false, err
+	}
+	row, err := s.q.CreateAttachment(c.Request.Context(), db.CreateAttachmentParams{
+		ID: pgtype.UUID{Bytes: id, Valid: true}, ProjectID: hook.ProjectID,
+		UploaderID: hook.CreatedBy, StorageKey: key, Filename: filename,
+		ContentType: contentType, SizeBytes: int64(len(data)),
+	})
+	if err != nil {
+		_ = s.Store.Remove(c.Request.Context(), key)
+		return false, err
+	}
+	if _, err = s.q.MarkAttachmentReady(c.Request.Context(), row.ID); err != nil {
+		return false, err
+	}
+	if err = s.q.LinkMessageAttachment(c.Request.Context(), db.LinkMessageAttachmentParams{
+		MessageID: mid, AttachmentID: row.ID, Position: int32(pos),
+	}); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func hookJSON(h db.InboundHook, token string) gin.H {

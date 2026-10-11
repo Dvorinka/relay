@@ -184,6 +184,13 @@ type InboundHook struct {
 	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
 }
 
+type InboundHookThread struct {
+	HookID          pgtype.UUID        `json:"hook_id"`
+	Key             string             `json:"key"`
+	ParentMessageID pgtype.UUID        `json:"parent_message_id"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
 type Issue struct {
 	ID           pgtype.UUID        `json:"id"`
 	ProjectID    pgtype.UUID        `json:"project_id"`

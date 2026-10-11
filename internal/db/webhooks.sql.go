@@ -205,6 +205,23 @@ func (q *Queries) GetInboundHookForUser(ctx context.Context, arg GetInboundHookF
 	return i, err
 }
 
+const getInboundThreadParent = `-- name: GetInboundThreadParent :one
+select parent_message_id from inbound_hook_threads
+where hook_id = $1 and key = $2
+`
+
+type GetInboundThreadParentParams struct {
+	HookID pgtype.UUID `json:"hook_id"`
+	Key    string      `json:"key"`
+}
+
+func (q *Queries) GetInboundThreadParent(ctx context.Context, arg GetInboundThreadParentParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, getInboundThreadParent, arg.HookID, arg.Key)
+	var parent_message_id pgtype.UUID
+	err := row.Scan(&parent_message_id)
+	return parent_message_id, err
+}
+
 const getWebhookByID = `-- name: GetWebhookByID :one
 select s.id, s.project_id, s.url, s.secret, s.events, s.active, s.created_by, s.created_at, s.updated_at, p.workspace_id
 from webhook_subscriptions s
@@ -286,6 +303,23 @@ func (q *Queries) GetWebhookForUser(ctx context.Context, arg GetWebhookForUserPa
 		&i.WorkspaceID,
 	)
 	return i, err
+}
+
+const insertInboundThread = `-- name: InsertInboundThread :exec
+insert into inbound_hook_threads (hook_id, key, parent_message_id)
+values ($1, $2, $3)
+on conflict (hook_id, key) do nothing
+`
+
+type InsertInboundThreadParams struct {
+	HookID          pgtype.UUID `json:"hook_id"`
+	Key             string      `json:"key"`
+	ParentMessageID pgtype.UUID `json:"parent_message_id"`
+}
+
+func (q *Queries) InsertInboundThread(ctx context.Context, arg InsertInboundThreadParams) error {
+	_, err := q.db.Exec(ctx, insertInboundThread, arg.HookID, arg.Key, arg.ParentMessageID)
+	return err
 }
 
 const listInboundHooks = `-- name: ListInboundHooks :many

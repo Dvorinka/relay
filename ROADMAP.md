@@ -583,6 +583,29 @@ locally" imported the cached workspace and reconnect didn't duplicate it.
   alongside the status; manual checks and the tray item bypass the 5-min
   session cache so they always hit the release feed.
 
+## Phase 30 — support intake on inbound hooks ☑
+
+`POST /api/hooks/<token>` grows from plain-text posts into a real intake
+endpoint — a product (invoicing platform, SaaS app, anything) posts user
+reports straight into a per-customer channel.
+
+- **Sender attribution**: `from` renders as a bold header line and a
+  `from:` tag; `subject` headlines the message. Messages stay
+  `["webhook", hook-name]`-tagged so they're distinguishable everywhere.
+- **Ticket threading**: `key` maps to `inbound_hook_threads` — the first
+  post with a key becomes the thread root; follow-ups with the same key
+  land as replies under it. One support ticket, one thread.
+- **File payloads**: `attachments` (base64, max 5, per-file upload cap)
+  run through the normal storage pipeline — log files and screenshots
+  arrive attached to the message. `503 storage_disabled` when storage
+  isn't configured; a failed file never sinks the message itself.
+- **Reply path**: an outbound `message.created` webhook subscription on
+  the same project already closes the loop — the platform receives
+  Relay-side replies (filter by `conversation_id`, skip `webhook`-tagged
+  posts to avoid echo loops).
+- Request cap lifts from 64KiB to 64KiB + 2×upload-max; response reports
+  `threaded`, `parent_id`, `attachments`.
+
 ## Post-1.0 ideas (not committed)
 
 - Relay Cloud (hosted offering) - self-hosting stays first-class

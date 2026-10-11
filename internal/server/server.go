@@ -88,6 +88,8 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	searchSvc := search.NewService(pool)
 	hookSvc := webhooks.NewService(log, pool, cfg.PublicURL)
 	hookSvc.Bus = hub
+	hookSvc.Store = store
+	hookSvc.MaxUpload = cfg.StorageMaxUploadMiB << 20
 	pushSvc := push.NewService(log, pool, cfg)
 	briefSvc := briefs.NewService(log, pool)
 	ideaSvc := ideas.NewService(log, pool)
