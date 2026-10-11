@@ -75,6 +75,8 @@ const RELEASES_URL =
 export const RELEASES_PAGE = "https://github.com/Dvorinka/relay/releases/latest";
 const CACHE_KEY = "relay.latestRelease";
 const CACHE_MS = 5 * 60 * 1000;
+// Bounded auto-retries for background checks — reset on each success.
+let retries = 0;
 
 export function useVersion() {
   return { appVersion, serverVersion, clientVersion };
@@ -178,6 +180,7 @@ export async function checkForUpdates(force = false) {
     if (!r.ok) throw new Error();
     const j = (await r.json()) as { tag_name?: string };
     if (!j.tag_name) throw new Error();
+    retries = 0;
     setLatest(j.tag_name);
     setChecked(true);
     sessionStorage.setItem(
@@ -187,6 +190,15 @@ export async function checkForUpdates(force = false) {
   } catch {
     setCheckError(true);
     setChecked(true);
+    // One bounded retry on transient failures (GitHub API blips) —
+    // background/launch checks would otherwise sit dead until the
+    // next manual click or the 6-hour interval.
+    if (!force) {
+      if (retries < 1) {
+        retries++;
+        setTimeout(() => void checkForUpdates(), 60 * 1000);
+      }
+    }
   } finally {
     setChecking(false);
   }
