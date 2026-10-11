@@ -286,9 +286,10 @@ func (s *Service) notify(e events.Event) {
 		body = string([]rune(body)[:previewRunes]) + "…"
 	}
 	link := s.pub + "/app/p/" + e.ProjectID.String()
-	if conv.Kind == "channel" {
+	switch conv.Kind {
+	case "channel":
 		link += "/c/" + convID
-	} else if conv.Kind == "thread" {
+	case "thread":
 		link += "?thread=" + convID
 	}
 	subject := fmt.Sprintf("[Relay] #%s — %s", chanName, name)
@@ -331,10 +332,10 @@ func (s *Service) send(ctx context.Context, cfg smtpConfig, to []string, subject
 	_ = conn.SetDeadline(time.Now().Add(20 * time.Second))
 	client, err := smtp.NewClient(conn, cfg.host)
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return err
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	if cfg.port != "465" {
 		if ok, _ := client.Extension("STARTTLS"); ok {
 			if err := client.StartTLS(&tls.Config{ServerName: cfg.host}); err != nil {
