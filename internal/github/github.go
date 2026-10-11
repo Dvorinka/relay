@@ -79,6 +79,7 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup, pub *gin.RouterGroup) {
 	g.GET("/projects/:id/github/pull", s.projectMemberOnly, s.handlePullDetail)
 	g.POST("/projects/:id/github/pulls", s.projectMemberOnly, s.handleCreatePull)
 	g.POST("/projects/:id/github/issues", s.projectMemberOnly, s.handleCreateGitHubIssue)
+	g.POST("/messages/:id/github", s.handleFileMessage)
 	g.POST("/projects/:id/github/issues/comments", s.projectMemberOnly, s.handleIssueComment)
 	g.POST("/projects/:id/github/pull/merge", s.projectMemberOnly, s.handlePullMerge)
 	g.POST("/projects/:id/github/pull/state", s.projectMemberOnly, s.handlePullState)

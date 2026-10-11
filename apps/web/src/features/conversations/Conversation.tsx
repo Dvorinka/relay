@@ -5,6 +5,7 @@ import {
   type Conversation as ApiConversation,
   type Mentionables,
   type Message,
+  type LinkedRepo,
   type MessageEdit,
   type Reaction,
   type ScheduledMessage,
@@ -77,6 +78,7 @@ import {
   type QueuedMessage,
 } from "../../lib/offline";
 import { Markdown, renderMarkdown } from "../../lib/markdown";
+import { markGitHub } from "../github/GitHub";
 import { LinkPreview } from "../../components/LinkPreview";
 import { formatBytes, initials, messagePreview } from "../../lib/text";
 import { useProjects } from "../../stores/projects";
@@ -629,12 +631,66 @@ function MessageMoreMenu(props: {
   y: number;
   saved: boolean;
   agents: Mentionables["agents"];
+  fileable: { projectId: string; messageId: string } | null;
   onSave: () => void;
   onRemind: (fireAt: Date) => void;
   onAskAgent: (agent: Mentionables["agents"][number]) => void;
   onClose: () => void;
 }) {
-  const [view, setView] = createSignal<"main" | "remind" | "agents">("main");
+  const [view, setView] = createSignal<"main" | "remind" | "agents" | "github">(
+    "main",
+  );
+  const [ghRepos, setGhRepos] = createSignal<LinkedRepo[] | null>(null);
+  const [ghBusy, setGhBusy] = createSignal(false);
+  const [ghError, setGhError] = createSignal<string | null>(null);
+  const [ghDone, setGhDone] = createSignal<{
+    number: number;
+    url: string;
+  } | null>(null);
+
+  async function fileOnGitHub(repoId?: string) {
+    const f = props.fileable;
+    if (!f || ghBusy()) return;
+    setGhBusy(true);
+    setGhError(null);
+    try {
+      const res = await api.fileMessageOnGitHub(
+        f.messageId,
+        repoId ? { repo_id: repoId } : undefined,
+      );
+      setGhDone(res.issue);
+    } catch (err) {
+      setGhError(
+        err instanceof ApiClientError ? err.message : "filing failed",
+      );
+    } finally {
+      setGhBusy(false);
+    }
+  }
+
+  // Repo picker rows only render when there is an actual choice to make.
+  const pickRepos = () => {
+    const r = ghRepos();
+    return r && r.length > 1 ? r : [];
+  };
+
+  // One linked repo files immediately; several offer a picker inside the
+  // menu; none surface the server's no_repo error verbatim anyway.
+  async function openGitHub() {
+    setView("github");
+    setGhError(null);
+    try {
+      const repos =
+        ghRepos() ??
+        (await api.listProjectRepos(props.fileable?.projectId ?? "")).repos;
+      setGhRepos(repos);
+      if (repos.length === 1) void fileOnGitHub();
+    } catch (err) {
+      setGhError(
+        err instanceof ApiClientError ? err.message : "couldn't load repos",
+      );
+    }
+  }
   createEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") props.onClose();
@@ -715,6 +771,16 @@ function MessageMoreMenu(props: {
                 Ask agent…
               </button>
             </Show>
+            <Show when={props.fileable}>
+              <button
+                type="button"
+                onClick={() => void openGitHub()}
+                class={item}
+              >
+                {markGitHub("", "h-4 w-4 text-faint")}
+                File on GitHub
+              </button>
+            </Show>
           </Match>
           <Match when={view() === "remind"}>
             <button
@@ -765,6 +831,70 @@ function MessageMoreMenu(props: {
                 </button>
               )}
             </For>
+          </Match>
+          <Match when={view() === "github"}>
+            <button
+              type="button"
+              onClick={() => setView("main")}
+              class={`${item} text-muted`}
+            >
+              <ChevronLeftIcon class="h-4 w-4 text-faint" />
+              File on GitHub
+            </button>
+            <Show
+              when={ghDone()}
+              fallback={
+                <>
+                  <Show when={ghRepos()?.length === 0 && !ghError()}>
+                    <div class="px-2.5 py-2 text-[13px] text-muted">
+                      No GitHub repository linked to this project
+                    </div>
+                  </Show>
+                  <For each={pickRepos()}>
+                    {(r) => (
+                      <button
+                        type="button"
+                        disabled={ghBusy()}
+                        onClick={() => void fileOnGitHub(r.id)}
+                        class={`${item} disabled:opacity-50`}
+                      >
+                        {markGitHub("", "h-4 w-4 text-faint")}
+                        <span class="min-w-0 truncate">
+                          {r.owner}/{r.name}
+                        </span>
+                      </button>
+                    )}
+                  </For>
+                  <Show when={ghBusy()}>
+                    <div class="flex items-center gap-2 px-2.5 py-2 text-[13px] text-muted">
+                      <Spinner class="h-3.5 w-3.5" />
+                      Filing issue…
+                    </div>
+                  </Show>
+                  <Show when={ghError()}>
+                    {(e) => (
+                      <div class="px-2.5 py-2 text-[13px] leading-snug text-danger">
+                        {e()}
+                      </div>
+                    )}
+                  </Show>
+                </>
+              }
+            >
+              {(issue) => (
+                <a
+                  href={issue().url}
+                  target="_blank"
+                  rel="noreferrer"
+                  class={item}
+                >
+                  {markGitHub("", "h-4 w-4 text-faint")}
+                  <span class="min-w-0 truncate">
+                    Issue #{issue().number} filed — open
+                  </span>
+                </a>
+              )}
+            </Show>
           </Match>
         </Switch>
       </div>
@@ -2352,6 +2482,12 @@ function MessageRow(props: {
               y={pos().y}
               saved={isSaved(m().id)}
               agents={props.agents}
+              fileable={
+                m().author.kind === "user" &&
+                !(m().tags ?? []).includes("autofile")
+                  ? { projectId: props.projectId, messageId: m().id }
+                  : null
+              }
               onSave={() => void toggleSaved(m().id)}
               onRemind={(at) => void remind(at)}
               onAskAgent={(a) => props.onAskAgent?.(m(), a)}

@@ -834,6 +834,14 @@ export function createClient(
         `/api/projects/${projectId}/github/pulls?repo=${encodeURIComponent(repo)}`,
         input,
       ),
+    fileMessageOnGitHub: (
+      messageId: string,
+      input?: { repo_id?: string; title?: string },
+    ) =>
+      post<{ issue: { number: number; url: string; state: string } }>(
+        `/api/messages/${messageId}/github`,
+        input ?? {},
+      ),
     createGitHubIssue: (projectId: string, repo: string, input: { title: string; body?: string }) =>
       post<{ issue: { id: string; number: number; url: string; state: string } }>(
         `/api/projects/${projectId}/github/issues?repo=${encodeURIComponent(repo)}`,

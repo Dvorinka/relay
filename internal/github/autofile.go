@@ -9,13 +9,16 @@ package github
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/Dvorinka/relay/internal/auth"
 	"github.com/Dvorinka/relay/internal/conversations"
 	"github.com/Dvorinka/relay/internal/db"
 	"github.com/Dvorinka/relay/internal/events"
+	"github.com/Dvorinka/relay/internal/httpx"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -84,22 +87,24 @@ func (s *Service) maybeAutoFile(projectID uuid.UUID, msg gin.H) {
 	// Only open discussion surfaces — a message inside an issue or brief
 	// conversation is already tracked work, not a fresh report.
 	conv, err := s.q.GetConversationByID(ctx, convID)
-	if err != nil {
-		return
-	}
-	switch conv.Kind {
-	case "project", "channel", "thread":
-	default:
+	if err != nil || !fileableKind(conv.Kind) {
 		return
 	}
 	// One linked repo only — with several we can't guess where it belongs.
 	repos, err := s.q.ListProjectRepos(ctx, pgtype.UUID{Bytes: projectID, Valid: true})
-	if err != nil || len(repos) != 1 {
+	if err != nil || len(repos) == 0 {
+		return
+	}
+	if len(repos) > 1 {
+		// GitHub is clearly in use but the target is ambiguous — point the
+		// reporter at the explicit action instead of silently dropping it.
+		s.reply(ctx, conv, msgID, authorID, fmt.Sprintf(
+			"Couldn't auto-file — this project links %d repos. Message menu → File on GitHub picks one explicitly.",
+			len(repos)))
 		return
 	}
 	repo := repos[0]
-	cli, err := s.githubClient(ctx)
-	if err != nil {
+	if _, err := s.githubClient(ctx); err != nil {
 		return // GitHub app not connected on this server
 	}
 
@@ -107,24 +112,124 @@ func (s *Service) maybeAutoFile(projectID uuid.UUID, msg gin.H) {
 	if title == "" {
 		title = "Untitled report"
 	}
+	if _, err := s.fileMessage(ctx, repo, conv, msgID, authorID, authorName,
+		title, report, "auto_file"); err != nil {
+		s.log.Warn("auto-file GitHub issue failed", zap.Error(err))
+	}
+}
+
+// fileMessage runs the shared tail of auto- and manual filing: create the
+// GitHub issue, mirror it onto the board, record provenance, and reply in
+// the source conversation with the link.
+func (s *Service) fileMessage(ctx context.Context, repo db.Repository, conv db.Conversation,
+	msgID, authorID pgtype.UUID, authorName, title, report, activityKind string) (*GHIssue, error) {
+	cli, err := s.githubClient(ctx)
+	if err != nil {
+		return nil, err
+	}
 	gh, err := cli.CreateIssue(ctx, repo.InstallationID, repo.Owner, repo.Name,
 		title, s.issueBody(ctx, msgID, report, authorName))
 	if err != nil {
-		s.log.Warn("auto-file GitHub issue failed", zap.Error(err))
-		return
+		return nil, err
 	}
 	if gh.Title == "" {
 		gh.Title = title // sparse response — the check constraint needs a title
 	}
 	issueID, err := s.MirrorIssue(ctx, repo, *gh)
 	if err != nil {
-		s.log.Warn("auto-file mirror failed", zap.Error(err))
+		s.log.Warn("file mirror failed", zap.Error(err))
 	} else {
-		s.ghActivity(ctx, issueID, "auto_file",
+		s.ghActivity(ctx, issueID, activityKind,
 			fmt.Sprintf(`{"message_id":%q,"author":%q}`, msgID.String(), authorName))
 	}
 	s.invalidateDevPanel(repo.ProjectID)
 	s.announce(ctx, conv, msgID, authorID, repo, gh)
+	return gh, nil
+}
+
+// handleFileMessage is the explicit version of auto-filing: POST
+// /api/messages/:id/github pushes any message — marker or not — onto a
+// linked repo. With several repos the caller names one via {"repo_id"}.
+func (s *Service) handleFileMessage(c *gin.Context) {
+	id, ok := httpx.PathUUID(c, "id")
+	if !ok {
+		return
+	}
+	user := auth.CurrentUser(c)
+	msg, err := s.q.GetMessageWithProjectForUser(c.Request.Context(), db.GetMessageWithProjectForUserParams{
+		ID: id, UserID: user.ID,
+	})
+	if err != nil {
+		httpx.Error(c, http.StatusNotFound, "not_found", "message not found")
+		return
+	}
+	var req struct {
+		RepoID string `json:"repo_id"`
+		Title  string `json:"title"`
+	}
+	if c.Request.Body != nil && c.Request.ContentLength > 0 && !httpx.BindJSON(c, &req) {
+		return
+	}
+	repos, err := s.q.ListProjectRepos(c.Request.Context(), msg.ProjectID)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	if len(repos) == 0 {
+		httpx.Error(c, http.StatusConflict, "no_repo", "project has no linked GitHub repository")
+		return
+	}
+	repo := repos[0]
+	if len(repos) > 1 {
+		matched := false
+		for _, r := range repos {
+			if r.ID.String() == req.RepoID {
+				repo, matched = r, true
+			}
+		}
+		if !matched {
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "repo_id is not linked to this project")
+			return
+		}
+	}
+	m, err := s.q.GetMessageByID(c.Request.Context(), msg.ID)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	conv, err := s.q.GetConversationByID(c.Request.Context(), m.ConversationID)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	if !fileableKind(conv.Kind) {
+		httpx.Error(c, http.StatusBadRequest, "bad_request",
+			"messages in this conversation can't be filed on GitHub")
+		return
+	}
+	// The marker is filing metadata, not content — strip it here too.
+	report := strings.TrimSpace(autoFileMarker.ReplaceAllString(msg.Body, ""))
+	if report == "" {
+		report = strings.TrimSpace(msg.Body)
+	}
+	title := strings.TrimSpace(req.Title)
+	if title == "" {
+		title = firstLineOf(report, 100)
+	}
+	if title == "" {
+		title = "Untitled report"
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
+	defer cancel()
+	gh, err := s.fileMessage(ctx, repo, conv, msg.ID, user.ID, user.Name,
+		title, report, "manual_file")
+	if err != nil {
+		httpx.Error(c, http.StatusBadGateway, "github_error", truncate(err.Error(), 300))
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{
+		"issue": gin.H{"number": gh.Number, "url": gh.HTMLURL, "state": gh.State},
+	})
 }
 
 // issueBody renders the GitHub issue body: the report text, an attachment
@@ -154,19 +259,25 @@ func (s *Service) issueBody(ctx context.Context, msgID pgtype.UUID, report, auth
 	return b.String()
 }
 
-// announce replies to the triggering message with the GitHub link, as the
-// reporter — the same convention postThreadNotice uses for "started a
-// thread" lines. Published on the bus so the reply appears live.
+// announce replies to the triggering message with the GitHub link.
 func (s *Service) announce(ctx context.Context, conv db.Conversation, parentID, authorID pgtype.UUID, repo db.Repository, gh *GHIssue) {
+	s.reply(ctx, conv, parentID, authorID, fmt.Sprintf("Filed on GitHub → %s/%s#%d — %s",
+		repo.Owner, repo.Name, gh.Number, gh.HTMLURL))
+}
+
+// reply posts a short system-narrated reply under the triggering message,
+// as the reporter — the same convention postThreadNotice uses for "started
+// a thread" lines. Published on the bus so the reply appears live.
+func (s *Service) reply(ctx context.Context, conv db.Conversation, parentID, authorID pgtype.UUID, body string) {
 	id, err := s.q.CreateMessage(ctx, db.CreateMessageParams{
 		ConversationID: conv.ID,
 		AuthorUserID:   authorID,
 		ParentID:       parentID,
-		Body: fmt.Sprintf("Filed on GitHub → %s/%s#%d — %s",
-			repo.Owner, repo.Name, gh.Number, gh.HTMLURL),
+		Body:           body,
+		Tags:           []string{"autofile"},
 	})
 	if err != nil {
-		s.log.Warn("auto-file announce failed", zap.Error(err))
+		s.log.Warn("auto-file reply failed", zap.Error(err))
 		return
 	}
 	m, err := s.q.GetMessageByID(ctx, id)
@@ -185,6 +296,16 @@ func (s *Service) announce(ctx context.Context, conv db.Conversation, parentID, 
 	})
 	s.Bus.Publish(events.Event{Type: "message.created", ProjectID: conv.ProjectID.Bytes,
 		Data: map[string]any{"conversation_id": m.ConversationID.String(), "message": out}})
+}
+
+// fileableKind limits filing — auto or manual — to open discussion
+// surfaces; issue/brief conversations are already tracked work.
+func fileableKind(kind string) bool {
+	switch kind {
+	case "project", "channel", "thread":
+		return true
+	}
+	return false
 }
 
 func scanUUID(s string) (pgtype.UUID, bool) {
