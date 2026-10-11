@@ -9,6 +9,7 @@ export interface RelayEvent {
 
 import { net } from "./net";
 import { desktopEventPump } from "./desktop";
+import { onServerUp } from "./offline";
 
 type Handler = (e: RelayEvent) => void;
 
@@ -28,6 +29,7 @@ let lastFrame = Date.now();
 let everConnected = false;
 let watchdog: ReturnType<typeof setInterval> | undefined;
 let visBound = false;
+let upBound = false;
 
 function noteFrame() {
   lastFrame = Date.now();
@@ -149,6 +151,17 @@ export function subscribe(h: Handler): () => void {
   handlers.add(h);
   if (!source && !bridged) connect();
   startWatchdog();
+  // Server recovered mid-session: queued mutations have replayed by now —
+  // tell views to reconcile so the replayed entities (and anything missed
+  // on the dead stream) appear without a reload.
+  if (!upBound) {
+    upBound = true;
+    onServerUp((origin) => {
+      if (!net.isLocal() && origin === (net.serverUrl() || location.origin)) {
+        resyncSoon();
+      }
+    });
+  }
   return () => {
     handlers.delete(h);
     if (handlers.size === 0) {

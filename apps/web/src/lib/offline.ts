@@ -7,6 +7,8 @@
 import { createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
 import { cacheGet, cachePut, kvDel, kvGet, kvPut } from "./cache";
+import { bytesToB64 } from "./desktop";
+import { localStore } from "./localdb";
 
 export type ServerState = "up" | "down" | "unknown";
 
@@ -116,11 +118,12 @@ export async function probeNow(rawUrl: string): Promise<boolean> {
 // fired into the void, then replayed FIFO the moment the server answers
 // again. Deliberate bounds:
 // - The request that *marks* the origin down also queues — but only when
-//   replay provably can't duplicate: PUT/DELETE are idempotent by method,
-//   and POSTs must carry a client_msg_id the server dedupes on. Anything
-//   else keeps the old fail-and-report behaviour.
-// - Only string bodies queue. FormData uploads can't round-trip through
-//   storage; they fail immediately like before.
+//   replay provably can't duplicate: PUT/PATCH/DELETE are idempotent by
+//   method, and POSTs must carry a client_msg_id the server dedupes on.
+//   Anything else keeps the old fail-and-report behaviour.
+// - Only string bodies queue here. FormData can't round-trip storage, so
+//   attachment uploads park through enqueueUpload instead — file bytes in
+//   the blobs store, replayed as base64 JSON.
 export class QueuedError extends Error {
   constructor() {
     super("Server unreachable — change queued, sends on reconnect");
@@ -132,24 +135,37 @@ export function isQueuedError(e: unknown): boolean {
   return e instanceof QueuedError || (e instanceof Error && e.name === "queued");
 }
 
-interface OutboxEntry {
+export interface OutboxEntry {
   id: string;
   origin: string;
   url: string;
   method: string;
   headers: Record<string, string>;
   body?: string;
+  // Upload entries carry no JSON body — the file bytes live in the blobs
+  // store under blobId and replay as {name,data} base64 JSON (the shape
+  // every upload endpoint accepts; multipart can't round-trip storage).
+  // `placeholder` is the synthesized attachment id handed to the caller;
+  // drain rewrites it in later entries' bodies once the upload lands.
+  blobId?: string;
+  filename?: string;
+  placeholder?: string;
 }
 
 const OUTBOX_KEY = "outbox:v1";
 const OUTBOX_CAP = 100;
 let outboxSeq = 0;
-const [outboxPending, setOutboxPending] = createSignal(0);
-export { outboxPending };
-void refreshOutboxCount();
+// The full queue as a signal so views can render what is parked — a bare
+// count can't drive the "queued message" lane.
+const [outboxEntries, setOutboxEntries] = createSignal<OutboxEntry[]>([]);
+export { outboxEntries };
+export function outboxPending(): number {
+  return outboxEntries().length;
+}
+void refreshOutbox();
 
-async function refreshOutboxCount(): Promise<void> {
-  setOutboxPending((await outboxList()).length);
+async function refreshOutbox(): Promise<void> {
+  setOutboxEntries(await outboxList());
 }
 
 async function outboxList(): Promise<OutboxEntry[]> {
@@ -163,7 +179,7 @@ async function outboxList(): Promise<OutboxEntry[]> {
 async function outboxSave(list: OutboxEntry[]): Promise<void> {
   if (list.length === 0) await kvDel(OUTBOX_KEY);
   else await kvPut(OUTBOX_KEY, JSON.stringify(list));
-  setOutboxPending(list.length);
+  setOutboxEntries(list);
 }
 
 async function enqueueOutbox(
@@ -190,6 +206,81 @@ async function enqueueOutbox(
   return true;
 }
 
+// --- Queued uploads ---------------------------------------------------------
+// File bytes can't live in the JSON outbox — they park in the blobs store.
+// The entry id doubles as the synthesized attachment id ("att:…") so a
+// queued postMessage can reference it before the real upload exists; drain
+// substitutes the server id in later bodies.
+
+const memBlobs = new Map<string, Blob>(); // IDB-less fallback (tests, private mode)
+
+async function putUploadBlob(blobId: string, blob: Blob): Promise<void> {
+  try {
+    await localStore.putBlob(blobId, blob);
+  } catch {
+    memBlobs.set(blobId, blob);
+  }
+}
+
+async function uploadBlob(blobId: string): Promise<Blob | undefined> {
+  try {
+    return await localStore.getBlob(blobId);
+  } catch {
+    return memBlobs.get(blobId);
+  }
+}
+
+async function dropUploadBlob(blobId: string): Promise<void> {
+  memBlobs.delete(blobId);
+  try {
+    await localStore.delBlob(blobId);
+  } catch {
+    /* IDB already gone — nothing to drop */
+  }
+}
+
+/** Park a file upload while the server is down. Returns the placeholder
+ *  attachment id ("att:<entryId>") for callers to reference, or null when
+ *  the queue is full. Replay posts {"name","data"} JSON — accepted on every
+ *  upload endpoint and immune to the desktop webview's multipart drops. */
+export async function enqueueUpload(
+  url: string,
+  file: File | Blob,
+  filename: string,
+  init?: RequestInit,
+): Promise<string | null> {
+  const list = await outboxList();
+  if (list.length >= OUTBOX_CAP) return null;
+  const id = `att:${Date.now()}-${outboxSeq++}`;
+  const blobId = `outbox-blob:${id}`;
+  await putUploadBlob(blobId, file);
+  const headers: Record<string, string> = {};
+  new Headers(init?.headers ?? {}).forEach((v, k) => {
+    headers[k] = v;
+  });
+  list.push({
+    id,
+    origin: originOf(url),
+    url,
+    method: "POST",
+    headers,
+    blobId,
+    filename,
+    placeholder: id,
+  });
+  await outboxSave(list);
+  return id;
+}
+
+/** Drop one queued change (the × on a queued message/upload). Blob-backed
+ *  entries take their parked file with them. */
+export async function removeOutboxEntry(id: string): Promise<void> {
+  const list = await outboxList();
+  const entry = list.find((e) => e.id === id);
+  if (entry?.blobId) void dropUploadBlob(entry.blobId);
+  await outboxSave(list.filter((e) => e.id !== id));
+}
+
 // Replay in order. Any answered request (<500, even a rejection) consumed
 // the change — drop it. A 5xx or transport error means the server is still
 // sick: stop and leave the rest queued for the next recovery.
@@ -197,6 +288,7 @@ async function drainOutbox(origin: string): Promise<void> {
   const list = await outboxList();
   if (!list.some((e) => e.origin === origin)) return;
   const keep: OutboxEntry[] = [];
+  const resolved = new Map<string, string>(); // placeholder -> real attachment id
   let stopped = false;
   for (const e of list) {
     if (stopped || e.origin !== origin) {
@@ -204,14 +296,36 @@ async function drainOutbox(origin: string): Promise<void> {
       continue;
     }
     try {
-      const res = await fetch(e.url, {
-        method: e.method,
-        headers: e.headers,
-        body: e.body,
-      });
+      let body = e.body;
+      let headers = e.headers;
+      if (e.blobId) {
+        const blob = await uploadBlob(e.blobId);
+        if (!blob) throw new Error("upload payload gone");
+        body = JSON.stringify({
+          name: e.filename ?? "file",
+          data: bytesToB64(await blob.arrayBuffer()),
+        });
+        headers = { ...e.headers, "Content-Type": "application/json" };
+      } else if (body !== undefined && resolved.size > 0) {
+        // Quoted needle — placeholders only appear as JSON string values.
+        for (const [ph, real] of resolved) {
+          body = body.replaceAll(`"${ph}"`, `"${real}"`);
+        }
+      }
+      const res = await fetch(e.url, { method: e.method, headers, body });
       if (res.status >= 500) {
         stopped = true;
         keep.push(e);
+        continue;
+      }
+      if (e.blobId) {
+        void dropUploadBlob(e.blobId);
+        if (res.ok && e.placeholder) {
+          const att = (await res.json().catch(() => null)) as {
+            id?: string;
+          } | null;
+          if (att?.id) resolved.set(e.placeholder, att.id);
+        }
       }
     } catch {
       stopped = true;
@@ -219,19 +333,64 @@ async function drainOutbox(origin: string): Promise<void> {
     }
   }
   await outboxSave(keep);
+  // Replay died mid-pass — the origin isn't really back. Marking it down
+  // restarts the probe loop so the remainder drains on real recovery.
+  if (stopped) markDown(origin);
 }
 
 export async function clearOutbox(): Promise<void> {
+  const list = await outboxList();
+  for (const e of list) if (e.blobId) void dropUploadBlob(e.blobId);
   await outboxSave([]);
+}
+
+// --- Queued reads for the UI -------------------------------------------------
+
+export interface QueuedMessage {
+  entryId: string;
+  body: string;
+  attachments: number;
+  parentId?: string;
+  tags: string[];
+}
+
+/** POST /messages entries parked for one conversation — the pending lane
+ *  the conversation view renders so a queued send never looks lost. */
+export function queuedMessages(conversationId: string): QueuedMessage[] {
+  const suffix = `/api/conversations/${conversationId}/messages`;
+  const out: QueuedMessage[] = [];
+  for (const e of outboxEntries()) {
+    if (e.method !== "POST" || !e.url.endsWith(suffix) || !e.body) continue;
+    try {
+      const b = JSON.parse(e.body) as {
+        body?: string;
+        attachment_ids?: string[];
+        parent_id?: string;
+        tags?: string[];
+      };
+      out.push({
+        entryId: e.id,
+        body: b.body ?? "",
+        attachments: b.attachment_ids?.length ?? 0,
+        parentId: b.parent_id,
+        tags: b.tags ?? [],
+      });
+    } catch {
+      /* unparseable entry — skip */
+    }
+  }
+  return out;
 }
 
 // replaySafe decides whether a request that just failed (and may or may
 // not have reached the server) can be re-sent without side effects.
-// PUT/DELETE replace or remove — replaying lands the same end state. POST
-// is only safe when the body carries client_msg_id, which the server
+// PUT/PATCH/DELETE write an end state — replaying lands the same result.
+// POST is only safe when the body carries client_msg_id, which the server
 // dedupes per conversation.
 function replaySafe(method: string, init?: RequestInit): boolean {
-  if (method === "PUT" || method === "DELETE") return true;
+  if (method === "PUT" || method === "PATCH" || method === "DELETE") {
+    return true;
+  }
   if (method !== "POST") return false;
   try {
     const body: unknown = JSON.parse(
@@ -268,6 +427,14 @@ function jsonResponse(body: string): Response {
 // alive (a 401 is a healthy server); transport failures and 5xx mark it
 // down. GETs write their body to the cache on success and read it back on
 // failure — mutating calls never see stale data.
+// Ephemeral writes that must not park: a replayed typing ping shows phantom
+// "typing…", a replayed read receipt can swallow unreads that arrived during
+// the outage. They fail like any parked change (callers swallow it) but
+// leave nothing behind.
+function ephemeral(url: string): boolean {
+  return url.endsWith("/typing") || url.endsWith("/read");
+}
+
 export async function resilientFetch(
   input: RequestInfo | URL,
   init?: RequestInit,
@@ -287,6 +454,7 @@ export async function resilientFetch(
     states[originOf(url)] === "down" &&
     !url.includes("/api/auth/")
   ) {
+    if (ephemeral(url)) throw new QueuedError();
     if (await enqueueOutbox(url, method, init)) throw new QueuedError();
   }
   try {

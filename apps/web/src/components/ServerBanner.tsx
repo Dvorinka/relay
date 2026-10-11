@@ -19,7 +19,7 @@ import {
 import { syncWithToken } from "../lib/sync";
 import { useSession } from "../stores/session";
 import { refreshUnread } from "../stores/unread";
-import { Spinner } from "./ui";
+import { Spinner, ConfirmDialog } from "./ui";
 
 export function ServerBanner() {
   const session = useSession();
@@ -28,6 +28,7 @@ export function ServerBanner() {
   const [syncing, setSyncing] = createSignal(false);
   const [syncErr, setSyncErr] = createSignal("");
   const [shellUrl, setShellUrl] = createSignal("");
+  const [localOpen, setLocalOpen] = createSignal(false);
 
   const activeOrigin = () => net.serverUrl() || location.origin;
   const host = (url: string) => {
@@ -126,7 +127,7 @@ export function ServerBanner() {
           <Show when={altPaths()}>
             <button
               type="button"
-              onClick={() => void session.enterLocal()}
+              onClick={() => setLocalOpen(true)}
               class="shrink-0 rounded border border-amber-500/40 px-2 py-0.5 text-[11.5px] transition-colors hover:bg-amber-500/20"
             >
               Work locally
@@ -134,6 +135,15 @@ export function ServerBanner() {
           </Show>
         </div>
       </Show>
+      <ConfirmDialog
+        open={localOpen()}
+        onOpenChange={setLocalOpen}
+        title="Work locally on this device?"
+        body={`This switches to the separate on-device workspace — ${host(activeOrigin())}'s projects aren't copied there. You can keep working right here instead: the app shows the last synced data and queues changes until the server is back.`}
+        confirmLabel="Work locally"
+        danger={false}
+        onConfirm={() => void session.enterLocal()}
+      />
       <Show when={net.isLocal() && rememberedState() === "up"}>
         <div class="flex items-center gap-2 border-b border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-[12.5px] text-emerald-600 dark:text-emerald-400">
           <span class="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />

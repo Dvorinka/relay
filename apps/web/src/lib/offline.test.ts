@@ -2,11 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cacheGet, cachePut, clearApiCache } from "./cache";
 import {
   clearOutbox,
+  enqueueUpload,
   isQueuedError,
   markUp,
   onServerUp,
   outboxPending,
   probeNow,
+  queuedMessages,
+  removeOutboxEntry,
   resilientFetch,
   serverState,
 } from "./offline";
@@ -232,6 +235,113 @@ describe("mutation outbox", () => {
     ).rejects.toThrow("fetch failed");
     expect(dead).toHaveBeenCalledTimes(2);
     expect(outboxPending()).toBe(0);
+  });
+
+  it("queues PATCH edits like PUT/DELETE — same end state on replay", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new TypeError("fetch failed")),
+    );
+    const err = await resilientFetch("http://q.test/api/messages/9", {
+      method: "PATCH",
+      body: `{"body":"edited"}`,
+    }).catch((e) => e);
+    expect(isQueuedError(err)).toBe(true);
+    expect(outboxPending()).toBe(1);
+  });
+
+  it("drops ephemeral typing/read writes instead of parking them", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new TypeError("fetch failed")),
+    );
+    await expect(
+      resilientFetch("http://q.test/api/x", { method: "POST" }),
+    ).rejects.toThrow();
+    for (const path of ["typing", "read"]) {
+      const err = await resilientFetch(
+        `http://q.test/api/conversations/1/${path}`,
+        { method: "POST" },
+      ).catch((e) => e);
+      expect(isQueuedError(err)).toBe(true);
+    }
+    expect(outboxPending()).toBe(0);
+  });
+
+  it("replays a parked upload as JSON and rewrites its placeholder in later bodies", async () => {
+    // Server dies; an upload and the message referencing it both park.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new TypeError("fetch failed")),
+    );
+    await expect(
+      resilientFetch("http://q.test/api/x", { method: "POST" }),
+    ).rejects.toThrow();
+    const placeholder = await enqueueUpload(
+      "http://q.test/api/projects/p1/attachments",
+      new Blob(["img-bytes"], { type: "image/png" }),
+      "pic.png",
+      { headers: { Authorization: "Bearer t" } },
+    );
+    expect(placeholder).toMatch(/^att:/);
+    await resilientFetch("http://q.test/api/conversations/c1/messages", {
+      method: "POST",
+      body: JSON.stringify({
+        body: "with pic",
+        attachment_ids: [placeholder],
+      }),
+    }).catch(() => {});
+    expect(outboxPending()).toBe(2);
+
+    // Recovery: the upload lands first as {name,data} JSON, then the
+    // message body carries the real attachment id — not the placeholder.
+    const sent: { url: string; body?: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (u: RequestInfo | URL, i?: RequestInit) => {
+        sent.push({ url: String(u), body: i?.body as string | undefined });
+        if (sent.length === 1) {
+          return new Response(`{"id":"real-att-7"}`, { status: 201 });
+        }
+        return new Response("{}", { status: 200 });
+      }),
+    );
+    markUp("http://q.test");
+    await vi.waitFor(() => expect(outboxPending()).toBe(0));
+    expect(sent).toHaveLength(2);
+    const up = JSON.parse(sent[0]!.body!) as { name: string; data: string };
+    expect(sent[0]!.url).toBe("http://q.test/api/projects/p1/attachments");
+    expect(up.name).toBe("pic.png");
+    expect(atob(up.data)).toBe("img-bytes");
+    expect(sent[1]!.body).toContain('"real-att-7"');
+    expect(sent[1]!.body).not.toContain(placeholder!);
+  });
+
+  it("queuedMessages surfaces parked sends for one conversation only", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new TypeError("fetch failed")),
+    );
+    await expect(
+      resilientFetch("http://q.test/api/x", { method: "POST" }),
+    ).rejects.toThrow();
+    await resilientFetch("http://q.test/api/conversations/c1/messages", {
+      method: "POST",
+      body: `{"body":"first","attachment_ids":["a"]}`,
+    }).catch(() => {});
+    await resilientFetch("http://q.test/api/conversations/c2/messages", {
+      method: "POST",
+      body: `{"body":"other convo"}`,
+    }).catch(() => {});
+    const list = queuedMessages("c1");
+    expect(list).toHaveLength(1);
+    expect(list[0]!.body).toBe("first");
+    expect(list[0]!.attachments).toBe(1);
+
+    // Discarding removes just that entry.
+    await removeOutboxEntry(list[0]!.entryId);
+    expect(queuedMessages("c1")).toHaveLength(0);
+    expect(queuedMessages("c2")).toHaveLength(1);
   });
 
   it("keeps the queue when the server is still down at replay", async () => {

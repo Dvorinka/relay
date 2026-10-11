@@ -69,7 +69,12 @@ import { openProfile } from "../../components/ProfileModal";
 import { subscribe } from "../../lib/events";
 import { loadNameColors, nameColorFor } from "../../lib/namecolors";
 import { mediaURL, net } from "../../lib/net";
-import { isQueuedError } from "../../lib/offline";
+import {
+  isQueuedError,
+  queuedMessages,
+  removeOutboxEntry,
+  type QueuedMessage,
+} from "../../lib/offline";
 import { Markdown, renderMarkdown } from "../../lib/markdown";
 import { LinkPreview } from "../../components/LinkPreview";
 import { formatBytes, initials, messagePreview } from "../../lib/text";
@@ -143,7 +148,9 @@ type PendingAttachment = {
   localId: string;
   file: File;
   previewUrl: string | null;
-  status: "uploading" | "ready" | "error";
+  // "queued" = bytes parked in the outbox; replays on reconnect. The
+  // attachmentId is the outbox placeholder ("att:…"), not a server id.
+  status: "uploading" | "ready" | "queued" | "error";
   attachmentId?: string;
   error?: string;
   // Restored-from-localStorage entries carry a stub File (0 bytes); size
@@ -2354,6 +2361,87 @@ function MessageRow(props: {
   );
 }
 
+// A parked send, drawn under the real messages. The outbox replays it the
+// moment the server answers and the real message lands via SSE/refetch —
+// the amber chip says "not there yet", the row itself says "not lost".
+function QueuedRow(props: {
+  q: QueuedMessage;
+  meName: string;
+  meAvatar: string | null;
+  projectId: string;
+}) {
+  const { chatStyle } = useChatStyle();
+  const bubbles = () => chatStyle() === "bubbles";
+  const q = () => props.q;
+  return (
+    <div
+      class={`group relative flex px-4 opacity-75 ${
+        bubbles() ? "mt-3 justify-end py-[1px]" : "mt-3 gap-3 py-1"
+      }`}
+    >
+      <Show when={!bubbles()}>
+        <Avatar.Root class="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border">
+          <Avatar.Fallback
+            class="text-[13px] font-semibold"
+            style={{
+              color: authorColor(props.meName),
+              "background-color": `color-mix(in srgb, ${authorColor(props.meName)} 14%, transparent)`,
+            }}
+          >
+            {initials(props.meName)}
+          </Avatar.Fallback>
+          <Avatar.Image
+            src={mediaURL(props.meAvatar)}
+            alt=""
+            class="h-full w-full rounded-full object-cover"
+          />
+        </Avatar.Root>
+      </Show>
+      <div
+        class={
+          bubbles()
+            ? "min-w-0 max-w-[78%] rounded-2xl rounded-br-md border border-dashed border-amber-500/50 bg-accent-soft px-3 py-1.5"
+            : "min-w-0 flex-1"
+        }
+      >
+        <div class="flex flex-wrap items-baseline gap-2">
+          <Show when={!bubbles()}>
+            <span
+              class="text-[14.5px] font-semibold"
+              style={{ color: authorColor(props.meName) }}
+            >
+              {props.meName}
+            </span>
+          </Show>
+          <span class="inline-flex items-center gap-1 rounded border border-amber-500/40 px-1 py-px text-[9.5px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
+            <ClockIcon class="h-2.5 w-2.5" />
+            Queued — sends on reconnect
+          </span>
+        </div>
+        <Show when={q().body.trim().length > 0}>
+          <Markdown body={q().body} projectId={props.projectId} />
+        </Show>
+        <Show when={q().attachments > 0}>
+          <p class="mt-0.5 flex items-center gap-1.5 text-[12px] italic text-muted">
+            <PaperclipIcon class="h-3 w-3" />
+            {q().attachments} attachment{q().attachments === 1 ? "" : "s"}{" "}
+            queued
+          </p>
+        </Show>
+      </div>
+      <button
+        type="button"
+        title="Discard queued message"
+        aria-label="Discard queued message"
+        onClick={() => void removeOutboxEntry(q().entryId)}
+        class="absolute right-3 top-1 rounded-md p-1 text-faint opacity-0 transition-opacity hover:bg-hover hover:text-red-500 group-hover:opacity-100"
+      >
+        <XIcon class="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
 function PendingChip(props: {
   item: PendingAttachment;
   onRemove: () => void;
@@ -2366,6 +2454,7 @@ function PendingChip(props: {
       return item().error ?? "Upload failed";
     }
     const size = formatBytes(item().file.size || item().size || 0);
+    if (item().status === "queued") return `${size} · ${ext} · queued`;
     return item().status === "uploading"
       ? "uploading…"
       : `${size} · ${ext} · ready`;
@@ -3342,13 +3431,23 @@ function ConversationThread(props: {
     if (item?.previewUrl) {
       URL.revokeObjectURL(item.previewUrl);
     }
+    // A placeholder id IS the outbox entry id — removing the chip drops
+    // the parked upload so it never replays.
+    if (item?.attachmentId?.startsWith("att:")) {
+      void removeOutboxEntry(item.attachmentId);
+    }
     setPending((cur) => cur.filter((p) => p.localId !== localId));
   }
 
   async function upload(localId: string, file: File) {
     try {
       const attachment = await api.uploadAttachment(props.projectId, file);
-      updatePending(localId, { status: "ready", attachmentId: attachment.id });
+      // Parked uploads come back with an outbox placeholder id — the chip
+      // says "queued" and the message can still send behind it.
+      updatePending(localId, {
+        status: attachment.id.startsWith("att:") ? "queued" : "ready",
+        attachmentId: attachment.id,
+      });
     } catch (err) {
       updatePending(localId, {
         status: "error",
@@ -4082,6 +4181,16 @@ function ConversationThread(props: {
                 </>
               );
             }}
+          </For>
+          <For each={queuedMessages(props.conversationId)}>
+            {(q) => (
+              <QueuedRow
+                q={q}
+                meName={session.user()?.name ?? "You"}
+                meAvatar={session.user()?.avatar_url ?? null}
+                projectId={props.projectId}
+              />
+            )}
           </For>
         </div>
       </div>
