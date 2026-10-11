@@ -980,7 +980,8 @@ function ContextRail(props: {
         agents={(agents.latest ?? []).map((a) => ({ name: a.name }))}
         projects={projects.projects() ?? []}
       />
-      <RailSection id="development" label="Development">
+      <Show when={!net.isLocal()}>
+        <RailSection id="development" label="Development">
         <Show
           when={(repos.latest?.length ?? 0) > 0}
           fallback={
@@ -1031,7 +1032,8 @@ function ContextRail(props: {
             Branches &amp; files →
           </button>
         </Show>
-      </RailSection>
+        </RailSection>
+      </Show>
 
       <RailSection id="issues" label="Open issues" count={openIssues().length}>
         <div class="flex flex-col gap-1.5">
@@ -1769,26 +1771,28 @@ export default function ProjectPage() {
             >
               <IssueIcon class="h-4 w-4" />
             </HeadButton>
-            <HeadButton
-              title="Pull requests"
-              hint="PRs mirrored from the linked GitHub repository — open and closed."
-              active={view() === "pulls"}
-              onClick={() =>
-                openView(view() === "pulls" ? undefined : "pulls")
-              }
-            >
-              <GitPullRequestIcon class="h-4 w-4" />
-            </HeadButton>
-            <HeadButton
-              title="Commits"
-              hint="Recent commits on the linked repository's default branch."
-              active={view() === "commits"}
-              onClick={() =>
-                openView(view() === "commits" ? undefined : "commits")
-              }
-            >
-              <GitBranchIcon class="h-4 w-4" />
-            </HeadButton>
+            <Show when={!net.isLocal()}>
+              <HeadButton
+                title="Pull requests"
+                hint="PRs mirrored from the linked GitHub repository — open and closed."
+                active={view() === "pulls"}
+                onClick={() =>
+                  openView(view() === "pulls" ? undefined : "pulls")
+                }
+              >
+                <GitPullRequestIcon class="h-4 w-4" />
+              </HeadButton>
+              <HeadButton
+                title="Commits"
+                hint="Recent commits on the linked repository's default branch."
+                active={view() === "commits"}
+                onClick={() =>
+                  openView(view() === "commits" ? undefined : "commits")
+                }
+              >
+                <GitBranchIcon class="h-4 w-4" />
+              </HeadButton>
+            </Show>
             <HeadButton
               title="Ideas"
               hint="Brainstorm boards — sketches and mindmaps that convert into issues."

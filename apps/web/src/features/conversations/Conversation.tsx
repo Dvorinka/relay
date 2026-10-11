@@ -2484,6 +2484,7 @@ function MessageRow(props: {
               saved={isSaved(m().id)}
               agents={props.agents}
               fileable={
+                !net.isLocal() &&
                 m().author.kind === "user" &&
                 !(m().tags ?? []).some((t) => t === "autofile" || t === "filed")
                   ? { projectId: props.projectId, messageId: m().id }

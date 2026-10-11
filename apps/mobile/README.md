@@ -7,7 +7,8 @@ mobile without a rebuild.
 ## What it does
 
 - First launch asks for the server URL (e.g. `relay.example.com` — https is
-  assumed); stored in AsyncStorage under `relay.serverUrl`.
+  assumed); stored in AsyncStorage under `relay.serverUrl`. With none set,
+  the bundled web app shows its own local-vs-server chooser instead.
 - Loads the server origin in a `react-native-webview`. Login, chat, issues,
   reviews — everything — is the web UI; the WebView keeps cookies and
   localStorage, so sign-in persists.
