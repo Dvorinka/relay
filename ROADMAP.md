@@ -645,6 +645,23 @@ that happens to have a hook.
 - Disabled hooks now 404 on both read and write paths — the enable
   toggle in project webhooks is a real gate.
 
+## Phase 32 — limited hosted tier + Resend mail ☑
+
+The free hosted instance gets real rails, and transactional mail gets a
+provider that needs no SMTP relay.
+
+- **`RELAY_LIMITED`**: a capacity cap for a hosted free tier — uploads
+  clamp to `RELAY_LIMITED_UPLOAD_MIB` (8 MiB) on every write path (UI
+  attachments, inbound-hook payloads, MCP `upload_attachment`), jpeg/png
+  re-encode to a bounded long edge (opaque → JPEG q75, alpha → PNG), and
+  `/api/health` reports `limited` + the effective cap so clients show a
+  dismissible "free instance — self-host for the full thing" notice.
+- **`internal/mail`**: transactional mailer chain — Resend
+  (`RESEND_API_KEY`/`RESEND_FROM`, HTTPS API) for the hosted tier, env
+  `SMTP_*` for self-hosters (implicit TLS on 465, STARTTLS elsewhere,
+  deadline-bounded), log mailer as the floor. No stored credentials, no
+  UI — env only.
+
 ## Post-1.0 ideas (not committed)
 
 - Relay Cloud (hosted offering) - self-hosting stays first-class

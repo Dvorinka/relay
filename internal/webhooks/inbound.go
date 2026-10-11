@@ -651,6 +651,9 @@ func (s *Service) bodyCap() int64 {
 func (s *Service) putInboundFile(c *gin.Context, hook db.InboundHook, mid pgtype.UUID,
 	name, declared string, data []byte, pos int) (bool, error) {
 	contentType := attachments.SniffType(data, declared)
+	if s.Limited {
+		data, contentType, _ = attachments.CompressImage(data, contentType)
+	}
 	filename := path.Base(strings.TrimSpace(name))
 	if filename == "." || filename == "/" || filename == "" {
 		filename = "file"

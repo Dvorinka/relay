@@ -66,6 +66,7 @@ type Service struct {
 	q         *db.Queries
 	store     *storage.Store
 	maxUpload int64
+	limited   bool
 	gh        *github.Service
 	log       *zap.Logger
 	// Bus publishes domain events for SSE subscribers. Optional.
@@ -81,9 +82,9 @@ type Service struct {
 // New builds the gin handler for POST /mcp. It performs bearer auth,
 // rate limiting, and last_used_at bookkeeping, then hands the request
 // to the mcp-go streamable HTTP transport.
-func New(q *db.Queries, store *storage.Store, maxUpload int64, log *zap.Logger, gh *github.Service, hub *events.Hub, pushSvc *push.Service) gin.HandlerFunc {
+func New(q *db.Queries, store *storage.Store, maxUpload int64, limited bool, log *zap.Logger, gh *github.Service, hub *events.Hub, pushSvc *push.Service) gin.HandlerFunc {
 	s := &Service{
-		q: q, store: store, maxUpload: maxUpload, gh: gh, log: log, Bus: hub, Push: pushSvc,
+		q: q, store: store, maxUpload: maxUpload, limited: limited, gh: gh, log: log, Bus: hub, Push: pushSvc,
 		windows: make(map[[16]byte]time.Time),
 		counts:  make(map[[16]byte]int),
 	}
@@ -1194,6 +1195,9 @@ func (s *Service) uploadAttachment(ctx context.Context, req mcp.CallToolRequest)
 		return mcp.NewToolResultError("file exceeds the upload size cap"), nil
 	}
 	contentType := attachments.SniffType(data, req.GetString("content_type", ""))
+	if s.limited {
+		data, contentType, _ = attachments.CompressImage(data, contentType)
+	}
 	name = path.Base(name)
 	if name == "." || name == "/" || name == "" {
 		name = "file"

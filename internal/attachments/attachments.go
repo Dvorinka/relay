@@ -33,14 +33,20 @@ import (
 // with Content-Disposition: attachment — see storage.InlineSafe.
 
 type Service struct {
-	q     *db.Queries
-	store *storage.Store
-	max   int64
-	log   *zap.Logger
+	q       *db.Queries
+	store   *storage.Store
+	max     int64
+	limited bool
+	log     *zap.Logger
 }
 
 func NewService(log *zap.Logger, pool *pgxpool.Pool, store *storage.Store, cfg config.Config) *Service {
-	return &Service{q: db.New(pool), store: store, max: cfg.StorageMaxUploadMiB << 20, log: log}
+	return &Service{
+		q: db.New(pool), store: store,
+		max:     cfg.EffectiveUploadMiB() << 20,
+		limited: cfg.Limited,
+		log:     log,
+	}
 }
 
 func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
@@ -138,6 +144,13 @@ func (s *Service) handleUpload(c *gin.Context) {
 		filename, declaredType = fh.Filename, fh.Header.Get("Content-Type")
 	}
 	contentType := SniffType(data, declaredType)
+	if s.limited {
+		var changed bool
+		if data, contentType, changed = CompressImage(data, contentType); changed {
+			s.log.Debug("limited-tier image compressed",
+				zap.String("file", filename), zap.Int("bytes", len(data)))
+		}
+	}
 	filename = path.Base(filename)
 	if filename == "." || filename == "/" || filename == "" {
 		filename = "file"

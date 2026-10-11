@@ -24,6 +24,7 @@ import (
 	"github.com/Dvorinka/relay/internal/github"
 	"github.com/Dvorinka/relay/internal/ideas"
 	"github.com/Dvorinka/relay/internal/issues"
+	"github.com/Dvorinka/relay/internal/mail"
 	"github.com/Dvorinka/relay/internal/mcpserver"
 	"github.com/Dvorinka/relay/internal/projects"
 	"github.com/Dvorinka/relay/internal/push"
@@ -61,7 +62,7 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 		cancel()
 	}
 
-	authSvc := auth.NewService(cfg, log, pool, auth.NewLogMailer(log))
+	authSvc := auth.NewService(cfg, log, pool, mail.New(cfg, log))
 	wsSvc := workspaces.NewService(log, pool)
 	projSvc := projects.NewService(log, pool)
 	convSvc := conversations.NewService(log, pool)
@@ -89,7 +90,8 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	hookSvc := webhooks.NewService(log, pool, cfg.PublicURL)
 	hookSvc.Bus = hub
 	hookSvc.Store = store
-	hookSvc.MaxUpload = cfg.StorageMaxUploadMiB << 20
+	hookSvc.MaxUpload = cfg.EffectiveUploadMiB() << 20
+	hookSvc.Limited = cfg.Limited
 	pushSvc := push.NewService(log, pool, cfg)
 	briefSvc := briefs.NewService(log, pool)
 	ideaSvc := ideas.NewService(log, pool)
@@ -124,7 +126,7 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 			sweep()
 		}
 	}()
-	mcpHandler := mcpserver.New(db.New(pool), store, cfg.StorageMaxUploadMiB<<20, log, ghSvc, hub, pushSvc)
+	mcpHandler := mcpserver.New(db.New(pool), store, cfg.EffectiveUploadMiB()<<20, cfg.Limited, log, ghSvc, hub, pushSvc)
 
 	api := r.Group("/api", corsForTokenClients())
 	// Gin 404s unmatched methods before group middleware — handle CORS
@@ -139,7 +141,13 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 			})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"status": "ok", "version": version})
+		c.JSON(http.StatusOK, gin.H{
+			"status": "ok", "version": version,
+			// Limited-tier marker: clients surface the free-instance notice
+			// and its real upload cap.
+			"limited": cfg.Limited,
+			"limits":  gin.H{"upload_mib": cfg.EffectiveUploadMiB()},
+		})
 	})
 	// The agent onboarding guide, embedded in the binary — public like the
 	// health check so a fresh agent (or a human) can read it before any

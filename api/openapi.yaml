@@ -46,6 +46,15 @@ paths:
                 properties:
                   status: { type: string, enum: [ok] }
                   version: { type: string }
+                  limited:
+                    type: boolean
+                    description: "True on capacity-capped hosted tiers (RELAY_LIMITED) — clients should surface the free-instance notice"
+                  limits:
+                    type: object
+                    properties:
+                      upload_mib:
+                        type: integer
+                        description: "Effective upload cap in MiB (tighter on limited instances)"
 
   /api/auth/register:
     post:
