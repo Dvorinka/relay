@@ -645,6 +645,33 @@ that happens to have a hook.
 - Disabled hooks now 404 on both read and write paths — the enable
   toggle in project webhooks is a real gate.
 
+## Phase 32 — email alerts (SMTP) ☑
+
+Channel-scoped email notification, in-app configured.
+
+- **Per-channel alert lists**: `conversations.email_alerts text[]` —
+  every new message in the channel mails each address on the list.
+  Managed from the channel header's mail button (a small dialog with a
+  comma/space-separated list); ride `PATCH /api/channels/:id
+  {email_alerts: [...]}`. Silent/system posts never mail; threads keep
+  their own lists if ever wanted.
+- **In-app SMTP setup**: `GET/PUT /api/settings/smtp` +
+  `POST /api/settings/smtp/test`, gated to workspace owner/admin — the
+  same role check the GitHub App registration uses. `SMTP_HOST`,
+  `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, `SMTP_FROM_NAME`
+  env remains the fallback; the in-app row wins when both exist
+  (`source: "db" | "env"` reports which is live).
+- **Password at rest**: AES-256-GCM under sha256(`AUTH_SECRET`) via the
+  new shared `internal/secrets` package — the same protection the
+  GitHub App secrets use (`crypto.go` now delegates to it).
+- **Delivery**: stdlib `net/smtp` — port 465 dials implicit TLS, other
+  ports STARTTLS when offered; auth only when a username is set. Dials
+  and conversations are deadline-bounded so a dead relay can never hang
+  the alert goroutine or the settings handler.
+- **Auth flows upgraded for free**: `auth.NewService` now takes the real
+  mailer — magic links / password resets send for real when SMTP exists
+  and keep logging when it doesn't.
+
 ## Post-1.0 ideas (not committed)
 
 - Relay Cloud (hosted offering) - self-hosting stays first-class

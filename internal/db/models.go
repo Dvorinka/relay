@@ -130,6 +130,7 @@ type Conversation struct {
 	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
 	AgentsBlocked       bool               `json:"agents_blocked"`
 	IntakeMode          string             `json:"intake_mode"`
+	EmailAlerts         []string           `json:"email_alerts"`
 }
 
 type GithubApp struct {
@@ -431,6 +432,18 @@ type Session struct {
 	LastSeenAt pgtype.Timestamptz `json:"last_seen_at"`
 	Ip         string             `json:"ip"`
 	UserAgent  string             `json:"user_agent"`
+}
+
+type SmtpSetting struct {
+	ID          bool               `json:"id"`
+	Host        string             `json:"host"`
+	Port        int32              `json:"port"`
+	Username    string             `json:"username"`
+	PasswordEnc []byte             `json:"password_enc"`
+	FromAddr    string             `json:"from_addr"`
+	FromName    string             `json:"from_name"`
+	Enabled     bool               `json:"enabled"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 type User struct {
