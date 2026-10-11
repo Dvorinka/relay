@@ -2484,7 +2484,7 @@ function MessageRow(props: {
               agents={props.agents}
               fileable={
                 m().author.kind === "user" &&
-                !(m().tags ?? []).includes("autofile")
+                !(m().tags ?? []).some((t) => t === "autofile" || t === "filed")
                   ? { projectId: props.projectId, messageId: m().id }
                   : null
               }

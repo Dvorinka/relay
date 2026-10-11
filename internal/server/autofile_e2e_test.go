@@ -319,6 +319,12 @@ func TestManualFileMessage(t *testing.T) {
 		t.Fatalf("issue payload: %v", res)
 	}
 
+	// Refiling the same message is refused — the filed tag was claimed by
+	// the first call, so no second upstream issue can be created.
+	if code, res = c.call("POST", "/api/messages/"+m1+"/github", `{}`); code != 409 {
+		t.Fatalf("refile: %d %v", code, res)
+	}
+
 	// Zero repos: 409, nothing created.
 	p0 := newProject("MF0", "MF Zero")
 	m0 := postMsg(p0, "nothing to file against")

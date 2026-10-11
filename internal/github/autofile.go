@@ -8,6 +8,7 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -113,23 +114,40 @@ func (s *Service) maybeAutoFile(projectID uuid.UUID, msg gin.H) {
 		title = "Untitled report"
 	}
 	if _, err := s.fileMessage(ctx, repo, conv, msgID, authorID, authorName,
-		title, report, "auto_file"); err != nil {
+		title, report, "auto_file"); err != nil && !errors.Is(err, errAlreadyFiled) {
 		s.log.Warn("auto-file GitHub issue failed", zap.Error(err))
 	}
 }
 
-// fileMessage runs the shared tail of auto- and manual filing: create the
-// GitHub issue, mirror it onto the board, record provenance, and reply in
-// the source conversation with the link.
+// filedTag marks the source message once an upstream issue exists for it —
+// claimed atomically before the GitHub call, so a repeated file is refused
+// instead of duplicating the issue.
+const filedTag = "filed"
+
+var errAlreadyFiled = errors.New("message already filed on GitHub")
+
+// fileMessage runs the shared tail of auto- and manual filing: claim the
+// message, create the GitHub issue, mirror it onto the board, record
+// provenance, and reply in the source conversation with the link.
 func (s *Service) fileMessage(ctx context.Context, repo db.Repository, conv db.Conversation,
 	msgID, authorID pgtype.UUID, authorName, title, report, activityKind string) (*GHIssue, error) {
 	cli, err := s.githubClient(ctx)
 	if err != nil {
 		return nil, err
 	}
+	n, err := s.q.AddMessageTag(ctx, db.AddMessageTagParams{ID: msgID, Tag: filedTag})
+	if err != nil {
+		return nil, err
+	}
+	if n == 0 {
+		return nil, errAlreadyFiled
+	}
+	s.publishMessage(ctx, conv, msgID, "message.updated")
 	gh, err := cli.CreateIssue(ctx, repo.InstallationID, repo.Owner, repo.Name,
 		title, s.issueBody(ctx, msgID, report, authorName))
 	if err != nil {
+		// Nothing exists upstream — release the claim so a retry can file.
+		_ = s.q.RemoveMessageTag(ctx, db.RemoveMessageTagParams{ID: msgID, Tag: filedTag})
 		return nil, err
 	}
 	if gh.Title == "" {
@@ -224,6 +242,11 @@ func (s *Service) handleFileMessage(c *gin.Context) {
 	gh, err := s.fileMessage(ctx, repo, conv, msg.ID, user.ID, user.Name,
 		title, report, "manual_file")
 	if err != nil {
+		if errors.Is(err, errAlreadyFiled) {
+			httpx.Error(c, http.StatusConflict, "already_filed",
+				"this message is already filed on GitHub")
+			return
+		}
 		httpx.Error(c, http.StatusBadGateway, "github_error", truncate(err.Error(), 300))
 		return
 	}
@@ -284,7 +307,23 @@ func (s *Service) reply(ctx context.Context, conv db.Conversation, parentID, aut
 	if err != nil || s.Bus == nil {
 		return
 	}
-	out := conversations.MessageJSON(conversations.MessageView{
+	s.Bus.Publish(events.Event{Type: "message.created", ProjectID: conv.ProjectID.Bytes,
+		Data: map[string]any{"conversation_id": m.ConversationID.String(), "message": messageJSON(m)}})
+}
+
+// publishMessage pushes a message.created/updated frame for the given
+// message — used to repaint rows after the filed tag lands.
+func (s *Service) publishMessage(ctx context.Context, conv db.Conversation, msgID pgtype.UUID, eventType string) {
+	m, err := s.q.GetMessageByID(ctx, msgID)
+	if err != nil || s.Bus == nil {
+		return
+	}
+	s.Bus.Publish(events.Event{Type: eventType, ProjectID: conv.ProjectID.Bytes,
+		Data: map[string]any{"conversation_id": m.ConversationID.String(), "message": messageJSON(m)}})
+}
+
+func messageJSON(m db.GetMessageByIDRow) gin.H {
+	return conversations.MessageJSON(conversations.MessageView{
 		ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
 		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Silent: m.Silent,
 		CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
@@ -294,8 +333,6 @@ func (s *Service) reply(ctx context.Context, conv db.Conversation, parentID, aut
 		ParentAuthorName: m.ParentAuthorName, ParentBody: m.ParentBody,
 		ParentDeleted: m.ParentDeleted,
 	})
-	s.Bus.Publish(events.Event{Type: "message.created", ProjectID: conv.ProjectID.Bytes,
-		Data: map[string]any{"conversation_id": m.ConversationID.String(), "message": out}})
 }
 
 // fileableKind limits filing — auto or manual — to open discussion

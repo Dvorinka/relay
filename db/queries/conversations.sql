@@ -534,3 +534,17 @@ select m2.author_user_id
 from messages m
 join messages m2 on m2.id = m.parent_id
 where m.id = $1;
+
+-- name: AddMessageTag :execrows
+-- atomic claim: appends the tag only when absent, so a 0-row result means
+-- another filer already holds it (filing dedup, not just UI hiding)
+update messages
+set tags = array_append(tags, sqlc.arg(tag)::text)
+where id = sqlc.arg(id)
+  and deleted_at is null
+  and not (sqlc.arg(tag)::text = any(tags));
+
+-- name: RemoveMessageTag :exec
+update messages
+set tags = array_remove(tags, sqlc.arg(tag)::text)
+where id = sqlc.arg(id);
