@@ -301,7 +301,7 @@ repos' open PRs; rail search filters this project inline.
   `apps/mobile/plugins/withReleaseSigning.js`
 - DragonflyDB cache layer if hot paths need it
 
-## Phase 18 — project states, boards, push, local folders, mobile outbox
+## Phase 18 — project states, boards, push, local folders, mobile outbox ☑
 
 - **Custom statuses**: `projects.statuses` JSONB definitions (id, label,
   color, closed flag) editable in project settings; the DB CHECK constraint
@@ -323,7 +323,7 @@ repos' open PRs; rail search filters this project inline.
   the server is unreachable; a successful poll drains them in order. Full
   local-mode remains a desktop/web feature by design.
 
-## Phase 19 — mentions, briefs, IndexedDB, CLI polish
+## Phase 19 — mentions, briefs, IndexedDB, CLI polish ☑
 
 - **Structured mentions**: `messages.mentions` jsonb stores resolved
   references (`user`, `agent`, `issue`, `gh`, `file`, `repo`). `@name`,
@@ -352,7 +352,7 @@ repos' open PRs; rail search filters this project inline.
 - **Brand lock**: `#06b6d4` is the only accent; the Settings accent picker
   is gone (`relay.accent` pref purged); favicon is the white mark on brand
   black with a cyan dot, shared by web and landing.
-## Phase 20 — release artifacts & landing refresh
+## Phase 20 — release artifacts & landing refresh ☑
 
 - **Release builds**: `v*` tags produce the full artifact set —
   server + CLI binaries (linux/windows/darwin), Wails desktop for
@@ -369,7 +369,7 @@ repos' open PRs; rail search filters this project inline.
 - **Scene labels**: `SceneView` renders `text` on shapes (agent-authored
   labels), centered with line splits and a luminance-aware fill.
 
-## Phase 21 — embedded Excalidraw editor
+## Phase 21 — embedded Excalidraw editor ☑
 
 - **Real Excalidraw in briefs**: every brief gains an "Edit canvas" path that
   mounts the actual `@excalidraw/excalidraw` component as a React island
@@ -385,7 +385,7 @@ repos' open PRs; rail search filters this project inline.
   are interchangeable; the lightweight `SceneView` still renders the core
   subset for quick viewing.
 
-## Phase 22 — message deletion, chat styles, threads
+## Phase 22 — message deletion, chat styles, threads ☑
 
 - **Message deletion**: `DELETE /api/messages/:id` soft-deletes (`deleted_at`),
   author-only, same agent-read lock as edit; `message.deleted` over SSE drops
@@ -550,6 +550,38 @@ just invalidated — regression covered in `TestChannelsAndExpiry`).
   reviews) so "what did the agent do overnight" answers itself.
 - **Multi-agent routing**: `@agent` mentions exist; add per-channel default
   agent + mention-targeted wake so the right agent picks up work.
+
+## Phase 29 — outage resilience & message→GitHub filing ☑
+
+Verified live with a scripted browser rehearsal: server killed mid-session,
+a queued image + message rendered inline with real previews, and on
+recovery the outbox replayed FIFO (upload `201` → message `201`); "Work
+locally" imported the cached workspace and reconnect didn't duplicate it.
+
+- **Server-outage tolerance**: reads serve the last-synced response cache;
+  sends/edits queue in a durable IndexedDB outbox and drain automatically
+  once `/api/health` answers. Image/file uploads park as blobs and replay
+  through the base64 path; placeholder `att:` ids rewrite to real ids
+  mid-drain. Queued rows show previews and a discard option.
+- **Snapshot import**: "Work locally" hydrates IndexedDB from the cached
+  workspace — remote entities keep server ids, so sync skips imported
+  rows and replays only the delta.
+- **SW media cache fix**: `sw.js` no longer permanently caches transient
+  opaque (no-cors) responses — network-first with cache fallback, so a
+  recovered server self-heals a poisoned entry.
+- **Message → GitHub filing**: user messages on repo-linked projects file
+  as GitHub issues. Auto-file fires on line-start markers (`bug:`,
+  `issue:`, `enhancement:`, `feature request:`, `suggestion:`,
+  `proposal:`, `/bug`-style slash forms); manual via ⋯ menu →
+  **File on GitHub** or `POST /api/messages/:id/github`. Attachments embed
+  via presigned URLs; the issue mirrors onto the board and a threaded
+  reply links it. Multi-repo projects never guess — a guidance reply
+  points at the manual pick. Dedup via an atomically-claimed `filed` tag
+  (`409 already_filed`); agent-authored and `autofile`-tagged replies are
+  excluded server- and client-side.
+- **Update checks**: rail keeps a permanent **Check for updates** button
+  alongside the status; manual checks and the tray item bypass the 5-min
+  session cache so they always hit the release feed.
 
 ## Post-1.0 ideas (not committed)
 
