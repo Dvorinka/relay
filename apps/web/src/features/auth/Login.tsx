@@ -11,6 +11,7 @@ import {
 import { net } from "../../lib/net";
 import { useSession } from "../../stores/session";
 import {
+  AuthChoice,
   AuthField,
   AuthLayout,
   authButtonClass,
@@ -36,6 +37,17 @@ export default function Login() {
   // same-origin: the desktop or mobile shell, or a cross-origin SPA. On a
   // hosted server's own web UI they would point at itself — meaningless.
   const altPaths = () => isDesktop() || isMobileShell() || !!net.serverUrl();
+  // First-run fork: when no server is configured the user chooses local vs
+  // server before seeing a form that assumes one. Returning users (stored
+  // server URL) skip the chooser straight to sign-in.
+  const [choseServer, setChoseServer] = createSignal(false);
+  const showChoice = () =>
+    altPaths() && !net.serverUrl() && !choseServer();
+
+  function pickServer() {
+    setChoseServer(true);
+    setShowServer(true);
+  }
 
   onMount(() => {
     if (isDesktop() && !net.serverUrl()) {
@@ -122,18 +134,43 @@ export default function Login() {
 
   return (
     <AuthLayout
-      title="Welcome back"
-      subtitle="Sign in to continue to Relay"
+      title={showChoice() ? "How do you want to use Relay?" : "Welcome back"}
+      subtitle={
+        showChoice() ? undefined : "Sign in to continue to Relay"
+      }
       footer={
-        <>
-          New here?{" "}
-          <A href="/register" class="text-fg underline-offset-2 hover:underline">
-            Create an account
-          </A>
-        </>
+        showChoice() ? undefined : (
+          <>
+            New here?{" "}
+            <A
+              href="/register"
+              class="text-fg underline-offset-2 hover:underline"
+            >
+              Create an account
+            </A>
+          </>
+        )
       }
     >
-      <form onSubmit={onSubmit} class="flex flex-col gap-5">
+      <Show
+        when={!showChoice()}
+        fallback={
+          <AuthChoice
+            onLocal={() => void session.enterLocal()}
+            onServer={pickServer}
+          />
+        }
+      >
+        <Show when={altPaths() && !net.serverUrl()}>
+          <button
+            type="button"
+            class="mb-4 text-[13px] text-muted underline-offset-2 hover:text-fg hover:underline"
+            onClick={() => setChoseServer(false)}
+          >
+            ← All options
+          </button>
+        </Show>
+        <form onSubmit={onSubmit} class="flex flex-col gap-5">
         <AuthField label="Email">
           <input
             type="email"
@@ -222,16 +259,17 @@ export default function Login() {
           </Show>
         </div>
       </Show>
-      <Show when={altPaths()}>
-        <div class="mt-3">
-          <button
-            type="button"
-            class="w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-muted transition-colors hover:bg-hover hover:text-fg"
-            onClick={() => session.enterLocal()}
-          >
-            Work locally on this device — no server needed
-          </button>
-        </div>
+        <Show when={net.serverUrl()}>
+          <div class="mt-3">
+            <button
+              type="button"
+              class="w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-muted transition-colors hover:bg-hover hover:text-fg"
+              onClick={() => session.enterLocal()}
+            >
+              Work locally on this device — no server needed
+            </button>
+          </div>
+        </Show>
       </Show>
     </AuthLayout>
   );

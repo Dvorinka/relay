@@ -82,9 +82,14 @@ bundle, which the proxy serves from the *server's* build.
 
 ## Sign-in
 
-The login page offers three paths: the account form (with an optional
-"Different server" URL field), **Work locally** (embedded bundle, "This
-device" workspace), and **Sign in via browser**. Browser sign-in POSTs
+When no server is configured yet, the auth screens open with a chooser —
+**Work locally** (embedded bundle, "This device" workspace) or **Connect to
+a server**, plus a self-host link. Picking the server path reveals the
+account form with the server URL field up front (and, on Register, a
+required one — a serverless register previously had nowhere to point).
+Once a server is stored, sign-in goes straight to the form: the account
+form (with an optional "Different server" URL field), a "Work locally"
+footnote, and **Sign in via browser**. Browser sign-in POSTs
 `/api/auth/browser/start` for a single-use 10-minute code, opens
 `<server>/connect?code=…` in the system browser via `/~desktop-open`,
 and polls `/api/auth/browser/poll` every 2 s until the signed-in user
