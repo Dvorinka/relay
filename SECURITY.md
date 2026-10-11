@@ -16,7 +16,7 @@ notes unless you prefer otherwise.
 
 ## Supported versions
 
-Relay is pre-1.0. Only the latest release receives security fixes.
+Only the latest release receives security fixes.
 Upgrade to the newest tag before reporting old-version issues.
 
 ## Security-relevant design notes
@@ -30,8 +30,10 @@ Things reporters and self-hosters should know:
 - **MCP tokens** - `rly_`-prefixed bearer tokens, stored as SHA-256 hashes,
   scoped to projects and permission sets, revocable per token. Treat them
   as credentials; Relay never logs them.
-- **GitHub** - GitHub App installation tokens only (short-lived); webhooks
-  verified with HMAC-SHA256 signatures; no personal access tokens stored.
+- **GitHub** - GitHub App installation tokens are short-lived and never
+  persisted; webhooks verified with HMAC-SHA256. Token mode reads
+  `GITHUB_TOKEN` from the environment or shells out to `gh auth token` —
+  no personal access token is ever stored in the database.
 - **Uploads** - server-side MIME sniffing (not just extension checks),
   size caps, randomized storage keys, content served via short-lived
   presigned URLs.

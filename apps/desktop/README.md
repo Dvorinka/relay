@@ -65,10 +65,13 @@ running window as the `relay:deeplink` event. Uninstall removes the key.
 
 ## Self-update
 
-"Check for updates" in the rail compares GitHub's latest tag against the
-binary's own stamp (`-ldflags -X main.version=<tag>`, reported through
-`App.Version()`) — not the SPA bundle, which the proxy serves from the
-*server's* build. `App.SelfUpdate(tag)` then:
+"Check for updates" lives permanently in the rail footer beside the status
+line and in the system-tray menu; a manual check (either path) bypasses the
+5-minute result cache and always queries GitHub. The check compares the
+latest release tag against the binary's own stamp (`-ldflags -X
+main.version=<tag>`, reported through `App.Version()`) — not the SPA
+bundle, which the proxy serves from the *server's* build.
+`App.SelfUpdate(tag)` then:
 
 - **Windows**: downloads `Relay-Setup-<ver>.exe`, runs it `/S /SELFUPDATE`.
   `.onInit` taskkills the running app, the silent install overwrites it,
@@ -135,5 +138,7 @@ ignored. The mark renders from `assets/brand/kit/relay-mark-accent-app-icon.svg`
 ## Deferred
 
 - Global screenshot hotkey — needs an OS-specific hook that doesn't fit the
-  thin-shell model. (The Windows system tray uses fyne.io/systray for its
-  click callbacks; Linux/macOS tray icons remain deferred.)
+  thin-shell model. (Tray: Windows via fyne.io/systray, Linux via
+  StatusNotifierItem over D-Bus; both expose **Check for updates**, which
+  restores the window and forces a live check. macOS keeps dock
+  conventions.)
