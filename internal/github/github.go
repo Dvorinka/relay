@@ -35,6 +35,7 @@ import (
 	"github.com/Dvorinka/relay/internal/db"
 	"github.com/Dvorinka/relay/internal/events"
 	"github.com/Dvorinka/relay/internal/httpx"
+	"github.com/Dvorinka/relay/internal/storage"
 )
 
 type Service struct {
@@ -44,9 +45,10 @@ type Service struct {
 	pool *pgxpool.Pool
 
 	mu     sync.Mutex
-	client *Client     // built lazily from the stored app row
-	cache  sync.Map    // dev-panel cache: key -> {data, expiry}
-	Bus    *events.Hub // optional — CI webhook events republish to subscribers
+	client *Client        // built lazily from the stored app row
+	cache  sync.Map       // dev-panel cache: key -> {data, expiry}
+	Bus    *events.Hub    // optional — CI webhook events republish to subscribers
+	Store  *storage.Store // optional — presigned URLs for auto-filed attachments
 
 	// dispatchMu serializes webhook processing: GitHub delivers resource events
 	// in order, and concurrent handlers would race read-modify-write.

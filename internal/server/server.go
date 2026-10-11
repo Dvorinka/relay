@@ -80,6 +80,10 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	reviewSvc.Bus = hub
 	agentSvc.Bus = hub
 	ghSvc.Bus = hub
+	ghSvc.Store = store
+	// Auto-file: marked messages ("bug:", "enhancement:", …) on repo-linked
+	// projects become GitHub issues mirrored back onto the board.
+	ghSvc.WatchMessages()
 	rtSvc := realtime.NewService(hub, pool)
 	searchSvc := search.NewService(pool)
 	hookSvc := webhooks.NewService(log, pool, cfg.PublicURL)

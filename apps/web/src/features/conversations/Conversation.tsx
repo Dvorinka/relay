@@ -110,6 +110,8 @@ const SLASH_COMMANDS: { name: string; desc: string; args?: string }[] = [
   { name: "threads", desc: "list all threads" },
   { name: "todo", desc: "add a task to this project", args: "<task>" },
   { name: "issue", desc: "create an issue and link it here", args: "<title>" },
+  { name: "bug", desc: "file a bug on the linked GitHub repo", args: "<what's broken>" },
+  { name: "enhancement", desc: "file an enhancement on the linked GitHub repo", args: "<what to add>" },
   { name: "silent", desc: "post without notifying anyone", args: "<message>" },
   { name: "me", desc: "post an action line — /me waves", args: "<action>" },
   { name: "tag", desc: "tag your next message", args: "<tag>" },
