@@ -132,6 +132,13 @@ set agents_blocked = sqlc.arg(agents_blocked)
 where id = sqlc.arg(id) and kind = 'channel'
 returning *;
 
+-- name: SetChannelIntake :one
+-- intake channels carry the support-intake badge and setup guide
+update conversations
+set intake = sqlc.arg(intake)
+where id = sqlc.arg(id) and kind = 'channel'
+returning *;
+
 -- name: DeleteChannel :execrows
 delete from conversations
 where id = $1 and kind = 'channel';

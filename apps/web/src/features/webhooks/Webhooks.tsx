@@ -534,9 +534,14 @@ function InboundHooksSection(props: { projectId: string }) {
     <>
       <h2 class="mt-10 text-[13px] font-semibold">Inbound hooks</h2>
       <p class="mt-1 text-[12px] text-muted">
-        CI alerts, deploy bots, monitoring — anything that can POST JSON.
-        <code class="font-mono"> {"{message: \"...\"}"} </code> lands in the
-        target channel, tagged with the hook name.
+        CI alerts, deploy bots, monitoring, support intake — anything that
+        can POST JSON. <code class="font-mono">{"{message: \"...\"}"}</code>{" "}
+        lands in the target channel, tagged with the hook name. Optional
+        fields: <code class="font-mono">from</code> attributes an external
+        sender, <code class="font-mono">subject</code> heads the message,{" "}
+        <code class="font-mono">key</code> threads follow-ups under the first
+        post, <code class="font-mono">attachments</code> takes up to 5 base64
+        files (logs, screenshots).
       </p>
 
       <Show when={freshUrl()}>

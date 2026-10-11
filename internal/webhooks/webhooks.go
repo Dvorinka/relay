@@ -30,6 +30,7 @@ import (
 	"github.com/Dvorinka/relay/internal/db"
 	"github.com/Dvorinka/relay/internal/events"
 	"github.com/Dvorinka/relay/internal/httpx"
+	"github.com/Dvorinka/relay/internal/storage"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -54,6 +55,10 @@ type Service struct {
 	// Bus republishes inbound-hook messages as message.created events so
 	// open clients repaint immediately. Optional — nil-safe.
 	Bus *events.Hub
+	// Store + MaxUpload enable inbound-hook file payloads (support intake:
+	// log files, screenshots). nil Store → attachment payloads get 503.
+	Store     *storage.Store
+	MaxUpload int64
 	// publicURL is the deployment's external base — managed ("relay:managed")
 	// subscriptions point at <publicURL>/api/webhooks/catch/<id>.
 	publicURL string

@@ -1620,8 +1620,8 @@ paths:
   /api/channels/{channelId}:
     patch:
       operationId: updateChannel
-      summary: Rename a channel or toggle agent access
-      description: "agents_blocked=true hides the channel from MCP agents entirely - its messages no longer appear in list_conversations, get_messages, send_message or search."
+      summary: Rename a channel, toggle agent access, or toggle support-intake mode
+      description: "agents_blocked=true hides the channel from MCP agents entirely - its messages no longer appear in list_conversations, get_messages, send_message or search. intake=true marks the channel as a support-intake surface (setup guide + badge in the UI)."
       tags: [conversations]
       parameters:
         - name: channelId
@@ -1637,6 +1637,7 @@ paths:
               properties:
                 name: { type: string, minLength: 1, maxLength: 60 }
                 agents_blocked: { type: boolean }
+                intake: { type: boolean }
       responses:
         "200":
           description: Updated channel
@@ -3618,11 +3619,14 @@ paths:
   /api/hooks/{token}:
     post:
       operationId: inboundHookPost
-      summary: Public token-secured endpoint — posts {message|text|body} into the hook's conversation
+      summary: Public token-secured endpoint — posts a message into the hook's conversation
       description: >-
         Unauthenticated; the path token is the credential (rlh_...).
-        Rate-limited to 30 posts/minute per token, body cap 64KiB.
-        The message lands tagged ["webhook", hook-name].
+        Rate-limited to 30 posts/minute per token. Beyond {message|text|body},
+        support-intake fields: "from" attributes an external sender, "subject"
+        heads the message, "key" threads follow-ups under the first post with
+        that key, "attachments" (base64, max 5) upload via the storage pipeline.
+        The message lands tagged ["webhook", hook-name, "from:…", "key:…"].
       tags: [webhooks]
       parameters:
         - { name: token, in: path, required: true, schema: { type: string } }
@@ -3636,6 +3640,18 @@ paths:
                 message: { type: string }
                 text: { type: string }
                 body: { type: string }
+                from: { type: string, description: "external sender, e.g. 'Alice <alice@acme.com>'" }
+                subject: { type: string }
+                key: { type: string, description: "threads follow-ups under the first post with this key" }
+                attachments:
+                  type: array
+                  maxItems: 5
+                  items:
+                    type: object
+                    properties:
+                      name: { type: string }
+                      content_type: { type: string }
+                      data: { type: string, description: "base64 file contents" }
       responses:
         "202":
           description: Posted into the conversation
@@ -3646,8 +3662,13 @@ paths:
                 properties:
                   posted: { type: boolean }
                   message_id: { type: string }
+                  parent_id: { type: string, description: "present when threaded under a prior key post" }
+                  threaded: { type: boolean }
+                  attachments: { type: integer }
+        "400": { description: "Invalid payload, too large, or >5 attachments" }
         "404": { description: "Unknown or disabled token" }
         "429": { description: "Rate limited" }
+        "503": { description: "Attachments sent but object storage is not configured" }
 
   /api/me/unread:
     get:
@@ -4536,6 +4557,9 @@ components:
         agents_blocked:
           type: boolean
           description: "True hides the channel from MCP agents entirely"
+        intake:
+          type: boolean
+          description: "True marks the channel as a support-intake surface"
         created_at: { type: string, format: date-time }
 
     MentionRef:

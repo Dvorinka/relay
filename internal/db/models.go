@@ -129,6 +129,7 @@ type Conversation struct {
 	CreatorNameSnapshot string             `json:"creator_name_snapshot"`
 	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
 	AgentsBlocked       bool               `json:"agents_blocked"`
+	Intake              bool               `json:"intake"`
 }
 
 type GithubApp struct {
@@ -182,6 +183,13 @@ type InboundHook struct {
 	CreatedBy      pgtype.UUID        `json:"created_by"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
+}
+
+type InboundHookThread struct {
+	HookID          pgtype.UUID        `json:"hook_id"`
+	Key             string             `json:"key"`
+	ParentMessageID pgtype.UUID        `json:"parent_message_id"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
 type Issue struct {

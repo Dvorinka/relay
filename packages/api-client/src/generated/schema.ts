@@ -963,8 +963,8 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Rename a channel or toggle agent access
-         * @description agents_blocked=true hides the channel from MCP agents entirely - its messages no longer appear in list_conversations, get_messages, send_message or search.
+         * Rename a channel, toggle agent access, or toggle support-intake mode
+         * @description agents_blocked=true hides the channel from MCP agents entirely - its messages no longer appear in list_conversations, get_messages, send_message or search. intake=true marks the channel as a support-intake surface (setup guide + badge in the UI).
          */
         patch: operations["updateChannel"];
         trace?: never;
@@ -2269,8 +2269,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Public token-secured endpoint — posts {message|text|body} into the hook's conversation
-         * @description Unauthenticated; the path token is the credential (rlh_...). Rate-limited to 30 posts/minute per token, body cap 64KiB. The message lands tagged ["webhook", hook-name].
+         * Public token-secured endpoint — posts a message into the hook's conversation
+         * @description Unauthenticated; the path token is the credential (rlh_...). Rate-limited to 30 posts/minute per token. Beyond {message|text|body}, support-intake fields: "from" attributes an external sender, "subject" heads the message, "key" threads follow-ups under the first post with that key, "attachments" (base64, max 5) upload via the storage pipeline. The message lands tagged ["webhook", hook-name, "from:…", "key:…"].
          */
         post: operations["inboundHookPost"];
         delete?: never;
@@ -2956,6 +2956,8 @@ export interface components {
             name?: string | null;
             /** @description True hides the channel from MCP agents entirely */
             agents_blocked?: boolean;
+            /** @description True marks the channel as a support-intake surface */
+            intake?: boolean;
             /** Format: date-time */
             created_at: string;
         };
@@ -5471,6 +5473,7 @@ export interface operations {
                 "application/json": {
                     name?: string;
                     agents_blocked?: boolean;
+                    intake?: boolean;
                 };
             };
         };
@@ -8276,6 +8279,17 @@ export interface operations {
                     message?: string;
                     text?: string;
                     body?: string;
+                    /** @description external sender, e.g. 'Alice <alice@acme.com>' */
+                    from?: string;
+                    subject?: string;
+                    /** @description threads follow-ups under the first post with this key */
+                    key?: string;
+                    attachments?: {
+                        name?: string;
+                        content_type?: string;
+                        /** @description base64 file contents */
+                        data?: string;
+                    }[];
                 };
             };
         };
@@ -8289,8 +8303,19 @@ export interface operations {
                     "application/json": {
                         posted?: boolean;
                         message_id?: string;
+                        /** @description present when threaded under a prior key post */
+                        parent_id?: string;
+                        threaded?: boolean;
+                        attachments?: number;
                     };
                 };
+            };
+            /** @description Invalid payload, too large, or >5 attachments */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Unknown or disabled token */
             404: {
@@ -8301,6 +8326,13 @@ export interface operations {
             };
             /** @description Rate limited */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Attachments sent but object storage is not configured */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

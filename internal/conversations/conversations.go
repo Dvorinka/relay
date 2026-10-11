@@ -1001,6 +1001,7 @@ func channelJSON(conv db.Conversation) gin.H {
 	m := conversationJSON(conv)
 	m["name"] = nullText(conv.Title)
 	m["agents_blocked"] = conv.AgentsBlocked
+	m["intake"] = conv.Intake
 	return m
 }
 
@@ -1061,8 +1062,8 @@ func (s *Service) handleCreateChannel(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"channel": channelJSON(conv)})
 }
 
-// handleUpdateChannel renames a channel and/or toggles agent visibility.
-// {"name": "...", "agents_blocked": bool} — either field optional.
+// handleUpdateChannel renames a channel and/or toggles agent visibility
+// and support-intake mode. {"name","agents_blocked","intake"} — optional.
 func (s *Service) handleUpdateChannel(c *gin.Context) {
 	conv := c.MustGet(ctxConversation).(db.Conversation)
 	if conv.Kind != "channel" {
@@ -1072,6 +1073,7 @@ func (s *Service) handleUpdateChannel(c *gin.Context) {
 	var req struct {
 		Name          *string `json:"name"`
 		AgentsBlocked *bool   `json:"agents_blocked"`
+		Intake        *bool   `json:"intake"`
 	}
 	if !httpx.BindJSON(c, &req) {
 		return
@@ -1092,6 +1094,14 @@ func (s *Service) handleUpdateChannel(c *gin.Context) {
 	if req.AgentsBlocked != nil {
 		if _, err := s.q.SetChannelAgentsBlocked(c.Request.Context(), db.SetChannelAgentsBlockedParams{
 			ID: conv.ID, AgentsBlocked: *req.AgentsBlocked,
+		}); err != nil {
+			httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
+	}
+	if req.Intake != nil {
+		if _, err := s.q.SetChannelIntake(c.Request.Context(), db.SetChannelIntakeParams{
+			ID: conv.ID, Intake: *req.Intake,
 		}); err != nil {
 			httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 			return

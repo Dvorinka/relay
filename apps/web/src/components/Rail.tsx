@@ -301,6 +301,15 @@ function ProjectChildren(props: { project: Project }) {
             >
               <span class="text-faint">#</span>
               <span class="min-w-0 flex-1 truncate">{ch.name}</span>
+              <Show when={ch.intake}>
+                <Tip
+                  text="Support intake"
+                  hint="External reports land here via an inbound hook"
+                  class="shrink-0"
+                >
+                  <InboxIcon class="h-3 w-3 shrink-0 text-faint" />
+                </Tip>
+              </Show>
               <Show when={ch.agents_blocked}>
                 <Tip
                   text="Agents blocked"

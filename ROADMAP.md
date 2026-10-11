@@ -583,6 +583,48 @@ locally" imported the cached workspace and reconnect didn't duplicate it.
   alongside the status; manual checks and the tray item bypass the 5-min
   session cache so they always hit the release feed.
 
+## Phase 30 — support intake on inbound hooks ☑
+
+`POST /api/hooks/<token>` grows from plain-text posts into a real intake
+endpoint — a product (invoicing platform, SaaS app, anything) posts user
+reports straight into a per-customer channel.
+
+- **Sender attribution**: `from` renders as a bold header line and a
+  `from:` tag; `subject` headlines the message. Messages stay
+  `["webhook", hook-name]`-tagged so they're distinguishable everywhere.
+- **Ticket threading**: `key` maps to `inbound_hook_threads` — the first
+  post with a key becomes the thread root; follow-ups with the same key
+  land as replies under it. One support ticket, one thread.
+- **File payloads**: `attachments` (base64, max 5, per-file upload cap)
+  run through the normal storage pipeline — log files and screenshots
+  arrive attached to the message. `503 storage_disabled` when storage
+  isn't configured; a failed file never sinks the message itself.
+- **Reply path**: an outbound `message.created` webhook subscription on
+  the same project already closes the loop — the platform receives
+  Relay-side replies (filter by `conversation_id`, skip `webhook`-tagged
+  posts to avoid echo loops).
+- Request cap lifts from 64KiB to 64KiB + 2×upload-max; response reports
+  `threaded`, `parent_id`, `attachments`.
+
+## Phase 31 — intake channels & setup guide ☑
+
+`conversations.intake` marks a channel as a support-intake surface — a
+first-class "special kind of channel" rather than an ordinary channel that
+happens to have a hook.
+
+- **Channel flag**: `PATCH /api/channels/:id {intake: true}`; the header
+  shows an `intake` chip and the rail an inbox icon. The toggle sits next
+  to rename/agents-blocked on the channel page.
+- **Setup guide**: enabling intake (or clicking the chip) opens the
+  four-step guide — the channel's inbound hook (create or rotate inline,
+  token shown once), the payload contract, and copy-paste integrations.
+- **Any language**: snippet tabs cover cURL, JavaScript, Python, and Go —
+  each inlines the real hook URL so it is paste-ready.
+- **AI prompt tab**: a complete instruction block to hand a coding agent —
+  endpoint, payload fields, key-threading semantics, response shapes, the
+  rate limit, and the outbound-webhook reply path with the echo-loop
+  guard (`tags` containing `webhook` are inbound posts).
+
 ## Post-1.0 ideas (not committed)
 
 - Relay Cloud (hosted offering) - self-hosting stays first-class
