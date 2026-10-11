@@ -54,10 +54,9 @@ type Config struct {
 	SMTPFrom     string
 
 	// RELAY_LIMITED marks a capacity-capped hosted instance (the free tier):
-	// tighter upload cap and image re-encoding on upload. Surfaced to clients
-	// via /api/health so the app can show the "limited" notice.
-	Limited          bool
-	LimitedUploadMiB int64
+	// a sync/auth/relay host that stores no files — every upload path gets
+	// 403 uploads_disabled. Surfaced to clients via /api/health.
+	Limited bool
 }
 
 func Load() (Config, error) {
@@ -95,8 +94,7 @@ func Load() (Config, error) {
 		SMTPPass:     os.Getenv("SMTP_PASS"),
 		SMTPFrom:     getEnv("SMTP_FROM", "relay@example.com"),
 
-		Limited:          getBool("RELAY_LIMITED"),
-		LimitedUploadMiB: int64(getInt("RELAY_LIMITED_UPLOAD_MIB", 8)),
+		Limited: getBool("RELAY_LIMITED"),
 	}
 
 	var missing []string
@@ -127,12 +125,8 @@ func (c Config) Logger() (*zap.Logger, error) {
 	return cfg.Build()
 }
 
-// EffectiveUploadMiB is the cap upload handlers enforce: the limited tier's
-// tighter cap when it beats the storage one.
+// EffectiveUploadMiB is the cap upload handlers enforce.
 func (c Config) EffectiveUploadMiB() int64 {
-	if c.Limited && c.LimitedUploadMiB < c.StorageMaxUploadMiB {
-		return c.LimitedUploadMiB
-	}
 	return c.StorageMaxUploadMiB
 }
 

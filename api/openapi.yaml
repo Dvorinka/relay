@@ -52,9 +52,12 @@ paths:
                   limits:
                     type: object
                     properties:
+                      uploads:
+                        type: boolean
+                        description: "False when the instance stores no files at all (limited hosted tier)"
                       upload_mib:
                         type: integer
-                        description: "Effective upload cap in MiB (tighter on limited instances)"
+                        description: "Effective upload cap in MiB (absent when uploads are disabled)"
 
   /api/auth/register:
     post:

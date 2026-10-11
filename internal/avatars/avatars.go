@@ -149,13 +149,14 @@ func extensionFor(contentType string) string {
 }
 
 type Service struct {
-	q     *db.Queries
-	store *storage.Store
-	log   *zap.Logger
+	q       *db.Queries
+	store   *storage.Store
+	limited bool
+	log     *zap.Logger
 }
 
-func NewService(log *zap.Logger, pool *pgxpool.Pool, store *storage.Store) *Service {
-	return &Service{q: db.New(pool), store: store, log: log}
+func NewService(log *zap.Logger, pool *pgxpool.Pool, store *storage.Store, limited bool) *Service {
+	return &Service{q: db.New(pool), store: store, limited: limited, log: log}
 }
 
 func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
@@ -173,6 +174,11 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
 // desktop app's upload bridge, whose WebKitGTK webview drops multipart
 // bodies). Replies on failure; the caller returns early when ok is false.
 func (s *Service) readUpload(c *gin.Context) (data []byte, contentType string, ok bool) {
+	if s.limited {
+		httpx.Error(c, http.StatusForbidden, "uploads_disabled",
+			"this hosted instance does not store files — self-host Relay for attachments")
+		return nil, "", false
+	}
 	if s.store == nil {
 		httpx.Error(c, http.StatusServiceUnavailable, "storage_disabled", "object storage is not configured")
 		return nil, "", false
@@ -344,6 +350,11 @@ func (s *Service) handleProjectIconFromGithub(c *gin.Context) {
 	})
 	if err != nil || role == "" {
 		httpx.Error(c, http.StatusNotFound, "not_found", "project not found")
+		return
+	}
+	if s.limited {
+		httpx.Error(c, http.StatusForbidden, "uploads_disabled",
+			"this hosted instance does not store files — self-host Relay for attachments")
 		return
 	}
 	if s.store == nil {

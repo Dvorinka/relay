@@ -1169,6 +1169,9 @@ func (s *Service) attachmentsJSON(ctx context.Context, messageID pgtype.UUID) []
 }
 
 func (s *Service) uploadAttachment(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if s.limited {
+		return mcp.NewToolResultError("this hosted instance does not store files — self-host Relay for attachments"), nil
+	}
 	if s.store == nil {
 		return mcp.NewToolResultError("storage not configured"), nil
 	}
@@ -1195,9 +1198,6 @@ func (s *Service) uploadAttachment(ctx context.Context, req mcp.CallToolRequest)
 		return mcp.NewToolResultError("file exceeds the upload size cap"), nil
 	}
 	contentType := attachments.SniffType(data, req.GetString("content_type", ""))
-	if s.limited {
-		data, contentType, _ = attachments.CompressImage(data, contentType)
-	}
 	name = path.Base(name)
 	if name == "." || name == "/" || name == "" {
 		name = "file"
@@ -2182,6 +2182,9 @@ func (s *Service) reactToMessage(ctx context.Context, req mcp.CallToolRequest) (
 // setAvatar lets the agent set its own profile picture - either
 // image_base64 bytes or image_url, which the server fetches itself.
 func (s *Service) setAvatar(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	if s.limited {
+		return mcp.NewToolResultError("this hosted instance does not store files — self-host Relay for attachments"), nil
+	}
 	if s.store == nil {
 		return mcp.NewToolResultError("storage not configured"), nil
 	}

@@ -87,6 +87,11 @@ func (s *Service) projectMemberOnly(c *gin.Context) {
 // --- handlers ---
 
 func (s *Service) handleUpload(c *gin.Context) {
+	if s.limited {
+		httpx.Error(c, http.StatusForbidden, "uploads_disabled",
+			"this hosted instance does not store files — self-host Relay for attachments")
+		return
+	}
 	if s.store == nil {
 		httpx.Error(c, http.StatusServiceUnavailable, "storage_disabled", "object storage is not configured")
 		return
@@ -144,13 +149,6 @@ func (s *Service) handleUpload(c *gin.Context) {
 		filename, declaredType = fh.Filename, fh.Header.Get("Content-Type")
 	}
 	contentType := SniffType(data, declaredType)
-	if s.limited {
-		var changed bool
-		if data, contentType, changed = CompressImage(data, contentType); changed {
-			s.log.Debug("limited-tier image compressed",
-				zap.String("file", filename), zap.Int("bytes", len(data)))
-		}
-	}
 	filename = path.Base(filename)
 	if filename == "." || filename == "/" || filename == "" {
 		filename = "file"

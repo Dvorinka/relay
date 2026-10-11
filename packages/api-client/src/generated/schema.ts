@@ -3385,7 +3385,9 @@ export interface operations {
                         /** @description True on capacity-capped hosted tiers (RELAY_LIMITED) — clients should surface the free-instance notice */
                         limited?: boolean;
                         limits?: {
-                            /** @description Effective upload cap in MiB (tighter on limited instances) */
+                            /** @description False when the instance stores no files at all (limited hosted tier) */
+                            uploads?: boolean;
+                            /** @description Effective upload cap in MiB (absent when uploads are disabled) */
                             upload_mib?: number;
                         };
                     };
