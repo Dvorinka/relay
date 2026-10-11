@@ -129,6 +129,7 @@ type Conversation struct {
 	CreatorNameSnapshot string             `json:"creator_name_snapshot"`
 	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
 	AgentsBlocked       bool               `json:"agents_blocked"`
+	Intake              bool               `json:"intake"`
 }
 
 type GithubApp struct {

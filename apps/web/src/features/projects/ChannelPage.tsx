@@ -9,12 +9,14 @@ import { confirmDestructive } from "../../components/Confirm";
 import { Spinner, Tip } from "../../components/ui";
 import {
   CheckIcon,
+  InboxIcon,
   LinkIcon,
   LockIcon,
   PencilIcon,
   TrashIcon,
 } from "../../components/icons";
 import { Conversation } from "../conversations/Conversation";
+import { IntakeGuide } from "./IntakeGuide";
 
 // ChannelPage renders one persistent side channel: the same message surface
 // as the project chat, headed by channel controls (rename, agent access,
@@ -38,6 +40,7 @@ export default function ChannelPage() {
   const [renaming, setRenaming] = createSignal(false);
   const [draft, setDraft] = createSignal("");
   const [copied, setCopied] = createSignal(false);
+  const [guideOpen, setGuideOpen] = createSignal(false);
 
   async function rename() {
     const ch = channel();
@@ -58,6 +61,17 @@ export default function ChannelPage() {
       .updateChannel(ch.id, { agents_blocked: !ch.agents_blocked })
       .catch(() => {});
     refetch();
+  }
+
+  async function toggleIntake() {
+    const ch = channel();
+    if (!ch) return;
+    const enabling = !ch.intake;
+    await api.updateChannel(ch.id, { intake: enabling }).catch(() => {});
+    refetch();
+    // Enabling opens the setup guide straight away — the flag is pointless
+    // without a hook wired to the channel.
+    if (enabling) setGuideOpen(true);
   }
 
   async function remove() {
@@ -111,6 +125,20 @@ export default function ChannelPage() {
             </span>
           </Tip>
         </Show>
+        <Show when={channel()?.intake}>
+          <Tip
+            text="Support intake"
+            hint="External reports land here via an inbound hook — click for the setup guide"
+          >
+            <button
+              type="button"
+              class="flex items-center gap-1 rounded-full bg-hover px-2 py-0.5 text-[10.5px] font-medium text-muted transition-colors hover:text-fg"
+              onClick={() => setGuideOpen(true)}
+            >
+              <InboxIcon class="h-3 w-3" /> intake
+            </button>
+          </Tip>
+        </Show>
         <div class="ml-auto flex shrink-0 items-center gap-0.5">
           <Tip text="Copy channel ID" hint="Paste to an agent's harness to address this channel">
             <button
@@ -127,6 +155,30 @@ export default function ChannelPage() {
               <Show when={copied()} fallback={<LinkIcon class="h-4 w-4" />}>
                 <CheckIcon class="h-4 w-4" />
               </Show>
+            </button>
+          </Tip>
+          <Tip
+            text={
+              channel()?.intake
+                ? "Support intake — setup guide"
+                : "Enable support intake"
+            }
+            hint="External products POST reports here via an inbound hook"
+          >
+            <button
+              type="button"
+              aria-label="Toggle support intake"
+              aria-pressed={channel()?.intake ?? false}
+              class={`${headerBtn} ${channel()?.intake ? "text-accent" : ""}`}
+              onClick={() => {
+                if (channel()?.intake) {
+                  setGuideOpen(true);
+                } else {
+                  void toggleIntake();
+                }
+              }}
+            >
+              <InboxIcon class="h-4 w-4" />
             </button>
           </Tip>
           <Tip
@@ -188,6 +240,12 @@ export default function ChannelPage() {
           )}
         </Show>
       </div>
+      <IntakeGuide
+        projectId={params.projectId}
+        channel={channel}
+        open={guideOpen()}
+        onOpenChange={setGuideOpen}
+      />
     </div>
   );
 }

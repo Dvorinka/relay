@@ -1620,8 +1620,8 @@ paths:
   /api/channels/{channelId}:
     patch:
       operationId: updateChannel
-      summary: Rename a channel or toggle agent access
-      description: "agents_blocked=true hides the channel from MCP agents entirely - its messages no longer appear in list_conversations, get_messages, send_message or search."
+      summary: Rename a channel, toggle agent access, or toggle support-intake mode
+      description: "agents_blocked=true hides the channel from MCP agents entirely - its messages no longer appear in list_conversations, get_messages, send_message or search. intake=true marks the channel as a support-intake surface (setup guide + badge in the UI)."
       tags: [conversations]
       parameters:
         - name: channelId
@@ -1637,6 +1637,7 @@ paths:
               properties:
                 name: { type: string, minLength: 1, maxLength: 60 }
                 agents_blocked: { type: boolean }
+                intake: { type: boolean }
       responses:
         "200":
           description: Updated channel
@@ -4556,6 +4557,9 @@ components:
         agents_blocked:
           type: boolean
           description: "True hides the channel from MCP agents entirely"
+        intake:
+          type: boolean
+          description: "True marks the channel as a support-intake surface"
         created_at: { type: string, format: date-time }
 
     MentionRef:

@@ -606,6 +606,25 @@ reports straight into a per-customer channel.
 - Request cap lifts from 64KiB to 64KiB + 2×upload-max; response reports
   `threaded`, `parent_id`, `attachments`.
 
+## Phase 31 — intake channels & setup guide ☑
+
+`conversations.intake` marks a channel as a support-intake surface — a
+first-class "special kind of channel" rather than an ordinary channel that
+happens to have a hook.
+
+- **Channel flag**: `PATCH /api/channels/:id {intake: true}`; the header
+  shows an `intake` chip and the rail an inbox icon. The toggle sits next
+  to rename/agents-blocked on the channel page.
+- **Setup guide**: enabling intake (or clicking the chip) opens the
+  four-step guide — the channel's inbound hook (create or rotate inline,
+  token shown once), the payload contract, and copy-paste integrations.
+- **Any language**: snippet tabs cover cURL, JavaScript, Python, and Go —
+  each inlines the real hook URL so it is paste-ready.
+- **AI prompt tab**: a complete instruction block to hand a coding agent —
+  endpoint, payload fields, key-threading semantics, response shapes, the
+  rate limit, and the outbound-webhook reply path with the echo-loop
+  guard (`tags` containing `webhook` are inbound posts).
+
 ## Post-1.0 ideas (not committed)
 
 - Relay Cloud (hosted offering) - self-hosting stays first-class

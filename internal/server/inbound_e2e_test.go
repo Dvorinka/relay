@@ -20,6 +20,16 @@ func TestInboundIntake(t *testing.T) {
 		t.Fatalf("channel: %d %v", code, ch)
 	}
 	chanID := ch["channel"].(map[string]any)["id"].(string)
+
+	// The intake flag rides the channel PATCH and round-trips in the JSON.
+	code, up := c.call("PATCH", "/api/channels/"+chanID, `{"intake":true}`)
+	if code != 200 {
+		t.Fatalf("intake patch: %d %v", code, up)
+	}
+	if up["channel"].(map[string]any)["intake"] != true {
+		t.Fatalf("intake flag not set: %v", up)
+	}
+
 	code, hook := c.call("POST", "/api/projects/"+projID+"/hooks",
 		fmt.Sprintf(`{"name":"acme-intake","conversation_id":%q}`, chanID))
 	if code != 201 {

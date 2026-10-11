@@ -403,7 +403,7 @@ func (q *Queries) GetMessageFull(ctx context.Context, id pgtype.UUID) (GetMessag
 }
 
 const listProjectConversations = `-- name: ListProjectConversations :many
-select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked from conversations where project_id = $1
+select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake from conversations where project_id = $1
   and not agents_blocked
   and (expires_at is null or expires_at > now())
 order by created_at
@@ -433,6 +433,7 @@ func (q *Queries) ListProjectConversations(ctx context.Context, projectID pgtype
 			&i.CreatorNameSnapshot,
 			&i.ExpiresAt,
 			&i.AgentsBlocked,
+			&i.Intake,
 		); err != nil {
 			return nil, err
 		}
