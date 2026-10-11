@@ -7,6 +7,7 @@
 // localStorage's ~5MB. A pre-IDB `relay.localdb.v1` document (data-URL
 // attachments included) is imported once and removed.
 import { emitLocal } from "./events";
+import { cacheEntries } from "./cache";
 import {
   dataUrlToBlob,
   localStore,
@@ -68,6 +69,10 @@ interface LocalDB {
   boards: Record<string, Board[]>; // project_id -> named boards
   briefs: Brief[]; // visual briefs incl. their scene JSON
   ideas: Idea[]; // brainstorm/mindmap docs
+  // Entities carried in from a server snapshot keep their server ids here —
+  // id -> origin. sync.ts skips re-creating them on that origin but still
+  // pushes new local work made on top.
+  remote_ids: Record<string, string>;
   synced_at?: string;
 }
 
@@ -105,6 +110,7 @@ function emptyDB(): LocalDB {
     boards: {},
     briefs: [],
     ideas: [],
+    remote_ids: {},
   };
 }
 
@@ -175,12 +181,14 @@ async function rehydrateUrls() {
 
 function save() {
   // Strip live object URLs — they're per-session; blobs re-mint on load.
+  // Remote "/api/…" paths (snapshot-imported attachments) persist as-is:
+  // they're a server route, not a blob handle.
   const doc: LocalDB = {
     ...db,
     attachments: Object.fromEntries(
       Object.entries(db.attachments).map(([id, a]) => [
         id,
-        { ...a, url: "" },
+        { ...a, url: a.url.startsWith("blob:") ? "" : a.url },
       ]),
     ),
     user: {
@@ -1268,4 +1276,248 @@ export const local = new Proxy(impl, {
 // filtering; strip it before returning.
 function projectOf(t: Todo): string | undefined {
   return (t as Todo & { project_id?: string }).project_id;
+}
+
+// --- Remote snapshot import --------------------------------------------------
+// "Work locally" used to land in an empty room. When the server's cached
+// GETs are still around, hydrate the local workspace from them first:
+// entities keep their server ids in remote_ids so sync.ts skips re-creating
+// them on that origin but still pushes work done on top. Only routes the
+// local adapter understands are imported — GitHub mirrors, agents and
+// reviews stay server-side until the connection is back.
+export async function importRemoteSnapshot(
+  origin: string,
+  authHeader: string,
+): Promise<number> {
+  await localReady;
+  let imported = 0;
+  const mark = (id: string | undefined | null) => {
+    if (id) db.remote_ids[id] = origin;
+  };
+  const dedupe = <T extends { id: string }>(list: T[]) => {
+    const s = new Set(list.map((x) => x.id));
+    return (x: T): boolean => {
+      if (s.has(x.id)) return false;
+      s.add(x.id);
+      list.push(x);
+      mark(x.id);
+      imported++;
+      return true;
+    };
+  };
+  const addProject = dedupe(db.projects);
+  const addConv = dedupe(db.conversations);
+  const addMessage = dedupe(db.messages);
+  const addIssue = dedupe(db.issues);
+  const addTodo = dedupe(db.todos);
+  const addBrief = dedupe(db.briefs);
+  const addIdea = dedupe(db.ideas);
+  const threadIds = new Set(db.threads.map((t) => t.id));
+
+  const pathOf = (raw: string): string | null => {
+    try {
+      const base =
+        typeof location !== "undefined"
+          ? location.origin
+          : "https://local.invalid";
+      const u = new URL(raw, base);
+      return u.origin === origin ? u.pathname : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const importMessage = (m: Message) => {
+    addMessage(m);
+    for (const a of m.attachments ?? []) {
+      if (!db.attachments[a.id]) {
+        mark(a.id);
+        db.attachments[a.id] = {
+          ...a,
+          url: `/api/projects/${a.project_id}/attachments/${a.id}/download`,
+        };
+      }
+    }
+  };
+
+  const mergeKeyed = <T extends { id: string }>(
+    map: Record<string, T[]>,
+    pid: string,
+    items: T[] | undefined,
+  ) => {
+    const cur = map[pid] ?? [];
+    const s = new Set(cur.map((x) => x.id));
+    for (const x of items ?? []) {
+      if (s.has(x.id)) continue;
+      s.add(x.id);
+      cur.push(x);
+      mark(x.id);
+      imported++;
+    }
+    map[pid] = cur;
+  };
+
+  const projSub = /^\/api\/projects\/([^/]+)\/([a-z_]+)$/;
+  const convMsgs = /^\/api\/conversations\/([^/]+)\/messages$/;
+  const issueConv = /^\/api\/issues\/([^/]+)\/conversation$/;
+  const briefConv = /^\/api\/briefs\/([^/]+)\/conversation$/;
+  const wsIdeas = /^\/api\/workspaces\/[^/]+\/ideas$/;
+
+  for (const { key, body } of await cacheEntries()) {
+    const bar = key.indexOf("|");
+    if (key.slice(0, bar) !== authHeader) continue;
+    const path = pathOf(key.slice(bar + 1));
+    if (!path) continue;
+    let data: unknown;
+    try {
+      data = JSON.parse(body);
+    } catch {
+      continue;
+    }
+
+    if (path === "/api/auth/session" || path === "/api/workspaces") {
+      const s = data as Partial<AuthSession> & {
+        workspaces?: WorkspaceWithRole[];
+      };
+      // Same person, same workspace — keep the remote ids so messages the
+      // user wrote still read as theirs and sync posts as the real account.
+      if (s.user?.id) db.user = { ...s.user };
+      const ws = s.workspaces?.[0];
+      if (ws) db.workspace = { ...db.workspace, ...ws, id: db.workspace.id };
+      continue;
+    }
+    if (path === "/api/projects") {
+      for (const p of (data as { projects?: Project[] }).projects ?? []) {
+        addProject(p);
+      }
+      continue;
+    }
+    let m = convMsgs.exec(path);
+    if (m) {
+      for (const msg of (data as { messages?: Message[] }).messages ?? []) {
+        importMessage(msg);
+      }
+      continue;
+    }
+    m = issueConv.exec(path);
+    if (m) {
+      const c = data as Conversation;
+      addConv({ ...c, kind: c.kind ?? "issue", issue_id: c.issue_id ?? m[1] });
+      continue;
+    }
+    m = briefConv.exec(path);
+    if (m) {
+      const { id } = data as { id: string };
+      const b = db.briefs.find((x) => x.id === m![1]);
+      addConv({
+        id,
+        project_id: b?.project_id ?? "",
+        kind: "brief",
+        brief_id: m[1],
+        created_at: b?.created_at ?? now(),
+      } as Conversation);
+      continue;
+    }
+    if (wsIdeas.test(path)) {
+      for (const i of (data as { ideas?: Idea[] }).ideas ?? []) addIdea(i);
+      continue;
+    }
+    m = projSub.exec(path);
+    if (!m) continue;
+    const pid = m[1] ?? "";
+    const sub = m[2] ?? "";
+    const project = db.projects.find((x) => x.id === pid);
+    if (!project) continue;
+    const d = data as Record<string, unknown>;
+    switch (sub) {
+      case "statuses": {
+        const s = d.statuses as StatusDef[] | undefined;
+        if (s) project.statuses = s;
+        break;
+      }
+      case "conversation":
+        addConv(d as unknown as Conversation);
+        break;
+      case "threads":
+        for (const t of (d.threads as Thread[] | undefined) ?? []) {
+          if (threadIds.has(t.id)) continue;
+          threadIds.add(t.id);
+          mark(t.id);
+          imported++;
+          db.threads.push({
+            id: t.id,
+            parent_message_id: t.parent_message_id,
+            parent_conversation: t.parent_conversation,
+            title: t.title,
+            created_at: t.created_at,
+          });
+          addConv({
+            id: t.id,
+            project_id:
+              db.conversations.find((c) => c.id === t.parent_conversation)
+                ?.project_id ?? pid,
+            kind: "thread",
+            issue_id: null,
+            created_at: t.created_at,
+          } as Conversation);
+        }
+        break;
+      case "issues":
+        for (const i of (d.issues as Issue[] | undefined) ?? []) {
+          if (addIssue(i)) {
+            const n = parseInt(i.key?.split("-").pop() ?? "", 10);
+            if (!isNaN(n)) {
+              db.counters[pid] = Math.max(db.counters[pid] ?? 1, n + 1);
+            }
+          }
+        }
+        break;
+      case "todos":
+        for (const t of (d.todos as Todo[] | undefined) ?? []) {
+          if (addTodo(t)) {
+            (t as Todo & { project_id?: string }).project_id = pid;
+          }
+        }
+        break;
+      case "labels":
+        mergeKeyed(db.labels, pid, d.labels as Label[] | undefined);
+        break;
+      case "filters":
+        mergeKeyed(
+          db.savedFilters,
+          pid,
+          (d.filters as SavedFilter[] | undefined) ?? [],
+        );
+        break;
+      case "boards":
+        mergeKeyed(db.boards, pid, d.boards as Board[] | undefined);
+        break;
+      case "briefs":
+        for (const b of (d.briefs as Brief[] | undefined) ?? []) {
+          if (addBrief(b) && b.conversation_id) {
+            addConv({
+              id: b.conversation_id,
+              project_id: pid,
+              kind: "brief",
+              brief_id: b.id,
+              created_at: b.created_at ?? now(),
+            } as Conversation);
+          }
+        }
+        break;
+      case "ideas":
+        for (const i of (d.ideas as Idea[] | undefined) ?? []) addIdea(i);
+        break;
+    }
+  }
+
+  db.messages.sort((a, b) => a.created_at.localeCompare(b.created_at));
+  if (imported > 0) save();
+  return imported;
+}
+
+/** The origin an imported entity came from — sync checks this before
+ *  skipping creation. */
+export function remoteOriginOf(id: string): string | undefined {
+  return db.remote_ids[id];
 }

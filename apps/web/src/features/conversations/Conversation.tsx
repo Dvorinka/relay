@@ -72,6 +72,7 @@ import { mediaURL, net } from "../../lib/net";
 import {
   isQueuedError,
   queuedMessages,
+  queuedUploadBlob,
   removeOutboxEntry,
   type QueuedMessage,
 } from "../../lib/offline";
@@ -2361,6 +2362,50 @@ function MessageRow(props: {
   );
 }
 
+// One queued file's own preview — the bytes sit in the outbox blob store,
+// so the lane shows the real image/file, not an attachment count.
+function QueuedAttachment(props: { placeholderId: string }) {
+  const [res] = createResource(
+    () => props.placeholderId,
+    async (id) => {
+      const got = await queuedUploadBlob(id);
+      if (!got) return null;
+      return {
+        url: URL.createObjectURL(got.blob),
+        name: got.filename,
+        type: got.blob.type,
+        size: got.blob.size,
+      };
+    },
+  );
+  onCleanup(() => {
+    const r = res();
+    if (r) URL.revokeObjectURL(r.url);
+  });
+  return (
+    <Show when={res()}>
+      {(f) => (
+        <Show
+          when={f().type.startsWith("image/")}
+          fallback={
+            <span class="inline-flex max-w-full items-center gap-2 rounded-lg border border-dashed border-amber-500/40 bg-surface px-3 py-2 text-[13px]">
+              <FileIcon class="h-4 w-4 shrink-0 text-muted" />
+              <span class="truncate">{f().name}</span>
+              <span class="shrink-0 text-muted">{formatBytes(f().size)}</span>
+            </span>
+          }
+        >
+          <img
+            src={f().url}
+            alt={f().name}
+            class="max-h-48 max-w-full rounded-lg border border-border object-cover opacity-80"
+          />
+        </Show>
+      )}
+    </Show>
+  );
+}
+
 // A parked send, drawn under the real messages. The outbox replays it the
 // moment the server answers and the real message lands via SSE/refetch —
 // the amber chip says "not there yet", the row itself says "not lost".
@@ -2421,13 +2466,28 @@ function QueuedRow(props: {
         <Show when={q().body.trim().length > 0}>
           <Markdown body={q().body} projectId={props.projectId} />
         </Show>
-        <Show when={q().attachments > 0}>
-          <p class="mt-0.5 flex items-center gap-1.5 text-[12px] italic text-muted">
-            <PaperclipIcon class="h-3 w-3" />
-            {q().attachments} attachment{q().attachments === 1 ? "" : "s"}{" "}
-            queued
-          </p>
-        </Show>
+        <div class="mt-1 flex flex-wrap items-center gap-2">
+          <For each={q().attachmentIds.filter((id) => id.startsWith("att:"))}>
+            {(id) => <QueuedAttachment placeholderId={id} />}
+          </For>
+          <Show
+            when={
+              q().attachmentIds.filter((id) => !id.startsWith("att:")).length >
+              0
+            }
+          >
+            <p class="flex items-center gap-1.5 text-[12px] italic text-muted">
+              <PaperclipIcon class="h-3 w-3" />
+              {q().attachmentIds.filter((id) => !id.startsWith("att:")).length}{" "}
+              attachment
+              {q().attachmentIds.filter((id) => !id.startsWith("att:"))
+                .length === 1
+                ? ""
+                : "s"}{" "}
+              uploaded
+            </p>
+          </Show>
+        </div>
       </div>
       <button
         type="button"

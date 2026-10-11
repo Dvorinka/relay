@@ -43,18 +43,34 @@ export function markDown(rawUrl: string): void {
   void probeLoop(origin);
 }
 
+// Drain bookkeeping: one pass per origin at a time. A send that arrives
+// mid-drain (or carries an "att:" placeholder) awaits the pass, rewrites
+// from resolvedPlaceholders, or re-queues so ordering survives.
+const inflightDrains = new Map<string, Promise<boolean>>();
+
+function ensureDrain(origin: string): Promise<boolean> {
+  const cur = inflightDrains.get(origin);
+  if (cur) return cur;
+  const p = drainOutbox(origin).finally(() => {
+    inflightDrains.delete(origin);
+  });
+  inflightDrains.set(origin, p);
+  return p;
+}
+
 export function markUp(rawUrl: string): void {
   const origin = originOf(rawUrl);
   const was = states[origin];
   if (was === "up") return;
   setStates(origin, "up");
-  if (was === "down") {
-    // Replay queued mutations first — listeners refetch and should see the
-    // server state after the outbox has landed.
-    void drainOutbox(origin).then(() => {
-      for (const cb of upListeners) cb(origin);
-    });
-  }
+  // Replay queued mutations first — listeners refetch and should see the
+  // server state after the outbox has landed. "unknown" counts too: a
+  // persisted outbox must drain after a reload, not just a down→up flap.
+  // A clean reload with an empty queue skips the resync entirely.
+  void ensureDrain(origin).then((didWork) => {
+    if (was !== "down" && !didWork) return;
+    for (const cb of upListeners) cb(origin);
+  });
 }
 
 async function probe(origin: string): Promise<boolean> {
@@ -281,14 +297,54 @@ export async function removeOutboxEntry(id: string): Promise<void> {
   await outboxSave(list.filter((e) => e.id !== id));
 }
 
+// Placeholder attachment ids that already replayed, this session. A send
+// fired while its upload was still parked rewrites from this map before
+// it hits the wire — no dangling "att:…" reference reaches the server.
+const resolvedPlaceholders = new Map<string, string>();
+
+function rewriteResolved(body: string): string {
+  if (!body.includes('"att:')) return body;
+  for (const [ph, real] of resolvedPlaceholders) {
+    body = body.replaceAll(`"${ph}"`, `"${real}"`);
+  }
+  return body;
+}
+
+function bodyPlaceholders(body: string): string[] {
+  return [...body.matchAll(/"(att:[^"]+)"/g)].map((m) => m[1] ?? "");
+}
+
+function parkedPlaceholders(): Set<string> {
+  const s = new Set<string>();
+  for (const e of outboxEntries()) if (e.placeholder) s.add(e.placeholder);
+  return s;
+}
+
+// An "att:" id that can never resolve — its upload entry was discarded or
+// failed — is stripped from attachment_ids so the message sends minus that
+// file instead of 4xx-ing on a dead reference.
+function stripDeadPlaceholders(body: string): string {
+  try {
+    const parsed = JSON.parse(body) as { attachment_ids?: unknown };
+    if (!Array.isArray(parsed.attachment_ids)) return body;
+    parsed.attachment_ids = parsed.attachment_ids.filter(
+      (x) => typeof x === "string" && !x.startsWith("att:"),
+    );
+    return JSON.stringify(parsed);
+  } catch {
+    return body;
+  }
+}
+
 // Replay in order. Any answered request (<500, even a rejection) consumed
 // the change — drop it. A 5xx or transport error means the server is still
-// sick: stop and leave the rest queued for the next recovery.
-async function drainOutbox(origin: string): Promise<void> {
+// sick: stop and leave the rest queued for the next recovery. Returns true
+// when it actually attempted entries — callers use that to decide whether
+// views need reconciling.
+async function drainOutbox(origin: string): Promise<boolean> {
   const list = await outboxList();
-  if (!list.some((e) => e.origin === origin)) return;
+  if (!list.some((e) => e.origin === origin)) return false;
   const keep: OutboxEntry[] = [];
-  const resolved = new Map<string, string>(); // placeholder -> real attachment id
   let stopped = false;
   for (const e of list) {
     if (stopped || e.origin !== origin) {
@@ -306,11 +362,11 @@ async function drainOutbox(origin: string): Promise<void> {
           data: bytesToB64(await blob.arrayBuffer()),
         });
         headers = { ...e.headers, "Content-Type": "application/json" };
-      } else if (body !== undefined && resolved.size > 0) {
+      } else if (body !== undefined) {
         // Quoted needle — placeholders only appear as JSON string values.
-        for (const [ph, real] of resolved) {
-          body = body.replaceAll(`"${ph}"`, `"${real}"`);
-        }
+        // Anything unresolved here is dead (its upload already consumed or
+        // discarded): strip it rather than 4xx the whole replay.
+        body = stripDeadPlaceholders(rewriteResolved(body));
       }
       const res = await fetch(e.url, { method: e.method, headers, body });
       if (res.status >= 500) {
@@ -324,7 +380,7 @@ async function drainOutbox(origin: string): Promise<void> {
           const att = (await res.json().catch(() => null)) as {
             id?: string;
           } | null;
-          if (att?.id) resolved.set(e.placeholder, att.id);
+          if (att?.id) resolvedPlaceholders.set(e.placeholder, att.id);
         }
       }
     } catch {
@@ -336,11 +392,13 @@ async function drainOutbox(origin: string): Promise<void> {
   // Replay died mid-pass — the origin isn't really back. Marking it down
   // restarts the probe loop so the remainder drains on real recovery.
   if (stopped) markDown(origin);
+  return list.length !== keep.length;
 }
 
 export async function clearOutbox(): Promise<void> {
   const list = await outboxList();
   for (const e of list) if (e.blobId) void dropUploadBlob(e.blobId);
+  resolvedPlaceholders.clear();
   await outboxSave([]);
 }
 
@@ -349,7 +407,7 @@ export async function clearOutbox(): Promise<void> {
 export interface QueuedMessage {
   entryId: string;
   body: string;
-  attachments: number;
+  attachmentIds: string[];
   parentId?: string;
   tags: string[];
 }
@@ -371,7 +429,7 @@ export function queuedMessages(conversationId: string): QueuedMessage[] {
       out.push({
         entryId: e.id,
         body: b.body ?? "",
-        attachments: b.attachment_ids?.length ?? 0,
+        attachmentIds: b.attachment_ids ?? [],
         parentId: b.parent_id,
         tags: b.tags ?? [],
       });
@@ -380,6 +438,17 @@ export function queuedMessages(conversationId: string): QueuedMessage[] {
     }
   }
   return out;
+}
+
+/** The parked file behind an "att:…" placeholder — lets the queued lane
+ *  show a real preview instead of an attachment count. */
+export async function queuedUploadBlob(
+  placeholderId: string,
+): Promise<{ blob: Blob; filename: string } | undefined> {
+  const e = outboxEntries().find((x) => x.placeholder === placeholderId);
+  if (!e?.blobId) return undefined;
+  const blob = await uploadBlob(e.blobId);
+  return blob ? { blob, filename: e.filename ?? "file" } : undefined;
 }
 
 // replaySafe decides whether a request that just failed (and may or may
@@ -446,16 +515,40 @@ export async function resilientFetch(
         ? input.href
         : input.url;
   const method = (init?.method ?? "GET").toUpperCase();
+  const origin = originOf(url);
   const key = method === "GET" ? cacheKey(url, init) : "";
   // Already known down: mutations queue instead of dying on the wire (auth
   // calls excluded — a queued login firing later would be confusing).
-  if (
-    method !== "GET" &&
-    states[originOf(url)] === "down" &&
-    !url.includes("/api/auth/")
-  ) {
+  if (method !== "GET" && states[origin] === "down" && !url.includes("/api/auth/")) {
     if (ephemeral(url)) throw new QueuedError();
     if (await enqueueOutbox(url, method, init)) throw new QueuedError();
+  }
+  // The request rides on an "att:" placeholder — a parked upload's stand-in
+  // id. Wait for any running drain so the upload lands first, then swap in
+  // the real id. Still parked: queue behind the upload and let the drain
+  // order them. Never resolving (discarded upload): strip and send.
+  if (
+    method !== "GET" &&
+    typeof init?.body === "string" &&
+    init.body.includes('"att:')
+  ) {
+    await inflightDrains.get(origin);
+    let body = rewriteResolved(init.body);
+    const leftovers = bodyPlaceholders(body);
+    if (leftovers.length > 0) {
+      const parked = parkedPlaceholders();
+      if (leftovers.some((id) => parked.has(id))) {
+        if (
+          (await enqueueOutbox(url, method, { ...init, body })) &&
+          states[origin] !== "down"
+        ) {
+          void ensureDrain(origin);
+        }
+        throw new QueuedError();
+      }
+      body = stripDeadPlaceholders(body);
+    }
+    init = { ...init, body };
   }
   try {
     const res = await fetch(input, init);

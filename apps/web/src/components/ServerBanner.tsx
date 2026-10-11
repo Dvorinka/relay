@@ -29,6 +29,7 @@ export function ServerBanner() {
   const [syncErr, setSyncErr] = createSignal("");
   const [shellUrl, setShellUrl] = createSignal("");
   const [localOpen, setLocalOpen] = createSignal(false);
+  const [localBusy, setLocalBusy] = createSignal(false);
 
   const activeOrigin = () => net.serverUrl() || location.origin;
   const host = (url: string) => {
@@ -139,10 +140,19 @@ export function ServerBanner() {
         open={localOpen()}
         onOpenChange={setLocalOpen}
         title="Work locally on this device?"
-        body={`This switches to the separate on-device workspace — ${host(activeOrigin())}'s projects aren't copied there. You can keep working right here instead: the app shows the last synced data and queues changes until the server is back.`}
-        confirmLabel="Work locally"
+        body={`This switches to the on-device workspace — everything the app last synced from ${host(activeOrigin())} comes with you: projects, conversations, messages, issues. Work there stays local until you sign back in and sync. Or keep working right here — changes queue and send automatically when the server is back.`}
+        confirmLabel={localBusy() ? "Importing…" : "Work locally"}
+        pending={localBusy()}
         danger={false}
-        onConfirm={() => void session.enterLocal()}
+        onConfirm={() => {
+          // Import can take a beat on a big cached workspace — keep the
+          // dialog open with a busy label until enterLocal resolves.
+          setLocalBusy(true);
+          void session.enterLocal().finally(() => {
+            setLocalBusy(false);
+            setLocalOpen(false);
+          });
+        }}
       />
       <Show when={net.isLocal() && rememberedState() === "up"}>
         <div class="flex items-center gap-2 border-b border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-[12.5px] text-emerald-600 dark:text-emerald-400">

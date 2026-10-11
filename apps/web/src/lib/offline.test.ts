@@ -336,12 +336,121 @@ describe("mutation outbox", () => {
     const list = queuedMessages("c1");
     expect(list).toHaveLength(1);
     expect(list[0]!.body).toBe("first");
-    expect(list[0]!.attachments).toBe(1);
+    expect(list[0]!.attachmentIds).toEqual(["a"]);
 
     // Discarding removes just that entry.
     await removeOutboxEntry(list[0]!.entryId);
     expect(queuedMessages("c1")).toHaveLength(0);
     expect(queuedMessages("c2")).toHaveLength(1);
+  });
+
+  it("sends a late request on the resolved id once its upload drained", async () => {
+    // Outage: upload parks. Server returns; the drain resolves att→real.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new TypeError("fetch failed")),
+    );
+    await expect(
+      resilientFetch("http://q.test/api/x", { method: "POST" }),
+    ).rejects.toThrow();
+    const placeholder = await enqueueUpload(
+      "http://q.test/api/projects/p1/attachments",
+      new Blob(["b"], { type: "image/png" }),
+      "p.png",
+    );
+    const sent: { url: string; body?: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (u: RequestInfo | URL, i?: RequestInit) => {
+        sent.push({ url: String(u), body: i?.body as string | undefined });
+        return new Response(`{"id":"real-9"}`, { status: 201 });
+      }),
+    );
+    markUp("http://q.test");
+    await vi.waitFor(() => expect(outboxPending()).toBe(0));
+
+    // Now a message references the same placeholder — it must go to the
+    // wire carrying the REAL id, not queue behind a drain that already ran.
+    sent.length = 0;
+    const res = await resilientFetch(
+      "http://q.test/api/conversations/c1/messages",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          body: "late",
+          attachment_ids: [placeholder],
+        }),
+      },
+    );
+    expect(res.status).toBe(201);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.body).toContain('"real-9"');
+    expect(sent[0]!.body).not.toContain(placeholder!);
+  });
+
+  it("queues a send behind a still-parked upload and drains both in order", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("{}", { status: 200 })),
+    );
+    markUp("http://q.test");
+    // The upload entry is parked but no drain is running yet.
+    const placeholder = await enqueueUpload(
+      "http://q.test/api/projects/p1/attachments",
+      new Blob(["b"], { type: "image/png" }),
+      "p.png",
+    );
+    const sent: { url: string; body?: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (u: RequestInfo | URL, i?: RequestInit) => {
+        sent.push({ url: String(u), body: i?.body as string | undefined });
+        return new Response(`{"id":"real-2"}`, { status: 201 });
+      }),
+    );
+    const err = await resilientFetch(
+      "http://q.test/api/conversations/c1/messages",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          body: "waits for upload",
+          attachment_ids: [placeholder],
+        }),
+      },
+    ).catch((e) => e);
+    // The send parks; the drain the send triggered replays upload→message.
+    expect(isQueuedError(err)).toBe(true);
+    await vi.waitFor(() => expect(outboxPending()).toBe(0));
+    expect(sent).toHaveLength(2);
+    expect(sent[0]!.url).toContain("/attachments");
+    expect(sent[1]!.body).toContain('"real-2"');
+  });
+
+  it("strips a placeholder that can never resolve and still sends", async () => {
+    const sent: { url: string; body?: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (u: RequestInfo | URL, i?: RequestInit) => {
+        sent.push({ url: String(u), body: i?.body as string | undefined });
+        return new Response("{}", { status: 201 });
+      }),
+    );
+    markUp("http://q.test");
+    // No parked upload for att:gone — its entry was discarded.
+    const res = await resilientFetch(
+      "http://q.test/api/conversations/c1/messages",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          body: "no attachment",
+          attachment_ids: ["att:gone-1"],
+        }),
+      },
+    );
+    expect(res.status).toBe(201);
+    expect(outboxPending()).toBe(0);
+    const body = JSON.parse(sent[0]!.body!) as { attachment_ids: string[] };
+    expect(body.attachment_ids).toEqual([]);
   });
 
   it("keeps the queue when the server is still down at replay", async () => {

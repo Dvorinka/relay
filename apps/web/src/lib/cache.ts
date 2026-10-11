@@ -70,6 +70,17 @@ export async function cachePut(key: string, body: string): Promise<void> {
   await kvPut(INDEX, JSON.stringify(idx));
 }
 
+/** Every cached (key, body) pair — the local-mode snapshot importer reads
+ *  the whole store and picks the entries belonging to one principal. */
+export async function cacheEntries(): Promise<{ key: string; body: string }[]> {
+  const out: { key: string; body: string }[] = [];
+  for (const key of await index()) {
+    const body = await kvGet(PREFIX + key);
+    if (body !== undefined) out.push({ key, body });
+  }
+  return out;
+}
+
 // Sign-out / server switch drops every cached body — a different user or
 // server must never see another principal's stale responses. The service
 // worker keeps avatars/attachments in its own media cache; clear that too.
