@@ -650,12 +650,13 @@ that happens to have a hook.
 The free hosted instance gets real rails, and transactional mail gets a
 provider that needs no SMTP relay.
 
-- **`RELAY_LIMITED`**: a capacity cap for a hosted free tier — uploads
-  clamp to `RELAY_LIMITED_UPLOAD_MIB` (8 MiB) on every write path (UI
-  attachments, inbound-hook payloads, MCP `upload_attachment`), jpeg/png
-  re-encode to a bounded long edge (opaque → JPEG q75, alpha → PNG), and
-  `/api/health` reports `limited` + the effective cap so clients show a
-  dismissible "free instance — self-host for the full thing" notice.
+- **`RELAY_LIMITED`**: a sync/auth/relay-only hosted tier — file storage
+  is off on every write path (UI attachments, avatars, inbound-hook
+  payloads, MCP `upload_attachment` → `403 uploads_disabled`; hook reports
+  still post and count dropped files), and `/api/health` reports
+  `limits.uploads: false` so clients show a dismissible "free instance —
+  self-host for the full thing" notice. Local→server sync skips file
+  blobs — messages, issues, and boards still land.
 - **`internal/mail`**: transactional mailer chain — Resend
   (`RESEND_API_KEY`/`RESEND_FROM`, HTTPS API) for the hosted tier, env
   `SMTP_*` for self-hosters (implicit TLS on 465, STARTTLS elsewhere,

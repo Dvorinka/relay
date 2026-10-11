@@ -315,7 +315,7 @@ func (s *Service) handleInbound(c *gin.Context) {
 		httpx.Error(c, http.StatusBadRequest, "bad_request", "at most 5 attachments per post")
 		return
 	}
-	if len(req.Attachments) > 0 && s.Store == nil {
+	if len(req.Attachments) > 0 && s.Store == nil && !s.Limited {
 		httpx.Error(c, http.StatusServiceUnavailable, "storage_disabled", "object storage is not configured")
 		return
 	}
@@ -419,7 +419,7 @@ func (s *Service) handleInbound(c *gin.Context) {
 			}
 		}
 	}
-	attachN := 0
+	attachN, droppedN := 0, 0
 	for i, a := range req.Attachments {
 		data, err := base64.StdEncoding.DecodeString(a.Data)
 		if err != nil || int64(len(data)) > s.MaxUpload {
@@ -429,10 +429,13 @@ func (s *Service) handleInbound(c *gin.Context) {
 		att, err := s.putInboundFile(c, hook, mid, a.Name, a.ContentType, data, i)
 		if err != nil {
 			s.log.Warn("inbound attachment store failed", zap.Error(err))
+			droppedN++
 			continue // post the message without it rather than lose the report
 		}
 		if att {
 			attachN++
+		} else {
+			droppedN++
 		}
 	}
 	_ = s.q.TouchInboundHook(c.Request.Context(), hook.ID)
@@ -457,6 +460,9 @@ func (s *Service) handleInbound(c *gin.Context) {
 		"conversation_id": convID.String(),
 		"threaded":        parentID.Valid,
 		"attachments":     attachN,
+	}
+	if droppedN > 0 {
+		out["attachments_dropped"] = droppedN
 	}
 	if parentID.Valid {
 		out["parent_id"] = parentID.String()
@@ -650,10 +656,11 @@ func (s *Service) bodyCap() int64 {
 // upload: sniffed type, project-scoped key, attachment row, link.
 func (s *Service) putInboundFile(c *gin.Context, hook db.InboundHook, mid pgtype.UUID,
 	name, declared string, data []byte, pos int) (bool, error) {
-	contentType := attachments.SniffType(data, declared)
 	if s.Limited {
-		data, contentType, _ = attachments.CompressImage(data, contentType)
+		// Hosted tier stores no files — drop the payload but keep the report.
+		return false, nil
 	}
+	contentType := attachments.SniffType(data, declared)
 	filename := path.Base(strings.TrimSpace(name))
 	if filename == "." || filename == "/" || filename == "" {
 		filename = "file"

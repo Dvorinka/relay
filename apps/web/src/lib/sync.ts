@@ -16,6 +16,7 @@ export interface SyncResult {
   issues: number;
   todos: number;
   briefs: number;
+  skipped_files: number;
 }
 
 // att.url is a live object URL for the IDB blob — fetch resolves it.
@@ -62,6 +63,7 @@ export async function syncWithToken(
     issues: 0,
     todos: 0,
     briefs: 0,
+    skipped_files: 0,
   };
 
   // True when the entity came from THIS server's snapshot — it exists
@@ -131,11 +133,17 @@ export async function syncWithToken(
           for (const a of m.attachments) {
             const local = db.attachments[a.id];
             if (!local || isRemote(a.id)) continue;
-            const up = await remote.uploadAttachment(
-              remotePid,
-              await attachmentFile(local),
-            );
-            attIds.push(up.id);
+            try {
+              const up = await remote.uploadAttachment(
+                remotePid,
+                await attachmentFile(local),
+              );
+              attIds.push(up.id);
+            } catch {
+              // Server rejects the file (hosted tier stores none, file
+              // over cap) — the message still syncs without it.
+              result.skipped_files++;
+            }
           }
         }
         const posted = await remote.postMessage(

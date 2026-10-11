@@ -73,7 +73,7 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	issueSvc.GH = ghSvc
 	todoSvc := todos.NewService(log, pool)
 	reviewSvc := reviews.NewService(log, pool)
-	avSvc := avatars.NewService(log, pool, store)
+	avSvc := avatars.NewService(log, pool, store, cfg.Limited)
 	hub := events.New()
 	convSvc.Bus = hub
 	issueSvc.Bus = hub
@@ -141,12 +141,16 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 			})
 			return
 		}
+		limits := gin.H{"uploads": !cfg.Limited}
+		if !cfg.Limited {
+			limits["upload_mib"] = cfg.EffectiveUploadMiB()
+		}
 		c.JSON(http.StatusOK, gin.H{
 			"status": "ok", "version": version,
 			// Limited-tier marker: clients surface the free-instance notice
-			// and its real upload cap.
+			// and that the hosted tier stores no files.
 			"limited": cfg.Limited,
-			"limits":  gin.H{"upload_mib": cfg.EffectiveUploadMiB()},
+			"limits":  limits,
 		})
 	})
 	// The agent onboarding guide, embedded in the binary — public like the

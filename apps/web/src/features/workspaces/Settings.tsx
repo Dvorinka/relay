@@ -854,7 +854,10 @@ function ConnectionSection() {
       : net.serverUrl() || window.location.origin;
 
   const syncSummary = (r: SyncResult) =>
-    `Synced ${r.projects} project(s), ${r.messages} message(s), ${r.issues} issue(s), ${r.todos} todo(s), ${r.briefs} brief(s).`;
+    `Synced ${r.projects} project(s), ${r.messages} message(s), ${r.issues} issue(s), ${r.todos} todo(s), ${r.briefs} brief(s).` +
+    (r.skipped_files
+      ? ` ${r.skipped_files} file(s) skipped — the server doesn't store attachments.`
+      : "");
 
   // Any button inside the merged connect form reaches the shared fields.
   function formData(el: HTMLElement): FormData | null {

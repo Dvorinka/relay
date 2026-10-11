@@ -26,6 +26,12 @@ import (
 // e2eSetup spins the server, registers a user, workspace and project, and
 // returns the client + ids. Mirrors the per-test boilerplate used elsewhere.
 func e2eSetup(t *testing.T, tag string) (*e2eClient, *pgxpool.Pool, string, string) {
+	return e2eSetupCfg(t, tag, nil)
+}
+
+// e2eSetupCfg is e2eSetup with a config override hook — tests that need a
+// non-default Config (e.g. RELAY_LIMITED) mutate it before the server spins.
+func e2eSetupCfg(t *testing.T, tag string, mutate func(*config.Config)) (*e2eClient, *pgxpool.Pool, string, string) {
 	t.Helper()
 	dsn := os.Getenv("RELAY_TEST_DATABASE_URL")
 	if dsn == "" {
@@ -54,6 +60,9 @@ func e2eSetup(t *testing.T, tag string) (*e2eClient, *pgxpool.Pool, string, stri
 		AuthSecret:      "test-secret-test-secret-test-secret",
 		InsecureDev:     true,
 		SessionTTLHours: 1,
+	}
+	if mutate != nil {
+		mutate(&cfg)
 	}
 	srv := httptest.NewServer(New(cfg, zap.NewNop(), pool, "test"))
 	t.Cleanup(srv.Close)
