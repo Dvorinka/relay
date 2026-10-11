@@ -600,7 +600,11 @@ export function createClient(
       }),
     updateChannel: (
       channelId: string,
-      input: { name?: string; agents_blocked?: boolean; intake?: boolean },
+      input: {
+        name?: string;
+        agents_blocked?: boolean;
+        intake_mode?: "" | "receive" | "chat";
+      },
     ) => patch<{ channel: Channel }>(`/api/channels/${channelId}`, input),
     deleteChannel: (channelId: string) =>
       request<void>(`/api/channels/${channelId}`, { method: "DELETE" }),
@@ -1008,12 +1012,28 @@ export function createClient(
     // Inbound hooks — token-secured endpoints that post into a channel
     listInboundHooks: (projectId: string) =>
       request<{ hooks: InboundHook[] }>(`/api/projects/${projectId}/hooks`),
-    createInboundHook: (projectId: string, body: { name: string; conversation_id: string }) =>
+    createInboundHook: (
+      projectId: string,
+      body: {
+        name: string;
+        conversation_id: string;
+        kind?: string;
+        header_template?: string;
+      },
+    ) =>
       post<{ hook: InboundHook; url: string; token: string }>(
         `/api/projects/${projectId}/hooks`,
         body,
       ),
-    updateInboundHook: (hookId: string, body: { name?: string; enabled?: boolean }) =>
+    updateInboundHook: (
+      hookId: string,
+      body: {
+        name?: string;
+        enabled?: boolean;
+        kind?: string;
+        header_template?: string;
+      },
+    ) =>
       request<{ hook: InboundHook }>(`/api/inbound-hooks/${hookId}`, {
         method: "PATCH",
         body: JSON.stringify(body),

@@ -1620,8 +1620,8 @@ paths:
   /api/channels/{channelId}:
     patch:
       operationId: updateChannel
-      summary: Rename a channel, toggle agent access, or toggle support-intake mode
-      description: "agents_blocked=true hides the channel from MCP agents entirely - its messages no longer appear in list_conversations, get_messages, send_message or search. intake=true marks the channel as a support-intake surface (setup guide + badge in the UI)."
+      summary: Rename a channel, toggle agent access, or set support-intake mode
+      description: "agents_blocked=true hides the channel from MCP agents entirely - its messages no longer appear in list_conversations, get_messages, send_message or search. intake_mode marks the channel as a support-intake surface: 'receive' accepts hook posts; 'chat' additionally lets the hook token pull channel messages (live support chat); '' disables intake."
       tags: [conversations]
       parameters:
         - name: channelId
@@ -1637,7 +1637,13 @@ paths:
               properties:
                 name: { type: string, minLength: 1, maxLength: 60 }
                 agents_blocked: { type: boolean }
-                intake: { type: boolean }
+                intake_mode:
+                  type: string
+                  enum: ["", receive, chat]
+                intake:
+                  type: boolean
+                  deprecated: true
+                  description: "Deprecated alias: true maps to intake_mode=receive, false to ''"
       responses:
         "200":
           description: Updated channel
@@ -3545,6 +3551,8 @@ paths:
               properties:
                 name: { type: string }
                 conversation_id: { type: string, format: uuid, description: "channel or main project conversation" }
+                kind: { type: string, maxLength: 40, description: "Default report type for posts without a payload kind — e.g. 'bug'. Free-form; the platform names its own types" }
+                header_template: { type: string, description: "Rendered head line; {from} {subject} {kind} {key} placeholders. Empty = the default '`kind` **from** — *subject*'" }
       responses:
         "201":
           description: Created — token and full URL shown once
@@ -3562,7 +3570,7 @@ paths:
   /api/inbound-hooks/{hookId}:
     patch:
       operationId: updateInboundHook
-      summary: Rename or enable/disable an inbound hook
+      summary: Rename, enable/disable, or restyle an inbound hook
       tags: [webhooks]
       parameters:
         - { name: hookId, in: path, required: true, schema: { type: string, format: uuid } }
@@ -3574,6 +3582,8 @@ paths:
               properties:
                 name: { type: string }
                 enabled: { type: boolean }
+                kind: { type: string, maxLength: 40, description: "Default report type — send '' to clear" }
+                header_template: { type: string, description: "{from} {subject} {kind} {key} placeholders — send '' to restore the default head" }
       responses:
         "200":
           description: Updated hook
@@ -3624,8 +3634,10 @@ paths:
         Unauthenticated; the path token is the credential (rlh_...).
         Rate-limited to 30 posts/minute per token. Beyond {message|text|body},
         support-intake fields: "from" attributes an external sender, "subject"
-        heads the message, "key" threads follow-ups under the first post with
-        that key, "attachments" (base64, max 5) upload via the storage pipeline.
+        heads the message, "key" makes the post a ticket — the first post with
+        a key opens a dedicated sub-chat (a thread rooted at it, never
+        expiring) and later posts with the same key land inside it —
+        "attachments" (base64, max 5) upload via the storage pipeline.
         The message lands tagged ["webhook", hook-name, "from:…", "key:…"].
       tags: [webhooks]
       parameters:
@@ -3642,7 +3654,8 @@ paths:
                 body: { type: string }
                 from: { type: string, description: "external sender, e.g. 'Alice <alice@acme.com>'" }
                 subject: { type: string }
-                key: { type: string, description: "threads follow-ups under the first post with this key" }
+                key: { type: string, description: "Ticket key — first post opens a dedicated sub-chat; same-key posts join it" }
+                kind: { type: string, maxLength: 40, description: "Report type — free-form ('bug', 'feature', …). Overrides the hook's default kind; lands as a kind:<x> tag and a `kind` label in the header" }
                 attachments:
                   type: array
                   maxItems: 5
@@ -3662,13 +3675,82 @@ paths:
                 properties:
                   posted: { type: boolean }
                   message_id: { type: string }
-                  parent_id: { type: string, description: "present when threaded under a prior key post" }
+                  conversation_id: { type: string, description: "where the message landed — the ticket's sub-chat for keyed posts" }
+                  parent_id: { type: string, description: "the ticket root, when the key was already open" }
+                  thread_id: { type: string, description: "the ticket's sub-chat conversation id, when a key was supplied" }
                   threaded: { type: boolean }
                   attachments: { type: integer }
         "400": { description: "Invalid payload, too large, or >5 attachments" }
         "404": { description: "Unknown or disabled token" }
         "429": { description: "Rate limited" }
         "503": { description: "Attachments sent but object storage is not configured" }
+
+  /api/hooks/{token}/messages:
+    get:
+      operationId: inboundHookMessages
+      summary: Pull channel messages — live-chat reply path for support-intake platforms
+      description: >-
+        Unauthenticated; the path token is the credential (rlh_...). Only
+        works while the hook's channel is intake_mode="chat" — receive-only
+        channels return 403 intake_read_disabled. Rate-limited to 120
+        reads/minute per token so widgets can poll every few seconds.
+        Messages arrive oldest-first; posts the platform sent itself carry
+        via_hook=true and the "webhook" tag — the rest are the support
+        team's replies to forward to the customer.
+      tags: [webhooks]
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+        - name: key
+          in: query
+          schema: { type: string }
+          description: "Scope to one ticket sub-chat: the key's root post plus everything in its thread"
+        - name: after
+          in: query
+          schema: { type: string, format: uuid }
+          description: "Polling cursor — only messages newer than this message id"
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: Channel messages, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        body: { type: string }
+                        author_name: { type: string }
+                        author_kind: { type: string }
+                        tags: { type: array, items: { type: string } }
+                        via_hook:
+                          type: boolean
+                          description: "True for posts that came in through the hook — don't re-forward"
+                        from: { type: string, description: "external sender, lifted from the from: tag" }
+                        key: { type: string, description: "ticket key, lifted from the key: tag" }
+                        kind: { type: string, description: "report type, lifted from the kind: tag" }
+                        parent_id: { type: string, format: uuid }
+                        attachments:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              id: { type: string, format: uuid }
+                              name: { type: string }
+                              content_type: { type: string }
+                              size_bytes: { type: integer }
+                              url: { type: string, description: "presigned GET URL when storage is configured" }
+                        created_at: { type: string, format: date-time }
+        "400": { description: "Invalid after cursor" }
+        "403": { description: "intake_read_disabled — channel is receive-only" }
+        "404": { description: "Unknown or disabled token" }
+        "429": { description: "Rate limited" }
 
   /api/me/unread:
     get:
@@ -4557,9 +4639,14 @@ components:
         agents_blocked:
           type: boolean
           description: "True hides the channel from MCP agents entirely"
+        intake_mode:
+          type: string
+          enum: ["", receive, chat]
+          description: "Support-intake mode: 'receive' accepts reports; 'chat' also exposes GET /api/hooks/{token}/messages so the platform can pull replies"
         intake:
           type: boolean
-          description: "True marks the channel as a support-intake surface"
+          deprecated: true
+          description: "True when intake_mode is set — kept for client compatibility"
         created_at: { type: string, format: date-time }
 
     MentionRef:
@@ -4808,6 +4895,8 @@ components:
         conversation_id: { type: string, format: uuid }
         name: { type: string }
         enabled: { type: boolean }
+        kind: { type: string, description: "Default report type for posts without a payload kind" }
+        header_template: { type: string, description: "Rendered head template — {from} {subject} {kind} {key}; empty = default" }
         token_hint: { type: string, description: "first 8 chars of the token hash" }
         token: { type: string, description: "rlh_... — only present on create/rotate" }
         last_used_at: { type: string, format: date-time }

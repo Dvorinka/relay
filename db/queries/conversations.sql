@@ -132,12 +132,30 @@ set agents_blocked = sqlc.arg(agents_blocked)
 where id = sqlc.arg(id) and kind = 'channel'
 returning *;
 
--- name: SetChannelIntake :one
--- intake channels carry the support-intake badge and setup guide
+-- name: SetChannelIntakeMode :one
+-- intake_mode: 'receive' | 'chat' | '' — support-intake badge + read gate
 update conversations
-set intake = sqlc.arg(intake)
+set intake_mode = sqlc.arg(intake_mode)
 where id = sqlc.arg(id) and kind = 'channel'
 returning *;
+
+-- name: ListHookChannelMessages :many
+-- oldest-first pull for intake chat mode; narg(root) scopes to a ticket
+-- thread (root + its inline replies), narg(after) is the polling cursor
+select m.id, m.conversation_id, m.body, m.tags, m.created_at, m.parent_id,
+       m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
+       coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name
+from messages m
+left join users u on u.id = m.author_user_id
+left join agents a on a.id = m.author_agent_id
+where m.conversation_id = $1
+  and m.deleted_at is null
+  and (sqlc.narg(after)::uuid is null or
+       (m.created_at, m.id) > (select m2.created_at, m2.id from messages m2 where m2.id = sqlc.narg(after)::uuid))
+  and (sqlc.narg(root)::uuid is null or m.id = sqlc.narg(root)::uuid
+       or m.parent_id = sqlc.narg(root)::uuid)
+order by m.created_at asc, m.id asc
+limit sqlc.arg(lim)::int;
 
 -- name: DeleteChannel :execrows
 delete from conversations

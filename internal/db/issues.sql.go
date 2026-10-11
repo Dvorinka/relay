@@ -85,7 +85,7 @@ func (q *Queries) CreateIssue(ctx context.Context, arg CreateIssueParams) (Issue
 const createIssueConversation = `-- name: CreateIssueConversation :one
 insert into conversations (project_id, kind, issue_id)
 values ($1, 'issue', $2)
-returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake
+returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake_mode
 `
 
 type CreateIssueConversationParams struct {
@@ -110,7 +110,7 @@ func (q *Queries) CreateIssueConversation(ctx context.Context, arg CreateIssueCo
 		&i.CreatorNameSnapshot,
 		&i.ExpiresAt,
 		&i.AgentsBlocked,
-		&i.Intake,
+		&i.IntakeMode,
 	)
 	return i, err
 }
@@ -207,7 +207,7 @@ func (q *Queries) GetIssueByID(ctx context.Context, id pgtype.UUID) (GetIssueByI
 }
 
 const getIssueConversation = `-- name: GetIssueConversation :one
-select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake from conversations where issue_id = $1 and kind = 'issue'
+select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake_mode from conversations where issue_id = $1 and kind = 'issue'
 `
 
 func (q *Queries) GetIssueConversation(ctx context.Context, issueID pgtype.UUID) (Conversation, error) {
@@ -227,7 +227,7 @@ func (q *Queries) GetIssueConversation(ctx context.Context, issueID pgtype.UUID)
 		&i.CreatorNameSnapshot,
 		&i.ExpiresAt,
 		&i.AgentsBlocked,
-		&i.Intake,
+		&i.IntakeMode,
 	)
 	return i, err
 }

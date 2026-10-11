@@ -55,8 +55,9 @@ where d.subscription_id = sqlc.arg(subscription_id)
   );
 
 -- name: CreateInboundHook :one
-insert into inbound_hooks (project_id, conversation_id, name, token_hash, created_by)
-values (sqlc.arg(project_id), sqlc.arg(conversation_id), sqlc.arg(name), sqlc.arg(token_hash), sqlc.arg(created_by))
+insert into inbound_hooks (project_id, conversation_id, name, token_hash, created_by, kind, header_template)
+values (sqlc.arg(project_id), sqlc.arg(conversation_id), sqlc.arg(name), sqlc.arg(token_hash), sqlc.arg(created_by),
+        sqlc.arg(kind), sqlc.arg(header_template))
 returning *;
 
 -- name: ListInboundHooks :many
@@ -81,7 +82,9 @@ returning *;
 -- name: UpdateInboundHook :one
 update inbound_hooks set
     name = coalesce(sqlc.narg(name), name),
-    enabled = coalesce(sqlc.narg(enabled), enabled)
+    enabled = coalesce(sqlc.narg(enabled), enabled),
+    kind = coalesce(sqlc.narg(kind), kind),
+    header_template = coalesce(sqlc.narg(header_template), header_template)
 where id = sqlc.arg(id)
 returning *;
 

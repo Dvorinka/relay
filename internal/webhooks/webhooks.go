@@ -99,6 +99,9 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup, pub *gin.RouterGroup) {
 	g.POST("/inbound-hooks/:id/rotate", s.hookAdmin, s.handleHookRotate)
 	g.DELETE("/inbound-hooks/:id", s.hookAdmin, s.handleHookDelete)
 	pub.POST("/hooks/:token", s.handleInbound)
+	// Chat-mode intake: the platform pulls channel messages with the same
+	// token — gated to intake_mode='chat' inside the handler.
+	pub.GET("/hooks/:token/messages", s.handleInboundMessages)
 }
 
 // handleCatch is the Relay-managed listener: verify the subscription id

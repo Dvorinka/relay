@@ -1001,7 +1001,8 @@ func channelJSON(conv db.Conversation) gin.H {
 	m := conversationJSON(conv)
 	m["name"] = nullText(conv.Title)
 	m["agents_blocked"] = conv.AgentsBlocked
-	m["intake"] = conv.Intake
+	m["intake_mode"] = conv.IntakeMode
+	m["intake"] = conv.IntakeMode != ""
 	return m
 }
 
@@ -1063,7 +1064,9 @@ func (s *Service) handleCreateChannel(c *gin.Context) {
 }
 
 // handleUpdateChannel renames a channel and/or toggles agent visibility
-// and support-intake mode. {"name","agents_blocked","intake"} — optional.
+// and support-intake mode. {"name","agents_blocked","intake_mode"} —
+// optional. intake_mode: "receive" | "chat" | "". The legacy boolean
+// "intake" still maps: true→receive, false→off.
 func (s *Service) handleUpdateChannel(c *gin.Context) {
 	conv := c.MustGet(ctxConversation).(db.Conversation)
 	if conv.Kind != "channel" {
@@ -1073,7 +1076,8 @@ func (s *Service) handleUpdateChannel(c *gin.Context) {
 	var req struct {
 		Name          *string `json:"name"`
 		AgentsBlocked *bool   `json:"agents_blocked"`
-		Intake        *bool   `json:"intake"`
+		IntakeMode    *string `json:"intake_mode"`
+		Intake        *bool   `json:"intake"` // deprecated: use intake_mode
 	}
 	if !httpx.BindJSON(c, &req) {
 		return
@@ -1099,9 +1103,24 @@ func (s *Service) handleUpdateChannel(c *gin.Context) {
 			return
 		}
 	}
-	if req.Intake != nil {
-		if _, err := s.q.SetChannelIntake(c.Request.Context(), db.SetChannelIntakeParams{
-			ID: conv.ID, Intake: *req.Intake,
+	mode := req.IntakeMode
+	if mode == nil && req.Intake != nil {
+		// legacy boolean shim — true is the plain receive-only mode
+		m := ""
+		if *req.Intake {
+			m = "receive"
+		}
+		mode = &m
+	}
+	if mode != nil {
+		switch *mode {
+		case "", "receive", "chat":
+		default:
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "intake_mode must be '', 'receive' or 'chat'")
+			return
+		}
+		if _, err := s.q.SetChannelIntakeMode(c.Request.Context(), db.SetChannelIntakeModeParams{
+			ID: conv.ID, IntakeMode: *mode,
 		}); err != nil {
 			httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 			return

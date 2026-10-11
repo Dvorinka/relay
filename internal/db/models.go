@@ -129,7 +129,7 @@ type Conversation struct {
 	CreatorNameSnapshot string             `json:"creator_name_snapshot"`
 	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
 	AgentsBlocked       bool               `json:"agents_blocked"`
-	Intake              bool               `json:"intake"`
+	IntakeMode          string             `json:"intake_mode"`
 }
 
 type GithubApp struct {
@@ -183,6 +183,8 @@ type InboundHook struct {
 	CreatedBy      pgtype.UUID        `json:"created_by"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
+	Kind           string             `json:"kind"`
+	HeaderTemplate string             `json:"header_template"`
 }
 
 type InboundHookThread struct {

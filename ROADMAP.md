@@ -592,9 +592,11 @@ reports straight into a per-customer channel.
 - **Sender attribution**: `from` renders as a bold header line and a
   `from:` tag; `subject` headlines the message. Messages stay
   `["webhook", hook-name]`-tagged so they're distinguishable everywhere.
-- **Ticket threading**: `key` maps to `inbound_hook_threads` — the first
-  post with a key becomes the thread root; follow-ups with the same key
-  land as replies under it. One support ticket, one thread.
+- **Ticket sub-chats**: `key` maps to `inbound_hook_threads` — the first
+  post with a key opens a dedicated thread conversation (never expiring,
+  titled from subject/sender) and follow-ups with the same key land
+  inside it. One support ticket, one sub-chat — nested under the channel
+  in the rail with its own unread badge.
 - **File payloads**: `attachments` (base64, max 5, per-file upload cap)
   run through the normal storage pipeline — log files and screenshots
   arrive attached to the message. `503 storage_disabled` when storage
@@ -604,26 +606,44 @@ reports straight into a per-customer channel.
   Relay-side replies (filter by `conversation_id`, skip `webhook`-tagged
   posts to avoid echo loops).
 - Request cap lifts from 64KiB to 64KiB + 2×upload-max; response reports
-  `threaded`, `parent_id`, `attachments`.
+  `threaded`, `parent_id`, `thread_id`, `conversation_id`,
+  `attachments`.
 
 ## Phase 31 — intake channels & setup guide ☑
 
-`conversations.intake` marks a channel as a support-intake surface — a
-first-class "special kind of channel" rather than an ordinary channel that
-happens to have a hook.
+`conversations.intake_mode` marks a channel as a support-intake surface —
+a first-class "special kind of channel" rather than an ordinary channel
+that happens to have a hook.
 
-- **Channel flag**: `PATCH /api/channels/:id {intake: true}`; the header
-  shows an `intake` chip and the rail an inbox icon. The toggle sits next
-  to rename/agents-blocked on the channel page.
-- **Setup guide**: enabling intake (or clicking the chip) opens the
+- **Two modes, two switches**: `PATCH /api/channels/:id {intake_mode: …}` —
+  `receive` is report-only (the hook token can write, never read);
+  `chat` is live support chat — the same token additionally pulls
+  channel messages via `GET /api/hooks/<token>/messages`
+  (`?key=` scopes to one ticket sub-chat — root plus its thread —
+  `?after=` is the polling cursor, `via_hook` marks the platform's own
+  posts for the echo guard). Everything posted inside a ticket's
+  sub-chat is customer-visible; internal triage stays in the channel. The
+  channel header carries both toggles next to rename/agents-blocked;
+  badges: `intake` chip / inbox icon for receive, `intake · chat` /
+  reply icon for chat.
+- **Setup guide**: enabling either mode (or clicking the chip) opens the
   four-step guide — the channel's inbound hook (create or rotate inline,
   token shown once), the payload contract, and copy-paste integrations.
 - **Any language**: snippet tabs cover cURL, JavaScript, Python, and Go —
   each inlines the real hook URL so it is paste-ready.
 - **AI prompt tab**: a complete instruction block to hand a coding agent —
   endpoint, payload fields, key-threading semantics, response shapes, the
-  rate limit, and the outbound-webhook reply path with the echo-loop
-  guard (`tags` containing `webhook` are inbound posts).
+  rate limit, and both reply paths (chat-mode pull and outbound-webhook
+  push) with the echo-loop guard.
+- **Report kinds**: a free-form `kind` payload field (bug, feature,
+  incident — the platform names its own types) lands as a `kind:<x>` tag
+  and a colored chip in the message header; pull reads lift `from`/`key`/
+  `kind` into top-level fields. Hooks carry a **default kind** and a
+  **`header_template`** (`{from}`/`{subject}`/`{kind}`/`{key}`
+  placeholders) — both editable from the hook row. Several hooks on
+  different channels split report types entirely.
+- Disabled hooks now 404 on both read and write paths — the enable
+  toggle in project webhooks is a real gate.
 
 ## Post-1.0 ideas (not committed)
 

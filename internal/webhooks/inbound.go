@@ -13,6 +13,7 @@ import (
 	"encoding/hex"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,7 @@ import (
 const (
 	inboundBodyLimit = 64 << 10 // 64KiB — alerts and diffs fit easily
 	inboundRate      = 30       // posts per minute per token
+	inboundReadRate  = 120      // message pulls per minute — chat widgets poll
 )
 
 // inLimiter is a dead-simple per-token sliding window — hooks see spiky CI
@@ -46,7 +48,7 @@ func newInLimiter() *inLimiter {
 	return &inLimiter{epoch: map[string]int64{}, count: map[string]int{}}
 }
 
-func (l *inLimiter) allow(key string) bool {
+func (l *inLimiter) allow(key string, max int) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	win := time.Now().Unix() / 60
@@ -55,7 +57,7 @@ func (l *inLimiter) allow(key string) bool {
 		l.count[key] = 0
 	}
 	l.count[key]++
-	return l.count[key] <= inboundRate
+	return l.count[key] <= max
 }
 
 var inboundLimiter = newInLimiter()
@@ -98,6 +100,8 @@ func (s *Service) handleHookCreate(c *gin.Context) {
 	var req struct {
 		Name           string `json:"name"`
 		ConversationID string `json:"conversation_id"`
+		Kind           string `json:"kind"`
+		HeaderTemplate string `json:"header_template"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Name) == "" {
 		httpx.Error(c, http.StatusBadRequest, "bad_request", "name is required")
@@ -123,7 +127,9 @@ func (s *Service) handleHookCreate(c *gin.Context) {
 	hook, err := s.q.CreateInboundHook(c.Request.Context(), db.CreateInboundHookParams{
 		ProjectID: pid, ConversationID: conv.ID,
 		Name: strings.TrimSpace(req.Name), TokenHash: hash,
-		CreatedBy: auth.CurrentUser(c).ID,
+		CreatedBy:      auth.CurrentUser(c).ID,
+		Kind:           oneLine(req.Kind, 40),
+		HeaderTemplate: strings.TrimSpace(req.HeaderTemplate),
 	})
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
@@ -174,8 +180,10 @@ func (s *Service) hookAdmin(c *gin.Context) {
 func (s *Service) handleHookUpdate(c *gin.Context) {
 	row := c.MustGet("relay.hook").(db.GetInboundHookForUserRow)
 	var req struct {
-		Name    *string `json:"name"`
-		Enabled *bool   `json:"enabled"`
+		Name           *string `json:"name"`
+		Enabled        *bool   `json:"enabled"`
+		Kind           *string `json:"kind"`
+		HeaderTemplate *string `json:"header_template"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httpx.Error(c, http.StatusBadRequest, "bad_request", "invalid body")
@@ -189,8 +197,17 @@ func (s *Service) handleHookUpdate(c *gin.Context) {
 	if req.Enabled != nil {
 		enabled = pgtype.Bool{Bool: *req.Enabled, Valid: true}
 	}
+	var kind pgtype.Text
+	if req.Kind != nil {
+		kind = pgtype.Text{String: oneLine(*req.Kind, 40), Valid: true}
+	}
+	var tpl pgtype.Text
+	if req.HeaderTemplate != nil {
+		tpl = pgtype.Text{String: strings.TrimSpace(*req.HeaderTemplate), Valid: true}
+	}
 	hook, err := s.q.UpdateInboundHook(c.Request.Context(), db.UpdateInboundHookParams{
 		ID: row.ID, Name: name, Enabled: enabled,
+		Kind: kind, HeaderTemplate: tpl,
 	})
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
@@ -241,12 +258,12 @@ func (s *Service) handleInbound(c *gin.Context) {
 		httpx.Error(c, http.StatusNotFound, "not_found", "hook not found")
 		return
 	}
-	if !inboundLimiter.allow(hookHash(token)) {
+	if !inboundLimiter.allow("w:"+hookHash(token), inboundRate) {
 		httpx.Error(c, http.StatusTooManyRequests, "rate_limited", "too many posts — try again in a minute")
 		return
 	}
 	hook, err := s.q.GetInboundHookByTokenHash(c.Request.Context(), hookHash(token))
-	if err != nil {
+	if err != nil || !hook.Enabled {
 		httpx.Error(c, http.StatusNotFound, "not_found", "hook not found")
 		return
 	}
@@ -258,6 +275,7 @@ func (s *Service) handleInbound(c *gin.Context) {
 		From        string `json:"from"`
 		Subject     string `json:"subject"`
 		Key         string `json:"key"`
+		Kind        string `json:"kind"`
 		Attachments []struct {
 			Name        string `json:"name"`
 			ContentType string `json:"content_type"`
@@ -278,6 +296,12 @@ func (s *Service) handleInbound(c *gin.Context) {
 	from := oneLine(req.From, 200)
 	subject := oneLine(req.Subject, 200)
 	key := oneLine(req.Key, 200)
+	// kind = the platform's own report type (bug, feature, …) — free-form.
+	// Payload wins over the hook's default.
+	kind := oneLine(req.Kind, 40)
+	if kind == "" {
+		kind = hook.Kind
+	}
 	body = strings.TrimSpace(body)
 	if body == "" {
 		body = subject
@@ -295,15 +319,29 @@ func (s *Service) handleInbound(c *gin.Context) {
 		httpx.Error(c, http.StatusServiceUnavailable, "storage_disabled", "object storage is not configured")
 		return
 	}
-	// Header line: **Alice <a@b.c>** — *subject* — then the body.
-	head := ""
-	if from != "" {
-		head = "**" + from + "**"
-		if subject != "" {
-			head += " — *" + subject + "*"
+	// Header: a per-hook header_template wins ({from}/{subject}/{kind}/
+	// {key} placeholders); otherwise `kind` **from** — *subject*.
+	var head string
+	if hook.HeaderTemplate != "" {
+		head = renderHookHead(hook.HeaderTemplate, from, subject, kind, key)
+	} else {
+		if kind != "" {
+			head = "`" + kind + "`"
 		}
-	} else if subject != "" {
-		head = "**" + subject + "**"
+		if from != "" {
+			if head != "" {
+				head += " "
+			}
+			head += "**" + from + "**"
+			if subject != "" {
+				head += " — *" + subject + "*"
+			}
+		} else if subject != "" {
+			if head != "" {
+				head += " "
+			}
+			head += "**" + subject + "**"
+		}
 	}
 	if head != "" {
 		body = head + "\n\n" + body
@@ -316,19 +354,33 @@ func (s *Service) handleInbound(c *gin.Context) {
 	if from != "" {
 		tags = append(tags, "from:"+from)
 	}
-	var parentID pgtype.UUID
+	if kind != "" {
+		tags = append(tags, "kind:"+kind)
+	}
+	var parentID, threadID pgtype.UUID
 	if key != "" {
 		tags = append(tags, "key:"+key)
 		if p, err := s.q.GetInboundThreadParent(c.Request.Context(), db.GetInboundThreadParentParams{
 			HookID: hook.ID, Key: key,
 		}); err == nil {
 			parentID = p
+			// A ticket is a dedicated sub-chat: a thread conversation
+			// rooted at the first post. Follow-ups land inside it.
+			if t, err := s.q.GetThreadByParentMessage(c.Request.Context(), p); err == nil {
+				threadID = t.ID
+			}
 		}
 	}
+	convID := hook.ConversationID
+	msgParent := parentID
+	if threadID.Valid {
+		convID = threadID
+		msgParent = pgtype.UUID{} // flat inside the ticket's sub-chat
+	}
 	mid, err := s.q.CreateMessage(c.Request.Context(), db.CreateMessageParams{
-		ConversationID: hook.ConversationID,
+		ConversationID: convID,
 		AuthorUserID:   hook.CreatedBy,
-		ParentID:       parentID,
+		ParentID:       msgParent,
 		Body:           body,
 		Tags:           tags,
 	})
@@ -340,6 +392,32 @@ func (s *Service) handleInbound(c *gin.Context) {
 		_ = s.q.InsertInboundThread(c.Request.Context(), db.InsertInboundThreadParams{
 			HookID: hook.ID, Key: key, ParentMessageID: mid,
 		})
+		// First post under this key opens the ticket's sub-chat —
+		// expires_at NULL so support tickets outlive the 5-day default.
+		title := subject
+		if title == "" {
+			title = from
+		}
+		if title == "" {
+			title = key
+		}
+		if t, err := s.q.CreateThread(c.Request.Context(), db.CreateThreadParams{
+			ProjectID:       hook.ProjectID,
+			ParentMessageID: mid,
+			Title:           pgtype.Text{String: oneLine(title, 80), Valid: title != ""},
+			CreatedByUser:   hook.CreatedBy,
+		}); err == nil {
+			threadID = t.ID
+			if s.Bus != nil {
+				pid, _ := uuid.FromBytes(hook.ProjectID.Bytes[:])
+				s.Bus.Publish(events.Event{Type: "thread.created", ProjectID: pid,
+					Data: map[string]any{
+						"conversation_id":   hook.ConversationID.String(),
+						"parent_message_id": mid.String(),
+						"thread":            map[string]any{"id": t.ID.String(), "title": title},
+					}})
+			}
+		}
 	}
 	attachN := 0
 	for i, a := range req.Attachments {
@@ -374,15 +452,178 @@ func (s *Service) handleInbound(c *gin.Context) {
 		}
 	}
 	out := gin.H{
-		"posted":      true,
-		"message_id":  mid.String(),
-		"threaded":    parentID.Valid,
-		"attachments": attachN,
+		"posted":          true,
+		"message_id":      mid.String(),
+		"conversation_id": convID.String(),
+		"threaded":        parentID.Valid,
+		"attachments":     attachN,
 	}
 	if parentID.Valid {
 		out["parent_id"] = parentID.String()
 	}
+	if threadID.Valid {
+		out["thread_id"] = threadID.String()
+	}
 	c.JSON(http.StatusAccepted, out)
+}
+
+// handleInboundMessages is the read half of a "chat"-mode intake channel:
+// the platform polls it to pull Relay-side replies back to the customer.
+// Same path token as POST. Gated to intake_mode='chat' — receive-only
+// channels return 403 intake_read_disabled. ?key scopes to one ticket
+// thread (root + inline replies); ?after is the polling cursor.
+func (s *Service) handleInboundMessages(c *gin.Context) {
+	token := c.Param("token")
+	if !strings.HasPrefix(token, "rlh_") || len(token) > 128 {
+		httpx.Error(c, http.StatusNotFound, "not_found", "hook not found")
+		return
+	}
+	if !inboundLimiter.allow("r:"+hookHash(token), inboundReadRate) {
+		httpx.Error(c, http.StatusTooManyRequests, "rate_limited", "too many reads — try again in a minute")
+		return
+	}
+	hook, err := s.q.GetInboundHookByTokenHash(c.Request.Context(), hookHash(token))
+	if err != nil || !hook.Enabled {
+		httpx.Error(c, http.StatusNotFound, "not_found", "hook not found")
+		return
+	}
+	conv, err := s.q.GetConversationByID(c.Request.Context(), hook.ConversationID)
+	if err != nil {
+		httpx.Error(c, http.StatusNotFound, "not_found", "channel not found")
+		return
+	}
+	if conv.IntakeMode != "chat" {
+		httpx.Error(c, http.StatusForbidden, "intake_read_disabled",
+			"this channel is receive-only — switch it to live chat to pull replies")
+		return
+	}
+	var after pgtype.UUID
+	if a := c.Query("after"); a != "" {
+		id, err := uuid.Parse(a)
+		if err != nil {
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "after must be a message id")
+			return
+		}
+		after = pgtype.UUID{Bytes: id, Valid: true}
+	}
+	// ?key scopes to one ticket sub-chat: the root post in the channel
+	// plus the thread conversation it opened. Legacy tickets whose
+	// replies predate sub-chats fall back to inline replies.
+	listConv := hook.ConversationID
+	var root, rootFilter pgtype.UUID
+	if key := oneLine(c.Query("key"), 200); key != "" {
+		p, err := s.q.GetInboundThreadParent(c.Request.Context(), db.GetInboundThreadParentParams{
+			HookID: hook.ID, Key: key,
+		})
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{"messages": []any{}})
+			return
+		}
+		root = p
+		if t, err := s.q.GetThreadByParentMessage(c.Request.Context(), p); err == nil {
+			listConv = t.ID
+		} else {
+			rootFilter = p
+		}
+	}
+	lim := int32(50)
+	if l, err := strconv.Atoi(c.Query("limit")); err == nil && l > 0 && l <= 200 {
+		lim = int32(l)
+	}
+	var rows []db.ListHookChannelMessagesRow
+	if root.Valid && !after.Valid {
+		head, _ := s.q.ListHookChannelMessages(c.Request.Context(), db.ListHookChannelMessagesParams{
+			ConversationID: hook.ConversationID, Root: root, Lim: 1,
+		})
+		rows = head
+	}
+	rest, err := s.q.ListHookChannelMessages(c.Request.Context(), db.ListHookChannelMessagesParams{
+		ConversationID: listConv,
+		After:          after,
+		Root:           rootFilter,
+		Lim:            lim,
+	})
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	rows = append(rows, rest...)
+	// Attachments ride presigned GET URLs when storage is configured —
+	// the token holder can fetch the bytes without a Relay session.
+	ids := make([]pgtype.UUID, 0, len(rows))
+	for _, m := range rows {
+		ids = append(ids, m.ID)
+	}
+	attByMsg := map[pgtype.UUID][]db.ListAttachmentsForMessagesRow{}
+	if len(ids) > 0 {
+		if atts, err := s.q.ListAttachmentsForMessages(c.Request.Context(), ids); err == nil {
+			for _, a := range atts {
+				attByMsg[a.MessageID] = append(attByMsg[a.MessageID], a)
+			}
+		}
+	}
+	out := make([]gin.H, 0, len(rows))
+	for _, m := range rows {
+		viaHook := false
+		for _, t := range m.Tags {
+			if t == "webhook" {
+				viaHook = true
+				break
+			}
+		}
+		msg := gin.H{
+			"id":          m.ID.String(),
+			"body":        m.Body,
+			"author_name": m.AuthorName,
+			"author_kind": m.AuthorKindSnapshot,
+			"tags":        m.Tags,
+			"via_hook":    viaHook,
+			"created_at":  m.CreatedAt,
+		}
+		// Lift intake metadata out of the tag list for convenience.
+		for _, t := range m.Tags {
+			switch {
+			case strings.HasPrefix(t, "from:"):
+				msg["from"] = t[len("from:"):]
+			case strings.HasPrefix(t, "key:"):
+				msg["key"] = t[len("key:"):]
+			case strings.HasPrefix(t, "kind:"):
+				msg["kind"] = t[len("kind:"):]
+			}
+		}
+		if m.ParentID.Valid {
+			msg["parent_id"] = m.ParentID.String()
+		}
+		var atts []gin.H
+		for _, a := range attByMsg[m.ID] {
+			att := gin.H{
+				"id":           a.ID.String(),
+				"name":         a.Filename,
+				"content_type": a.ContentType,
+				"size_bytes":   a.SizeBytes,
+			}
+			if s.Store != nil {
+				if u, err := s.Store.PresignGet(c.Request.Context(), a.StorageKey, a.Filename, a.ContentType); err == nil {
+					att["url"] = u
+				}
+			}
+			atts = append(atts, att)
+		}
+		if len(atts) > 0 {
+			msg["attachments"] = atts
+		}
+		out = append(out, msg)
+	}
+	c.JSON(http.StatusOK, gin.H{"messages": out})
+}
+
+// renderHookHead expands a hook's header template. Empty result is fine —
+// the body then stands alone.
+func renderHookHead(tpl, from, subject, kind, key string) string {
+	r := strings.NewReplacer(
+		"{from}", from, "{subject}", subject, "{kind}", kind, "{key}", key,
+	)
+	return strings.TrimSpace(r.Replace(tpl))
 }
 
 // oneLine squashes metadata fields (from/subject/key) to a single trimmed
@@ -446,6 +687,8 @@ func hookJSON(h db.InboundHook, token string) gin.H {
 		"project_id":      h.ProjectID.String(),
 		"conversation_id": h.ConversationID.String(),
 		"enabled":         h.Enabled,
+		"kind":            h.Kind,
+		"header_template": h.HeaderTemplate,
 		"token_hint":      h.TokenHash[:8],
 		"created_at":      h.CreatedAt,
 	}

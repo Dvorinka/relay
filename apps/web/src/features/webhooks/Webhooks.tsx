@@ -389,6 +389,10 @@ function InboundHookRow(props: {
 }) {
   const [confirmDelete, setConfirmDelete] = createSignal(false);
   const [freshToken, setFreshToken] = createSignal("");
+  const [editing, setEditing] = createSignal(false);
+  const [editName, setEditName] = createSignal("");
+  const [editKind, setEditKind] = createSignal("");
+  const [editTpl, setEditTpl] = createSignal("");
   const [err, setErr] = createSignal("");
   const h = () => props.h;
 
@@ -418,6 +422,19 @@ function InboundHookRow(props: {
       setErr(e instanceof Error ? e.message : "delete failed");
     }
   };
+  const save = async () => {
+    try {
+      await api.updateInboundHook(h().id!, {
+        ...(editName().trim() ? { name: editName().trim() } : {}),
+        kind: editKind().trim(),
+        header_template: editTpl().trim(),
+      });
+      setEditing(false);
+      props.onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "save failed");
+    }
+  };
 
   return (
     <li class="rounded-md border border-border px-3 py-2.5">
@@ -430,6 +447,11 @@ function InboundHookRow(props: {
         <span class="min-w-0 flex-1 truncate text-[12.5px] font-medium">
           {h().name}
         </span>
+        <Show when={h().kind}>
+          <span class="shrink-0 rounded-full border border-accent/40 bg-accent-soft/60 px-1.5 py-px font-mono text-[9.5px] font-medium lowercase tracking-wide text-accent-ink">
+            {h().kind}
+          </span>
+        </Show>
         <span class="shrink-0 font-mono text-[10px] text-muted">
           {h().token_hint}
         </span>
@@ -476,12 +498,66 @@ function InboundHookRow(props: {
         </button>
         <button
           type="button"
+          onClick={() => {
+            setEditName(h().name);
+            setEditKind(h().kind ?? "");
+            setEditTpl(h().header_template ?? "");
+            setEditing(!editing());
+          }}
+          class="shrink-0 text-[11.5px] text-muted transition-colors hover:text-fg"
+        >
+          Edit
+        </button>
+        <button
+          type="button"
           onClick={() => setConfirmDelete(true)}
           class="shrink-0 text-[11.5px] text-red-500/80 transition-colors hover:text-red-500"
         >
           Delete
         </button>
       </div>
+      <Show when={editing()}>
+        <div class="mt-2 flex flex-col gap-1.5 rounded-md border border-border bg-hover/40 px-2.5 py-2">
+          <input
+            class={`${inputClass} h-7 text-[11.5px]`}
+            value={editName()}
+            onInput={(e) => setEditName(e.currentTarget.value)}
+            placeholder="Hook name"
+            aria-label="Hook name"
+          />
+          <input
+            class={`${inputClass} h-7 font-mono text-[11.5px]`}
+            value={editKind()}
+            onInput={(e) => setEditKind(e.currentTarget.value)}
+            placeholder="Default kind — bug, feature, … (payload kind wins)"
+            aria-label="Default report kind"
+            maxLength={40}
+          />
+          <input
+            class={`${inputClass} h-7 font-mono text-[11.5px]`}
+            value={editTpl()}
+            onInput={(e) => setEditTpl(e.currentTarget.value)}
+            placeholder="Header template — {from} {subject} {kind} {key}"
+            aria-label="Header template"
+          />
+          <div class="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setEditing(false)}
+              class="text-[11.5px] text-muted transition-colors hover:text-fg"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void save()}
+              class="rounded bg-accent px-2.5 py-1 text-[11.5px] font-medium text-white"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      </Show>
       <FormError message={err()} />
       <ConfirmDialog
         open={confirmDelete()}
@@ -540,8 +616,11 @@ function InboundHooksSection(props: { projectId: string }) {
         fields: <code class="font-mono">from</code> attributes an external
         sender, <code class="font-mono">subject</code> heads the message,{" "}
         <code class="font-mono">key</code> threads follow-ups under the first
-        post, <code class="font-mono">attachments</code> takes up to 5 base64
-        files (logs, screenshots).
+        post, <code class="font-mono">kind</code> labels the report type
+        (bug, feature — free-form, colored chip),{" "}
+        <code class="font-mono">attachments</code> takes up to 5 base64
+        files (logs, screenshots). Per-hook <em>Edit</em> sets a default
+        kind and a custom header template.
       </p>
 
       <Show when={freshUrl()}>
