@@ -25,7 +25,27 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Skip docs-only / marked pushes
+        id: gate
+        run: |
+          msg=$(git log -1 --format=%s)
+          files=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
+          nondocs=$(printf '%s\n' "$files" | grep -vE \
+            '(\.md$|^docs/|^\.env\.example$)' || true)
+          if printf '%s' "$msg" | grep -qiE '\[(skip|no)[ -]?release\]'; then
+            echo "skip: marker in '$msg'"
+          elif [ -z "$files" ]; then
+            echo "skip: empty diff"
+          elif [ -z "$nondocs" ]; then
+            echo "skip: docs-only ($files)"
+          else
+            echo "release: non-doc files changed:" && printf '%s\n' "$nondocs"
+            exit 0
+          fi
+          echo "SKIP_RELEASE=1" >> "$GITHUB_ENV"
+
       - name: Bump patch version, push tag, trigger release
+        if: env.SKIP_RELEASE != '1'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
