@@ -69,6 +69,7 @@ import { confirmDestructive } from "../../components/Confirm";
 import { openProfile } from "../../components/ProfileModal";
 import { subscribe } from "../../lib/events";
 import { loadNameColors, nameColorFor } from "../../lib/namecolors";
+import { tagChip } from "../../lib/tagcolor";
 import { mediaURL, net } from "../../lib/net";
 import {
   isQueuedError,
@@ -2037,9 +2038,9 @@ function MessageRow(props: {
                   type="button"
                   onClick={() => props.onTagClick?.(t)}
                   title={`Filter by ${t}`}
-                  class="rounded-full border border-accent/40 bg-accent-soft/60 px-1.5 py-px font-mono text-[9.5px] font-medium lowercase tracking-wide text-accent-ink transition-colors hover:bg-accent-soft"
+                  class={`rounded-full border px-1.5 py-px font-mono text-[9.5px] font-medium lowercase tracking-wide transition-colors ${tagChip(t).cls}`}
                 >
-                  {t}
+                  {tagChip(t).label}
                 </button>
               )}
             </For>
@@ -2061,9 +2062,9 @@ function MessageRow(props: {
                   type="button"
                   onClick={() => props.onTagClick?.(t)}
                   title={`Filter by ${t}`}
-                  class="rounded-full border border-accent/40 bg-accent-soft/60 px-1.5 py-px font-mono text-[9.5px] font-medium lowercase tracking-wide text-accent-ink transition-colors hover:bg-accent-soft"
+                  class={`rounded-full border px-1.5 py-px font-mono text-[9.5px] font-medium lowercase tracking-wide transition-colors ${tagChip(t).cls}`}
                 >
-                  {t}
+                  {tagChip(t).label}
                 </button>
               )}
             </For>

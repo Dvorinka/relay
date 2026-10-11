@@ -2238,7 +2238,7 @@ export interface paths {
         delete: operations["deleteInboundHook"];
         options?: never;
         head?: never;
-        /** Rename or enable/disable an inbound hook */
+        /** Rename, enable/disable, or restyle an inbound hook */
         patch: operations["updateInboundHook"];
         trace?: never;
     };
@@ -2270,7 +2270,7 @@ export interface paths {
         put?: never;
         /**
          * Public token-secured endpoint — posts a message into the hook's conversation
-         * @description Unauthenticated; the path token is the credential (rlh_...). Rate-limited to 30 posts/minute per token. Beyond {message|text|body}, support-intake fields: "from" attributes an external sender, "subject" heads the message, "key" threads follow-ups under the first post with that key, "attachments" (base64, max 5) upload via the storage pipeline. The message lands tagged ["webhook", hook-name, "from:…", "key:…"].
+         * @description Unauthenticated; the path token is the credential (rlh_...). Rate-limited to 30 posts/minute per token. Beyond {message|text|body}, support-intake fields: "from" attributes an external sender, "subject" heads the message, "key" makes the post a ticket — the first post with a key opens a dedicated sub-chat (a thread rooted at it, never expiring) and later posts with the same key land inside it — "attachments" (base64, max 5) upload via the storage pipeline. The message lands tagged ["webhook", hook-name, "from:…", "key:…"].
          */
         post: operations["inboundHookPost"];
         delete?: never;
@@ -3198,6 +3198,10 @@ export interface components {
             conversation_id: string;
             name: string;
             enabled: boolean;
+            /** @description Default report type for posts without a payload kind */
+            kind?: string;
+            /** @description Rendered head template — {from} {subject} {kind} {key}; empty = default */
+            header_template?: string;
             /** @description first 8 chars of the token hash */
             token_hint: string;
             /** @description rlh_... — only present on create/rotate */
@@ -8194,6 +8198,10 @@ export interface operations {
                      * @description channel or main project conversation
                      */
                     conversation_id: string;
+                    /** @description Default report type for posts without a payload kind — e.g. 'bug'. Free-form; the platform names its own types */
+                    kind?: string;
+                    /** @description Rendered head line; {from} {subject} {kind} {key} placeholders. Empty = the default '`kind` **from** — *subject*' */
+                    header_template?: string;
                 };
             };
         };
@@ -8251,6 +8259,10 @@ export interface operations {
                 "application/json": {
                     name?: string;
                     enabled?: boolean;
+                    /** @description Default report type — send '' to clear */
+                    kind?: string;
+                    /** @description {from} {subject} {kind} {key} placeholders — send '' to restore the default head */
+                    header_template?: string;
                 };
             };
         };
@@ -8316,8 +8328,10 @@ export interface operations {
                     /** @description external sender, e.g. 'Alice <alice@acme.com>' */
                     from?: string;
                     subject?: string;
-                    /** @description threads follow-ups under the first post with this key */
+                    /** @description Ticket key — first post opens a dedicated sub-chat; same-key posts join it */
                     key?: string;
+                    /** @description Report type — free-form ('bug', 'feature', …). Overrides the hook's default kind; lands as a kind:<x> tag and a `kind` label in the header */
+                    kind?: string;
                     attachments?: {
                         name?: string;
                         content_type?: string;
@@ -8337,8 +8351,12 @@ export interface operations {
                     "application/json": {
                         posted?: boolean;
                         message_id?: string;
-                        /** @description present when threaded under a prior key post */
+                        /** @description where the message landed — the ticket's sub-chat for keyed posts */
+                        conversation_id?: string;
+                        /** @description the ticket root, when the key was already open */
                         parent_id?: string;
+                        /** @description the ticket's sub-chat conversation id, when a key was supplied */
+                        thread_id?: string;
                         threaded?: boolean;
                         attachments?: number;
                     };
@@ -8377,7 +8395,7 @@ export interface operations {
     inboundHookMessages: {
         parameters: {
             query?: {
-                /** @description Scope to one ticket: returns the key's root post plus its replies */
+                /** @description Scope to one ticket sub-chat: the key's root post plus everything in its thread */
                 key?: string;
                 /** @description Polling cursor — only messages newer than this message id */
                 after?: string;
@@ -8407,6 +8425,12 @@ export interface operations {
                             tags?: string[];
                             /** @description True for posts that came in through the hook — don't re-forward */
                             via_hook?: boolean;
+                            /** @description external sender, lifted from the from: tag */
+                            from?: string;
+                            /** @description ticket key, lifted from the key: tag */
+                            key?: string;
+                            /** @description report type, lifted from the kind: tag */
+                            kind?: string;
                             /** Format: uuid */
                             parent_id?: string;
                             attachments?: {

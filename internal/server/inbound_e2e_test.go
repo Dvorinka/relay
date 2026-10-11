@@ -34,8 +34,9 @@ func TestInboundIntake(t *testing.T) {
 		t.Fatalf("legacy intake bool did not map to receive: %v", up)
 	}
 
+	// The hook carries a default report kind — payloads can override it.
 	code, hook := c.call("POST", "/api/projects/"+projID+"/hooks",
-		fmt.Sprintf(`{"name":"acme-intake","conversation_id":%q}`, chanID))
+		fmt.Sprintf(`{"name":"acme-intake","conversation_id":%q,"kind":"bug"}`, chanID))
 	if code != 201 {
 		t.Fatalf("hook: %d %v", code, hook)
 	}
@@ -62,39 +63,66 @@ func TestInboundIntake(t *testing.T) {
 		t.Fatalf("first post threaded: %v", r1)
 	}
 	m1 := r1["message_id"].(string)
+	// The first keyed post opens the ticket's sub-chat — a thread
+	// conversation rooted at the report.
+	threadID, _ := r1["thread_id"].(string)
+	if threadID == "" {
+		t.Fatalf("keyed post did not open a sub-chat: %v", r1)
+	}
 
-	// Follow-up with the same key threads under the first.
+	// Follow-up with the same key lands inside the sub-chat — and carries
+	// its own kind, overriding the hook's default.
 	code, r2 := post(`{"from":"Alice <alice@acme.com>","key":"ticket-42",` +
-		`"body":"totals are wrong too — tax missing"}`)
+		`"kind":"feature","body":"totals are wrong too — tax missing"}`)
 	if code != 202 {
 		t.Fatalf("follow-up: %d %v", code, r2)
 	}
-	if r2["threaded"] != true || r2["parent_id"] != m1 {
-		t.Fatalf("follow-up not threaded: %v", r2)
+	if r2["threaded"] != true || r2["parent_id"] != m1 || r2["thread_id"] != threadID {
+		t.Fatalf("follow-up not in the sub-chat: %v", r2)
 	}
 
-	// Verify the rendered shape: header line, tags, parent link.
+	// Verify the rendered shape: header line, tags, thread affordance.
 	code, lst := c.call("GET", "/api/conversations/"+chanID+"/messages", "")
 	if code != 200 {
 		t.Fatalf("messages: %d", code)
 	}
-	var first, follow map[string]any
+	var first map[string]any
 	for _, m := range lst["messages"].([]any) {
 		mm := m.(map[string]any)
 		if mm["id"] == m1 {
 			first = mm
 		}
+	}
+	if first == nil {
+		t.Fatalf("intake root missing: %v", lst)
+	}
+	if th, _ := first["thread"].(map[string]any); th == nil || th["id"] != threadID {
+		t.Fatalf("root missing its sub-chat affordance: %v", first["thread"])
+	}
+	// The follow-up lives in the sub-chat conversation, not the channel.
+	code, tlst := c.call("GET", "/api/conversations/"+threadID+"/messages", "")
+	if code != 200 {
+		t.Fatalf("thread messages: %d", code)
+	}
+	var follow map[string]any
+	for _, m := range tlst["messages"].([]any) {
+		mm := m.(map[string]any)
 		if mm["id"] == r2["message_id"].(string) {
 			follow = mm
 		}
 	}
-	if first == nil || follow == nil {
-		t.Fatalf("intake messages missing: %v", lst)
+	if follow == nil {
+		t.Fatalf("follow-up not in sub-chat: %v", tlst)
 	}
-	want := "**Alice <alice@acme.com>** — *PDF renders blank*\n\n" +
+	// The inherited hook kind labels the head; the payload kind overrode
+	// it on the follow-up.
+	want := "`bug` **Alice <alice@acme.com>** — *PDF renders blank*\n\n" +
 		"invoice #1042 downloads as an empty pdf"
 	if first["body"] != want {
 		t.Fatalf("body = %q, want %q", first["body"], want)
+	}
+	if follow["body"] != "`feature` **Alice <alice@acme.com>**\n\ntotals are wrong too — tax missing" {
+		t.Fatalf("follow-up body = %q", follow["body"])
 	}
 	hasTag := func(m map[string]any, tag string) bool {
 		for _, tg := range m["tags"].([]any) {
@@ -104,13 +132,13 @@ func TestInboundIntake(t *testing.T) {
 		}
 		return false
 	}
-	for _, tag := range []string{"webhook", "acme-intake", "from:Alice <alice@acme.com>", "key:ticket-42"} {
+	for _, tag := range []string{"webhook", "acme-intake", "from:Alice <alice@acme.com>", "key:ticket-42", "kind:bug"} {
 		if !hasTag(first, tag) {
 			t.Fatalf("missing tag %q in %v", tag, first["tags"])
 		}
 	}
-	if p, _ := follow["parent"].(map[string]any); p == nil || p["id"] != m1 {
-		t.Fatalf("follow parent = %v, want %s", follow["parent"], m1)
+	if follow["parent"] != nil {
+		t.Fatalf("in-thread follow-up should be flat, got parent %v", follow["parent"])
 	}
 
 	// Attachments need object storage — the fixture has none, so the
@@ -141,9 +169,10 @@ func TestInboundIntake(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("chat patch: %d", code)
 	}
-	// A human replies inline to the ticket root — the platform pulls it.
-	code, rep := c.call("POST", "/api/conversations/"+chanID+"/messages",
-		fmt.Sprintf(`{"body":"looking into it now","parent_id":%q}`, m1))
+	// A human answers inside the ticket's sub-chat — the platform pulls
+	// whatever is posted there; the channel stays staff-side.
+	code, rep := c.call("POST", "/api/conversations/"+threadID+"/messages",
+		`{"body":"looking into it now"}`)
 	if code != 201 && code != 200 {
 		t.Fatalf("staff reply: %d %v", code, rep)
 	}
@@ -167,11 +196,48 @@ func TestInboundIntake(t *testing.T) {
 	if msgs[0].(map[string]any)["via_hook"] != true {
 		t.Fatalf("inbound post not marked via_hook: %v", msgs[0])
 	}
+	// Intake metadata is lifted out of tags for the platform.
+	m0 := msgs[0].(map[string]any)
+	if m0["from"] != "Alice <alice@acme.com>" || m0["key"] != "ticket-42" || m0["kind"] != "bug" {
+		t.Fatalf("lifted fields wrong: %v", m0)
+	}
 
-	// ?after paginates: nothing newer than the last message.
-	code, rd = get("?after=" + last["id"].(string))
+	// A per-hook header template replaces the default head line.
+	code, _ = c.call("PATCH", "/api/inbound-hooks/"+hookObj["id"].(string),
+		`{"header_template":"[{kind}] {from} » {subject}"}`)
+	if code != 200 {
+		t.Fatalf("template patch: %d", code)
+	}
+	code, r4 := post(`{"from":"Bob <bob@acme.com>","kind":"incident",` +
+		`"subject":"payments down","body":"all card charges 502ing"}`)
+	if code != 202 {
+		t.Fatalf("templated post: %d %v", code, r4)
+	}
+	code, lst = c.call("GET", "/api/conversations/"+chanID+"/messages", "")
+	if code != 200 {
+		t.Fatalf("messages2: %d", code)
+	}
+	var templ map[string]any
+	for _, m := range lst["messages"].([]any) {
+		mm := m.(map[string]any)
+		if mm["id"] == r4["message_id"].(string) {
+			templ = mm
+		}
+	}
+	if templ == nil ||
+		templ["body"] != "[incident] Bob <bob@acme.com> » payments down\n\nall card charges 502ing" {
+		t.Fatalf("templated body = %v", templ)
+	}
+
+	// ?after paginates: nothing newer than the newest message (Bob's).
+	code, rd = get("?after=" + r4["message_id"].(string))
 	if code != 200 || len(rd["messages"].([]any)) != 0 {
 		t.Fatalf("after cursor: %d %v", code, rd)
+	}
+	// …and after the staff reply, only Bob's post is newer.
+	code, rd = get("?key=ticket-42&after=" + last["id"].(string))
+	if code != 200 || len(rd["messages"].([]any)) != 0 {
+		t.Fatalf("key+after cursor: %d %v", code, rd)
 	}
 	// Unknown key is an empty thread, not an error.
 	code, rd = get("?key=nope")

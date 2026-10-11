@@ -291,95 +291,113 @@ function ProjectChildren(props: { project: Project }) {
   const delBtn =
     "shrink-0 rounded p-0.5 text-faint opacity-0 transition-opacity hover:text-red-500 focus-visible:opacity-100 group-hover:opacity-100";
 
+  const channelIDs = () => new Set((channels.latest ?? []).map((ch) => ch.id));
+  // Threads rooted inside a channel are its sub-chats (support tickets);
+  // threads rooted at the main conversation stay in the flat list.
+  const channelThreads = (id: string) =>
+    (threads.latest ?? []).filter((t) => t.parent_conversation === id);
+  const rootThreads = () =>
+    (threads.latest ?? []).filter(
+      (t) => !channelIDs().has(t.parent_conversation),
+    );
+
+  const threadRow = (t: Thread, nested = false) => (
+    <div class={rowClass(viewingThread(t.id)) + (nested ? " ml-3" : "")}>
+      <A
+        href={`/app/p/${props.project.id}?thread=${t.id}`}
+        class="flex min-w-0 flex-1 items-center gap-1.5"
+      >
+        <ThreadIcon class="h-3 w-3 shrink-0 text-faint" />
+        <span class="min-w-0 flex-1 truncate">{t.title || "Thread"}</span>
+        <Show when={unreadFor(t.id) > 0}>
+          <span class="rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-medium leading-none text-white">
+            {unreadFor(t.id)}
+          </span>
+        </Show>
+        <Show when={t.reply_count > 0 && unreadFor(t.id) === 0}>
+          <span class="shrink-0 text-[10px] text-faint">{t.reply_count}</span>
+        </Show>
+      </A>
+      <button
+        type="button"
+        aria-label={`Delete thread ${t.title ?? ""}`}
+        title="Delete thread"
+        onClick={() => void removeThread(t)}
+        class={delBtn}
+      >
+        <TrashIcon class="h-3 w-3" />
+      </button>
+    </div>
+  );
+
   return (
     <div class="ml-4 flex flex-col gap-0.5 border-l border-border pl-1.5">
       <For each={channels.latest}>
         {(ch: Channel) => (
-          <div class={rowClass(viewingChannel(ch.id))}>
-            <A
-              href={`/app/p/${props.project.id}/c/${ch.id}`}
-              class="flex min-w-0 flex-1 items-center gap-1.5"
-            >
-              <span class="text-faint">#</span>
-              <span class="min-w-0 flex-1 truncate">{ch.name}</span>
-              <Show when={ch.intake_mode}>
-                <Tip
-                  text={
-                    ch.intake_mode === "chat"
-                      ? "Support intake — live chat"
-                      : "Support intake — receive only"
-                  }
-                  hint={
-                    ch.intake_mode === "chat"
-                      ? "The platform posts reports and pulls replies"
-                      : "External reports land here via an inbound hook"
-                  }
-                  class="shrink-0"
-                >
-                  <Show
-                    when={ch.intake_mode === "chat"}
-                    fallback={<InboxIcon class="h-3 w-3 shrink-0 text-faint" />}
+          <>
+            <div class={rowClass(viewingChannel(ch.id))}>
+              <A
+                href={`/app/p/${props.project.id}/c/${ch.id}`}
+                class="flex min-w-0 flex-1 items-center gap-1.5"
+              >
+                <span class="text-faint">#</span>
+                <span class="min-w-0 flex-1 truncate">{ch.name}</span>
+                <Show when={ch.intake_mode}>
+                  <Tip
+                    text={
+                      ch.intake_mode === "chat"
+                        ? "Support intake — live chat"
+                        : "Support intake — receive only"
+                    }
+                    hint={
+                      ch.intake_mode === "chat"
+                        ? "The platform posts reports and pulls replies"
+                        : "External reports land here via an inbound hook"
+                    }
+                    class="shrink-0"
                   >
-                    <ReplyIcon class="h-3 w-3 shrink-0 text-faint" />
-                  </Show>
-                </Tip>
-              </Show>
-              <Show when={ch.agents_blocked}>
-                <Tip
-                  text="Agents blocked"
-                  hint="Agents can't see or post in this channel"
-                  class="shrink-0"
-                >
-                  <LockIcon class="h-3 w-3 shrink-0 text-faint" />
-                </Tip>
-              </Show>
-              <Show when={unreadFor(ch.id) > 0}>
-                <span class="rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-medium leading-none text-white">
-                  {unreadFor(ch.id)}
-                </span>
-              </Show>
-            </A>
-            <button
-              type="button"
-              aria-label={`Delete channel ${ch.name ?? ""}`}
-              title="Delete channel"
-              onClick={() => void removeChannel(ch)}
-              class={delBtn}
-            >
-              <TrashIcon class="h-3 w-3" />
-            </button>
-          </div>
+                    <Show
+                      when={ch.intake_mode === "chat"}
+                      fallback={
+                        <InboxIcon class="h-3 w-3 shrink-0 text-faint" />
+                      }
+                    >
+                      <ReplyIcon class="h-3 w-3 shrink-0 text-faint" />
+                    </Show>
+                  </Tip>
+                </Show>
+                <Show when={ch.agents_blocked}>
+                  <Tip
+                    text="Agents blocked"
+                    hint="Agents can't see or post in this channel"
+                    class="shrink-0"
+                  >
+                    <LockIcon class="h-3 w-3 shrink-0 text-faint" />
+                  </Tip>
+                </Show>
+                <Show when={unreadFor(ch.id) > 0}>
+                  <span class="rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-medium leading-none text-white">
+                    {unreadFor(ch.id)}
+                  </span>
+                </Show>
+              </A>
+              <button
+                type="button"
+                aria-label={`Delete channel ${ch.name ?? ""}`}
+                title="Delete channel"
+                onClick={() => void removeChannel(ch)}
+                class={delBtn}
+              >
+                <TrashIcon class="h-3 w-3" />
+              </button>
+            </div>
+            <For each={channelThreads(ch.id)}>
+              {(t: Thread) => threadRow(t, true)}
+            </For>
+          </>
         )}
       </For>
-      <For each={threads.latest}>
-        {(t: Thread) => (
-          <div class={rowClass(viewingThread(t.id))}>
-            <A
-              href={`/app/p/${props.project.id}?thread=${t.id}`}
-              class="flex min-w-0 flex-1 items-center gap-1.5"
-            >
-              <ThreadIcon class="h-3 w-3 shrink-0 text-faint" />
-              <span class="min-w-0 flex-1 truncate">
-                {t.title || "Thread"}
-              </span>
-              <Show when={t.reply_count > 0}>
-                <span class="shrink-0 text-[10px] text-faint">
-                  {t.reply_count}
-                </span>
-              </Show>
-            </A>
-            <button
-              type="button"
-              aria-label={`Delete thread ${t.title ?? ""}`}
-              title="Delete thread"
-              onClick={() => void removeThread(t)}
-              class={delBtn}
-            >
-              <TrashIcon class="h-3 w-3" />
-            </button>
-          </div>
-        )}
-      </For>
+      <For each={rootThreads()}>{(t: Thread) => threadRow(t)}</For>
       <Show
         when={adding()}
         fallback={

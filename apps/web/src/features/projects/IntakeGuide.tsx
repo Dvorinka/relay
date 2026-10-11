@@ -25,6 +25,7 @@ curl -X POST "$HOOK_URL" \\
   -H "Content-Type: application/json" \\
   -d '{
     "from":    "user-4821",
+    "kind":    "bug",
     "subject": "Invoice totals look wrong",
     "key":     "ticket-4821",
     "message": "The sum on invoice #221 is twice the line items."
@@ -34,6 +35,7 @@ curl -X POST "$HOOK_URL" \\
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
     from: user.id,                 // external sender attribution
+    kind: report.type,             // "bug" | "feature" | … your own types
     subject: report.title,         // bold heading in Relay
     key: \`ticket-\${report.id}\`, // follow-ups with the same key thread here
     message: report.body,          // markdown rendered
@@ -45,6 +47,7 @@ curl -X POST "$HOOK_URL" \\
 
 requests.post("${url}", json={
     "from":    user.email,                    # external sender
+    "kind":    report.type,                   # "bug" | "feature" | any type
     "subject": report.title,                  # bold heading in Relay
     "key":     f"ticket-{report.id}",         # same key -> same thread
     "message": report.body,
@@ -54,6 +57,7 @@ requests.post("${url}", json={
 })`,
     go: `payload, _ := json.Marshal(map[string]any{
     "from":    user.Email,
+    "kind":    report.Type, // "bug" | "feature" | your own types
     "subject": report.Title,
     "key":     fmt.Sprintf("ticket-%d", report.ID), // threads follow-ups
     "message": report.Body,
@@ -64,40 +68,74 @@ req.Header.Set("Content-Type", "application/json")
 resp, err := http.DefaultClient.Do(req)`,
     "ai prompt": `You are wiring live customer support into our product. Relay
 exposes a token-secured intake endpoint; POST JSON to it whenever a user
-submits a report or a background job hits an error worth flagging.
+submits a report, a support message, or a background job hits an error
+worth flagging.
 
 Endpoint: POST ${url}
 Content-Type: application/json — no auth header; the path token IS the
-credential. Keep it in server-side config only (RELAY_INTAKE_URL env var).
+credential. Keep it in server-side config only (RELAY_INTAKE_URL env var),
+never ship it to browsers or mobile clients — proxy through our backend.
 
 Payload fields:
   message | text | body  required — the report text (markdown rendered)
-  from                  sender attribution, e.g. user email or id
-  subject               optional bold heading shown above the body
-  key                   stable ticket key — the first post with a key becomes
-                        a thread root; later posts with the same key land as
-                        replies on it. Use your ticket/user id.
+  from                  sender attribution, e.g. "Alice <alice@acme.com>"
+  kind                  report type — free-form, you name your own types
+                        ("bug", "feature", "incident"). Renders as a
+                        colored chip + a kind label. If the hook has a
+                        default kind set, omit to inherit it.
+  subject               optional bold heading shown above the body —
+                        becomes the sub-chat's title
+  key                   stable ticket key (your ticket/conversation id).
+                        IMPORTANT: the first post with a key opens a
+                        dedicated SUB-CHAT under the channel — its own
+                        conversation the support team talks inside.
+                        Every later post with the same key lands in that
+                        sub-chat, not the channel.
   attachments           up to 5: { name, content_type, data } — base64.
                         Use for stack-trace logs and screenshots.
 
-Handle responses: 201 {posted,message_id,threaded,attachments};
-503 storage_disabled when attachments were sent but storage is off.
-Rate limit: 30 posts/minute — queue or batch beyond that.
+Responses:
+  202 { posted, message_id, conversation_id, thread_id, parent_id,
+        threaded, attachments }
+      thread_id   the ticket's sub-chat (present whenever key was sent)
+      threaded    true when this post joined an existing sub-chat
+      202 means durable — do not retry; retry only on network error or 5xx
+  400 bad_request    malformed JSON, empty body, >5 attachments, oversized
+  404 not_found      wrong token or the hook was disabled
+  429 rate_limited   back off — budget is 30 posts/minute per token
+  503 storage_disabled  attachments sent but the server has no object
+                        storage configured — resend without files
 
-Replies — pick one or both:
+Replies back to the customer — pick one or both:
   a) Pull (live chat): GET ${url}/messages?key=<ticket>&after=<last-id>
-     returns { messages: [{ id, body, author_name, author_kind, tags,
-     via_hook, parent_id, attachments, created_at }] }, oldest first,
-     up to 200. Poll every few seconds per open ticket; pass the last
-     seen message id as ?after= for deltas. Budget: 120 reads/minute.
+     returns { messages: [{ id, body, author_name, author_kind
+     ("user"|"agent"), from, key, kind, tags, via_hook, parent_id,
+     attachments, created_at }] }, oldest first, up to 200.
+     Poll each open ticket every few seconds; pass the last seen
+     message id as ?after= for deltas. Budget: 120 reads/minute.
+     Messages your platform sent come back tagged with via_hook=true —
+     skip them; via_hook=false rows are the support team's replies to
+     show the customer. Works only while the channel is in live-chat
+     mode; receive-only channels answer 403 intake_read_disabled.
   b) Push: create an outbound webhook subscription for "message.created"
      on the project. Relay POSTs { id, type, project_id, occurred_at,
      data: { conversation_id, message } } to your URL, HMAC-SHA256-signed
-     via the X-Relay-Signature-256 header.
-Forward the support team's messages to the customer under the same key.
-IMPORTANT: skip messages whose tags contain "webhook" (or via_hook=true
-in pull mode) — those came in through the intake hook and forwarding
-them would echo-loop.`,
+     via the X-Relay-Signature-256 header — verify it with the
+     subscription secret before trusting the body.
+
+IMPORTANT — echo-loop guard: never forward a message back into the
+intake endpoint when its tags contain "webhook" (pull mode:
+via_hook=true). Those posts already came from our platform and
+re-posting them loops forever.
+
+Visibility: everything posted inside a ticket's sub-chat ships to the
+customer in chat mode. Keep internal triage notes in the channel or a
+separate thread — only customer-facing answers go in the sub-chat.
+
+Multiple report types or products: either send different "kind" values
+to this one endpoint, or create a second inbound hook (each has its own
+default kind and header template) pointed at the same or a different
+channel — e.g. one channel per customer, kinds per report type.`,
   };
 }
 
@@ -317,11 +355,17 @@ export function IntakeGuide(props: {
                 </span>
                 <code class="font-mono text-fg">from</code>
                 <span class="text-muted">external sender attribution</span>
+                <code class="font-mono text-fg">kind</code>
+                <span class="text-muted">
+                  report type — free-form, your own names; colored chip +
+                  label
+                </span>
                 <code class="font-mono text-fg">subject</code>
                 <span class="text-muted">bold heading above the body</span>
                 <code class="font-mono text-fg">key</code>
                 <span class="text-muted">
-                  stable ticket key — same key threads follow-ups
+                  stable ticket key — the first post opens a dedicated
+                  sub-chat under this channel; same-key posts join it
                 </span>
                 <code class="font-mono text-fg">attachments</code>
                 <span class="text-muted">
@@ -385,7 +429,9 @@ export function IntakeGuide(props: {
               >
                 <p class="mt-1 text-[11.5px] leading-relaxed text-muted">
                   <span class="font-medium text-fg">Live chat is on.</span>{" "}
-                  Poll the same token at{" "}
+                  Each ticket is a sub-chat under this channel — whatever
+                  the team posts inside it is what the platform pulls. Poll
+                  the same token at{" "}
                   <code class="font-mono">
                     GET {"<hook-url>"}/messages?key=…&after=…
                   </code>{" "}

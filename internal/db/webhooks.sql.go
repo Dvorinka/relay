@@ -46,9 +46,10 @@ func (q *Queries) ActiveWebhooksForProject(ctx context.Context, projectID pgtype
 }
 
 const createInboundHook = `-- name: CreateInboundHook :one
-insert into inbound_hooks (project_id, conversation_id, name, token_hash, created_by)
-values ($1, $2, $3, $4, $5)
-returning id, project_id, conversation_id, name, token_hash, enabled, created_by, created_at, last_used_at
+insert into inbound_hooks (project_id, conversation_id, name, token_hash, created_by, kind, header_template)
+values ($1, $2, $3, $4, $5,
+        $6, $7)
+returning id, project_id, conversation_id, name, token_hash, enabled, created_by, created_at, last_used_at, kind, header_template
 `
 
 type CreateInboundHookParams struct {
@@ -57,6 +58,8 @@ type CreateInboundHookParams struct {
 	Name           string      `json:"name"`
 	TokenHash      string      `json:"token_hash"`
 	CreatedBy      pgtype.UUID `json:"created_by"`
+	Kind           string      `json:"kind"`
+	HeaderTemplate string      `json:"header_template"`
 }
 
 func (q *Queries) CreateInboundHook(ctx context.Context, arg CreateInboundHookParams) (InboundHook, error) {
@@ -66,6 +69,8 @@ func (q *Queries) CreateInboundHook(ctx context.Context, arg CreateInboundHookPa
 		arg.Name,
 		arg.TokenHash,
 		arg.CreatedBy,
+		arg.Kind,
+		arg.HeaderTemplate,
 	)
 	var i InboundHook
 	err := row.Scan(
@@ -78,6 +83,8 @@ func (q *Queries) CreateInboundHook(ctx context.Context, arg CreateInboundHookPa
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.LastUsedAt,
+		&i.Kind,
+		&i.HeaderTemplate,
 	)
 	return i, err
 }
@@ -140,7 +147,7 @@ func (q *Queries) DeleteWebhook(ctx context.Context, id pgtype.UUID) error {
 }
 
 const getInboundHookByTokenHash = `-- name: GetInboundHookByTokenHash :one
-select id, project_id, conversation_id, name, token_hash, enabled, created_by, created_at, last_used_at from inbound_hooks where token_hash = $1 and enabled
+select id, project_id, conversation_id, name, token_hash, enabled, created_by, created_at, last_used_at, kind, header_template from inbound_hooks where token_hash = $1 and enabled
 `
 
 func (q *Queries) GetInboundHookByTokenHash(ctx context.Context, tokenHash string) (InboundHook, error) {
@@ -156,12 +163,14 @@ func (q *Queries) GetInboundHookByTokenHash(ctx context.Context, tokenHash strin
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.LastUsedAt,
+		&i.Kind,
+		&i.HeaderTemplate,
 	)
 	return i, err
 }
 
 const getInboundHookForUser = `-- name: GetInboundHookForUser :one
-select h.id, h.project_id, h.conversation_id, h.name, h.token_hash, h.enabled, h.created_by, h.created_at, h.last_used_at, p.workspace_id
+select h.id, h.project_id, h.conversation_id, h.name, h.token_hash, h.enabled, h.created_by, h.created_at, h.last_used_at, h.kind, h.header_template, p.workspace_id
 from inbound_hooks h
 join projects p on p.id = h.project_id
 join workspace_members wm on wm.workspace_id = p.workspace_id and wm.user_id = $1
@@ -183,6 +192,8 @@ type GetInboundHookForUserRow struct {
 	CreatedBy      pgtype.UUID        `json:"created_by"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
+	Kind           string             `json:"kind"`
+	HeaderTemplate string             `json:"header_template"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
 }
 
@@ -200,6 +211,8 @@ func (q *Queries) GetInboundHookForUser(ctx context.Context, arg GetInboundHookF
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.LastUsedAt,
+		&i.Kind,
+		&i.HeaderTemplate,
 		&i.WorkspaceID,
 	)
 	return i, err
@@ -323,7 +336,7 @@ func (q *Queries) InsertInboundThread(ctx context.Context, arg InsertInboundThre
 }
 
 const listInboundHooks = `-- name: ListInboundHooks :many
-select id, project_id, conversation_id, name, token_hash, enabled, created_by, created_at, last_used_at from inbound_hooks where project_id = $1 order by created_at desc
+select id, project_id, conversation_id, name, token_hash, enabled, created_by, created_at, last_used_at, kind, header_template from inbound_hooks where project_id = $1 order by created_at desc
 `
 
 func (q *Queries) ListInboundHooks(ctx context.Context, projectID pgtype.UUID) ([]InboundHook, error) {
@@ -345,6 +358,8 @@ func (q *Queries) ListInboundHooks(ctx context.Context, projectID pgtype.UUID) (
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.LastUsedAt,
+			&i.Kind,
+			&i.HeaderTemplate,
 		); err != nil {
 			return nil, err
 		}
@@ -471,7 +486,7 @@ func (q *Queries) RecordWebhookDelivery(ctx context.Context, arg RecordWebhookDe
 const rotateInboundHook = `-- name: RotateInboundHook :one
 update inbound_hooks set token_hash = $1
 where id = $2
-returning id, project_id, conversation_id, name, token_hash, enabled, created_by, created_at, last_used_at
+returning id, project_id, conversation_id, name, token_hash, enabled, created_by, created_at, last_used_at, kind, header_template
 `
 
 type RotateInboundHookParams struct {
@@ -492,6 +507,8 @@ func (q *Queries) RotateInboundHook(ctx context.Context, arg RotateInboundHookPa
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.LastUsedAt,
+		&i.Kind,
+		&i.HeaderTemplate,
 	)
 	return i, err
 }
@@ -524,19 +541,29 @@ func (q *Queries) TrimWebhookDeliveries(ctx context.Context, subscriptionID pgty
 const updateInboundHook = `-- name: UpdateInboundHook :one
 update inbound_hooks set
     name = coalesce($1, name),
-    enabled = coalesce($2, enabled)
-where id = $3
-returning id, project_id, conversation_id, name, token_hash, enabled, created_by, created_at, last_used_at
+    enabled = coalesce($2, enabled),
+    kind = coalesce($3, kind),
+    header_template = coalesce($4, header_template)
+where id = $5
+returning id, project_id, conversation_id, name, token_hash, enabled, created_by, created_at, last_used_at, kind, header_template
 `
 
 type UpdateInboundHookParams struct {
-	Name    pgtype.Text `json:"name"`
-	Enabled pgtype.Bool `json:"enabled"`
-	ID      pgtype.UUID `json:"id"`
+	Name           pgtype.Text `json:"name"`
+	Enabled        pgtype.Bool `json:"enabled"`
+	Kind           pgtype.Text `json:"kind"`
+	HeaderTemplate pgtype.Text `json:"header_template"`
+	ID             pgtype.UUID `json:"id"`
 }
 
 func (q *Queries) UpdateInboundHook(ctx context.Context, arg UpdateInboundHookParams) (InboundHook, error) {
-	row := q.db.QueryRow(ctx, updateInboundHook, arg.Name, arg.Enabled, arg.ID)
+	row := q.db.QueryRow(ctx, updateInboundHook,
+		arg.Name,
+		arg.Enabled,
+		arg.Kind,
+		arg.HeaderTemplate,
+		arg.ID,
+	)
 	var i InboundHook
 	err := row.Scan(
 		&i.ID,
@@ -548,6 +575,8 @@ func (q *Queries) UpdateInboundHook(ctx context.Context, arg UpdateInboundHookPa
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.LastUsedAt,
+		&i.Kind,
+		&i.HeaderTemplate,
 	)
 	return i, err
 }
