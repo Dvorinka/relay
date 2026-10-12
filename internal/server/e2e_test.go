@@ -1700,6 +1700,135 @@ func TestInviteLifecycleKeepsToken(t *testing.T) {
 	}
 }
 
+// A workspace-wide (grant_all) agent must stay inside its own workspace.
+// The invite flow that mints grant_all agents once let them read and write
+// every workspace's projects: AgentScopeForProject had no tenant check.
+func TestAgentGrantAllStaysInWorkspace(t *testing.T) {
+	dsn := os.Getenv("RELAY_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("RELAY_TEST_DATABASE_URL unset")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	goose.SetBaseFS(relaydb.MigrationsFS)
+	if err := goose.SetDialect("postgres"); err != nil {
+		t.Fatal(err)
+	}
+	if err := goose.UpContext(ctx, stdlib.OpenDBFromPool(pool), "migrations"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "delete from rate_limits"); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Config{
+		DatabaseURL:     dsn,
+		AuthSecret:      "test-secret-test-secret-test-secret",
+		InsecureDev:     true,
+		SessionTTLHours: 1,
+	}
+	srv := httptest.NewServer(New(cfg, zap.NewNop(), pool, "test"))
+	defer srv.Close()
+	c := &e2eClient{t: t, base: srv.URL}
+
+	code, _ := c.call("POST", "/api/auth/register",
+		fmt.Sprintf(`{"email":"wide-%d@relay.dev","password":"widepass12345","name":"Wide"}`,
+			time.Now().UnixNano()))
+	if code != 201 && code != 200 {
+		t.Fatal("register A")
+	}
+	code, wsA := c.call("POST", "/api/workspaces", `{"name":"Wide WS A"}`)
+	if code != 201 && code != 200 {
+		t.Fatal("workspace A")
+	}
+	code, projA := c.call("POST", "/api/projects",
+		fmt.Sprintf(`{"workspace_id":%q,"key":"WA","name":"Wide A"}`, wsA["id"]))
+	if code != 201 && code != 200 {
+		t.Fatal("project A")
+	}
+
+	// workspace-wide invite: empty project_ids => grant_all on redeem
+	code, inv := c.call("POST", "/api/workspaces/"+wsA["id"].(string)+"/agent-invites", `{}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("invite: %d %v", code, inv)
+	}
+	code, red := c.call("POST", "/api/agent-invites/redeem",
+		fmt.Sprintf(`{"token":%q,"name":"Wide Bot"}`, inv["token"]))
+	if code != 201 && code != 200 {
+		t.Fatalf("redeem: %d %v", code, red)
+	}
+	rly := red["token"].(string)
+
+	sid, _ := c.mcp(rly, "", "1", "initialize",
+		`{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"e2e","version":"0"}}`)
+	if sid == "" {
+		t.Fatal("no mcp session id")
+	}
+	req, _ := http.NewRequest("POST", srv.URL+"/mcp",
+		strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/initialized"}`))
+	req.Header.Set("Authorization", "Bearer "+rly)
+	req.Header.Set("Mcp-Session-Id", sid)
+	req.Header.Set("Content-Type", "application/json")
+	_, _ = http.DefaultClient.Do(req)
+
+	// positive control: the agent's own workspace works
+	_, env := c.mcp(rly, sid, "2", "tools/call",
+		fmt.Sprintf(`{"name":"send_message","arguments":{"project_id":%q,"body":"hello home"}}`, projA["id"]))
+	if got := mcpToolResult(t, env)["body"]; got != "hello home" {
+		t.Fatalf("own-workspace post failed: %v", env)
+	}
+
+	// second user, second workspace, second project
+	c2 := &e2eClient{t: t, base: srv.URL}
+	code, _ = c2.call("POST", "/api/auth/register",
+		fmt.Sprintf(`{"email":"wideb-%d@relay.dev","password":"widepass12345","name":"WideB"}`,
+			time.Now().UnixNano()))
+	if code != 201 && code != 200 {
+		t.Fatal("register B")
+	}
+	code, wsB := c2.call("POST", "/api/workspaces", `{"name":"Wide WS B"}`)
+	if code != 201 && code != 200 {
+		t.Fatal("workspace B")
+	}
+	code, projB := c2.call("POST", "/api/projects",
+		fmt.Sprintf(`{"workspace_id":%q,"key":"WB","name":"Wide B"}`, wsB["id"]))
+	if code != 201 && code != 200 {
+		t.Fatal("project B")
+	}
+
+	toolText := func(env map[string]any) string {
+		result, _ := env["result"].(map[string]any)
+		content, _ := result["content"].([]any)
+		if len(content) == 0 {
+			return ""
+		}
+		m, _ := content[0].(map[string]any)
+		s, _ := m["text"].(string)
+		return s
+	}
+
+	// cross-workspace write must be denied
+	_, env = c.mcp(rly, sid, "3", "tools/call",
+		fmt.Sprintf(`{"name":"send_message","arguments":{"project_id":%q,"body":"intruder"}}`, projB["id"]))
+	if got := toolText(env); !strings.Contains(got, "no grant") &&
+		!strings.Contains(got, "missing scope") && !strings.Contains(got, "not granted") {
+		t.Fatalf("cross-workspace post was not denied: %v", env)
+	}
+
+	// cross-workspace read must be denied
+	_, env = c.mcp(rly, sid, "4", "tools/call",
+		fmt.Sprintf(`{"name":"list_conversations","arguments":{"project_id":%q}}`, projB["id"]))
+	if got := toolText(env); !strings.Contains(got, "no grant") &&
+		!strings.Contains(got, "missing scope") && !strings.Contains(got, "not granted") {
+		t.Fatalf("cross-workspace read was not denied: %v", env)
+	}
+}
+
 // A multi-use invite (max_uses>1) onboards several agents with one token;
 // the (max_uses+1)-th redeem is denied.
 func TestInviteMultiUse(t *testing.T) {

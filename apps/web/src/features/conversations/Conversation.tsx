@@ -69,6 +69,7 @@ import { confirmDestructive } from "../../components/Confirm";
 import { openProfile } from "../../components/ProfileModal";
 import { subscribe } from "../../lib/events";
 import { loadNameColors, nameColorFor } from "../../lib/namecolors";
+import { attachmentMarker, stripMarkerText } from "../../lib/markers";
 import { tagChip } from "../../lib/tagcolor";
 import { mediaURL, net } from "../../lib/net";
 import {
@@ -159,6 +160,10 @@ type PendingAttachment = {
   status: "uploading" | "ready" | "queued" | "error";
   attachmentId?: string;
   error?: string;
+  // The exact [image N]/[filename] token inserted into the draft on stage.
+  // Removed with the entry when its upload fails or its chip is removed,
+  // so the draft never keeps a dead token.
+  marker?: string;
   // Restored-from-localStorage entries carry a stub File (0 bytes); size
   // keeps the real byte count for the chip's label.
   size?: number;
@@ -1759,14 +1764,20 @@ function MessageRow(props: {
   function removeEditFile(localId: string) {
     const item = editFiles().find((p) => p.localId === localId);
     if (item?.previewUrl) URL.revokeObjectURL(item.previewUrl);
+    if (item?.marker) {
+      setEditDraft((cur) => stripMarkerText(cur, item.marker!));
+    }
     setEditFiles((cur) => cur.filter((p) => p.localId !== localId));
   }
 
-  function addEditFiles(files: readonly File[]) {
+  // Returns the staged entry ids so callers (paste) can link draft markers.
+  function addEditFiles(files: readonly File[]): string[] {
+    const ids: string[] = [];
     for (const file of files) {
       const localId = `${Date.now().toString(36)}-${Math.random()
         .toString(36)
         .slice(2)}`;
+      ids.push(localId);
       const entry: PendingAttachment = {
         localId,
         file,
@@ -1792,7 +1803,7 @@ function MessageRow(props: {
               ),
             ),
           )
-          .catch((err) =>
+          .catch((err) => {
             setEditFiles((cur) =>
               cur.map((p) =>
                 p.localId === localId
@@ -1804,10 +1815,17 @@ function MessageRow(props: {
                     }
                   : p,
               ),
-            ),
-          );
+            );
+            const marker = editFiles().find(
+              (p) => p.localId === localId,
+            )?.marker;
+            if (marker) {
+              setEditDraft((cur) => stripMarkerText(cur, marker));
+            }
+          });
       }
     }
+    return ids;
   }
 
   const editFilesReady = () =>
@@ -1825,15 +1843,22 @@ function MessageRow(props: {
       (p) => p.file.type.startsWith("image/") && p.status !== "error",
     ).length;
     for (const file of files) {
-      addEditFiles([file]);
+      const [stagedId] = addEditFiles([file]);
       if (!file.type.startsWith("image/")) continue;
       n += 1;
+      const text = `[image ${n}]`;
+      if (stagedId) {
+        setEditFiles((cur) =>
+          cur.map((p) =>
+            p.localId === stagedId ? { ...p, marker: text } : p,
+          ),
+        );
+      }
       const cur = editDraft();
       const start = el.selectionStart ?? cur.length;
       const end = el.selectionEnd ?? cur.length;
       const pre = start > 0 && !/\s/.test(cur[start - 1]!) ? " " : "";
       const post = end < cur.length && !/\s/.test(cur[end]!) ? " " : " ";
-      const text = `[image ${n}]`;
       setEditDraft(cur.slice(0, start) + pre + text + post + cur.slice(end));
       const pos = start + pre.length + text.length + post.length;
       el.selectionStart = el.selectionEnd = pos;
@@ -3648,6 +3673,11 @@ function ConversationThread(props: {
     if (item?.attachmentId?.startsWith("att:")) {
       void removeOutboxEntry(item.attachmentId);
     }
+    // The entry's draft marker goes with it — otherwise a removed (or
+    // never-uploaded) file leaves a dead [filename] token behind.
+    if (item?.marker) {
+      setDraft((cur) => stripMarkerText(cur, item.marker!));
+    }
     setPending((cur) => cur.filter((p) => p.localId !== localId));
   }
 
@@ -3670,6 +3700,13 @@ function ConversationThread(props: {
               ? err.message
               : "Upload failed",
       });
+      // The file will never attach (e.g. 403 on a limited-tier server) —
+      // drop its draft marker now so it can't send as a dead token. The
+      // error chip stays, with the reason.
+      const marker = pending().find((p) => p.localId === localId)?.marker;
+      if (marker) {
+        setDraft((cur) => stripMarkerText(cur, marker));
+      }
     }
   }
 
@@ -3742,12 +3779,9 @@ function ConversationThread(props: {
             // Never-focused textareas report caret 0 — append at the end.
             inputEl.selectionStart = inputEl.selectionEnd = draft().length;
           }
-          insertAtCursor(
-            inputEl,
-            file.type.startsWith("image/")
-              ? `[image ${++imgN}]`
-              : `[${file.name.replaceAll("[", "").replaceAll("]", "")}]`,
-          );
+          const marker = attachmentMarker(file, file.type.startsWith("image/") ? ++imgN : 0);
+          updatePending(localId, { marker });
+          insertAtCursor(inputEl, marker);
         }
       }
     }
