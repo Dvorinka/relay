@@ -1122,11 +1122,121 @@ func (s *Service) getAttachment(ctx context.Context, req mcp.CallToolRequest) (*
 	return jsonResult(out)
 }
 
-// messageJSONFull is messageJSON plus the attachments list — used wherever a
-// message is emitted so live updates never strip attachment rows.
+// messageJSONFull is messageJSON plus the attachments list — the shape for
+// MCP tool RESULT payloads. SSE broadcasts must use messageFrame instead,
+// which carries the full MessageView wire shape live views expect.
 func (s *Service) messageJSONFull(ctx context.Context, m db.GetMessageFullRow) gin.H {
 	out := messageJSON(m)
 	out["attachments"] = s.attachmentsJSON(ctx, m.ID)
+	return out
+}
+
+// messageFrame renders one message for SSE broadcast in the exact
+// MessageView wire shape the REST API serves (and the SPA consumes):
+// reactions/read_by default to [], agent_read to false, the author avatar
+// key is avatar_url (not avatar), timestamps are RFC3339 strings.
+// Broadcasts must never use the slimmer messageJSON shape — an agent-shaped
+// frame once crashed live-append in the browser (see #112; the client still
+// normalizes for compatibility with older servers). Pure tool RESULT
+// payloads intentionally keep the slim shape for agent-parser compatibility.
+func (s *Service) messageFrame(ctx context.Context, m db.GetMessageFullRow) gin.H {
+	out := messageJSON(m)
+	out["id"] = m.ID.String()
+	out["conversation_id"] = m.ConversationID.String()
+	if author, ok := out["author"].(gin.H); ok {
+		author["avatar_url"] = author["avatar"]
+		delete(author, "avatar")
+	}
+	out["created_at"] = m.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00")
+	if m.EditedAt.Valid {
+		out["edited_at"] = m.EditedAt.Time.Format("2006-01-02T15:04:05Z07:00")
+	} else {
+		out["edited_at"] = nil
+	}
+	if th, ok := out["thread"].(gin.H); ok {
+		var title any
+		if m.ThreadTitle.Valid {
+			title = m.ThreadTitle.String
+		}
+		th["title"] = title
+	}
+	if fwd, ok := out["forwarded"].(gin.H); ok {
+		if !m.FwdProjectID.Valid {
+			delete(fwd, "project_id")
+		}
+	}
+	out["attachments"] = s.attachmentsJSON(ctx, m.ID)
+	out["reactions"] = bucketReactions(s.reactionRows(ctx, m.ID))
+	readers := mapReaders(s.readerRows(ctx, m.ID))
+	out["read_by"] = readers
+	out["agent_read"] = len(readers) > 0
+	return out
+}
+
+func (s *Service) reactionRows(ctx context.Context, id pgtype.UUID) []db.ListReactionsForMessagesRow {
+	rows, err := s.q.ListReactionsForMessages(ctx, []pgtype.UUID{id})
+	if err != nil {
+		return nil
+	}
+	return rows
+}
+
+func (s *Service) readerRows(ctx context.Context, id pgtype.UUID) []db.AgentReadersForMessagesRow {
+	rows, err := s.q.AgentReadersForMessages(ctx, []pgtype.UUID{id})
+	if err != nil {
+		return nil
+	}
+	return rows
+}
+
+// bucketReactions aggregates reaction rows into the MessageView bucket
+// shape (emoji/count/mine/names, first-seen emoji order). Broadcasts have
+// no viewing user, so mine is always false. Pure — unit tested.
+func bucketReactions(rows []db.ListReactionsForMessagesRow) []gin.H {
+	type bucket struct {
+		count int
+		names []string
+	}
+	byEmoji := map[string]*bucket{}
+	var order []string
+	for _, r := range rows {
+		b, ok := byEmoji[r.Emoji]
+		if !ok {
+			b = &bucket{}
+			byEmoji[r.Emoji] = b
+			order = append(order, r.Emoji)
+		}
+		b.count++
+		if len(b.names) < 8 {
+			b.names = append(b.names, r.ReactorName)
+		}
+	}
+	out := make([]gin.H, 0, len(order))
+	for _, emoji := range order {
+		b := byEmoji[emoji]
+		out = append(out, gin.H{
+			"emoji": emoji, "count": b.count, "mine": false, "names": b.names,
+		})
+	}
+	return out
+}
+
+// mapReaders renders agent read receipts in the MessageView shape.
+// Pure — unit tested.
+func mapReaders(rows []db.AgentReadersForMessagesRow) []gin.H {
+	out := make([]gin.H, 0, len(rows))
+	for _, r := range rows {
+		var avatar *string
+		if r.AvatarKey.Valid {
+			a := "/api/files/" + r.AvatarKey.String
+			avatar = &a
+		}
+		out = append(out, gin.H{
+			"id": r.AgentID.String(), "name": r.Name,
+			"avatar_url": avatar,
+			"read_at":    r.ReadAt.Time.Format("2006-01-02T15:04:05Z07:00"),
+		})
+	}
 	return out
 }
 
@@ -1442,7 +1552,7 @@ func (s *Service) sendMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 		return errResult(err)
 	}
 	out := s.messageJSONFull(ctx, m)
-	s.publish(ctx, cid, "message.created", map[string]any{"conversation_id": cid.String(), "message": out})
+	s.publish(ctx, cid, "message.created", map[string]any{"conversation_id": cid.String(), "message": s.messageFrame(ctx, m)})
 	// A reply inside a thread bumps the parent message's chip live.
 	if conv, err := s.q.GetConversationByID(ctx, cid); err == nil && conv.Kind == "thread" {
 		if tr, err := s.q.GetThread(ctx, cid); err == nil {
@@ -1576,7 +1686,7 @@ func (s *Service) editMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 		return errResult(err)
 	}
 	s.publish(ctx, m.ConversationID, "message.updated",
-		map[string]any{"conversation_id": m.ConversationID.String(), "message": s.messageJSONFull(ctx, m)})
+		map[string]any{"conversation_id": m.ConversationID.String(), "message": s.messageFrame(ctx, m)})
 	return jsonResult(s.messageJSONFull(ctx, m))
 }
 
@@ -1736,7 +1846,7 @@ func (s *Service) postThreadNotice(ctx context.Context, parentConvID, threadID p
 	}
 	if m, err := s.q.GetMessageFull(ctx, mid); err == nil {
 		s.publish(ctx, parentConvID, "message.created",
-			map[string]any{"conversation_id": parentConvID.String(), "message": s.messageJSONFull(ctx, m)})
+			map[string]any{"conversation_id": parentConvID.String(), "message": s.messageFrame(ctx, m)})
 	}
 }
 
@@ -1833,7 +1943,7 @@ func (s *Service) requestInput(ctx context.Context, req mcp.CallToolRequest) (*m
 		return errResult(err)
 	}
 	s.publish(ctx, tr.ID, "message.created",
-		map[string]any{"conversation_id": tr.ID.String(), "message": s.messageJSONFull(ctx, m)})
+		map[string]any{"conversation_id": tr.ID.String(), "message": s.messageFrame(ctx, m)})
 	// the reply bumps the chip's count on the parent message
 	if tr2, err := s.q.GetThread(ctx, tr.ID); err == nil {
 		s.publish(ctx, tr2.ParentConversationID, "thread.updated", map[string]any{
@@ -1849,7 +1959,7 @@ func (s *Service) requestInput(ctx context.Context, req mcp.CallToolRequest) (*m
 	}
 	return jsonResult(gin.H{
 		"thread":  threadOut(tr),
-		"message": s.messageJSONFull(ctx, m),
+		"message": s.messageFrame(ctx, m),
 	})
 }
 
@@ -1897,13 +2007,13 @@ func (s *Service) resolveInput(ctx context.Context, req mcp.CallToolRequest) (*m
 		if err == nil {
 			if nm, err := s.q.GetMessageFull(ctx, nid); err == nil {
 				s.publish(ctx, cid, "message.created",
-					map[string]any{"conversation_id": cid.String(), "message": messageJSON(nm)})
+					map[string]any{"conversation_id": cid.String(), "message": s.messageFrame(ctx, nm)})
 			}
 		}
 	}
 	if fresh, err := s.q.GetMessageFull(ctx, mid); err == nil {
 		s.publish(ctx, cid, "message.updated", map[string]any{
-			"conversation_id": cid.String(), "message": messageJSON(fresh)})
+			"conversation_id": cid.String(), "message": s.messageFrame(ctx, fresh)})
 	}
 	return jsonResult(gin.H{"resolved": mid.String(), "note": note})
 }
@@ -1958,7 +2068,7 @@ func (s *Service) workStart(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 		return errResult(err)
 	}
 	s.publish(ctx, cid, "message.created",
-		map[string]any{"conversation_id": cid.String(), "message": s.messageJSONFull(ctx, m)})
+		map[string]any{"conversation_id": cid.String(), "message": s.messageFrame(ctx, m)})
 	return jsonResult(gin.H{
 		"message_id":       mid.String(),
 		"conversation_id":  cid.String(),
@@ -2007,13 +2117,13 @@ func (s *Service) workStop(ctx context.Context, req mcp.CallToolRequest) (*mcp.C
 		}); err == nil {
 			if nm, err := s.q.GetMessageFull(ctx, nid); err == nil {
 				s.publish(ctx, target, "message.created",
-					map[string]any{"conversation_id": target.String(), "message": messageJSON(nm)})
+					map[string]any{"conversation_id": target.String(), "message": s.messageFrame(ctx, nm)})
 			}
 		}
 	}
 	if fresh, err := s.q.GetMessageFull(ctx, mid); err == nil {
 		s.publish(ctx, cid, "message.updated", map[string]any{
-			"conversation_id": cid.String(), "message": messageJSON(fresh)})
+			"conversation_id": cid.String(), "message": s.messageFrame(ctx, fresh)})
 	}
 	return jsonResult(gin.H{"stopped": mid.String()})
 }
@@ -2052,7 +2162,7 @@ func (s *Service) pinMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	}
 	if m, err := s.q.GetMessageFull(ctx, mid); err == nil {
 		s.publish(ctx, convID, "message.updated", map[string]any{
-			"conversation_id": convID.String(), "message": s.messageJSONFull(ctx, m)})
+			"conversation_id": convID.String(), "message": s.messageFrame(ctx, m)})
 	}
 	return jsonResult(map[string]any{"message_id": mid.String(), "pinned": pinned})
 }
@@ -2137,7 +2247,7 @@ func (s *Service) forwardMessage(ctx context.Context, req mcp.CallToolRequest) (
 		return errResult(err)
 	}
 	s.publish(ctx, target.ID, "message.created", map[string]any{
-		"conversation_id": target.ID.String(), "message": s.messageJSONFull(ctx, m)})
+		"conversation_id": target.ID.String(), "message": s.messageFrame(ctx, m)})
 	return jsonResult(map[string]any{"message": s.messageJSONFull(ctx, m)})
 }
 
