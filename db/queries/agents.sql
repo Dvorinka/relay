@@ -105,11 +105,16 @@ update mcp_tokens set last_used_at = now() where id = sqlc.arg(id);
 -- scopes the agent holds on a project; empty set when ungranted. An
 -- explicit grant row wins; grant_all agents fall back to grant_scopes,
 -- which is what lets workspace-wide invites cover future projects.
+-- The grant_all fallback is workspace-scoped: without the projects join
+-- guard, a grant_all agent in ANY workspace could read/write EVERY
+-- workspace's projects.
 select coalesce(
     g.scopes,
-    case when a.grant_all then a.grant_scopes else '{}'::text[] end
+    case when a.grant_all and p.workspace_id = a.workspace_id
+         then a.grant_scopes else '{}'::text[] end
 ) as scopes
 from agents a
+join projects p on p.id = sqlc.arg(project_id)
 left join agent_project_permissions g
        on g.agent_id = a.id and g.project_id = sqlc.arg(project_id)
 where a.id = sqlc.arg(agent_id);
