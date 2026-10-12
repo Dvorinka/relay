@@ -25,9 +25,11 @@ func (q *Queries) AgentLastSeen(ctx context.Context, agentID pgtype.UUID) (pgtyp
 const agentScopeForProject = `-- name: AgentScopeForProject :one
 select coalesce(
     g.scopes,
-    case when a.grant_all then a.grant_scopes else '{}'::text[] end
+    case when a.grant_all and p.workspace_id = a.workspace_id
+         then a.grant_scopes else '{}'::text[] end
 ) as scopes
 from agents a
+join projects p on p.id = $1
 left join agent_project_permissions g
        on g.agent_id = a.id and g.project_id = $1
 where a.id = $2
@@ -41,6 +43,9 @@ type AgentScopeForProjectParams struct {
 // scopes the agent holds on a project; empty set when ungranted. An
 // explicit grant row wins; grant_all agents fall back to grant_scopes,
 // which is what lets workspace-wide invites cover future projects.
+// The grant_all fallback is workspace-scoped: without the projects join
+// guard, a grant_all agent in ANY workspace could read/write EVERY
+// workspace's projects.
 func (q *Queries) AgentScopeForProject(ctx context.Context, arg AgentScopeForProjectParams) ([]string, error) {
 	row := q.db.QueryRow(ctx, agentScopeForProject, arg.ProjectID, arg.AgentID)
 	var scopes []string
