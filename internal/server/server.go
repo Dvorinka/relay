@@ -22,6 +22,7 @@ import (
 	"github.com/Dvorinka/relay/internal/db"
 	"github.com/Dvorinka/relay/internal/events"
 	"github.com/Dvorinka/relay/internal/github"
+	"github.com/Dvorinka/relay/internal/httpx"
 	"github.com/Dvorinka/relay/internal/ideas"
 	"github.com/Dvorinka/relay/internal/issues"
 	"github.com/Dvorinka/relay/internal/mail"
@@ -255,6 +256,12 @@ func mountStatic(r *gin.Engine, dir string) {
 	r.NoRoute(func(c *gin.Context) {
 		c.Header("Cache-Control", "no-cache")
 		name := path.Clean("/" + c.Request.URL.Path)
+		// API misses must answer 404 JSON — falling through to index.html
+		// returns 200 + the SPA shell, which API clients read as success.
+		if name == "/api" || name == "/mcp" || strings.HasPrefix(name, "/api/") || strings.HasPrefix(name, "/mcp/") {
+			httpx.Error(c, http.StatusNotFound, "not_found", "unknown route")
+			return
+		}
 		if info, err := os.Stat(filepath.Join(dir, name)); err == nil && info.Mode().IsRegular() {
 			c.File(filepath.Join(dir, name))
 			return
