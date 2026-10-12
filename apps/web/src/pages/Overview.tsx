@@ -188,7 +188,11 @@ export default function Overview() {
   );
 
   const unsub = subscribe((e) => {
-    if (e.type.startsWith("issue.") || e.type === "review.created") {
+    if (
+      e.type.startsWith("issue.") ||
+      e.type.startsWith("review.") ||
+      e.type === "stream.resync"
+    ) {
       void refetch();
     }
   });

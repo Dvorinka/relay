@@ -35,6 +35,11 @@ export function Board(props: {
   );
 
   const unsub = subscribe((e) => {
+    if (e.type === "stream.resync") {
+      refetch();
+      refetchTodos();
+      return;
+    }
     if (e.project_id !== props.project.id) return;
     if (e.type.startsWith("issue.")) refetch();
     if (e.type === "todo.changed") refetchTodos();

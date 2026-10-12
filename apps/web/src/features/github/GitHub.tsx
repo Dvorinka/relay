@@ -319,6 +319,10 @@ function ActionsRuns(props: { projectId: string; repo: string }) {
   );
   // webhook → bus → SSE: a check/workflow event on this repo refreshes the list
   const unsub = subscribe((e) => {
+    if (e.type === "stream.resync") {
+      void refetch();
+      return;
+    }
     if (e.type === "github.ci" && e.data?.repo === props.repo) void refetch();
   });
   onCleanup(unsub);
@@ -521,12 +525,26 @@ export function DevelopmentPanel(props: {
     () => props.projectId,
     (id) => api.listProjectRepos(id),
   );
-  const [dev] = createResource(
+  const [dev, { refetch: refetchDev }] = createResource(
     () => (linked.state === "ready" && (linked()?.repos.length ?? 0) > 0
       ? props.projectId
       : undefined),
     (id) => api.projectDevelopment(id),
   );
+  // Mirror flips (issue.updated), CI runs (github.ci) and reconnects repaint
+  // the linked list and snapshot — repo link/unlink has no event yet.
+  const unsubDev = subscribe((e) => {
+    if (e.type === "stream.resync") {
+      void refetchLinked();
+      return;
+    }
+    if (e.project_id !== props.projectId) return;
+    if (e.type.startsWith("issue.") || e.type === "github.ci") {
+      void refetchLinked();
+      void refetchDev();
+    }
+  });
+  onCleanup(unsubDev);
   const [confirm, setConfirm] = createSignal<string | null>(null);
   const [importing, setImporting] = createSignal<string | null>(null);
   const [importMsg, setImportMsg] = createSignal<Record<string, string>>({});

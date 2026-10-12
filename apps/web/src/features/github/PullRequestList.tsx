@@ -4,10 +4,12 @@ import {
   createResource,
   createSignal,
   For,
+  onCleanup,
   Show,
 } from "solid-js";
 import { useSearchParams } from "@solidjs/router";
 import { api } from "../../lib/api";
+import { subscribe } from "../../lib/events";
 import { Spinner, Tip } from "../../components/ui";
 import { GitPullRequestIcon } from "../../components/icons";
 import { markGitHub } from "./GitHub";
@@ -19,10 +21,21 @@ import type { Issue } from "@relay/api-client";
 // github.kind="pr" (import + webhooks keep them current). Listed here —
 // never in the Issues view — split into open and closed.
 export function PullRequestList(props: { projectId: string }) {
-  const [issues] = createResource(
+  const [issues, { refetch }] = createResource(
     () => props.projectId,
     async (id) => (await api.listIssues(id)).issues,
   );
+  // Mirrors flip via issue.updated (SyncMirroredIssue + webhooks) and CI
+  // runs move via github.ci — repaint without a manual refresh.
+  const unsub = subscribe((e) => {
+    if (e.type === "stream.resync") {
+      refetch();
+      return;
+    }
+    if (e.project_id !== props.projectId) return;
+    if (e.type.startsWith("issue.") || e.type === "github.ci") refetch();
+  });
+  onCleanup(unsub);
   const [repos] = createResource(
     () => props.projectId,
     async (id) => (await api.listProjectRepos(id)).repos,

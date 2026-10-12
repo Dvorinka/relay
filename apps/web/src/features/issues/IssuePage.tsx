@@ -5,10 +5,11 @@ import type {
   UpdateIssueRequest,
 } from "@relay/api-client";
 import { A, useParams } from "@solidjs/router";
-import { createResource, createSignal, For, Show } from "solid-js";
+import { createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { FormError, Spinner } from "../../components/ui";
 import { Select } from "../../components/Select";
 import { api } from "../../lib/api";
+import { subscribe } from "../../lib/events";
 import { Markdown } from "../../lib/markdown";
 import { timeAgo } from "../../lib/time";
 import { Conversation } from "../conversations/Conversation";
@@ -253,10 +254,33 @@ export default function IssuePage() {
     () => params.projectId,
     async (id) => (await api.listLabels(id)).labels,
   );
-  const [thread] = createResource(
+  const [thread, { refetch: refetchThread }] = createResource(
     () => params.issueId,
     (id) => api.getIssueConversation(id),
   );
+
+  // Concurrent title/status/assignee/comment changes land live — the page
+  // used to freeze at mount. Message frames are filtered to this issue's
+  // own thread conversation; reviews repaint the linked block.
+  const unsub = subscribe((e) => {
+    if (e.type === "stream.resync") {
+      void refetch();
+      void refetchThread();
+      return;
+    }
+    if (e.project_id !== params.projectId) return;
+    if (e.type.startsWith("issue.") || e.type.startsWith("review.")) {
+      void refetch();
+    }
+    if (
+      e.type.startsWith("message.") &&
+      thread() &&
+      (e.data?.conversation_id as string | undefined) === thread()?.id
+    ) {
+      void refetchThread();
+    }
+  });
+  onCleanup(unsub);
 
   const issue = () => detail()?.issue;
 

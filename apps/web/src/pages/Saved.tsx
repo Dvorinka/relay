@@ -1,9 +1,10 @@
 // Saved: the personal "for later" tray — saved messages plus pending
 // reminders. Both lists deep-link back into the conversation via ?msg=.
 import { A } from "@solidjs/router";
-import { createResource, For, Show, type JSX } from "solid-js";
+import { createResource, For, onCleanup, Show, type JSX } from "solid-js";
 import type { Reminder } from "@relay/api-client";
 import { api } from "../lib/api";
+import { subscribe } from "../lib/events";
 import { timeAgo, timeUntil } from "../lib/time";
 import { savedItems, seedSaved } from "../stores/saved";
 import { BookmarkIcon, ClockIcon, TrashIcon } from "../components/icons";
@@ -25,6 +26,13 @@ export default function Saved(): JSX.Element {
 
   const pending = () => (reminders() ?? []).filter((r) => !r.fired_at);
   const fired = () => (reminders() ?? []).filter((r) => r.fired_at);
+
+  // A fired reminder moves pending→fired live; reconnects reconcile too.
+  // (The toast comes from notify.ts — this repaints the lists.)
+  const unsub = subscribe((e) => {
+    if (e.type === "reminder.fired" || e.type === "stream.resync") refetch();
+  });
+  onCleanup(unsub);
 
   async function cancel(id: string) {
     try {

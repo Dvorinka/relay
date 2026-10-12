@@ -1450,6 +1450,23 @@ func (s *Service) onIssue(ctx context.Context, p webhookPayload) {
 		s.ghActivity(ctx, item.issueID, "github_mirrored",
 			fmt.Sprintf(`{"repo":"%s","number":%d,"state":%q}`, repo.Owner+"/"+repo.Name, p.Issue.Number, p.Issue.State))
 	}
+	s.publishIssue(repo.ProjectID, item.issueID, created)
+}
+
+// publishIssue tells live lists about external GitHub activity (webhook
+// mirrors). Without it, issues/PRs opened or closed on github.com stay
+// invisible until a manual refresh — only CI check events broadcast.
+func (s *Service) publishIssue(projectID pgtype.UUID, issueID pgtype.UUID, created bool) {
+	if s.Bus == nil {
+		return
+	}
+	pid, _ := uuid.FromBytes(projectID.Bytes[:])
+	typ := "issue.updated"
+	if created {
+		typ = "issue.created"
+	}
+	s.Bus.Publish(events.Event{Type: typ, ProjectID: pid,
+		Data: map[string]any{"issue": map[string]any{"id": issueID.String()}}})
 }
 
 // importItem is one GitHub object normalized for upsertGitHub.
@@ -1601,6 +1618,7 @@ func (s *Service) onPullRequest(ctx context.Context, p webhookPayload) {
 			fmt.Sprintf(`{"repo":"%s","number":%d,"state":%q,"kind":"pr","author":%q}`,
 				repo.Owner+"/"+repo.Name, pr.Number, state, pr.User.Login))
 	}
+	s.publishIssue(repo.ProjectID, item.issueID, created)
 }
 
 // --- bulk import ---

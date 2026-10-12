@@ -2768,6 +2768,10 @@ function ThreadsModal(props: {
     async (id) => (await api.listThreads(id)).threads,
   );
   const unsub = subscribe((e) => {
+    if (e.type === "stream.resync") {
+      refetch();
+      return;
+    }
     if (e.project_id === props.projectId && e.type.startsWith("thread.")) {
       refetch();
     }
@@ -3050,11 +3054,11 @@ function ConversationThread(props: {
 
   // Mentions: @ opens the unified menu (people, agents, issues, PRs, files),
   // # jumps straight to issues. @file:/@gh: keep their prefixes for paths.
-  const [repos] = createResource(
+  const [repos, { refetch: refetchRepos }] = createResource(
     () => props.projectId,
     async (id) => (await api.listProjectRepos(id)).repos,
   );
-  const [mentionables] = createResource(
+  const [mentionables, { refetch: refetchMentionables }] = createResource(
     () => props.projectId,
     async (id) => {
       try {
@@ -3064,6 +3068,24 @@ function ConversationThread(props: {
       }
     },
   );
+  // The @-menu loads once — a new agent/member/channel would otherwise stay
+  // invisible until remount. Repos ride along (cheap, same trigger).
+  const unsubMenus = subscribe((e) => {
+    if (e.type === "stream.resync") {
+      refetchMentionables();
+      return;
+    }
+    if (e.project_id !== props.projectId) return;
+    if (
+      e.type === "agent.changed" ||
+      e.type.startsWith("channel.") ||
+      e.type.startsWith("issue.")
+    ) {
+      refetchMentionables();
+      refetchRepos();
+    }
+  });
+  onCleanup(unsubMenus);
   const [localPaths, setLocalPaths] = createSignal<string[] | null>(null);
   const [ghPaths, setGhPaths] = createSignal<string[] | null>(null);
   const [mention, setMention] = createSignal<{
@@ -3233,14 +3255,14 @@ function ConversationThread(props: {
         cur.map((x) => (x.id === mid ? { ...x, reactions } : x)),
       );
     } else if (e.type === "message.read") {
-      // Named agent receipt — merge the reader into each affected message.
+      // Read receipt — agent or human reader — merge into each message.
       const ids = (data.message_ids ?? []) as string[];
-      const agent = data.agent as ReadReceipt | undefined;
-      if (ids.length && agent) {
+      const who = (data.agent ?? data.user) as ReadReceipt | undefined;
+      if (ids.length && who) {
         const receipt: ReadReceipt = {
-          id: agent.id,
-          name: agent.name,
-          avatar_url: agent.avatar_url ?? null,
+          id: who.id,
+          name: who.name,
+          avatar_url: who.avatar_url ?? null,
           read_at: new Date().toISOString(),
         };
         setMessages((cur) =>
@@ -3266,6 +3288,19 @@ function ConversationThread(props: {
         };
         setMessages((cur) =>
           cur.map((x) => (x.id === mid ? { ...x, thread: chip } : x)),
+        );
+      }
+    } else if (e.type === "thread.deleted") {
+      // Expired/deleted thread — drop its chip from the parent message.
+      const mid = data.parent_message_id as string;
+      const tid = data.thread_id as string;
+      if (mid && tid) {
+        setMessages((cur) =>
+          cur.map((x) =>
+            x.id === mid && x.thread?.id === tid
+              ? { ...x, thread: undefined }
+              : x,
+          ),
         );
       }
     }

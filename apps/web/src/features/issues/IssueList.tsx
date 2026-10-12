@@ -228,6 +228,10 @@ export function IssueList(props: { project: Project }) {
   };
 
   const unsub = subscribe((e) => {
+    if (e.type === "stream.resync") {
+      refetch();
+      return;
+    }
     if (e.project_id === props.project.id && e.type.startsWith("issue.")) {
       refetch();
     }

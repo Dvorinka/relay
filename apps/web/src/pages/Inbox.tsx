@@ -63,7 +63,11 @@ function PendingReviews(props: {
     api.myReviews().then((r) => r.reviews),
   );
   const unsub = subscribe((e) => {
-    if (e.type === "review.created" || e.type === "review.responded") {
+    if (
+      e.type === "review.created" ||
+      e.type === "review.responded" ||
+      e.type === "stream.resync"
+    ) {
       void refetch();
     }
   });
@@ -398,7 +402,11 @@ export default function Inbox() {
     shownMentions().length === 0;
 
   const unsub = subscribe((e) => {
-    if (e.type === "message.created") {
+    if (
+      e.type.startsWith("message.") ||
+      e.type === "conversation.cleared" ||
+      e.type === "stream.resync"
+    ) {
       void refetch();
       void refreshUnread();
     }

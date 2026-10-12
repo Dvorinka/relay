@@ -59,6 +59,11 @@ export function Timeline(props: { project: Project }) {
   // Real-time: any work event re-pulls; the dev bundle is 60s-cached
   // server-side, so it trails by at most a minute.
   const unsub = subscribe((e) => {
+    if (e.type === "stream.resync") {
+      refetchIssues();
+      refetchDev();
+      return;
+    }
     if (e.project_id !== props.project.id) return;
     if (
       e.type.startsWith("issue.") ||

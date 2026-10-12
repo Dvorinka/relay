@@ -1,6 +1,15 @@
 import { A, useParams } from "@solidjs/router";
-import { createResource, createSignal, For, Match, Show, Switch } from "solid-js";
+import {
+  createResource,
+  createSignal,
+  For,
+  Match,
+  onCleanup,
+  Show,
+  Switch,
+} from "solid-js";
 import { api } from "../../lib/api";
+import { subscribe } from "../../lib/events";
 import { confirmDestructive } from "../../components/Confirm";
 import { Spinner, Tip } from "../../components/ui";
 import { IssueIcon, PlusIcon, SettingsIcon, XIcon } from "../../components/icons";
@@ -22,6 +31,12 @@ export default function BoardPage() {
     () => params.projectId,
     async (id) => (await api.listBoards(id)).boards,
   );
+  // Board configs have no dedicated event type yet — this only reconciles
+  // after reconnects. (Board/Timeline/Calendar children listen themselves.)
+  const unsubBoards = subscribe((e) => {
+    if (e.type === "stream.resync") refetchBoards();
+  });
+  onCleanup(unsubBoards);
   const [activeBoard, setActiveBoard] = createSignal<string | null>(null);
   const [saving, setSaving] = createSignal(false);
   // Board|Timeline|Calendar pick — persisted so the page reopens where it left.
