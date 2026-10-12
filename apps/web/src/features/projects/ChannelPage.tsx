@@ -12,12 +12,14 @@ import {
   InboxIcon,
   LinkIcon,
   LockIcon,
+  MailIcon,
   PencilIcon,
   ReplyIcon,
   TrashIcon,
 } from "../../components/icons";
 import { Conversation } from "../conversations/Conversation";
 import { IntakeGuide } from "./IntakeGuide";
+import { EmailAlerts } from "./EmailAlerts";
 
 // ChannelPage renders one persistent side channel: the same message surface
 // as the project chat, headed by channel controls (rename, agent access,
@@ -42,6 +44,8 @@ export default function ChannelPage() {
   const [draft, setDraft] = createSignal("");
   const [copied, setCopied] = createSignal(false);
   const [guideOpen, setGuideOpen] = createSignal(false);
+  const [alertsOpen, setAlertsOpen] = createSignal(false);
+  const alertCount = () => channel()?.email_alerts?.length ?? 0;
 
   async function rename() {
     const ch = channel();
@@ -230,6 +234,24 @@ export default function ChannelPage() {
               <LockIcon class="h-4 w-4" />
             </button>
           </Tip>
+          <Tip
+            text={
+              alertCount() > 0
+                ? `Email alerts — ${alertCount()} recipient${alertCount() > 1 ? "s" : ""}`
+                : "Email alerts"
+            }
+            hint="Mail every new message in this channel to a list"
+          >
+            <button
+              type="button"
+              aria-label="Email alerts"
+              aria-pressed={alertCount() > 0}
+              class={`${headerBtn} ${alertCount() > 0 ? "text-accent" : ""}`}
+              onClick={() => setAlertsOpen(true)}
+            >
+              <MailIcon class="h-4 w-4" />
+            </button>
+          </Tip>
           <Tip text="Rename" hint="Rename this channel">
             <button
               type="button"
@@ -281,6 +303,12 @@ export default function ChannelPage() {
         open={guideOpen()}
         onOpenChange={setGuideOpen}
         onMode={(m) => void setIntake(m)}
+      />
+      <EmailAlerts
+        channel={channel}
+        open={alertsOpen()}
+        onOpenChange={setAlertsOpen}
+        onSaved={refetch}
       />
     </div>
   );

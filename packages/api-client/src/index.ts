@@ -53,6 +53,28 @@ export interface UnfurlResult {
   image_url?: string;
   site_name?: string;
 }
+// Workspace SMTP setup — powers channel email alerts. source=env means the
+// server fell back to SMTP_* variables; in-app settings override them.
+export interface SmtpSettings {
+  configured: boolean;
+  source?: "db" | "env";
+  host?: string;
+  port?: string;
+  username?: string;
+  from_address?: string;
+  from_name?: string;
+  has_password?: boolean;
+}
+export interface SmtpSettingsInput {
+  host: string;
+  port: number;
+  username?: string;
+  /** Empty keeps the stored password. */
+  password?: string;
+  from_address: string;
+  from_name?: string;
+  enabled?: boolean;
+}
 // One unread conversation: which channel/issue/brief/thread holds unread
 // messages, with the ids needed to deep-link straight to them.
 export interface UnreadConversation {
@@ -453,6 +475,14 @@ export function createClient(
     health: (signal?: AbortSignal) =>
       request<Health>("/api/health", { signal }),
 
+    // SMTP — workspace-admin settings for channel email alerts
+    getSmtpSettings: () =>
+      request<{ smtp: SmtpSettings }>("/api/settings/smtp"),
+    putSmtpSettings: (input: SmtpSettingsInput) =>
+      put<{ smtp: SmtpSettings }>("/api/settings/smtp", input),
+    testSmtp: (to: string) =>
+      post<{ sent: boolean }>("/api/settings/smtp/test", { to }),
+
     // Auth
     register: (input: RegisterRequest) =>
       post<AuthSession>("/api/auth/register", input),
@@ -604,6 +634,7 @@ export function createClient(
         name?: string;
         agents_blocked?: boolean;
         intake_mode?: "" | "receive" | "chat";
+        email_alerts?: string[];
       },
     ) => patch<{ channel: Channel }>(`/api/channels/${channelId}`, input),
     deleteChannel: (channelId: string) =>

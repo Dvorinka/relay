@@ -2206,6 +2206,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/smtp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read SMTP configuration — workspace admins only
+         * @description The in-app row wins; SMTP_* env vars are the fallback and report source=env. Passwords are never returned — has_password flags one is stored.
+         */
+        get: operations["getSMTPSettings"];
+        /**
+         * Configure SMTP in-app — workspace admins only
+         * @description Writes the smtp_settings row; overrides SMTP_* env. Omit password (or send empty) to keep the stored one. Passwords are AES-256-GCM-encrypted under AUTH_SECRET at rest.
+         */
+        put: operations["putSMTPSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/smtp/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Send a test email through the configured SMTP — workspace admins only */
+        post: operations["testSMTP"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{projectId}/hooks": {
         parameters: {
             query?: never;
@@ -2986,6 +3027,8 @@ export interface components {
              * @description True when intake_mode is set — kept for client compatibility
              */
             intake?: boolean;
+            /** @description Addresses emailed on every new message in this channel */
+            email_alerts?: string[];
             /** Format: date-time */
             created_at: string;
         };
@@ -5520,6 +5563,8 @@ export interface operations {
                      * @description Deprecated alias: true maps to intake_mode=receive, false to ''
                      */
                     intake?: boolean;
+                    /** @description Addresses emailed on every new message in this channel — requires SMTP configured (in-app or SMTP_* env) */
+                    email_alerts?: string[];
                 };
             };
         };
@@ -8157,6 +8202,114 @@ export interface operations {
         responses: {
             /** @description Accepted */
             204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getSMTPSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description SMTP settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        smtp?: {
+                            configured?: boolean;
+                            /** @enum {string} */
+                            source?: "db" | "env";
+                            host?: string;
+                            port?: string;
+                            username?: string;
+                            from_address?: string;
+                            from_name?: string;
+                            has_password?: boolean;
+                        };
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    putSMTPSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    host: string;
+                    /** @description 465 = implicit TLS; anything else uses STARTTLS when offered */
+                    port: number;
+                    username?: string;
+                    /** @description Empty keeps the stored password */
+                    password?: string;
+                    /** Format: email */
+                    from_address: string;
+                    from_name?: string;
+                    enabled?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Saved */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    testSMTP: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: email */
+                    to: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Test mail sent */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description SMTP not configured or bad address */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description SMTP relay refused the send — body carries the upstream error */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

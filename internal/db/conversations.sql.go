@@ -209,7 +209,7 @@ const createChannel = `-- name: CreateChannel :one
 insert into conversations (project_id, kind, title, created_by_user)
 values ($1, 'channel', $2, $3)
 on conflict (project_id, lower(title)) where kind = 'channel' do nothing
-returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake_mode
+returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake_mode, email_alerts
 `
 
 type CreateChannelParams struct {
@@ -237,6 +237,7 @@ func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (C
 		&i.ExpiresAt,
 		&i.AgentsBlocked,
 		&i.IntakeMode,
+		&i.EmailAlerts,
 	)
 	return i, err
 }
@@ -283,7 +284,7 @@ const createProjectConversation = `-- name: CreateProjectConversation :one
 insert into conversations (project_id, kind)
 values ($1, 'project')
 on conflict do nothing
-returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake_mode
+returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake_mode, email_alerts
 `
 
 func (q *Queries) CreateProjectConversation(ctx context.Context, projectID pgtype.UUID) (Conversation, error) {
@@ -304,6 +305,7 @@ func (q *Queries) CreateProjectConversation(ctx context.Context, projectID pgtyp
 		&i.ExpiresAt,
 		&i.AgentsBlocked,
 		&i.IntakeMode,
+		&i.EmailAlerts,
 	)
 	return i, err
 }
@@ -313,7 +315,7 @@ insert into conversations (project_id, kind, parent_message_id, title, created_b
 values ($1, 'thread', $2,
         $3, $4, $5)
 on conflict (parent_message_id) where kind = 'thread' do nothing
-returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake_mode
+returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake_mode, email_alerts
 `
 
 type CreateThreadParams struct {
@@ -351,6 +353,7 @@ func (q *Queries) CreateThread(ctx context.Context, arg CreateThreadParams) (Con
 		&i.ExpiresAt,
 		&i.AgentsBlocked,
 		&i.IntakeMode,
+		&i.EmailAlerts,
 	)
 	return i, err
 }
@@ -360,7 +363,7 @@ insert into conversations (project_id, kind, parent_message_id, title, created_b
 values ($1, 'thread', $2,
         $3, $4, $5)
 on conflict (parent_message_id) where kind = 'thread' do nothing
-returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake_mode
+returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake_mode, email_alerts
 `
 
 type CreateThreadAgentParams struct {
@@ -395,6 +398,7 @@ func (q *Queries) CreateThreadAgent(ctx context.Context, arg CreateThreadAgentPa
 		&i.ExpiresAt,
 		&i.AgentsBlocked,
 		&i.IntakeMode,
+		&i.EmailAlerts,
 	)
 	return i, err
 }
@@ -453,7 +457,7 @@ func (q *Queries) FirstUnreadMessageID(ctx context.Context, arg FirstUnreadMessa
 }
 
 const getConversationByID = `-- name: GetConversationByID :one
-select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake_mode
+select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake_mode, email_alerts
 from conversations
 where id = $1
 `
@@ -476,12 +480,13 @@ func (q *Queries) GetConversationByID(ctx context.Context, id pgtype.UUID) (Conv
 		&i.ExpiresAt,
 		&i.AgentsBlocked,
 		&i.IntakeMode,
+		&i.EmailAlerts,
 	)
 	return i, err
 }
 
 const getConversationForUser = `-- name: GetConversationForUser :one
-select c.id, c.project_id, c.kind, c.issue_id, c.created_at, c.brief_id, c.parent_message_id, c.title, c.created_by_user, c.created_by_agent, c.creator_name_snapshot, c.expires_at, c.agents_blocked, c.intake_mode
+select c.id, c.project_id, c.kind, c.issue_id, c.created_at, c.brief_id, c.parent_message_id, c.title, c.created_by_user, c.created_by_agent, c.creator_name_snapshot, c.expires_at, c.agents_blocked, c.intake_mode, c.email_alerts
 from conversations c
 join projects p on p.id = c.project_id
 join workspace_members wm on wm.workspace_id = p.workspace_id
@@ -512,6 +517,7 @@ func (q *Queries) GetConversationForUser(ctx context.Context, arg GetConversatio
 		&i.ExpiresAt,
 		&i.AgentsBlocked,
 		&i.IntakeMode,
+		&i.EmailAlerts,
 	)
 	return i, err
 }
@@ -665,7 +671,7 @@ func (q *Queries) GetMessageIDByClientMsgID(ctx context.Context, arg GetMessageI
 }
 
 const getProjectConversation = `-- name: GetProjectConversation :one
-select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake_mode
+select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake_mode, email_alerts
 from conversations
 where project_id = $1 and kind = 'project'
 `
@@ -688,6 +694,7 @@ func (q *Queries) GetProjectConversation(ctx context.Context, projectID pgtype.U
 		&i.ExpiresAt,
 		&i.AgentsBlocked,
 		&i.IntakeMode,
+		&i.EmailAlerts,
 	)
 	return i, err
 }
@@ -793,7 +800,7 @@ func (q *Queries) GetThread(ctx context.Context, id pgtype.UUID) (GetThreadRow, 
 }
 
 const getThreadByParentMessage = `-- name: GetThreadByParentMessage :one
-select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake_mode
+select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake_mode, email_alerts
 from conversations
 where parent_message_id = $1 and kind = 'thread'
   and (expires_at is null or expires_at > now())
@@ -817,12 +824,13 @@ func (q *Queries) GetThreadByParentMessage(ctx context.Context, parentMessageID 
 		&i.ExpiresAt,
 		&i.AgentsBlocked,
 		&i.IntakeMode,
+		&i.EmailAlerts,
 	)
 	return i, err
 }
 
 const listChannels = `-- name: ListChannels :many
-select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake_mode
+select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake_mode, email_alerts
 from conversations
 where project_id = $1 and kind = 'channel'
 order by created_at
@@ -853,6 +861,7 @@ func (q *Queries) ListChannels(ctx context.Context, projectID pgtype.UUID) ([]Co
 			&i.ExpiresAt,
 			&i.AgentsBlocked,
 			&i.IntakeMode,
+			&i.EmailAlerts,
 		); err != nil {
 			return nil, err
 		}
@@ -1615,7 +1624,7 @@ const renameChannel = `-- name: RenameChannel :one
 update conversations
 set title = $1
 where id = $2 and kind = 'channel'
-returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake_mode
+returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake_mode, email_alerts
 `
 
 type RenameChannelParams struct {
@@ -1641,6 +1650,7 @@ func (q *Queries) RenameChannel(ctx context.Context, arg RenameChannelParams) (C
 		&i.ExpiresAt,
 		&i.AgentsBlocked,
 		&i.IntakeMode,
+		&i.EmailAlerts,
 	)
 	return i, err
 }
@@ -1649,7 +1659,7 @@ const setChannelAgentsBlocked = `-- name: SetChannelAgentsBlocked :one
 update conversations
 set agents_blocked = $1
 where id = $2 and kind = 'channel'
-returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake_mode
+returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake_mode, email_alerts
 `
 
 type SetChannelAgentsBlockedParams struct {
@@ -1676,6 +1686,44 @@ func (q *Queries) SetChannelAgentsBlocked(ctx context.Context, arg SetChannelAge
 		&i.ExpiresAt,
 		&i.AgentsBlocked,
 		&i.IntakeMode,
+		&i.EmailAlerts,
+	)
+	return i, err
+}
+
+const setChannelEmailAlerts = `-- name: SetChannelEmailAlerts :one
+update conversations
+set email_alerts = $1
+where id = $2 and kind = 'channel'
+returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake_mode, email_alerts
+`
+
+type SetChannelEmailAlertsParams struct {
+	EmailAlerts []string    `json:"email_alerts"`
+	ID          pgtype.UUID `json:"id"`
+}
+
+// the channel's email notification list — every new message mails these
+// addresses when SMTP is configured
+func (q *Queries) SetChannelEmailAlerts(ctx context.Context, arg SetChannelEmailAlertsParams) (Conversation, error) {
+	row := q.db.QueryRow(ctx, setChannelEmailAlerts, arg.EmailAlerts, arg.ID)
+	var i Conversation
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Kind,
+		&i.IssueID,
+		&i.CreatedAt,
+		&i.BriefID,
+		&i.ParentMessageID,
+		&i.Title,
+		&i.CreatedByUser,
+		&i.CreatedByAgent,
+		&i.CreatorNameSnapshot,
+		&i.ExpiresAt,
+		&i.AgentsBlocked,
+		&i.IntakeMode,
+		&i.EmailAlerts,
 	)
 	return i, err
 }
@@ -1684,7 +1732,7 @@ const setChannelIntakeMode = `-- name: SetChannelIntakeMode :one
 update conversations
 set intake_mode = $1
 where id = $2 and kind = 'channel'
-returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake_mode
+returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake_mode, email_alerts
 `
 
 type SetChannelIntakeModeParams struct {
@@ -1711,6 +1759,7 @@ func (q *Queries) SetChannelIntakeMode(ctx context.Context, arg SetChannelIntake
 		&i.ExpiresAt,
 		&i.AgentsBlocked,
 		&i.IntakeMode,
+		&i.EmailAlerts,
 	)
 	return i, err
 }
@@ -1719,7 +1768,7 @@ const setThreadExpiry = `-- name: SetThreadExpiry :one
 update conversations
 set expires_at = $1
 where id = $2 and kind = 'thread'
-returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake_mode
+returning id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake_mode, email_alerts
 `
 
 type SetThreadExpiryParams struct {
@@ -1746,6 +1795,7 @@ func (q *Queries) SetThreadExpiry(ctx context.Context, arg SetThreadExpiryParams
 		&i.ExpiresAt,
 		&i.AgentsBlocked,
 		&i.IntakeMode,
+		&i.EmailAlerts,
 	)
 	return i, err
 }

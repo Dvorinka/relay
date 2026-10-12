@@ -139,6 +139,14 @@ set intake_mode = sqlc.arg(intake_mode)
 where id = sqlc.arg(id) and kind = 'channel'
 returning *;
 
+-- name: SetChannelEmailAlerts :one
+-- the channel's email notification list — every new message mails these
+-- addresses when SMTP is configured
+update conversations
+set email_alerts = sqlc.arg(email_alerts)
+where id = sqlc.arg(id) and kind = 'channel'
+returning *;
+
 -- name: ListHookChannelMessages :many
 -- oldest-first pull for intake chat mode; narg(root) scopes to a ticket
 -- thread (root + its inline replies), narg(after) is the polling cursor
