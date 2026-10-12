@@ -2284,11 +2284,13 @@ paths:
   /api/workspaces/{workspaceId}/agent-invites:
     post:
       operationId: createAgentInvite
-      summary: Mint a one-shot agent invite; the rli_ token is returned once (owner/admin)
+      summary: Mint an agent invite (multi-use up to max_uses); the rli_ token is returned once (owner/admin)
       description: >-
-        The user invites; the agent registers itself by redeeming the token at
+        The user invites; each agent registers itself by redeeming the token at
         POST /api/agent-invites/redeem. Empty project_ids means every workspace
         project, including ones created later; empty scopes means the default full set.
+        max_uses (default 1, max 100) lets one token onboard several agents
+        with a single instruction message.
       tags: [agents]
       parameters: [ { $ref: "#/components/parameters/WorkspaceId" } ]
       requestBody:
@@ -2308,6 +2310,12 @@ paths:
                   minimum: 1
                   maximum: 168
                   default: 72
+                max_uses:
+                  type: integer
+                  minimum: 1
+                  maximum: 100
+                  default: 1
+                  description: "How many agents may redeem this token."
       responses:
         "201":
           description: Invite created; `token` shown only in this response
@@ -5026,7 +5034,7 @@ components:
 
     AgentInvite:
       type: object
-      required: [id, project_ids, scopes, expires_at, used_by, created_at]
+      required: [id, project_ids, scopes, expires_at, used_by, created_at, max_uses, use_count, uses_left]
       properties:
         id: { type: string, format: uuid }
         project_ids:
@@ -5039,9 +5047,19 @@ components:
         expires_at: { type: string, format: date-time }
         used_by:
           type: ["object", "null"]
+          description: "First redeemer (display only); use_count is authoritative."
           properties:
             agent_id: { type: string, format: uuid }
             name: { type: string }
+        max_uses:
+          type: integer
+          description: "How many agents may redeem this token (1 = one-shot)."
+        use_count:
+          type: integer
+          description: "Redemptions consumed so far."
+        uses_left:
+          type: integer
+          description: "max_uses minus use_count, floored at 0."
         created_by:
           type: string
           description: "Display name of the user who minted the invite"

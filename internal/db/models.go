@@ -33,6 +33,8 @@ type AgentInvite struct {
 	UsedBy      pgtype.UUID        `json:"used_by"`
 	CreatedBy   pgtype.UUID        `json:"created_by"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	MaxUses     int32              `json:"max_uses"`
+	UseCount    int32              `json:"use_count"`
 }
 
 type AgentProjectPermission struct {

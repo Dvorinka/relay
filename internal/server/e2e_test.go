@@ -1700,6 +1700,94 @@ func TestInviteLifecycleKeepsToken(t *testing.T) {
 	}
 }
 
+// A multi-use invite (max_uses>1) onboards several agents with one token;
+// the (max_uses+1)-th redeem is denied.
+func TestInviteMultiUse(t *testing.T) {
+	dsn := os.Getenv("RELAY_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("RELAY_TEST_DATABASE_URL unset")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	goose.SetBaseFS(relaydb.MigrationsFS)
+	if err := goose.SetDialect("postgres"); err != nil {
+		t.Fatal(err)
+	}
+	if err := goose.UpContext(ctx, stdlib.OpenDBFromPool(pool), "migrations"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "delete from rate_limits"); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Config{
+		DatabaseURL:     dsn,
+		AuthSecret:      "test-secret-test-secret-test-secret",
+		InsecureDev:     true,
+		SessionTTLHours: 1,
+	}
+	srv := httptest.NewServer(New(cfg, zap.NewNop(), pool, "test"))
+	defer srv.Close()
+	c := &e2eClient{t: t, base: srv.URL}
+
+	code, _ := c.call("POST", "/api/auth/register",
+		fmt.Sprintf(`{"email":"invm-%d@relay.dev","password":"invpass12345","name":"InvM"}`,
+			time.Now().UnixNano()))
+	if code != 201 && code != 200 {
+		t.Fatal("register")
+	}
+	code, ws := c.call("POST", "/api/workspaces", `{"name":"InvM WS"}`)
+	if code != 201 && code != 200 {
+		t.Fatal("workspace")
+	}
+	wsID := ws["id"].(string)
+
+	code, inv := c.call("POST", "/api/workspaces/"+wsID+"/agent-invites",
+		`{"max_uses":2}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("invite: %d %v", code, inv)
+	}
+	if inv["max_uses"] != float64(2) {
+		t.Fatalf("max_uses not echoed: %v", inv)
+	}
+	rli := inv["token"].(string)
+
+	redeem := func(name string) (int, map[string]any) {
+		return c.call("POST", "/api/agent-invites/redeem",
+			fmt.Sprintf(`{"token":%q,"name":%q}`, rli, name))
+	}
+	code, red1 := redeem("Inv Multi 1")
+	if code != 201 && code != 200 {
+		t.Fatalf("redeem 1: %d %v", code, red1)
+	}
+	if red1["token"] == nil || red1["token"] == "" {
+		t.Fatalf("redeem 1 returned no token: %v", red1)
+	}
+	code, red2 := redeem("Inv Multi 2")
+	if code != 201 && code != 200 {
+		t.Fatalf("redeem 2: %d %v", code, red2)
+	}
+	if red2["token"] == red1["token"] {
+		t.Fatal("redeems must mint distinct tokens")
+	}
+	code, red3 := redeem("Inv Multi 3")
+	if code != 401 {
+		t.Fatalf("third redeem past max_uses should 401: %d %v", code, red3)
+	}
+
+	// max_uses bounds are validated
+	code, bad := c.call("POST", "/api/workspaces/"+wsID+"/agent-invites",
+		`{"max_uses":101}`)
+	if code != 400 {
+		t.Fatalf("max_uses=101 should 400: %d %v", code, bad)
+	}
+}
+
 // Agent attachment download: /api/agent/attachments/:id/download takes a
 // bearer rly_ token and the attachment:read scope — never a session cookie.
 // The fixture has no object storage, so the deepest reachable verdict is

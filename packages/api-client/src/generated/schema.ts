@@ -1331,8 +1331,8 @@ export interface paths {
         get: operations["listAgentInvites"];
         put?: never;
         /**
-         * Mint a one-shot agent invite; the rli_ token is returned once (owner/admin)
-         * @description The user invites; the agent registers itself by redeeming the token at POST /api/agent-invites/redeem. Empty project_ids means every workspace project, including ones created later; empty scopes means the default full set.
+         * Mint an agent invite (multi-use up to max_uses); the rli_ token is returned once (owner/admin)
+         * @description The user invites; each agent registers itself by redeeming the token at POST /api/agent-invites/redeem. Empty project_ids means every workspace project, including ones created later; empty scopes means the default full set. max_uses (default 1, max 100) lets one token onboard several agents with a single instruction message.
          */
         post: operations["createAgentInvite"];
         delete?: never;
@@ -3290,11 +3290,18 @@ export interface components {
             scopes: components["schemas"]["AgentScope"][];
             /** Format: date-time */
             expires_at: string;
+            /** @description First redeemer (display only); use_count is authoritative. */
             used_by: {
                 /** Format: uuid */
                 agent_id?: string;
                 name?: string;
             } | null;
+            /** @description How many agents may redeem this token (1 = one-shot). */
+            max_uses: number;
+            /** @description Redemptions consumed so far. */
+            use_count: number;
+            /** @description max_uses minus use_count, floored at 0. */
+            uses_left: number;
             /** @description Display name of the user who minted the invite */
             created_by?: string;
             /** Format: date-time */
@@ -6441,6 +6448,11 @@ export interface operations {
                     scopes?: components["schemas"]["AgentScope"][];
                     /** @default 72 */
                     expires_hours?: number;
+                    /**
+                     * @description How many agents may redeem this token.
+                     * @default 1
+                     */
+                    max_uses?: number;
                 };
             };
         };
