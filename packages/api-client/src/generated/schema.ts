@@ -2214,12 +2214,12 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Read SMTP configuration — workspace admins only
+         * Read SMTP configuration — workspace owners only (deployment-global singleton)
          * @description The in-app row wins; SMTP_* env vars are the fallback and report source=env. Passwords are never returned — has_password flags one is stored.
          */
         get: operations["getSMTPSettings"];
         /**
-         * Configure SMTP in-app — workspace admins only
+         * Configure SMTP in-app — workspace owners only (deployment-global singleton)
          * @description Writes the smtp_settings row; overrides SMTP_* env. Omit password (or send empty) to keep the stored one. Passwords are AES-256-GCM-encrypted under AUTH_SECRET at rest.
          */
         put: operations["putSMTPSettings"];
@@ -2239,7 +2239,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Send a test email through the configured SMTP — workspace admins only */
+        /** Send a test email through the configured SMTP — workspace owners only */
         post: operations["testSMTP"];
         delete?: never;
         options?: never;
