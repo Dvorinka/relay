@@ -321,9 +321,9 @@ function ReactionRow(props: {
     }
   }
   return (
-    <Show when={props.reactions.length > 0}>
+    <Show when={(props.reactions ?? []).length > 0}>
       <div class="mt-1 flex flex-wrap gap-1">
-        <For each={props.reactions}>
+        <For each={props.reactions ?? []}>
           {(r) => (
             <button
               type="button"
@@ -3169,7 +3169,19 @@ function ConversationThread(props: {
       return;
     }
     if (e.type === "message.created") {
+      // Broadcasts from the MCP/agent write path carry a slimmer shape than
+      // the REST serializer: reactions/read_by/agent_read are absent and the
+      // author uses `avatar` rather than `avatar_url`. Fill the defaults so
+      // downstream views (ReactionRow reads props.reactions.length) don't
+      // throw mid-render and silently drop the live append.
       const m = data.message as Message;
+      m.reactions ??= [];
+      m.read_by ??= [];
+      m.agent_read ??= false;
+      const author = m.author as Message["author"] & { avatar?: string | null };
+      if (author.avatar_url == null && author.avatar != null) {
+        author.avatar_url = author.avatar;
+      }
       // Under an active tag filter only matching messages join the view.
       if (tagFilter() && !(m.tags ?? []).includes(tagFilter())) return;
       setMessages((cur) =>

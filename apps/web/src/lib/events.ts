@@ -35,6 +35,19 @@ function noteFrame() {
   lastFrame = Date.now();
 }
 
+// One misbehaving subscriber must not kill the loop for the rest — without
+// isolation a throw here is caught by the caller's frame parse and reads as
+// "malformed frame", silently dropping the event for every later handler.
+function dispatch(e: RelayEvent) {
+  for (const h of handlers) {
+    try {
+      h(e);
+    } catch (err) {
+      console.error("[events] subscriber threw", err);
+    }
+  }
+}
+
 // The stream was down long enough to possibly miss frames — give the
 // reconnect a beat to land, then tell views to reconcile (refetch the
 // message tail, unread counts, …) via a synthetic event.
@@ -83,7 +96,7 @@ function connectBridge(token: string): boolean {
       try {
         const e = JSON.parse(data) as RelayEvent;
         noteFrame();
-        for (const h of handlers) h(e);
+        dispatch(e);
       } catch {
         /* malformed frame — ignore */
       }
@@ -127,7 +140,7 @@ function connect() {
     try {
       const e = JSON.parse(m.data) as RelayEvent;
       noteFrame();
-      for (const h of handlers) h(e);
+      dispatch(e);
     } catch {
       /* malformed frame — ignore */
     }
@@ -144,7 +157,7 @@ function connect() {
 // the adapter uses this for updates a live view needs (e.g. a thread's
 // reply count on the parent message).
 export function emitLocal(e: RelayEvent) {
-  for (const h of handlers) h(e);
+  dispatch(e);
 }
 
 export function subscribe(h: Handler): () => void {
