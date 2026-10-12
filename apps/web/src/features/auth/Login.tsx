@@ -9,6 +9,7 @@ import {
   isMobileShell,
 } from "../../lib/desktop";
 import { net } from "../../lib/net";
+import { FREE_SERVER_URL } from "../../lib/servers";
 import { useSession } from "../../stores/session";
 import {
   AuthChoice,
@@ -45,6 +46,12 @@ export default function Login() {
     altPaths() && !net.serverUrl() && !choseServer();
 
   function pickServer() {
+    setChoseServer(true);
+    setShowServer(true);
+  }
+
+  function pickFree() {
+    setServerUrl(FREE_SERVER_URL);
     setChoseServer(true);
     setShowServer(true);
   }
@@ -158,6 +165,7 @@ export default function Login() {
           <AuthChoice
             onLocal={() => void session.enterLocal()}
             onServer={pickServer}
+            onFree={pickFree}
           />
         }
       >

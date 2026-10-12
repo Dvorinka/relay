@@ -39,6 +39,7 @@ import {
 } from "../../lib/connections";
 import { api } from "../../lib/api";
 import { browserAuth } from "../../lib/desktop";
+import { FREE_SERVER_URL } from "../../lib/servers";
 import { mediaURL, net } from "../../lib/net";
 import {
   deliver,
@@ -1015,6 +1016,26 @@ function ConnectionSection() {
           <p class="text-[12.5px] text-muted">
             Sign in on a different Relay server — you'll leave this one.
           </p>
+          <div>
+            <button
+              type="button"
+              class="rounded-md border border-border px-2.5 py-1 text-[12px] text-muted transition-colors hover:bg-hover hover:text-fg"
+              onClick={(e) => {
+                const form = (e.currentTarget as HTMLButtonElement).closest("form");
+                const input = form?.elements.namedItem("server_url");
+                if (input instanceof HTMLInputElement) {
+                  input.value = FREE_SERVER_URL;
+                  input.focus();
+                }
+              }}
+            >
+              Use the free hosted server
+            </button>
+            <p class="mt-1 text-[12px] text-muted">
+              Shared free instance — messages sync, file attachments aren't
+              stored. For the full thing, self-host.
+            </p>
+          </div>
           <input
             type="url"
             name="server_url"

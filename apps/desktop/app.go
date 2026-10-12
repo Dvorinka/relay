@@ -28,6 +28,20 @@ import (
 
 const configName = "relay-desktop.json"
 
+// defaultFreeServer is the opt-in free hosted instance offered on the
+// setup page ("Try the free hosted server"). Overridable via
+// RELAY_DEFAULT_SERVER so forks point at their own instance; empty
+// disables the button. Never forced — self-hosting stays first-class.
+const defaultFreeServer = "https://relay-hst.tdvorak.dev"
+
+func freeServerURL() string {
+	// Explicit empty RELAY_DEFAULT_SERVER disables the button.
+	if v, ok := os.LookupEnv("RELAY_DEFAULT_SERVER"); ok {
+		return strings.TrimRight(strings.TrimSpace(v), "/")
+	}
+	return defaultFreeServer
+}
+
 type Config struct {
 	ServerURL string `json:"server_url"`
 	// Offline serves the embedded SPA ("This device" workspace) instead of
@@ -695,6 +709,17 @@ func (a *App) setupPage(w http.ResponseWriter, r *http.Request) {
 	if offlineAvailable() {
 		offline = `<button type="button" onclick="location.search='?offline=1'">Work offline — this device only</button>`
 	}
+	// Opt-in free hosted instance (limits disclosed, self-host recommended).
+	// Empty when RELAY_DEFAULT_SERVER="" disables it.
+	free := ""
+	if url := freeServerURL(); url != "" {
+		free = fmt.Sprintf(`<form method="get" action="/">
+  <input type="hidden" name="server_url" value="%s">
+  <button>Try the free hosted server</button>
+  <small>Shared free instance — messages sync, file attachments aren't stored.
+  For the full thing, self-host (one command).</small>
+</form>`, html.EscapeString(url))
+	}
 	w.Header().Set("Content-Type", "text/html")
 	_, _ = fmt.Fprintf(w, `<!doctype html>
 <meta charset="utf-8">
@@ -721,5 +746,6 @@ func (a *App) setupPage(w http.ResponseWriter, r *http.Request) {
   After connecting, sign in in the app or through your browser.</small>
 </form>
 %s
-</div>`, offline)
+%s
+</div>`, offline, free)
 }

@@ -9,13 +9,15 @@ const choiceBodyClass = "mt-1 text-[12.5px] leading-snug text-muted";
 
 /**
  * First-run fork for shells that can run without a server (desktop, mobile,
- * cross-origin SPA): work locally, connect to a server, or self-host one.
- * Without it the login form assumes a server exists and the local path hides
- * as a footnote — newcomers registered accounts they never needed.
+ * cross-origin SPA): work locally, connect to a server, try the free hosted
+ * instance, or self-host one. Without it the login form assumes a server
+ * exists and the local path hides as a footnote — newcomers registered
+ * accounts they never needed.
  */
 export function AuthChoice(props: {
   onLocal: () => void;
   onServer: () => void;
+  onFree: () => void;
 }) {
   return (
     <div class="flex flex-col gap-3">
@@ -31,6 +33,14 @@ export function AuthChoice(props: {
         <span class={`block ${choiceBodyClass}`}>
           You or your team run a Relay server. Sign in or create an account —
           data syncs across devices.
+        </span>
+      </button>
+      <button type="button" class={choiceCardClass} onClick={props.onFree}>
+        <span class={choiceTitleClass}>Try the free hosted server</span>
+        <span class={`block ${choiceBodyClass}`}>
+          Shared free instance, no setup — messages sync across devices.
+          File attachments aren't stored here; for the full thing, host your
+          own (one command, link below).
         </span>
       </button>
       <a
