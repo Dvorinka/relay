@@ -1332,7 +1332,24 @@ func issueJSON(i db.Issue, assigneeName pgtype.Text, projectKey string) gin.H {
 func (s *Service) sendMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	var cid pgtype.UUID
 	var pid pgtype.UUID
-	if v := req.GetString("project_id", ""); v != "" {
+	// conversation_id is an explicit override — the tool schema documents it
+	// as the target and callers legitimately pass both ids (channel inside a
+	// project). Read it first; silently preferring project_id posted to the
+	// project's main conversation instead of the requested channel.
+	if v := req.GetString("conversation_id", ""); v != "" {
+		var err error
+		cid, err = uuidArg(req, "conversation_id")
+		if err != nil {
+			return mcp.NewToolResultError("invalid conversation_id"), nil
+		}
+		pid, err = s.q.ResolveConversationProject(ctx, cid)
+		if err != nil {
+			return errResult(err)
+		}
+		if err := s.scope(ctx, pid, "message:write"); err != nil {
+			return errResult(err)
+		}
+	} else if v := req.GetString("project_id", ""); v != "" {
 		if err := pid.Scan(v); err != nil || !pid.Valid {
 			return mcp.NewToolResultError("invalid project_id"), nil
 		}
@@ -1355,18 +1372,7 @@ func (s *Service) sendMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 			return errResult(err)
 		}
 	} else {
-		var err error
-		cid, err = uuidArg(req, "conversation_id")
-		if err != nil {
-			return mcp.NewToolResultError("conversation_id or project_id required"), nil
-		}
-		pid, err = s.q.ResolveConversationProject(ctx, cid)
-		if err != nil {
-			return errResult(err)
-		}
-		if err := s.scope(ctx, pid, "message:write"); err != nil {
-			return errResult(err)
-		}
+		return mcp.NewToolResultError("conversation_id or project_id required"), nil
 	}
 	body, err := req.RequireString("body")
 	if err != nil {
