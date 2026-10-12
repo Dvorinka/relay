@@ -832,7 +832,17 @@ export function createClient(
           account_login: string;
         }[];
         install_url?: string;
+        unclaimed?: {
+          installation_id: number;
+          account_login: string;
+          account_type: string;
+        }[];
       }>(`/api/workspaces/${workspaceId}/github/installations`),
+    claimGitHubInstallation: (workspaceId: string, installationId: number) =>
+      request<void>(
+        `/api/workspaces/${workspaceId}/github/installations/${installationId}/claim`,
+        { method: "POST" },
+      ),
     listAvailableRepos: (workspaceId: string) =>
       request<{
         repos: AvailableRepo[];

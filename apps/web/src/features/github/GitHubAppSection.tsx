@@ -194,6 +194,58 @@ export default function GitHubAppSection(props: {
                   )}
                 </For>
               </ul>
+
+              {/* Installs that arrived without a workspace hint (multi-
+                  tenant instances) — an admin claims them explicitly. */}
+              <Show
+                when={
+                  props.canManage &&
+                  (installations.latest?.unclaimed?.length ?? 0) > 0
+                }
+              >
+                <h3 class="mb-1.5 mt-4 text-[12px] font-medium text-muted">
+                  Unclaimed installations
+                </h3>
+                <ul class="divide-y divide-border rounded-md border border-border">
+                  <For each={installations.latest?.unclaimed}>
+                    {(u) => (
+                      <li class="flex items-center justify-between px-3 py-2.5">
+                        <div class="flex items-center gap-2.5">
+                          {markGitHub("", "h-3.5 w-3.5 text-muted")}
+                          <span class="text-[13px]">{u.account_login}</span>
+                          <span class="font-mono text-[11px] text-muted">
+                            #{u.installation_id}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          class="text-[12px] font-medium text-accent hover:underline"
+                          onClick={async () => {
+                            setError(null);
+                            try {
+                              await api.claimGitHubInstallation(
+                                props.workspaceId,
+                                u.installation_id,
+                              );
+                              refetchInst();
+                            } catch (err) {
+                              setError(
+                                errorMessage(err, "Could not claim install"),
+                              );
+                            }
+                          }}
+                        >
+                          Claim
+                        </button>
+                      </li>
+                    )}
+                  </For>
+                </ul>
+                <p class="mt-1.5 max-w-md text-[11.5px] text-muted">
+                  These installs arrived without a workspace hint. Claim only
+                  the ones this workspace owns.
+                </p>
+              </Show>
             </div>
           </Show>
         )}

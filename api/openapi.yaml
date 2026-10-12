@@ -2466,6 +2466,26 @@ paths:
       responses:
         "200": { description: "Installations" }
 
+  /api/workspaces/{workspaceId}/github/installations/{installationId}/claim:
+    post:
+      operationId: claimGitHubInstallation
+      summary: Claim an unclaimed GitHub installation for a workspace
+      description: >-
+        Attaches an installation whose workspace could not be determined
+        (NULL workspace_id — e.g. an install that arrived on a
+        multi-tenant instance with no pending hint). Requires workspace
+        owner/admin. Bound installations can never be claimed.
+      tags: [github]
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - name: installationId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "204": { description: "Claimed" }
+        "404": { description: "No unclaimed installation with that id" }
+
   /api/workspaces/{workspaceId}/github/repos:
     get:
       operationId: listAvailableRepos
