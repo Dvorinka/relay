@@ -1909,6 +1909,29 @@ func TestInviteMultiUse(t *testing.T) {
 		t.Fatalf("third redeem past max_uses should 401: %d %v", code, red3)
 	}
 
+	// the list view reflects consumption (manual row mapping must carry
+	// max_uses/use_count — a past regression zeroed them here)
+	inviteID := inv["id"].(string)
+	code, listed := c.call("GET", "/api/workspaces/"+wsID+"/agent-invites", "")
+	if code != 200 {
+		t.Fatalf("list invites: %d %v", code, listed)
+	}
+	seen := false
+	for _, raw := range listed["invites"].([]any) {
+		row := raw.(map[string]any)
+		if row["id"] != inviteID {
+			continue
+		}
+		seen = true
+		if row["max_uses"] != float64(2) || row["use_count"] != float64(2) ||
+			row["uses_left"] != float64(0) {
+			t.Fatalf("list misreports consumption: %v", row)
+		}
+	}
+	if !seen {
+		t.Fatal("created invite missing from list")
+	}
+
 	// max_uses bounds are validated
 	code, bad := c.call("POST", "/api/workspaces/"+wsID+"/agent-invites",
 		`{"max_uses":101}`)

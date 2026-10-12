@@ -613,6 +613,7 @@ func (s *Service) handleListInvites(c *gin.Context) {
 			ID: r.ID, WorkspaceID: r.WorkspaceID, ProjectIds: r.ProjectIds,
 			Scopes: r.Scopes, ExpiresAt: r.ExpiresAt, UsedBy: r.UsedBy,
 			CreatedBy: r.CreatedBy, CreatedAt: r.CreatedAt,
+			MaxUses: r.MaxUses, UseCount: r.UseCount,
 		}, r.UsedByName.String, r.CreatedByName.String))
 	}
 	c.JSON(http.StatusOK, gin.H{"invites": out})
