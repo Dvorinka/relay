@@ -1484,6 +1484,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspaceId}/github/installations/{installationId}/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Claim an unclaimed GitHub installation for a workspace
+         * @description Attaches an installation whose workspace could not be determined (NULL workspace_id — e.g. an install that arrived on a multi-tenant instance with no pending hint). Requires workspace owner/admin. Bound installations can never be claimed.
+         */
+        post: operations["claimGitHubInstallation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspaceId}/github/repos": {
         parameters: {
             query?: never;
@@ -6671,6 +6691,34 @@ export interface operations {
         responses: {
             /** @description Installations */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    claimGitHubInstallation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspaceId: components["parameters"]["WorkspaceId"];
+                installationId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Claimed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No unclaimed installation with that id */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -97,12 +97,16 @@ func (s *Service) adminOnly(c *gin.Context) {
 	uid := auth.CurrentUser(c).ID
 	var ok bool
 	// smtp_settings is a deployment-global singleton (one row, no
-	// workspace column), so management requires workspace *owner* —
-	// an admin of any workspace must not read or rotate the shared
-	// relay credentials. Matches the trust model documented in the
-	// OpenAPI for /settings/smtp.
+	// workspace column), so management requires *owner* of the FIRST
+	// workspace — the deployment operator's. An owner of any other
+	// workspace must not read or rotate the shared relay credentials;
+	// on a multi-user instance every registrant owns their own
+	// workspace. Matches the trust model documented in the OpenAPI
+	// for /settings/smtp.
 	err := s.pool.QueryRow(c.Request.Context(),
-		`select exists(select 1 from workspace_members where user_id=$1 and role='owner')`,
+		`select exists(select 1 from workspace_members wm
+			where wm.user_id=$1 and wm.role='owner'
+			  and wm.workspace_id = (select id from workspaces order by created_at limit 1))`,
 		uid).Scan(&ok)
 	if err != nil || !ok {
 		httpx.Error(c, http.StatusForbidden, "forbidden", "workspace owner required")

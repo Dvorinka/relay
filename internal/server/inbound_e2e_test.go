@@ -6,12 +6,13 @@ package server
 // RELAY_TEST_DATABASE_URL.
 
 import (
+	"context"
 	"fmt"
 	"testing"
 )
 
 func TestInboundIntake(t *testing.T) {
-	c, _, _, projID := e2eSetup(t, "intake")
+	c, pool, wsID, projID := e2eSetup(t, "intake")
 
 	// A per-customer support channel + hook on it.
 	code, ch := c.call("POST", "/api/projects/"+projID+"/channels",
@@ -48,6 +49,26 @@ func TestInboundIntake(t *testing.T) {
 	got := up["channel"].(map[string]any)["email_alerts"].([]any)
 	if len(got) != 2 || got[0] != "support@acme.com" || got[1] != "oncall@acme.com" {
 		t.Fatalf("email_alerts not normalized/deduped: %v", got)
+	}
+
+	// SMTP is a deployment-global singleton — managing it requires owner
+	// of the FIRST workspace, not just any workspace. Promote the test
+	// user there so these assertions exercise the handler, not the gate.
+	ctx := context.Background()
+	var uid, firstWS string
+	if err := pool.QueryRow(ctx,
+		"select user_id::text from workspace_members where workspace_id=$1 limit 1",
+		wsID).Scan(&uid); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx,
+		"select id::text from workspaces order by created_at limit 1").Scan(&firstWS); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx,
+		`insert into workspace_members (workspace_id, user_id, role)
+		 values ($1, $2::uuid, 'owner') on conflict do nothing`, firstWS, uid); err != nil {
+		t.Fatal(err)
 	}
 
 	// SMTP settings — the row persists across runs on the shared test db,

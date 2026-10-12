@@ -35,7 +35,10 @@ limit 12;
 
 -- name: ListGrantedOpenIssues :many
 -- same feed as ListMyOpenIssues but scoped to the calling agent's project
--- grants: explicit rows win, grant_all + project:read covers the workspace
+-- grants: explicit rows win, grant_all + project:read covers the workspace.
+-- The workspace_id join guard is what keeps grant_all inside the agent's
+-- own tenant — without it every workspace's issues leak to any
+-- workspace-wide agent.
 select i.id, i.project_id, cast(p.key || '-' || i.number as text) as key,
        i.title, i.status, i.priority, i.github_kind, i.updated_at,
        p.key as project_key, p.name as project_name
@@ -45,6 +48,7 @@ join agents a on a.id = sqlc.arg(agent_id)
 left join agent_project_permissions g
        on g.agent_id = a.id and g.project_id = p.id
 where i.status not in ('done','cancelled')
+  and p.workspace_id = a.workspace_id
   and ('project:read' = any(g.scopes)
        or (a.grant_all and 'project:read' = any(a.grant_scopes)))
 order by i.updated_at desc
@@ -69,6 +73,7 @@ left join agent_project_permissions g
 left join users u on u.id = m.author_user_id
 left join agents a2 on a2.id = m.author_agent_id
 where m.deleted_at is null
+  and p.workspace_id = a.workspace_id
   and ('project:read' = any(g.scopes)
        or (a.grant_all and 'project:read' = any(a.grant_scopes)))
 order by m.created_at desc
