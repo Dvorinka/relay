@@ -789,6 +789,7 @@ export function createClient(
         project_ids?: string[];
         scopes?: AgentScope[];
         expires_hours?: number;
+        max_uses?: number;
       } = {},
     ) =>
       post<AgentInvite & { token: string }>(

@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/Dvorinka/relay/internal/events"
 	"github.com/Dvorinka/relay/internal/httpx"
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
@@ -504,18 +506,29 @@ func (s *Service) handleRevokeToken(c *gin.Context) {
 
 // --- invites ---
 
-// handleCreateInvite mints a one-shot rli_ token an agent redeems itself.
+// handleCreateInvite mints an rli_ token agents redeem themselves.
 // project_ids empty = every workspace project at redeem time; scopes empty =
-// DefaultInviteScopes. The plaintext token is returned exactly once.
+// DefaultInviteScopes. max_uses (1-100, default 1) lets one token onboard
+// several agents with a single instruction message. The plaintext token is
+// returned exactly once.
 func (s *Service) handleCreateInvite(c *gin.Context) {
 	wsID := c.MustGet(ctxWorkspace).(pgtype.UUID)
 	var req struct {
 		ProjectIDs   []string `json:"project_ids"`
 		Scopes       []string `json:"scopes"`
 		ExpiresHours *int     `json:"expires_hours"`
+		MaxUses      *int     `json:"max_uses"`
 	}
 	if !httpx.BindJSON(c, &req) {
 		return
+	}
+	maxUses := 1
+	if req.MaxUses != nil {
+		if *req.MaxUses < 1 || *req.MaxUses > 100 {
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "max_uses must be 1-100")
+			return
+		}
+		maxUses = *req.MaxUses
 	}
 	hours := 72
 	if req.ExpiresHours != nil {
@@ -575,6 +588,7 @@ func (s *Service) handleCreateInvite(c *gin.Context) {
 			Time: time.Now().Add(time.Duration(hours) * time.Hour), Valid: true,
 		},
 		CreatedBy: auth.CurrentUser(c).ID,
+		MaxUses:   int32(maxUses),
 	})
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
@@ -653,6 +667,10 @@ func (s *Service) handleRedeemInvite(c *gin.Context) {
 		httpx.Error(c, http.StatusUnauthorized, "unauthorized", "invite is invalid, used, or expired")
 		return
 	}
+	if inv.UseCount >= inv.MaxUses {
+		httpx.Error(c, http.StatusUnauthorized, "unauthorized", "invite is invalid, used, or expired")
+		return
+	}
 	slug := slugify(req.Name)
 	if slug == "" {
 		slug = "agent"
@@ -716,6 +734,13 @@ func (s *Service) handleRedeemInvite(c *gin.Context) {
 	if _, err := s.q.RedeemAgentInvite(c.Request.Context(), db.RedeemAgentInviteParams{
 		ID: inv.ID, UsedBy: agent.ID,
 	}); err != nil {
+		// No row = a concurrent redeem consumed the last use (or the
+		// invite expired) between lookup and update — same 401 as an
+		// unknown token, never a 500.
+		if errors.Is(err, pgx.ErrNoRows) {
+			httpx.Error(c, http.StatusUnauthorized, "unauthorized", "invite is invalid, used, or expired")
+			return
+		}
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
@@ -754,10 +779,15 @@ func inviteJSON(r db.AgentInvite, usedByName, createdByName string) gin.H {
 	for _, p := range r.ProjectIds {
 		projs = append(projs, p.String())
 	}
+	usesLeft := int(r.MaxUses - r.UseCount)
+	if usesLeft < 0 {
+		usesLeft = 0
+	}
 	return gin.H{
 		"id": r.ID.String(), "project_ids": projs, "scopes": r.Scopes,
 		"expires_at": r.ExpiresAt.Time.Format("2006-01-02T15:04:05Z07:00"),
 		"used_by":    used,
+		"max_uses":   r.MaxUses, "use_count": r.UseCount, "uses_left": usesLeft,
 		"created_by": createdByName,
 		"created_at": r.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
 	}

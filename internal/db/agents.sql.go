@@ -161,10 +161,10 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent
 }
 
 const createAgentInvite = `-- name: CreateAgentInvite :one
-insert into agent_invites (workspace_id, token_hash, project_ids, scopes, expires_at, created_by)
+insert into agent_invites (workspace_id, token_hash, project_ids, scopes, expires_at, created_by, max_uses)
 values ($1, $2, $3::uuid[],
-        $4::text[], $5, $6)
-returning id, workspace_id, token_hash, project_ids, scopes, expires_at, used_by, created_by, created_at
+        $4::text[], $5, $6, $7)
+returning id, workspace_id, token_hash, project_ids, scopes, expires_at, used_by, created_by, created_at, max_uses, use_count
 `
 
 type CreateAgentInviteParams struct {
@@ -174,6 +174,7 @@ type CreateAgentInviteParams struct {
 	Scopes      []string           `json:"scopes"`
 	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
 	CreatedBy   pgtype.UUID        `json:"created_by"`
+	MaxUses     int32              `json:"max_uses"`
 }
 
 func (q *Queries) CreateAgentInvite(ctx context.Context, arg CreateAgentInviteParams) (AgentInvite, error) {
@@ -184,6 +185,7 @@ func (q *Queries) CreateAgentInvite(ctx context.Context, arg CreateAgentInvitePa
 		arg.Scopes,
 		arg.ExpiresAt,
 		arg.CreatedBy,
+		arg.MaxUses,
 	)
 	var i AgentInvite
 	err := row.Scan(
@@ -196,6 +198,8 @@ func (q *Queries) CreateAgentInvite(ctx context.Context, arg CreateAgentInvitePa
 		&i.UsedBy,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.MaxUses,
+		&i.UseCount,
 	)
 	return i, err
 }
@@ -324,9 +328,8 @@ func (q *Queries) GetAgentForUser(ctx context.Context, arg GetAgentForUserParams
 }
 
 const getAgentInviteByHash = `-- name: GetAgentInviteByHash :one
-select id, workspace_id, token_hash, project_ids, scopes, expires_at, used_by, created_by, created_at from agent_invites
+select id, workspace_id, token_hash, project_ids, scopes, expires_at, used_by, created_by, created_at, max_uses, use_count from agent_invites
 where token_hash = $1
-  and used_by is null
   and expires_at > now()
 `
 
@@ -343,12 +346,14 @@ func (q *Queries) GetAgentInviteByHash(ctx context.Context, tokenHash []byte) (A
 		&i.UsedBy,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.MaxUses,
+		&i.UseCount,
 	)
 	return i, err
 }
 
 const getAgentInviteByID = `-- name: GetAgentInviteByID :one
-select id, workspace_id, token_hash, project_ids, scopes, expires_at, used_by, created_by, created_at from agent_invites where id = $1
+select id, workspace_id, token_hash, project_ids, scopes, expires_at, used_by, created_by, created_at, max_uses, use_count from agent_invites where id = $1
 `
 
 func (q *Queries) GetAgentInviteByID(ctx context.Context, id pgtype.UUID) (AgentInvite, error) {
@@ -364,6 +369,8 @@ func (q *Queries) GetAgentInviteByID(ctx context.Context, id pgtype.UUID) (Agent
 		&i.UsedBy,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.MaxUses,
+		&i.UseCount,
 	)
 	return i, err
 }
@@ -459,7 +466,7 @@ func (q *Queries) ListAgentGrants(ctx context.Context, agentID pgtype.UUID) ([]L
 }
 
 const listAgentInvites = `-- name: ListAgentInvites :many
-select i.id, i.workspace_id, i.token_hash, i.project_ids, i.scopes, i.expires_at, i.used_by, i.created_by, i.created_at, a.name as used_by_name, u.name as created_by_name from agent_invites i
+select i.id, i.workspace_id, i.token_hash, i.project_ids, i.scopes, i.expires_at, i.used_by, i.created_by, i.created_at, i.max_uses, i.use_count, a.name as used_by_name, u.name as created_by_name from agent_invites i
 left join agents a on a.id = i.used_by
 left join users u on u.id = i.created_by
 where i.workspace_id = $1
@@ -476,6 +483,8 @@ type ListAgentInvitesRow struct {
 	UsedBy        pgtype.UUID        `json:"used_by"`
 	CreatedBy     pgtype.UUID        `json:"created_by"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	MaxUses       int32              `json:"max_uses"`
+	UseCount      int32              `json:"use_count"`
 	UsedByName    pgtype.Text        `json:"used_by_name"`
 	CreatedByName pgtype.Text        `json:"created_by_name"`
 }
@@ -499,6 +508,8 @@ func (q *Queries) ListAgentInvites(ctx context.Context, workspaceID pgtype.UUID)
 			&i.UsedBy,
 			&i.CreatedBy,
 			&i.CreatedAt,
+			&i.MaxUses,
+			&i.UseCount,
 			&i.UsedByName,
 			&i.CreatedByName,
 		); err != nil {
@@ -774,9 +785,9 @@ func (q *Queries) ProjectInAgentWorkspace(ctx context.Context, arg ProjectInAgen
 }
 
 const redeemAgentInvite = `-- name: RedeemAgentInvite :one
-update agent_invites set used_by = $1
-where id = $2 and used_by is null
-returning id, workspace_id, token_hash, project_ids, scopes, expires_at, used_by, created_by, created_at
+update agent_invites set use_count = use_count + 1, used_by = coalesce(used_by, $1)
+where id = $2 and use_count < max_uses and expires_at > now()
+returning id, workspace_id, token_hash, project_ids, scopes, expires_at, used_by, created_by, created_at, max_uses, use_count
 `
 
 type RedeemAgentInviteParams struct {
@@ -784,6 +795,9 @@ type RedeemAgentInviteParams struct {
 	ID     pgtype.UUID `json:"id"`
 }
 
+// Atomic multi-use redeem: each redemption consumes one use; concurrent
+// redeems cannot overshoot max_uses. used_by keeps the first redeemer for
+// display; use_count is the authority on exhaustion.
 func (q *Queries) RedeemAgentInvite(ctx context.Context, arg RedeemAgentInviteParams) (AgentInvite, error) {
 	row := q.db.QueryRow(ctx, redeemAgentInvite, arg.UsedBy, arg.ID)
 	var i AgentInvite
@@ -797,6 +811,8 @@ func (q *Queries) RedeemAgentInvite(ctx context.Context, arg RedeemAgentInvitePa
 		&i.UsedBy,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.MaxUses,
+		&i.UseCount,
 	)
 	return i, err
 }

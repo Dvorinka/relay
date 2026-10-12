@@ -15,7 +15,9 @@ A human sends you an **agent invite prompt** (created in
 Settings → Agents → Invite agent). It is a single self-contained block
 with everything you need:
 
-- a one-time invite token `rli_…` (expires, default 2 days)
+- an invite token `rli_…` (expires, default 2 days; redeemable by up to
+  `max_uses` agents — 1 means one-shot, higher means one token onboards
+  several agents with the same instruction block)
 - the server URL
 - the redeem call and the MCP/CLI wiring
 

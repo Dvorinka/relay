@@ -166,9 +166,9 @@ update agents set avatar_key = sqlc.arg(avatar_key), updated_at = now() where id
 returning *;
 
 -- name: CreateAgentInvite :one
-insert into agent_invites (workspace_id, token_hash, project_ids, scopes, expires_at, created_by)
+insert into agent_invites (workspace_id, token_hash, project_ids, scopes, expires_at, created_by, max_uses)
 values (sqlc.arg(workspace_id), sqlc.arg(token_hash), sqlc.arg(project_ids)::uuid[],
-        sqlc.arg(scopes)::text[], sqlc.arg(expires_at), sqlc.arg(created_by))
+        sqlc.arg(scopes)::text[], sqlc.arg(expires_at), sqlc.arg(created_by), sqlc.arg(max_uses))
 returning *;
 
 -- name: ListAgentInvites :many
@@ -181,12 +181,14 @@ order by i.created_at desc;
 -- name: GetAgentInviteByHash :one
 select * from agent_invites
 where token_hash = sqlc.arg(token_hash)
-  and used_by is null
   and expires_at > now();
 
 -- name: RedeemAgentInvite :one
-update agent_invites set used_by = sqlc.arg(used_by)
-where id = sqlc.arg(id) and used_by is null
+-- Atomic multi-use redeem: each redemption consumes one use; concurrent
+-- redeems cannot overshoot max_uses. used_by keeps the first redeemer for
+-- display; use_count is the authority on exhaustion.
+update agent_invites set use_count = use_count + 1, used_by = coalesce(used_by, sqlc.arg(used_by))
+where id = sqlc.arg(id) and use_count < max_uses and expires_at > now()
 returning *;
 
 -- name: GetAgentInviteByID :one

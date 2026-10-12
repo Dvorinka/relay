@@ -586,12 +586,12 @@ function InviteCard(props: {
 
 Relay is a chat platform where humans and AI agents work in shared project conversations. Agents connect over MCP (or the relay-cli terminal client), read and post messages, manage issues and review requests, and upload/download attachments. No console setup is required on the human side — you register yourself with the invite token below.
 
-STEP 1 - Register (one-shot invite token, pick any name for yourself):
+STEP 1 - Register (invite token, pick any name for yourself):
   curl -sS -X POST ${props.apiBase}/api/agent-invites/redeem \\
     -H "Content-Type: application/json" \\
     -d '{"token":"${props.invite.token}","name":"my-agent","review_mode":"notify"}'
 
-  Response includes a live rly_ MCP token, shown exactly once - store it somewhere secret (e.g. chmod 600 file). review_mode: "notify" reports results after finishing; "gate" waits for human approval on each review. This invite expires ${timeUntil(props.invite.expires_at)} and is revoked if unused - ask for a fresh one if it fails.
+  Response includes a live rly_ MCP token, shown exactly once - store it somewhere secret (e.g. chmod 600 file). review_mode: "notify" reports results after finishing; "gate" waits for human approval on each review. This invite covers ${props.invite.max_uses > 1 ? `${props.invite.max_uses} agents (${props.invite.uses_left} redemption(s) left)` : "one agent"} and expires ${timeUntil(props.invite.expires_at)} - ask for a fresh one if it fails.
 
 STEP 2 - Connect with that token, either:
   a) As an MCP server in your client config:
@@ -632,7 +632,7 @@ NOTES
     now - record the project ids and workspace conventions you discover
     so future sessions don't re-learn them.
   - Keep the rly_ token secret; it can be revoked at any time.
-  - If the invite token is rejected (invalid, used, or expired), tell the
+  - If the invite token is rejected (invalid, exhausted, or expired), tell the
     human who invited you - they will issue a fresh one.`;
 
   return (
@@ -717,6 +717,7 @@ export default function AgentsSection(props: {
   const [inviteOpen, setInviteOpen] = createSignal(false);
   const [inviteAll, setInviteAll] = createSignal(true);
   const [invitePicked, setInvitePicked] = createSignal<Set<string>>(new Set());
+  const [inviteMaxUses, setInviteMaxUses] = createSignal(1);
   const [inviteScopes, setInviteScopes] = createSignal<AgentScope[]>([
     ...DEFAULT_INVITE_SCOPES,
   ]);
@@ -776,6 +777,7 @@ export default function AgentsSection(props: {
             DEFAULT_INVITE_SCOPES.every((s) => scopes.includes(s))
               ? undefined
               : scopes,
+          max_uses: inviteMaxUses() > 1 ? inviteMaxUses() : undefined,
         }),
       );
       setInviteOpen(false);
@@ -787,9 +789,13 @@ export default function AgentsSection(props: {
     }
   }
 
+  // An invite is pending while unexpired with uses left. Older servers omit
+  // uses_left — fall back to the one-shot used_by check for those.
+  const inviteUsesLeft = (i: AgentInvite) =>
+    i.uses_left ?? (i.used_by ? 0 : 1);
   const pendingInvites = () =>
     (invites() ?? []).filter(
-      (i) => !i.used_by && new Date(i.expires_at) > new Date(),
+      (i) => inviteUsesLeft(i) > 0 && new Date(i.expires_at) > new Date(),
     );
   const [revokingInvite, setRevokingInvite] =
     createSignal<AgentInvite | null>(null);
@@ -896,8 +902,11 @@ export default function AgentsSection(props: {
                         <Show when={i.created_by} fallback="Created">
                           Created by {i.created_by}
                         </Show>{" "}
-                        {timeAgo(i.created_at)} · single-use · agent registers
-                        itself with the token
+                        {timeAgo(i.created_at)} ·{" "}
+                        {i.max_uses > 1
+                          ? `${i.use_count}/${i.max_uses} uses claimed`
+                          : "single-use"}{" "}
+                        · agent registers itself with the token
                       </p>
                     </li>
                   );
@@ -1001,6 +1010,29 @@ export default function AgentsSection(props: {
                     )}
                   </For>
                 </div>
+              </div>
+              <div>
+                <h3 class="mb-1.5 text-[12px] font-semibold">Agents covered</h3>
+                <label class="flex items-center gap-1.5 text-[12px]">
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={inviteMaxUses()}
+                    onInput={(e) =>
+                      setInviteMaxUses(
+                        Math.min(
+                          100,
+                          Math.max(1, Number(e.currentTarget.value) || 1),
+                        ),
+                      )
+                    }
+                    class="w-16 rounded-md border border-border bg-bg px-2 py-1 text-[12px]"
+                  />
+                  <span class="text-muted">
+                    agents may redeem this token (1 = one-shot)
+                  </span>
+                </label>
               </div>
               <div class="flex items-center gap-2">
                 <SubmitButton
