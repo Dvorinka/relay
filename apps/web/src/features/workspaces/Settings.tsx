@@ -1503,7 +1503,7 @@ export default function Settings() {
               <GitHubAppSection workspaceId={ws().id} canManage={canInvite()} />
             </Section>
             <Section title="Email">
-              <SmtpSection canManage={canInvite()} />
+              <SmtpSection canManage={current()?.role === "owner"} />
             </Section>
           </>
         )}

@@ -96,15 +96,31 @@ func (s *Service) Send(ctx context.Context, to, subject, body string) error {
 func (s *Service) adminOnly(c *gin.Context) {
 	uid := auth.CurrentUser(c).ID
 	var ok bool
+	// smtp_settings is a deployment-global singleton (one row, no
+	// workspace column), so management requires workspace *owner* —
+	// an admin of any workspace must not read or rotate the shared
+	// relay credentials. Matches the trust model documented in the
+	// OpenAPI for /settings/smtp.
 	err := s.pool.QueryRow(c.Request.Context(),
-		`select exists(select 1 from workspace_members where user_id=$1 and role in ('owner','admin'))`,
+		`select exists(select 1 from workspace_members where user_id=$1 and role='owner')`,
 		uid).Scan(&ok)
 	if err != nil || !ok {
-		httpx.Error(c, http.StatusForbidden, "forbidden", "workspace admin required")
+		httpx.Error(c, http.StatusForbidden, "forbidden", "workspace owner required")
 		c.Abort()
 		return
 	}
 	c.Next()
+}
+
+// headerSafe strips CR/LF so user-controlled names (author display
+// names, from_name) can never inject mail headers at compose time.
+func headerSafe(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\r' || r == '\n' {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // resolve reads the DB row first, falling back to env. The second return
@@ -120,6 +136,8 @@ func (s *Service) resolve(ctx context.Context) (smtpConfig, bool) {
 		if len(row.PasswordEnc) > 0 {
 			if p, err := secrets.Open(row.PasswordEnc, s.authSecret()); err == nil {
 				cfg.password = string(p)
+			} else {
+				s.log.Warn("stored smtp password undecryptable — AUTH_SECRET rotated?", zap.Error(err))
 			}
 		}
 		return cfg, true
@@ -171,6 +189,10 @@ func (s *Service) handlePutSMTP(c *gin.Context) {
 	}
 	if _, err := mail.ParseAddress(req.FromAddress); err != nil {
 		httpx.Error(c, http.StatusBadRequest, "bad_request", "from_address is not a valid email")
+		return
+	}
+	if strings.ContainsAny(req.FromName, "\r\n") {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "from_name must not contain line breaks")
 		return
 	}
 	var pwEnc []byte
@@ -301,16 +323,18 @@ func (s *Service) notify(e events.Event) {
 }
 
 // send delivers one plain-text mail. Port 465 implies implicit TLS;
-// everything else goes plain + STARTTLS when offered.
+// everything else goes STARTTLS, which is *required* whenever SMTP
+// credentials are configured — a relay that strips the STARTTLS
+// advertisement fails closed instead of leaking the password.
 func (s *Service) send(ctx context.Context, cfg smtpConfig, to []string, subject, body string) error {
 	addr := cfg.host + ":" + cfg.port
 	from := cfg.fromAddr
 	if cfg.fromName != "" {
-		from = fmt.Sprintf("%s <%s>", mime.QEncoding.Encode("utf-8", cfg.fromName), cfg.fromAddr)
+		from = fmt.Sprintf("%s <%s>", mime.QEncoding.Encode("utf-8", headerSafe(cfg.fromName)), cfg.fromAddr)
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "From: %s\r\nTo: %s\r\nSubject: %s\r\n", from,
-		strings.Join(to, ", "), mime.QEncoding.Encode("utf-8", subject))
+		strings.Join(to, ", "), mime.QEncoding.Encode("utf-8", headerSafe(subject)))
 	b.WriteString("MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n")
 	b.WriteString(body)
 	raw := []byte(b.String())
@@ -322,7 +346,7 @@ func (s *Service) send(ctx context.Context, cfg smtpConfig, to []string, subject
 	var err error
 	if cfg.port == "465" {
 		conn, err = tls.DialWithDialer(dialer, "tcp", addr,
-			&tls.Config{ServerName: cfg.host})
+			&tls.Config{ServerName: cfg.host, MinVersion: tls.VersionTLS12})
 	} else {
 		conn, err = dialer.DialContext(ctx, "tcp", addr)
 	}
@@ -338,9 +362,11 @@ func (s *Service) send(ctx context.Context, cfg smtpConfig, to []string, subject
 	defer func() { _ = client.Close() }()
 	if cfg.port != "465" {
 		if ok, _ := client.Extension("STARTTLS"); ok {
-			if err := client.StartTLS(&tls.Config{ServerName: cfg.host}); err != nil {
+			if err := client.StartTLS(&tls.Config{ServerName: cfg.host, MinVersion: tls.VersionTLS12}); err != nil {
 				return err
 			}
+		} else if cfg.username != "" {
+			return fmt.Errorf("smtp STARTTLS not offered — refusing to send credentials in cleartext")
 		}
 	}
 	if cfg.username != "" {

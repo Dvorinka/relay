@@ -3538,7 +3538,7 @@ paths:
   /api/settings/smtp:
     get:
       operationId: getSMTPSettings
-      summary: Read SMTP configuration — workspace admins only
+      summary: Read SMTP configuration — workspace owners only (deployment-global singleton)
       description: "The in-app row wins; SMTP_* env vars are the fallback and report source=env. Passwords are never returned — has_password flags one is stored."
       tags: [settings]
       responses:
@@ -3563,7 +3563,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
     put:
       operationId: putSMTPSettings
-      summary: Configure SMTP in-app — workspace admins only
+      summary: Configure SMTP in-app — workspace owners only (deployment-global singleton)
       description: "Writes the smtp_settings row; overrides SMTP_* env. Omit password (or send empty) to keep the stored one. Passwords are AES-256-GCM-encrypted under AUTH_SECRET at rest."
       tags: [settings]
       requestBody:
@@ -3589,7 +3589,7 @@ paths:
   /api/settings/smtp/test:
     post:
       operationId: testSMTP
-      summary: Send a test email through the configured SMTP — workspace admins only
+      summary: Send a test email through the configured SMTP — workspace owners only
       tags: [settings]
       requestBody:
         required: true

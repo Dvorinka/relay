@@ -66,8 +66,8 @@ export function EmailAlerts(props: {
                 </Dialog.Title>
                 <Dialog.Description class="mt-1 text-[12px] text-muted">
                   Every new message in #{props.channel()?.name} is emailed to
-                  these addresses. Requires SMTP — Settings → Email, or SMTP_*
-                  env on the server.
+                  these addresses (workspace owners/admins only). Requires
+                  SMTP — Settings → Email, or SMTP_* env on the server.
                 </Dialog.Description>
               </div>
               <Dialog.CloseTrigger class="rounded p-1 text-muted transition-colors hover:bg-hover hover:text-fg">

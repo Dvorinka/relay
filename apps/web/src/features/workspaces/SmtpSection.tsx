@@ -86,7 +86,7 @@ export default function SmtpSection(props: { canManage: boolean }) {
       <Show when={props.canManage} fallback={
         <Show when={smtp()?.smtp.configured}>
           <p class="text-muted">
-            SMTP configured — only workspace admins can change it.
+            SMTP configured — only workspace owners can change it.
           </p>
         </Show>
       }>
