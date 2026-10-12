@@ -34,6 +34,50 @@ func TestInboundIntake(t *testing.T) {
 		t.Fatalf("legacy intake bool did not map to receive: %v", up)
 	}
 
+	// Email alerts ride the same PATCH — the list validates and
+	// round-trips in the channel JSON.
+	if code, bad := c.call("PATCH", "/api/channels/"+chanID,
+		`{"email_alerts":["not-an-email"]}`); code != 400 {
+		t.Fatalf("bad email_alerts: %d %v", code, bad)
+	}
+	code, up = c.call("PATCH", "/api/channels/"+chanID,
+		`{"email_alerts":[" Support@Acme.com ","oncall@acme.com","oncall@acme.com"]}`)
+	if code != 200 {
+		t.Fatalf("email_alerts patch: %d %v", code, up)
+	}
+	got := up["channel"].(map[string]any)["email_alerts"].([]any)
+	if len(got) != 2 || got[0] != "support@acme.com" || got[1] != "oncall@acme.com" {
+		t.Fatalf("email_alerts not normalized/deduped: %v", got)
+	}
+
+	// SMTP settings — the row persists across runs on the shared test db,
+	// so assert the shape, not the initial state.
+	code, sm := c.call("GET", "/api/settings/smtp", "")
+	if code != 200 {
+		if _, ok := sm["smtp"].(map[string]any); !ok {
+			t.Fatalf("smtp get: %d %v", code, sm)
+		}
+	}
+	code, sm = c.call("PUT", "/api/settings/smtp",
+		`{"host":"10.255.255.1","port":2525,"from_address":"relay@test.dev","password":"s3cret"}`)
+	if code != 200 {
+		t.Fatalf("smtp put: %d %v", code, sm)
+	}
+	code, sm = c.call("GET", "/api/settings/smtp", "")
+	cfg := sm["smtp"].(map[string]any)
+	if code != 200 || cfg["configured"] != true || cfg["source"] != "db" ||
+		cfg["has_password"] != true {
+		if _, leaked := cfg["password"]; leaked {
+			t.Fatalf("password leaked in response: %v", cfg)
+		}
+		t.Fatalf("smtp get after put: %d %v", code, sm)
+	}
+	// Test-send against an unreachable host surfaces the upstream error.
+	code, sm = c.call("POST", "/api/settings/smtp/test", `{"to":"ops@test.dev"}`)
+	if code != 502 {
+		t.Fatalf("smtp test to dead host: %d %v", code, sm)
+	}
+
 	// The hook carries a default report kind — payloads can override it.
 	code, hook := c.call("POST", "/api/projects/"+projID+"/hooks",
 		fmt.Sprintf(`{"name":"acme-intake","conversation_id":%q,"kind":"bug"}`, chanID))

@@ -2,8 +2,6 @@ package github
 
 import (
 	"crypto"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -12,46 +10,19 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"io"
 	"time"
+
+	"github.com/Dvorinka/relay/internal/secrets"
 )
 
-// sealedLen = nonce + ciphertext + tag overhead for a sanity check on decrypt.
-func key(secret string) []byte {
-	sum := sha256.Sum256([]byte(secret))
-	return sum[:]
-}
-
-// seal encrypts with AES-256-GCM under a key derived from AUTH_SECRET.
+// seal/open delegate to the shared secrets package — AUTH_SECRET-keyed
+// AES-256-GCM at rest.
 func seal(plain []byte, secret string) ([]byte, error) {
-	block, err := aes.NewCipher(key(secret))
-	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, err
-	}
-	return gcm.Seal(nonce, nonce, plain, nil), nil
+	return secrets.Seal(plain, secret)
 }
 
 func open(sealed []byte, secret string) ([]byte, error) {
-	block, err := aes.NewCipher(key(secret))
-	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	if len(sealed) < gcm.NonceSize()+gcm.Overhead() {
-		return nil, errors.New("sealed value too short")
-	}
-	return gcm.Open(nil, sealed[:gcm.NonceSize()], sealed[gcm.NonceSize():], nil)
+	return secrets.Open(sealed, secret)
 }
 
 var b64 = base64.RawURLEncoding

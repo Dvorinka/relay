@@ -26,6 +26,7 @@ import (
 	"github.com/Dvorinka/relay/internal/ideas"
 	"github.com/Dvorinka/relay/internal/issues"
 	"github.com/Dvorinka/relay/internal/mail"
+	"github.com/Dvorinka/relay/internal/mailer"
 	"github.com/Dvorinka/relay/internal/mcpserver"
 	"github.com/Dvorinka/relay/internal/projects"
 	"github.com/Dvorinka/relay/internal/push"
@@ -63,7 +64,15 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 		cancel()
 	}
 
-	authSvc := auth.NewService(cfg, log, pool, mail.New(cfg, log))
+	mailSvc := mailer.NewService(cfg, log, pool)
+	// Auth mail: Resend-first chain on hosted (relay-hst sets only
+	// RESEND_API_KEY); elsewhere the SMTP service covers in-app DB
+	// settings with env fallback, logging when nothing is configured.
+	authMailer := auth.Mailer(mailSvc)
+	if cfg.ResendAPIKey != "" {
+		authMailer = mail.New(cfg, log)
+	}
+	authSvc := auth.NewService(cfg, log, pool, authMailer)
 	wsSvc := workspaces.NewService(log, pool)
 	projSvc := projects.NewService(log, pool)
 	convSvc := conversations.NewService(log, pool)
@@ -103,6 +112,7 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	unfurlSvc := unfurl.NewService(log, pool)
 	convSvc.Push = pushSvc
 	hookSvc.Start(context.Background(), hub)
+	mailSvc.Start(context.Background(), hub)
 	go remSvc.Start(context.Background())
 	go convSvc.StartScheduledSweep(context.Background())
 	go pushSvc.StartDigestSweep(context.Background())
@@ -185,6 +195,7 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	savedSvc.RegisterRoutes(priv)
 	remSvc.RegisterRoutes(priv)
 	unfurlSvc.RegisterRoutes(priv)
+	mailSvc.RegisterRoutes(priv)
 
 	// external agents: bearer-token MCP, not session cookies
 	r.POST("/mcp", mcpHandler)

@@ -1656,6 +1656,10 @@ paths:
                   type: boolean
                   deprecated: true
                   description: "Deprecated alias: true maps to intake_mode=receive, false to ''"
+                email_alerts:
+                  type: array
+                  items: { type: string, format: email }
+                  description: "Addresses emailed on every new message in this channel — requires SMTP configured (in-app or SMTP_* env)"
       responses:
         "200":
           description: Updated channel
@@ -3531,6 +3535,77 @@ paths:
       responses:
         "204": { description: "Accepted" }
 
+  /api/settings/smtp:
+    get:
+      operationId: getSMTPSettings
+      summary: Read SMTP configuration — workspace owners only (deployment-global singleton)
+      description: "The in-app row wins; SMTP_* env vars are the fallback and report source=env. Passwords are never returned — has_password flags one is stored."
+      tags: [settings]
+      responses:
+        "200":
+          description: SMTP settings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  smtp:
+                    type: object
+                    properties:
+                      configured: { type: boolean }
+                      source: { type: string, enum: [db, env] }
+                      host: { type: string }
+                      port: { type: string }
+                      username: { type: string }
+                      from_address: { type: string }
+                      from_name: { type: string }
+                      has_password: { type: boolean }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: putSMTPSettings
+      summary: Configure SMTP in-app — workspace owners only (deployment-global singleton)
+      description: "Writes the smtp_settings row; overrides SMTP_* env. Omit password (or send empty) to keep the stored one. Passwords are AES-256-GCM-encrypted under AUTH_SECRET at rest."
+      tags: [settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [host, port, from_address]
+              properties:
+                host: { type: string }
+                port: { type: integer, description: "465 = implicit TLS; anything else uses STARTTLS when offered" }
+                username: { type: string }
+                password: { type: string, description: "Empty keeps the stored password" }
+                from_address: { type: string, format: email }
+                from_name: { type: string }
+                enabled: { type: boolean }
+      responses:
+        "200": { description: "Saved" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/settings/smtp/test:
+    post:
+      operationId: testSMTP
+      summary: Send a test email through the configured SMTP — workspace owners only
+      tags: [settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties:
+                to: { type: string, format: email }
+      responses:
+        "200": { description: "Test mail sent" }
+        "400": { description: "SMTP not configured or bad address" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "502": { description: "SMTP relay refused the send — body carries the upstream error" }
+
   /api/projects/{projectId}/hooks:
     get:
       operationId: listInboundHooks
@@ -4659,6 +4734,10 @@ components:
           type: boolean
           deprecated: true
           description: "True when intake_mode is set — kept for client compatibility"
+        email_alerts:
+          type: array
+          items: { type: string }
+          description: "Addresses emailed on every new message in this channel"
         created_at: { type: string, format: date-time }
 
     MentionRef:

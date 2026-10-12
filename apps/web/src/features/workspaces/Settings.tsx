@@ -82,6 +82,7 @@ import {
 } from "../../stores/theme";
 import AgentsSection from "../agents/AgentsSection";
 import GitHubAppSection from "../github/GitHubAppSection";
+import SmtpSection from "./SmtpSection";
 
 function errorMessage(err: unknown, fallback: string): string {
   return err instanceof ApiClientError
@@ -1500,6 +1501,9 @@ export default function Settings() {
             </Section>
             <Section title="GitHub">
               <GitHubAppSection workspaceId={ws().id} canManage={canInvite()} />
+            </Section>
+            <Section title="Email">
+              <SmtpSection canManage={current()?.role === "owner"} />
             </Section>
           </>
         )}

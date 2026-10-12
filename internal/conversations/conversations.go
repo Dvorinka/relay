@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/mail"
 	"regexp"
 	"strconv"
 	"strings"
@@ -34,8 +35,9 @@ import (
 const MaxMessageBodyChars = 1_000_000
 
 type Service struct {
-	q   *db.Queries
-	log *zap.Logger
+	q    *db.Queries
+	pool *pgxpool.Pool
+	log  *zap.Logger
 	// Bus publishes domain events for SSE subscribers. Optional.
 	Bus *events.Hub
 	// Push fans out web-push notifications on mentions/replies. Optional.
@@ -43,7 +45,20 @@ type Service struct {
 }
 
 func NewService(log *zap.Logger, pool *pgxpool.Pool) *Service {
-	return &Service{q: db.New(pool), log: log}
+	return &Service{q: db.New(pool), pool: pool, log: log}
+}
+
+// isProjectAdmin reports whether uid holds owner/admin in the workspace
+// that owns the project. Used to gate deployment-impacting channel
+// settings (email alert lists) that plain members must not control.
+func (s *Service) isProjectAdmin(ctx context.Context, uid pgtype.UUID, pid pgtype.UUID) bool {
+	var ok bool
+	err := s.pool.QueryRow(ctx,
+		`select exists(select 1 from workspace_members wm
+		   join projects p on p.workspace_id = wm.workspace_id
+		   where wm.user_id=$1 and p.id=$2 and wm.role in ('owner','admin'))`,
+		uid, pid).Scan(&ok)
+	return err == nil && ok
 }
 
 // RegisterRoutes wires /conversations/:id/messages, /messages/:id/read and
@@ -1003,7 +1018,51 @@ func channelJSON(conv db.Conversation) gin.H {
 	m["agents_blocked"] = conv.AgentsBlocked
 	m["intake_mode"] = conv.IntakeMode
 	m["intake"] = conv.IntakeMode != ""
+	m["email_alerts"] = nonEmptyStrings(conv.EmailAlerts)
 	return m
+}
+
+// nonEmptyStrings keeps JSON arrays []-shaped instead of null.
+func nonEmptyStrings(l []string) []string {
+	if l == nil {
+		return []string{}
+	}
+	return l
+}
+
+// maxAlertAddrs / maxAddrLen bound the per-channel alert list: without
+// caps any member could turn the server into a bulk mailer and stall the
+// single alert goroutine behind huge Rcpt sequences.
+const (
+	maxAlertAddrs = 25
+	maxAddrLen    = 254
+)
+
+// cleanEmailAlerts trims, lowercases, dedupes and validates the alert
+// list, storing the parsed bare address (never a display-name form).
+// Returns the bad address on failure.
+func cleanEmailAlerts(in []string) ([]string, string) {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(in))
+	for _, a := range in {
+		a = strings.ToLower(strings.TrimSpace(a))
+		if a == "" {
+			continue
+		}
+		parsed, err := mail.ParseAddress(a)
+		if err != nil || strings.Contains(a, " ") || len(a) > maxAddrLen {
+			return nil, a
+		}
+		a = strings.ToLower(parsed.Address)
+		if !seen[a] {
+			seen[a] = true
+			out = append(out, a)
+		}
+		if len(out) > maxAlertAddrs {
+			return nil, a
+		}
+	}
+	return out, ""
 }
 
 // channelName validates the wire name: trimmed, collapsed whitespace,
@@ -1074,10 +1133,11 @@ func (s *Service) handleUpdateChannel(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Name          *string `json:"name"`
-		AgentsBlocked *bool   `json:"agents_blocked"`
-		IntakeMode    *string `json:"intake_mode"`
-		Intake        *bool   `json:"intake"` // deprecated: use intake_mode
+		Name          *string  `json:"name"`
+		AgentsBlocked *bool    `json:"agents_blocked"`
+		IntakeMode    *string  `json:"intake_mode"`
+		Intake        *bool    `json:"intake"` // deprecated: use intake_mode
+		EmailAlerts   []string `json:"email_alerts"`
 	}
 	if !httpx.BindJSON(c, &req) {
 		return
@@ -1121,6 +1181,25 @@ func (s *Service) handleUpdateChannel(c *gin.Context) {
 		}
 		if _, err := s.q.SetChannelIntakeMode(c.Request.Context(), db.SetChannelIntakeModeParams{
 			ID: conv.ID, IntakeMode: *mode,
+		}); err != nil {
+			httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+			return
+		}
+	}
+	if req.EmailAlerts != nil {
+		// Alert lists make the server mail third parties — owner/admin only.
+		if !s.isProjectAdmin(c.Request.Context(), auth.CurrentUser(c).ID, conv.ProjectID) {
+			httpx.Error(c, http.StatusForbidden, "forbidden", "email alert lists require owner or admin")
+			return
+		}
+		addrs, bad := cleanEmailAlerts(req.EmailAlerts)
+		if bad != "" {
+			httpx.Error(c, http.StatusBadRequest, "bad_request",
+				"invalid email address: "+bad)
+			return
+		}
+		if _, err := s.q.SetChannelEmailAlerts(c.Request.Context(), db.SetChannelEmailAlertsParams{
+			ID: conv.ID, EmailAlerts: addrs,
 		}); err != nil {
 			httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 			return
