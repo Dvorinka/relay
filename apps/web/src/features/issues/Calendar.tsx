@@ -87,11 +87,16 @@ export function useProjectBundles(projList: () => Project[]) {
   );
 
   const unsub = subscribe((e) => {
+    if (e.type === "stream.resync") {
+      refetch();
+      return;
+    }
     if (!e.project_id || !projList().some((p) => p.id === e.project_id)) return;
     if (
       e.type.startsWith("issue.") ||
       e.type.startsWith("review.") ||
-      e.type.startsWith("github.")
+      e.type.startsWith("github.") ||
+      e.type === "todo.changed"
     ) {
       refetch();
     }

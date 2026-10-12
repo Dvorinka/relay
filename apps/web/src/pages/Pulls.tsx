@@ -35,7 +35,12 @@ export default function Pulls() {
   // Mirrored PR issues emit issue.*; CI/deploy webhooks republish as
   // github.ci — both mean a pull row may have moved.
   const unsub = subscribe((e) => {
-    if (e.type.startsWith("issue.") || e.type === "github.ci") void refetch();
+    if (
+      e.type.startsWith("issue.") ||
+      e.type === "github.ci" ||
+      e.type === "stream.resync"
+    )
+      void refetch();
   });
   onCleanup(unsub);
 

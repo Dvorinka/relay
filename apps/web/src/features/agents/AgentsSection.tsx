@@ -725,6 +725,11 @@ export default function AgentsSection(props: {
   // Live agent lifecycle: another client creating/editing/deleting an agent
   // (or an invite being used) updates this list without a manual refresh.
   const unsub = subscribe((e) => {
+    if (e.type === "stream.resync") {
+      void refetch();
+      void refetchInvites();
+      return;
+    }
     if (e.type !== "agent.changed") return;
     void refetch();
     void refetchInvites();

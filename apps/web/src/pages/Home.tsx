@@ -54,7 +54,8 @@ export default function Home() {
       if (
         e.type.startsWith("message.") ||
         e.type.startsWith("issue.") ||
-        e.type.startsWith("review.")
+        e.type.startsWith("review.") ||
+        e.type === "stream.resync"
       ) {
         bump();
       }

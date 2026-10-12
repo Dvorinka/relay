@@ -32,6 +32,10 @@ export default function ChannelPage() {
     (id) => api.listChannels(id).then((r) => r.channels),
   );
   const unsub = subscribe((e) => {
+    if (e.type === "stream.resync") {
+      refetch();
+      return;
+    }
     if (e.project_id === params.projectId && e.type.startsWith("channel.")) {
       refetch();
     }

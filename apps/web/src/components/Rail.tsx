@@ -208,9 +208,15 @@ function ProjectChildren(props: { project: Project }) {
   const [name, setName] = createSignal("");
   const [error, setError] = createSignal("");
   const unsub = subscribe((e) => {
+    if (e.type === "stream.resync") {
+      refetchChannels();
+      refetchThreads();
+      return;
+    }
     if (e.project_id !== props.project.id) return;
     if (e.type.startsWith("channel.")) refetchChannels();
     if (e.type.startsWith("thread.")) refetchThreads();
+    if (e.type === "conversation.cleared") refetchChannels();
   });
   onCleanup(unsub);
 
@@ -737,7 +743,11 @@ export function Rail() {
   const [creating, setCreating] = createSignal(false);
   onMount(refreshUnread);
   const unsub = subscribe((e) => {
-    if (e.type === "message.created" || e.type === "stream.resync") {
+    if (
+      e.type === "message.created" ||
+      e.type === "conversation.cleared" ||
+      e.type === "stream.resync"
+    ) {
       void refreshUnread();
     }
     if (e.type === "review.created" || e.type === "review.responded") {

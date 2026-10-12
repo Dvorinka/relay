@@ -937,17 +937,34 @@ func (s *Service) handleSetExpiry(c *gin.Context) {
 	if req.ExpiresAt != nil {
 		at = pgtype.Timestamptz{Time: *req.ExpiresAt, Valid: true}
 	}
+	// A past expires_at is a delete. Read the thread BEFORE updating:
+	// GetThread filters expired rows, so afterwards the row is unreadable.
+	// Expired threads vanish from every list — publish thread.deleted so
+	// live clients drop dead rows instead of waiting for a manual refresh.
+	var delTr *db.GetThreadRow
+	if at.Valid && !at.Time.After(time.Now()) {
+		if tr, err := s.q.GetThread(c.Request.Context(), conv.ID); err == nil {
+			delTr = &tr
+		}
+	}
 	if _, err := s.q.SetThreadExpiry(c.Request.Context(), db.SetThreadExpiryParams{
 		ID: conv.ID, ExpiresAt: at,
 	}); err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
-	// A past expires_at is a delete: GetThread filters expired rows, so the
-	// re-read misses. Sweep eagerly and confirm instead of 500ing.
-	if at.Valid && !at.Time.After(time.Now()) {
+	if delTr != nil {
 		if _, err := s.q.DeleteExpiredThreads(c.Request.Context()); err != nil {
 			s.log.Warn("thread sweep failed", zap.Error(err))
+		}
+		if s.Bus != nil {
+			pid, _ := uuid.FromBytes(delTr.ProjectID.Bytes[:])
+			s.Bus.Publish(events.Event{Type: "thread.deleted", ProjectID: pid,
+				Data: map[string]any{
+					"conversation_id":   delTr.ParentConversationID.String(),
+					"parent_message_id": delTr.ParentMessageID.String(),
+					"thread_id":         conv.ID.String(),
+				}})
 		}
 		c.JSON(http.StatusOK, gin.H{"thread": nil, "deleted": true})
 		return
@@ -1412,6 +1429,28 @@ func (s *Service) handleMarkRead(c *gin.Context) {
 	}); err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
+	}
+	// Human reads broadcast like agent reads do — open clients merge the
+	// receipt live instead of waiting for a refetch.
+	if s.Bus != nil {
+		if cid, err := s.q.GetMessageConversation(c.Request.Context(), id); err == nil {
+			if conv, err := s.q.GetConversationByID(c.Request.Context(), cid); err == nil {
+				var avatar *string
+				if user.AvatarKey.Valid && user.AvatarKey.String != "" {
+					a := "/api/files/" + user.AvatarKey.String
+					avatar = &a
+				}
+				pid, _ := uuid.FromBytes(conv.ProjectID.Bytes[:])
+				s.Bus.Publish(events.Event{Type: "message.read", ProjectID: pid,
+					Data: map[string]any{
+						"conversation_id": cid.String(),
+						"message_ids":     []string{id.String()},
+						"user": gin.H{
+							"id": user.ID.String(), "name": user.Name, "avatar_url": avatar,
+						},
+					}})
+			}
+		}
 	}
 	c.Status(http.StatusNoContent)
 }

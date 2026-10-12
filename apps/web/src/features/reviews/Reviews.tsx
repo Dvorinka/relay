@@ -480,6 +480,10 @@ export function Reviews(props: { project: Project }) {
   );
 
   const unsub = subscribe((e) => {
+    if (e.type === "stream.resync") {
+      refetch();
+      return;
+    }
     if (e.project_id !== props.project.id) return;
     if (e.type === "review.created" || e.type === "review.responded") refetch();
   });

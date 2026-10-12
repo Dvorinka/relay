@@ -32,6 +32,10 @@ export function PullRequestDetail(props: {
   );
   // check-run webhooks repaint the Checks section while the page is open
   const unsub = subscribe((e) => {
+    if (e.type === "stream.resync") {
+      void refetch();
+      return;
+    }
     if (e.type === "github.ci" && e.data?.repo === props.repo) void refetch();
   });
   onCleanup(unsub);

@@ -812,7 +812,7 @@ function ContextRail(props: {
     () => props.project.id,
     async (id) => (await api.listIssues(id)).issues,
   );
-  const [reviews] = createResource(
+  const [reviews, { refetch: refetchReviews }] = createResource(
     () => props.project.id,
     async (id) => (await api.listReviews(id, "pending")).reviews,
   );
@@ -824,23 +824,35 @@ function ContextRail(props: {
     () => props.project.id,
     async (id) => (await api.listProjectRepos(id)).repos,
   );
-  const [members] = createResource(
+  const [members, { refetch: refetchMembers }] = createResource(
     () => props.project.workspace_id,
     async (id) => (await api.listWorkspaceMembers(id)).members,
   );
 
-  const [agents] = createResource(
+  const [agents, { refetch: refetchAgents }] = createResource(
     () => props.project.id,
     async (id) => (await api.listProjectAgents(id)).agents,
   );
 
   const unsub = subscribe((e) => {
-    if (e.project_id === props.project.id && e.type.startsWith("issue.")) {
+    if (e.type === "stream.resync") {
       refetchIssues();
-    }
-    if (e.project_id === props.project.id && e.type.startsWith("todo.")) {
       refetchTodos();
+      refetchReviews();
+      refetchAgents();
+      refetchMembers();
+      refetchDev();
+      return;
     }
+    if (e.project_id !== props.project.id) return;
+    if (e.type.startsWith("issue.")) refetchIssues();
+    if (e.type.startsWith("todo.")) refetchTodos();
+    if (e.type.startsWith("review.")) refetchReviews();
+    if (e.type === "agent.changed") {
+      refetchAgents();
+      refetchMembers();
+    }
+    if (e.type === "github.ci") refetchDev();
   });
   onCleanup(unsub);
 
@@ -858,7 +870,7 @@ function ContextRail(props: {
   );
 
   // Development snapshot powers the rail's commits strip — cached 60s upstream.
-  const [dev] = createResource(
+  const [dev, { refetch: refetchDev }] = createResource(
     () => ((repos.latest ?? []).length > 0 ? props.project.id : undefined),
     (id) => api.projectDevelopment(id).catch(() => undefined),
   );

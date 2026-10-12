@@ -562,7 +562,9 @@ func (s *Service) handleFromMessage(c *gin.Context) {
 			}
 		}
 	}
-	c.JSON(http.StatusCreated, issueJSON(row, pgtype.Text{}, pgtype.Text{}, nil, proj.Key, pgtype.Text{}, pgtype.Text{}, s.defsFor(c.Request.Context(), proj.ID)))
+	out := issueJSON(row, pgtype.Text{}, pgtype.Text{}, nil, proj.Key, pgtype.Text{}, pgtype.Text{}, s.defsFor(c.Request.Context(), proj.ID))
+	s.publish(msg.ProjectID, "issue.created", out)
+	c.JSON(http.StatusCreated, out)
 }
 
 // --- labels ---

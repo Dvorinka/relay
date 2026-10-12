@@ -40,6 +40,7 @@ import {
 import { api } from "../../lib/api";
 import { browserAuth } from "../../lib/desktop";
 import { FREE_SERVER_URL } from "../../lib/servers";
+import { subscribe } from "../../lib/events";
 import { mediaURL, net } from "../../lib/net";
 import {
   deliver,
@@ -170,6 +171,13 @@ function MemberList(props: { workspaceId: string; canInvite: boolean }) {
     () => props.workspaceId,
     async (id) => (await api.listWorkspaceMembers(id)).members,
   );
+  // Roster joins/role changes have no dedicated event yet, but agent
+  // membership changes fan out as agent.changed — repaint on those and
+  // on reconnects. (AgentsSection, rendered below, listens itself.)
+  const unsub = subscribe((e) => {
+    if (e.type === "agent.changed" || e.type === "stream.resync") refetch();
+  });
+  onCleanup(unsub);
   const [inviteError, setInviteError] = createSignal<string | null>(null);
   const [inviteRole, setInviteRole] = createSignal("member");
   const [pending, setPending] = createSignal(false);
