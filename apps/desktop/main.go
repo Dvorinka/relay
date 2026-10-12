@@ -42,6 +42,13 @@ func main() {
 	if _, ok := os.LookupEnv("WEBKIT_DISABLE_DMABUF_RENDERER"); !ok {
 		_ = os.Setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
 	}
+	// WebKitGTK >= 2.52 segfaults in libatk-bridge's
+	// spi_register_object_to_path when the AT-SPI registry is
+	// unavailable or misbehaving; skip the bridge unless opted out.
+	// Cost: the app exposes no accessibility tree to AT-SPI clients.
+	if _, ok := os.LookupEnv("NO_AT_BRIDGE"); !ok {
+		_ = os.Setenv("NO_AT_BRIDGE", "1")
+	}
 	cfg, err := loadConfig()
 	if err != nil {
 		log.Fatal(err)
