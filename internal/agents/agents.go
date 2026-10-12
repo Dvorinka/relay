@@ -625,7 +625,7 @@ func (s *Service) handleDeleteInvite(c *gin.Context) {
 		return
 	}
 	inv, err := s.q.GetAgentInviteByID(c.Request.Context(), id)
-	if err != nil {
+	if err != nil || inv.WorkspaceID != c.MustGet(ctxWorkspace).(pgtype.UUID) {
 		httpx.Error(c, http.StatusNotFound, "not_found", "invite not found")
 		return
 	}

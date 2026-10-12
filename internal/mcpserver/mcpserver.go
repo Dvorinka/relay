@@ -951,17 +951,23 @@ func (s *Service) resolveConversationArg(ctx context.Context, req mcp.CallToolRe
 		}
 		conv, err := s.q.GetProjectConversation(ctx, pid)
 		if errors.Is(err, pgx.ErrNoRows) {
-			conv, err = s.q.CreateProjectConversation(ctx, pid)
-		}
-		if err != nil {
-			// Not a project — treat the id as a conversation (brief threads,
-			// issue threads) so `messages <uuid>` works on either.
+			// The id may be a conversation (brief/issue thread), not a
+			// project — resolve first and only create for real projects.
+			// The scope check must come before the insert: without it an
+			// ungranted agent could create a conversation row inside a
+			// foreign project even though the call itself errors.
 			if _, cerr := s.q.ResolveConversationProject(ctx, pid); cerr == nil {
 				if cerr := s.checkAgentConversation(ctx, pid); cerr != nil {
 					return pgtype.UUID{}, mcp.NewToolResultError(cerr.Error())
 				}
 				return pid, nil
 			}
+			if err := s.scope(ctx, pid, "message:read"); err != nil {
+				return pgtype.UUID{}, mcp.NewToolResultError(err.Error())
+			}
+			conv, err = s.q.CreateProjectConversation(ctx, pid)
+		}
+		if err != nil {
 			return pgtype.UUID{}, mcp.NewToolResultError(err.Error())
 		}
 		return conv.ID, nil
@@ -1465,16 +1471,24 @@ func (s *Service) sendMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 		}
 		conv, err := s.q.GetProjectConversation(ctx, pid)
 		if errors.Is(err, pgx.ErrNoRows) {
-			conv, err = s.q.CreateProjectConversation(ctx, pid)
-		}
-		if err != nil {
 			// A conversation UUID lands here too (brief/issue threads).
 			if cres, cerr := s.q.ResolveConversationProject(ctx, pid); cerr == nil {
 				cid = pid
 				pid = cres
 			} else {
-				return errResult(err)
+				// Real project with no conversation yet — scope before
+				// create so an ungranted agent can't insert a row here.
+				if err := s.scope(ctx, pid, "message:write"); err != nil {
+					return errResult(err)
+				}
+				conv, err = s.q.CreateProjectConversation(ctx, pid)
+				if err != nil {
+					return errResult(err)
+				}
+				cid = conv.ID
 			}
+		} else if err != nil {
+			return errResult(err)
 		} else {
 			cid = conv.ID
 		}

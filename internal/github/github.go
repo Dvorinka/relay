@@ -53,7 +53,26 @@ type Service struct {
 	// dispatchMu serializes webhook processing: GitHub delivers resource events
 	// in order, and concurrent handlers would race read-modify-write.
 	dispatchMu sync.Mutex
+
+	// pendingInstalls records which workspace last asked for the install
+	// URL — the only hint available when an installation.created webhook
+	// arrives with no Relay-side context. Workspace admins viewing the
+	// GitHub settings section prime it; the freshest entry within the TTL
+	// wins.
+	installMu       sync.Mutex
+	pendingInstalls []pendingInstall
 }
+
+// pendingInstall is a "workspace X is about to install the app" marker.
+type pendingInstall struct {
+	ws pgtype.UUID
+	at time.Time
+}
+
+const (
+	pendingInstallTTL = 15 * time.Minute
+	pendingInstallCap = 16
+)
 
 type cacheEntry struct {
 	data   any
@@ -69,6 +88,7 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup, pub *gin.RouterGroup) {
 	g.POST("/github/app/manifest", s.adminOnly, s.handleManifest)
 	g.DELETE("/github/app", s.adminOnly, s.handleDeleteApp)
 	g.GET("/workspaces/:id/github/installations", s.memberOnly, s.handleInstallations)
+	g.POST("/workspaces/:id/github/installations/:installId/claim", s.wsAdminOnly, s.handleClaimInstallation)
 	g.GET("/workspaces/:id/github/repos", s.memberOnly, s.handleAvailableRepos)
 	g.GET("/projects/:id/github/repos", s.projectMemberOnly, s.handleProjectRepos)
 	g.PUT("/projects/:id/github/repo", s.projectAdminOnly, s.handleLinkRepo)
@@ -318,6 +338,10 @@ func ghCLIToken(ctx context.Context) (string, error) {
 
 func (s *Service) handleInstallations(c *gin.Context) {
 	wsID, _ := httpx.PathUUID(c, "id")
+	// Serving install_url means this workspace is about to install — the
+	// marker is the only workspace signal available when the
+	// installation.created webhook lands moments later.
+	s.rememberPendingInstall(wsID)
 	rows, err := s.q.ListInstallationsForWorkspace(c.Request.Context(), wsID)
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
@@ -328,7 +352,110 @@ func (s *Service) handleInstallations(c *gin.Context) {
 	if app.AppID != 0 {
 		out["install_url"] = "https://github.com/apps/" + app.Slug + "/installations/new"
 	}
+	// Admins also see installs that arrived with no workspace hint so they
+	// can claim theirs. The account login is what identifies whose install
+	// it is; members don't need it, so it's admin-only.
+	if role, _ := s.userWorkspaceRole(c, wsID); role == "owner" || role == "admin" {
+		unclaimed := []gin.H{}
+		if urows, err := s.pool.Query(c.Request.Context(),
+			`select installation_id, account_login, account_type
+			 from github_installations where workspace_id is null`); err == nil {
+			defer urows.Close()
+			for urows.Next() {
+				var iid int64
+				var login, typ string
+				if err := urows.Scan(&iid, &login, &typ); err == nil {
+					unclaimed = append(unclaimed, gin.H{
+						"installation_id": iid, "account_login": login, "account_type": typ,
+					})
+				}
+			}
+		}
+		out["unclaimed"] = unclaimed
+	}
 	c.JSON(http.StatusOK, out)
+}
+
+// rememberPendingInstall primes the install-binding hint for wsID.
+func (s *Service) rememberPendingInstall(wsID pgtype.UUID) {
+	s.installMu.Lock()
+	defer s.installMu.Unlock()
+	now := time.Now()
+	kept := s.pendingInstalls[:0]
+	for _, p := range s.pendingInstalls {
+		if now.Sub(p.at) < pendingInstallTTL && p.ws != wsID {
+			kept = append(kept, p)
+		}
+	}
+	s.pendingInstalls = append(kept, pendingInstall{ws: wsID, at: now})
+	if len(s.pendingInstalls) > pendingInstallCap {
+		s.pendingInstalls = s.pendingInstalls[len(s.pendingInstalls)-pendingInstallCap:]
+	}
+}
+
+// takePendingInstall returns and consumes the freshest live marker.
+func (s *Service) takePendingInstall() (pgtype.UUID, bool) {
+	s.installMu.Lock()
+	defer s.installMu.Unlock()
+	now := time.Now()
+	freshest := -1
+	for i, p := range s.pendingInstalls {
+		if now.Sub(p.at) < pendingInstallTTL &&
+			(freshest < 0 || p.at.After(s.pendingInstalls[freshest].at)) {
+			freshest = i
+		}
+	}
+	if freshest < 0 {
+		return pgtype.UUID{}, false
+	}
+	ws := s.pendingInstalls[freshest].ws
+	kept := s.pendingInstalls[:0]
+	for i, p := range s.pendingInstalls {
+		if i != freshest && now.Sub(p.at) < pendingInstallTTL {
+			kept = append(kept, p)
+		}
+	}
+	s.pendingInstalls = kept
+	return ws, true
+}
+
+// soleWorkspace returns the workspace id only when exactly one exists —
+// the self-host case, where binding an install is unambiguous.
+func (s *Service) soleWorkspace(ctx context.Context) (pgtype.UUID, bool) {
+	var id pgtype.UUID
+	err := s.pool.QueryRow(ctx,
+		`select id from workspaces
+		 where (select count(*) from workspaces) = 1
+		 limit 1`).Scan(&id)
+	if err != nil {
+		return pgtype.UUID{}, false
+	}
+	return id, true
+}
+
+// handleClaimInstallation attaches an unclaimed (NULL workspace)
+// installation to the caller's workspace. Only unclaimed rows are
+// claimable — once bound, an install can never be pulled into another
+// workspace from here.
+func (s *Service) handleClaimInstallation(c *gin.Context) {
+	wsID, _ := httpx.PathUUID(c, "id")
+	installID, err := strconv.ParseInt(c.Param("installId"), 10, 64)
+	if err != nil || installID <= 0 {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "invalid installation id")
+		return
+	}
+	tag, err := s.pool.Exec(c.Request.Context(),
+		`update github_installations set workspace_id=$1
+		 where installation_id=$2 and workspace_id is null`, wsID, installID)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		httpx.Error(c, http.StatusNotFound, "not_found", "no unclaimed installation with that id")
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 func (s *Service) handleAvailableRepos(c *gin.Context) {
@@ -1394,12 +1521,20 @@ func (s *Service) onInstallation(ctx context.Context, body []byte, p webhookPayl
 	}
 	switch full.Action {
 	case "created":
-		// attach to every workspace for now: the installer chooses scope on
-		// the GitHub side; linking is per-project anyway
-		ws, err := s.firstWorkspace(ctx)
-		if err != nil {
-			s.log.Warn("installation created but no workspace", zap.Error(err))
-			return
+		// The webhook carries no Relay workspace context. Binding order:
+		// the workspace that just asked for the install URL, then — when
+		// exactly one workspace exists — that workspace. Anything else is
+		// a guess we refuse to make on a multi-tenant instance: the row
+		// goes in unclaimed (NULL workspace) and a workspace admin claims
+		// it explicitly from settings.
+		ws, ok := s.takePendingInstall()
+		if !ok {
+			ws, ok = s.soleWorkspace(ctx)
+		}
+		if !ok {
+			s.log.Info("installation created with no workspace hint — left unclaimed",
+				zap.Int64("installation", full.Installation.ID),
+				zap.String("account", full.Installation.Account.Login))
 		}
 		if _, err := s.q.UpsertInstallation(ctx, db.UpsertInstallationParams{
 			WorkspaceID: ws, InstallationID: full.Installation.ID,
@@ -1411,12 +1546,6 @@ func (s *Service) onInstallation(ctx context.Context, body []byte, p webhookPayl
 	case "deleted":
 		_ = s.q.DeleteInstallation(ctx, full.Installation.ID)
 	}
-}
-
-func (s *Service) firstWorkspace(ctx context.Context) (pgtype.UUID, error) {
-	var id pgtype.UUID
-	err := s.pool.QueryRow(ctx, "select id from workspaces order by created_at limit 1").Scan(&id)
-	return id, err
 }
 
 func (s *Service) onIssue(ctx context.Context, p webhookPayload) {
@@ -1802,15 +1931,21 @@ func (s *Service) userWorkspaceRole(c *gin.Context, wsID pgtype.UUID) (string, b
 }
 
 func (s *Service) adminOnly(c *gin.Context) {
-	// app registration is a deployment-level decision: require any workspace
-	// admin. For single-workspace self-hosts this is the owner.
+	// app registration is a deployment-level decision: the app row is a
+	// singleton shared by every workspace, so managing it requires admin
+	// of the FIRST workspace — the deployment operator's. Any-workspace
+	// admin would let any tenant hijack or delete the shared app on a
+	// multi-user instance. Single-workspace self-hosts collapse to the
+	// same rule: the only workspace is the first one.
 	uid := auth.CurrentUser(c).ID
 	var ok bool
 	err := s.pool.QueryRow(c.Request.Context(),
-		`select exists(select 1 from workspace_members where user_id=$1 and role in ('owner','admin'))`,
+		`select exists(select 1 from workspace_members wm
+			where wm.user_id=$1 and wm.role in ('owner','admin')
+			  and wm.workspace_id = (select id from workspaces order by created_at limit 1))`,
 		uid).Scan(&ok)
 	if err != nil || !ok {
-		httpx.Error(c, http.StatusForbidden, "forbidden", "workspace admin required")
+		httpx.Error(c, http.StatusForbidden, "forbidden", "deployment admin required")
 		c.Abort()
 		return
 	}
@@ -1826,6 +1961,23 @@ func (s *Service) memberOnly(c *gin.Context) {
 	role, ok := s.userWorkspaceRole(c, wsID)
 	if !ok || role == "" {
 		httpx.Error(c, http.StatusForbidden, "forbidden", "workspace membership required")
+		c.Abort()
+		return
+	}
+	c.Next()
+}
+
+// wsAdminOnly is memberOnly plus the owner/admin role — for workspace-level
+// mutations like claiming a GitHub installation.
+func (s *Service) wsAdminOnly(c *gin.Context) {
+	wsID, ok := httpx.PathUUID(c, "id")
+	if !ok {
+		c.Abort()
+		return
+	}
+	role, ok := s.userWorkspaceRole(c, wsID)
+	if !ok || (role != "owner" && role != "admin") {
+		httpx.Error(c, http.StatusForbidden, "forbidden", "workspace admin required")
 		c.Abort()
 		return
 	}
