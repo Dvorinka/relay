@@ -8,7 +8,7 @@ on:
 
 jobs:
   backend:
-    runs-on: ubuntu-latest
+    runs-on: lxc-901
     services:
       postgres:
         image: postgres:17
@@ -38,7 +38,7 @@ jobs:
           RELAY_TEST_DATABASE_URL: postgres://relay:relay@127.0.0.1:5432/relay_e2e?sslmode=disable
 
   web:
-    runs-on: ubuntu-latest
+    runs-on: lxc-901
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -52,7 +52,7 @@ jobs:
       - run: npm run build --prefix apps/web
 
   openapi:
-    runs-on: ubuntu-latest
+    runs-on: lxc-901
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -66,7 +66,7 @@ jobs:
             diff -u packages/api-client/src/generated/schema.ts /tmp/schema.ts
 
   docker:
-    runs-on: ubuntu-latest
+    runs-on: lxc-901
     permissions:
       packages: write
       contents: read
@@ -93,7 +93,7 @@ jobs:
           docker push ghcr.io/dvorinka/relay:sha-${GITHUB_SHA:0:7}
 
   desktop:
-    runs-on: ubuntu-latest
+    runs-on: lxc-901
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -137,7 +137,7 @@ jobs:
           path: apps/desktop/build/bin/relay-desktop
 
   security:
-    runs-on: ubuntu-latest
+    runs-on: lxc-901
     steps:
       - uses: actions/checkout@v7
       - uses: aquasecurity/trivy-action@master
