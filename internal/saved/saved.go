@@ -88,7 +88,7 @@ func (s *Service) handleList(c *gin.Context) {
 	for _, r := range rows {
 		m := conversations.MessageJSON(conversations.MessageView{
 			ID: r.ID, ConversationID: r.ConversationID, ParentID: r.ParentID,
-			Body: r.Body, Mentions: r.Mentions, Tags: r.Tags, Silent: r.Silent,
+			Body: r.Body, Mentions: r.Mentions, Tags: r.Tags, Meta: r.Meta, Silent: r.Silent,
 			CreatedAt: r.CreatedAt, EditedAt: r.EditedAt,
 			AuthorUserID: r.AuthorUserID, AuthorAgentID: r.AuthorAgentID,
 			AuthorKindSnapshot: r.AuthorKindSnapshot,

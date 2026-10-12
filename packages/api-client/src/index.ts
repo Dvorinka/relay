@@ -1,4 +1,4 @@
-import type { components, paths } from "./generated/schema";
+import type { components, operations, paths } from "./generated/schema";
 
 export type { components, paths };
 
@@ -16,6 +16,8 @@ export type CreateProjectRequest = components["schemas"]["CreateProjectRequest"]
 export type ProjectOverview = components["schemas"]["ProjectOverview"];
 export type Conversation = components["schemas"]["Conversation"];
 export type Message = components["schemas"]["Message"];
+export type OpsSummary =
+  operations["opsSummary"]["responses"]["200"]["content"]["application/json"];
 export type MessageAuthor = components["schemas"]["MessageAuthor"];
 export type MessageParent = components["schemas"]["MessageParent"];
 export type MentionRef = components["schemas"]["MentionRef"];
@@ -633,7 +635,7 @@ export function createClient(
       input: {
         name?: string;
         agents_blocked?: boolean;
-        intake_mode?: "" | "receive" | "chat";
+        intake_mode?: "" | "receive" | "chat" | "ops";
         email_alerts?: string[];
       },
     ) => patch<{ channel: Channel }>(`/api/channels/${channelId}`, input),
@@ -647,6 +649,8 @@ export function createClient(
       request<{ messages: Message[] }>(
         `/api/conversations/${conversationId}/pins`,
       ),
+    opsSummary: (conversationId: string) =>
+      request<OpsSummary>(`/api/conversations/${conversationId}/ops`),
     saveMessage: (messageId: string, saved: boolean) =>
       request<void>(`/api/messages/${messageId}/save`, {
         method: saved ? "PUT" : "DELETE",

@@ -281,6 +281,7 @@ type Message struct {
 	AuthorKindSnapshot string             `json:"author_kind_snapshot"`
 	Silent             bool               `json:"silent"`
 	ClientMsgID        pgtype.Text        `json:"client_msg_id"`
+	Meta               []byte             `json:"meta"`
 }
 
 type MessageAttachment struct {

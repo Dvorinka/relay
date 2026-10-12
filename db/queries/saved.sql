@@ -19,7 +19,7 @@ select message_id from saved_messages where user_id = sqlc.arg(user_id);
 -- name: ListSavedMessages :many
 -- newest-saved-first; joins mirror GetMessageByID so the client can render
 -- a normal message plus enough context to deep-link back to it
-select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.silent, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.meta, m.silent, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
        m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
        coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,

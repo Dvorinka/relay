@@ -82,6 +82,7 @@ import {
 import { Markdown, renderMarkdown } from "../../lib/markdown";
 import { markGitHub } from "../github/GitHub";
 import { LinkPreview } from "../../components/LinkPreview";
+import { OpsBanner, opsFrameCls, opsMetaOf } from "../../components/OpsCard";
 import { formatBytes, initials, messagePreview } from "../../lib/text";
 import { useProjects } from "../../stores/projects";
 import { isSaved, seedSaved, toggleSaved } from "../../stores/saved";
@@ -2118,6 +2119,15 @@ function MessageRow(props: {
           when={editing()}
           fallback={
             <>
+              <Show when={opsMetaOf(m())} keyed>
+                {(meta) => (
+                  <div
+                    class={`my-1 max-w-xl rounded-lg border-l-[3px] px-3 py-2 ${opsFrameCls(meta)}`}
+                  >
+                    <OpsBanner meta={meta} />
+                  </div>
+                )}
+              </Show>
               <Show when={m().body.trim().length > 0}>
                 <Markdown
                   body={m().body}

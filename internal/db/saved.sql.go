@@ -55,7 +55,7 @@ func (q *Queries) ListSavedMessageIDs(ctx context.Context, userID pgtype.UUID) (
 }
 
 const listSavedMessages = `-- name: ListSavedMessages :many
-select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.silent, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.meta, m.silent, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
        m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
        coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
@@ -96,6 +96,7 @@ type ListSavedMessagesRow struct {
 	Body               string             `json:"body"`
 	Mentions           []byte             `json:"mentions"`
 	Tags               []string           `json:"tags"`
+	Meta               []byte             `json:"meta"`
 	Silent             bool               `json:"silent"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	EditedAt           pgtype.Timestamptz `json:"edited_at"`
@@ -139,6 +140,7 @@ func (q *Queries) ListSavedMessages(ctx context.Context, userID pgtype.UUID) ([]
 			&i.Body,
 			&i.Mentions,
 			&i.Tags,
+			&i.Meta,
 			&i.Silent,
 			&i.CreatedAt,
 			&i.EditedAt,

@@ -150,7 +150,7 @@ returning *;
 -- name: ListHookChannelMessages :many
 -- oldest-first pull for intake chat mode; narg(root) scopes to a ticket
 -- thread (root + its inline replies), narg(after) is the polling cursor
-select m.id, m.conversation_id, m.body, m.tags, m.created_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.tags, m.meta, m.created_at, m.parent_id,
        m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
        coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name
 from messages m
@@ -169,6 +169,17 @@ limit sqlc.arg(lim)::int;
 delete from conversations
 where id = $1 and kind = 'channel';
 
+-- name: OpsStatusEvents :many
+-- ops-channel control center: every meta-carrying post in the window.
+-- Service states, uptime day-buckets and counts derive in Go.
+select m.id, m.created_at, m.meta
+from messages m
+where m.conversation_id = sqlc.arg(conversation_id)
+  and m.deleted_at is null
+  and m.meta is not null
+  and m.created_at > now() - interval '35 days'
+order by m.created_at asc;
+
 -- name: GetProjectForUser :one
 -- project row only when the caller is a member of its workspace
 select p.id, p.workspace_id, p.key, p.name, p.description, p.icon, p.color,
@@ -180,7 +191,7 @@ where p.id = $1 and wm.user_id = $2;
 -- name: ListMessages :many
 -- newest-first page; $2 is an optional "older than message id" cursor,
 -- narg(tag) filters to messages carrying that tag
-select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.silent, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.meta, m.silent, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
        m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
        coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
@@ -216,7 +227,7 @@ limit sqlc.arg(lim)::int;
 
 -- name: ListPinnedMessages :many
 -- pinned messages in one conversation, most recently pinned first
-select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.silent, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.meta, m.silent, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
        m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
        coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
@@ -261,8 +272,8 @@ returning id, conversation_id;
 -- name: CreateMessage :one
 -- client_msg_id dedupes offline-outbox replays: a second insert with the
 -- same key no-ops (zero rows) and the caller returns the stored message.
-insert into messages (conversation_id, author_user_id, body, parent_id, mentions, forwarded_from, tags, silent, client_msg_id)
-values ($1, $2, $3, sqlc.narg(parent_id), coalesce(sqlc.narg(mentions), '[]'::jsonb), sqlc.narg(forwarded_from), coalesce(sqlc.narg(tags), '{}'::text[]), coalesce(sqlc.narg(silent), false), sqlc.narg(client_msg_id))
+insert into messages (conversation_id, author_user_id, body, parent_id, mentions, forwarded_from, tags, silent, client_msg_id, meta)
+values ($1, $2, $3, sqlc.narg(parent_id), coalesce(sqlc.narg(mentions), '[]'::jsonb), sqlc.narg(forwarded_from), coalesce(sqlc.narg(tags), '{}'::text[]), coalesce(sqlc.narg(silent), false), sqlc.narg(client_msg_id), sqlc.narg(meta))
 on conflict (conversation_id, client_msg_id) where client_msg_id is not null do nothing
 returning id;
 
@@ -288,7 +299,7 @@ where m.id = sqlc.arg(id)
   and m.deleted_at is null;
 
 -- name: GetMessageByID :one
-select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.silent, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.meta, m.silent, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
        m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
        coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
@@ -471,7 +482,7 @@ where mr.message_id = any(sqlc.arg(ids)::uuid[])
 order by mr.created_at;
 
 -- name: RecentProjectMessages :many
-select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.silent, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.meta, m.silent, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
        m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
        coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
@@ -533,7 +544,7 @@ group by c.id, c.project_id, c.kind, c.issue_id, c.brief_id,
 
 -- name: MentionsForUser :many
 -- messages mentioning the user (@<name>), newest first
-select m.id, m.conversation_id, m.body, m.tags, m.silent, m.created_at, m.edited_at,
+select m.id, m.conversation_id, m.body, m.tags, m.meta, m.silent, m.created_at, m.edited_at,
        m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
        coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,

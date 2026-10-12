@@ -964,7 +964,7 @@ export interface paths {
         head?: never;
         /**
          * Rename a channel, toggle agent access, or set support-intake mode
-         * @description agents_blocked=true hides the channel from MCP agents entirely - its messages no longer appear in list_conversations, get_messages, send_message or search. intake_mode marks the channel as a support-intake surface: 'receive' accepts hook posts; 'chat' additionally lets the hook token pull channel messages (live support chat); '' disables intake.
+         * @description agents_blocked=true hides the channel from MCP agents entirely - its messages no longer appear in list_conversations, get_messages, send_message or search. intake_mode marks the channel as an intake surface: 'receive' accepts hook posts; 'chat' additionally lets the hook token pull channel messages (live support chat); 'ops' is a monitoring/command-center channel whose meta posts feed the ops summary; '' disables intake.
          */
         patch: operations["updateChannel"];
         trace?: never;
@@ -1014,6 +1014,26 @@ export interface paths {
         };
         /** Pinned messages in the conversation, most recently pinned first */
         get: operations["listPins"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/conversations/{conversationId}/ops": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Control-center summary over the channel's structured (meta) posts
+         * @description Folds meta-carrying messages into the ops surface: the latest state per service (worst first), a dense 30-day strip of worst-state-per-day buckets, per-kind counts over the 35-day window, and the newest event pointer. Channels with intake_mode="ops" show this as their header; any member can query it.
+         */
+        get: operations["opsSummary"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2914,6 +2934,10 @@ export interface components {
             body: string;
             /** @description Free-form classification tags (frontend, backend, visual, mcp, …); lowercase slug, max 8 */
             tags?: string[];
+            /** @description Structured payload on ops/intake posts — kind, service, state, latency_ms, level, env, release, url, at, fields{} — rendered as a distinct card and aggregated by the ops summary */
+            meta?: {
+                [key: string]: unknown;
+            } | null;
             /** @description Agent progress update posted without notifications — clients should not toast it */
             silent?: boolean;
             /** @description Structured entity references extracted from the body */
@@ -3041,7 +3065,7 @@ export interface components {
              * @description Support-intake mode: 'receive' accepts reports; 'chat' also exposes GET /api/hooks/{token}/messages so the platform can pull replies
              * @enum {string}
              */
-            intake_mode?: "" | "receive" | "chat";
+            intake_mode?: "" | "receive" | "chat" | "ops";
             /**
              * @deprecated
              * @description True when intake_mode is set — kept for client compatibility
@@ -5584,7 +5608,7 @@ export interface operations {
                     name?: string;
                     agents_blocked?: boolean;
                     /** @enum {string} */
-                    intake_mode?: "" | "receive" | "chat";
+                    intake_mode?: "" | "receive" | "chat" | "ops";
                     /**
                      * @deprecated
                      * @description Deprecated alias: true maps to intake_mode=receive, false to ''
@@ -5723,6 +5747,58 @@ export interface operations {
                 content: {
                     "application/json": {
                         messages: components["schemas"]["Message"][];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    opsSummary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversationId: components["parameters"]["ConversationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ops summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        conversation_id: string;
+                        /** @description Latest reported state per service, worst state first */
+                        services: {
+                            service?: string;
+                            state?: string;
+                            /** Format: int64 */
+                            latency_ms?: number;
+                            env?: string;
+                            /** Format: date-time */
+                            at?: string;
+                            /** Format: uuid */
+                            message_id?: string;
+                        }[];
+                        /** @description 30 entries oldest→newest; 'worst' is the day's worst reported state ('no_data' when silent) */
+                        days: {
+                            date?: string;
+                            worst?: string;
+                            events?: number;
+                        }[];
+                        /** @description meta.kind → event count across the window */
+                        kinds: {
+                            [key: string]: number;
+                        };
+                        /** Format: date-time */
+                        last_event_at?: string | null;
+                        /** Format: uuid */
+                        last_message_id?: string;
                     };
                 };
             };
@@ -8551,8 +8627,34 @@ export interface operations {
                     subject?: string;
                     /** @description Ticket key — first post opens a dedicated sub-chat; same-key posts join it */
                     key?: string;
-                    /** @description Report type — free-form ('bug', 'feature', …). Overrides the hook's default kind; lands as a kind:<x> tag and a `kind` label in the header */
+                    /** @description Report type — free-form ('bug', 'feature', 'status', 'error', …). Overrides the hook's default kind; lands as a kind:<x> tag and a `kind` label in the header */
                     kind?: string;
+                    /** @description Ops: the monitored entity ('api', 'web', 'db'). Latest state per service feeds the ops summary */
+                    service?: string;
+                    /** @description Ops: health state — up|ok|operational, degraded|warn, down|outage|critical, maintenance; unknown values render neutral */
+                    state?: string;
+                    /**
+                     * Format: int64
+                     * @description Ops: probe latency in milliseconds
+                     */
+                    latency_ms?: number;
+                    /** @description Ops: log/error severity — debug|info|warn|error|fatal */
+                    level?: string;
+                    /** @description Ops: environment tag (prod, staging, eu-1…) */
+                    env?: string;
+                    /** @description Ops: version/commit the event belongs to */
+                    release?: string;
+                    /** @description Ops: link back to the source (dashboard, run, trace) */
+                    url?: string;
+                    /** @description Ops: arbitrary labelled values rendered on the message card (max 24 entries; values stringified to 200 chars) */
+                    fields?: {
+                        [key: string]: unknown;
+                    };
+                    /**
+                     * Format: date-time
+                     * @description Ops: event timestamp; defaults to receipt time. Drives service-state ordering and day buckets
+                     */
+                    at?: string;
                     attachments?: {
                         name?: string;
                         content_type?: string;
