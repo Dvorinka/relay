@@ -4,6 +4,7 @@ import { createSignal, Show } from "solid-js";
 import { FormError } from "../../components/ui";
 import { isDesktop, isMobileShell } from "../../lib/desktop";
 import { net } from "../../lib/net";
+import { FREE_SERVER_URL } from "../../lib/servers";
 import { useSession } from "../../stores/session";
 import {
   AuthChoice,
@@ -72,6 +73,10 @@ export default function Register() {
           <AuthChoice
             onLocal={() => void session.enterLocal()}
             onServer={() => setChoseServer(true)}
+            onFree={() => {
+              setServerUrl(FREE_SERVER_URL);
+              setChoseServer(true);
+            }}
           />
         }
       >
