@@ -258,6 +258,11 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithString("project_id", mcp.Required()),
 	), s.listConversations)
 
+	srv.AddTool(mcp.NewTool("ops_summary",
+		mcp.WithDescription("Control-center view over a channel's structured (meta) posts: latest state per service, a 30-day uptime strip, and per-kind counts. Use on ops/monitoring channels; agents_blocked channels refuse."),
+		mcp.WithString("conversation_id", mcp.Required()),
+	), s.opsSummary)
+
 	srv.AddTool(mcp.NewTool("get_messages",
 		mcp.WithDescription("List messages in a conversation (newest first). Pass conversation_id, or project_id for the project's main thread."),
 		mcp.WithString("conversation_id"),
@@ -311,6 +316,7 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithString("tags", mcp.Description("Comma-separated tags classifying the message, e.g. frontend,backend,visual,mcp")),
 		mcp.WithBoolean("silent", mcp.Description("true posts without any notification/push — use for routine progress updates inside a work thread. @mentions in a silent message still notify.")),
 		mcp.WithString("attachment_ids", mcp.Description("Comma-separated attachment UUIDs from upload_attachment, max 20")),
+		mcp.WithString("meta", mcp.Description("Optional JSON object rendered as a structured card — ops channels aggregate it. Recognized keys: kind, service, state (up|degraded|down|maintenance…), latency_ms, level, env, release, url, at, fields{label:value}")),
 	), s.sendMessage)
 
 	srv.AddTool(mcp.NewTool("edit_message",
@@ -746,12 +752,17 @@ func messageJSON(m db.GetMessageFullRow) gin.H {
 			"author":          m.FwdAuthorName,
 		}
 	}
+	var meta any
+	if len(m.Meta) > 0 {
+		_ = json.Unmarshal(m.Meta, &meta)
+	}
 	return gin.H{
 		"id":              m.ID,
 		"conversation_id": m.ConversationID,
 		"body":            m.Body,
 		"mentions":        mrefs,
 		"tags":            m.Tags,
+		"meta":            meta,
 		"silent":          m.Silent,
 		"parent":          parent,
 		"thread":          thread,
@@ -912,6 +923,33 @@ func (s *Service) listConversations(ctx context.Context, req mcp.CallToolRequest
 		}
 		out = append(out, e)
 	}
+	return jsonResult(out)
+}
+
+// opsSummary is the agent-facing control center: same fold as the web
+// /channels/:id/ops endpoint, gated by checkAgentConversation so
+// agents_blocked channels stay dark.
+func (s *Service) opsSummary(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	cid, err := uuidArg(req, "conversation_id")
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.checkAgentConversation(ctx, cid); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	pid, err := s.q.ResolveConversationProject(ctx, cid)
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "message:read"); err != nil {
+		return errResult(err)
+	}
+	rows, err := s.q.OpsStatusEvents(ctx, cid)
+	if err != nil {
+		return errResult(err)
+	}
+	out := conversations.OpsSummarize(rows, time.Now().UTC())
+	out["conversation_id"] = cid.String()
 	return jsonResult(out)
 }
 
@@ -1547,9 +1585,22 @@ func (s *Service) sendMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 	}
 	refs := s.resolveMentions(ctx, pid, mentions.Extract(body))
 	mj, _ := json.Marshal(refs)
+	// Optional structured meta — ops/status cards. Accepts a JSON object;
+	// must be an object (not array/scalar) and stay under 8KiB.
+	var meta []byte
+	if v := strings.TrimSpace(req.GetString("meta", "")); v != "" {
+		var probe map[string]any
+		if err := json.Unmarshal([]byte(v), &probe); err != nil || probe == nil {
+			return mcp.NewToolResultError("meta must be a JSON object"), nil
+		}
+		if len(v) > 8<<10 {
+			return mcp.NewToolResultError("meta too large (8KiB max)"), nil
+		}
+		meta = []byte(v)
+	}
 	id, err := s.q.CreateAgentMessage(ctx, db.CreateAgentMessageParams{
 		ConversationID: cid, AgentID: agent(ctx).ID, Body: body, ParentID: parent,
-		Mentions: mj, Tags: tags, Silent: silent,
+		Mentions: mj, Tags: tags, Silent: silent, Meta: meta,
 	})
 	if err != nil {
 		return errResult(err)

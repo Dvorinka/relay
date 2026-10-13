@@ -325,7 +325,7 @@ func (s *Service) publishMessage(ctx context.Context, conv db.Conversation, msgI
 func messageJSON(m db.GetMessageByIDRow) gin.H {
 	return conversations.MessageJSON(conversations.MessageView{
 		ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
-		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Silent: m.Silent,
+		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Meta: m.Meta, Silent: m.Silent,
 		CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 		AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 		AuthorKindSnapshot: m.AuthorKindSnapshot,

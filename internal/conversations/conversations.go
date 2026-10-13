@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/mail"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -84,6 +85,7 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup) {
 	g.PUT("/messages/:id/pin", s.handlePinMessage)
 	g.DELETE("/messages/:id/pin", s.handlePinMessage)
 	g.GET("/conversations/:id/pins", s.memberOnly, s.handleListPins)
+	g.GET("/conversations/:id/ops", s.memberOnly, s.handleOpsSummary)
 	g.PUT("/messages/:id/reactions", s.handleToggleReaction)
 	g.POST("/messages/:id/read", s.handleMarkRead)
 	g.POST("/conversations/:id/read", s.memberOnly, s.handleMarkConversationRead)
@@ -227,7 +229,7 @@ func (s *Service) handleListMessages(c *gin.Context) {
 		readers := readBy[m.ID.String()]
 		msgs = append(msgs, MessageJSON(MessageView{
 			ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
-			Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Silent: m.Silent, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+			Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Meta: m.Meta, Silent: m.Silent, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 			AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 			AuthorKindSnapshot: m.AuthorKindSnapshot,
 			AuthorName:         m.AuthorName, AuthorAvatar: m.AuthorAvatar,
@@ -396,7 +398,7 @@ func (s *Service) messageView(ctx context.Context, m db.GetMessageByIDRow) gin.H
 	atts := s.attachmentsFor(ctx, []pgtype.UUID{m.ID})
 	return MessageJSON(MessageView{
 		ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
-		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Silent: m.Silent, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Meta: m.Meta, Silent: m.Silent, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 		AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 		AuthorKindSnapshot: m.AuthorKindSnapshot,
 		AuthorName:         m.AuthorName, AuthorAvatar: m.AuthorAvatar,
@@ -509,7 +511,7 @@ func (s *Service) handleEditMessage(c *gin.Context) {
 	}
 	out := MessageJSON(MessageView{
 		ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
-		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Silent: m.Silent, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Meta: m.Meta, Silent: m.Silent, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 		AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 		AuthorKindSnapshot: m.AuthorKindSnapshot,
 		AuthorName:         m.AuthorName, AuthorAvatar: m.AuthorAvatar,
@@ -616,7 +618,7 @@ func (s *Service) messagePayload(c *gin.Context, id pgtype.UUID) (gin.H, bool) {
 	readers := s.readByFor(c, []pgtype.UUID{m.ID})[m.ID.String()]
 	return MessageJSON(MessageView{
 		ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
-		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Silent: m.Silent, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Meta: m.Meta, Silent: m.Silent, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 		AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 		AuthorKindSnapshot: m.AuthorKindSnapshot,
 		AuthorName:         m.AuthorName, AuthorAvatar: m.AuthorAvatar,
@@ -704,7 +706,7 @@ func (s *Service) handleListPins(c *gin.Context) {
 		readers := readBy[m.ID.String()]
 		msgs = append(msgs, MessageJSON(MessageView{
 			ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
-			Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Silent: m.Silent, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+			Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Meta: m.Meta, Silent: m.Silent, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 			AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 			AuthorKindSnapshot: m.AuthorKindSnapshot,
 			AuthorName:         m.AuthorName, AuthorAvatar: m.AuthorAvatar,
@@ -1191,9 +1193,9 @@ func (s *Service) handleUpdateChannel(c *gin.Context) {
 	}
 	if mode != nil {
 		switch *mode {
-		case "", "receive", "chat":
+		case "", "receive", "chat", "ops":
 		default:
-			httpx.Error(c, http.StatusBadRequest, "bad_request", "intake_mode must be '', 'receive' or 'chat'")
+			httpx.Error(c, http.StatusBadRequest, "bad_request", "intake_mode must be '', 'receive', 'chat' or 'ops'")
 			return
 		}
 		if _, err := s.q.SetChannelIntakeMode(c.Request.Context(), db.SetChannelIntakeModeParams{
@@ -1286,7 +1288,7 @@ func (s *Service) postThreadNotice(c *gin.Context, parent db.Conversation, threa
 	}
 	out := MessageJSON(MessageView{
 		ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
-		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Silent: m.Silent, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
+		Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Meta: m.Meta, Silent: m.Silent, CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 		AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 		AuthorKindSnapshot: m.AuthorKindSnapshot,
 		AuthorName:         m.AuthorName, AuthorAvatar: m.AuthorAvatar,
@@ -1653,6 +1655,7 @@ type MessageView struct {
 	Body                         string
 	Mentions                     []byte
 	Tags                         []string
+	Meta                         []byte
 	Silent                       bool
 	CreatedAt, EditedAt          pgtype.Timestamptz
 	AuthorUserID, AuthorAgentID  pgtype.UUID
@@ -1722,6 +1725,10 @@ func MessageJSON(v MessageView) gin.H {
 	if mrefs == nil {
 		mrefs = []any{}
 	}
+	var meta any
+	if len(v.Meta) > 0 {
+		_ = json.Unmarshal(v.Meta, &meta)
+	}
 	var thread *gin.H
 	if v.ThreadID.Valid {
 		thread = &gin.H{
@@ -1760,6 +1767,7 @@ func MessageJSON(v MessageView) gin.H {
 		"body":        v.Body,
 		"mentions":    mrefs,
 		"tags":        nonEmptyTags(v.Tags),
+		"meta":        meta,
 		"silent":      v.Silent,
 		"parent":      parent,
 		"thread":      thread,
@@ -1940,4 +1948,168 @@ func (s *Service) handleMentionables(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"users": users, "agents": agents, "issues": issues, "repos": repos,
 	})
+}
+
+// --- ops / command center ---
+
+// handleOpsSummary serves the control-center view over a channel's
+// meta-carrying messages — see OpsSummarize. Member-gated by memberOnly.
+func (s *Service) handleOpsSummary(c *gin.Context) {
+	conv := c.MustGet(ctxConversation).(db.Conversation)
+	rows, err := s.q.OpsStatusEvents(c.Request.Context(), conv.ID)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	out := OpsSummarize(rows, time.Now().UTC())
+	out["conversation_id"] = conv.ID.String()
+	c.JSON(http.StatusOK, out)
+}
+
+// OpsSummarize folds raw meta-carrying messages into the command-center
+// shape: latest state per service (worst first), a dense 30-day uptime
+// strip, per-kind counts, and the newest event pointer. Pure — the HTTP
+// handler and the MCP ops_summary tool both render from it.
+func OpsSummarize(rows []db.OpsStatusEventsRow, now time.Time) gin.H {
+	type svc struct {
+		service   string
+		state     string
+		latencyMs int64
+		env       string
+		at        time.Time
+		msgID     string
+	}
+	services := map[string]*svc{}
+	days := map[string]*gin.H{}
+	kinds := map[string]int64{}
+	dayStart := now.AddDate(0, 0, -30).Truncate(24 * time.Hour)
+	var lastEvent time.Time
+	var lastID string
+	for _, r := range rows {
+		var m map[string]any
+		if json.Unmarshal(r.Meta, &m) != nil {
+			continue
+		}
+		kind, _ := m["kind"].(string)
+		if kind != "" {
+			kinds[kind]++
+		}
+		at := r.CreatedAt.Time
+		if v, ok := m["at"].(string); ok {
+			if t, err := time.Parse(time.RFC3339, v); err == nil {
+				at = t
+			}
+		}
+		if r.CreatedAt.Time.After(lastEvent) {
+			lastEvent = r.CreatedAt.Time
+			lastID = r.ID.String()
+		}
+		service, _ := m["service"].(string)
+		state, _ := m["state"].(string)
+		// Only health readings feed the board + strip — a deploy's "ok" or
+		// an alert's "critical" shouldn't masquerade as a probe result.
+		if !opsBoardKind(kind) {
+			continue
+		}
+		if service != "" && state != "" {
+			cur := services[service]
+			if cur == nil || at.After(cur.at) || at.Equal(cur.at) {
+				var lat int64
+				if v, ok := m["latency_ms"].(float64); ok {
+					lat = int64(v)
+				}
+				env, _ := m["env"].(string)
+				services[service] = &svc{service: service, state: state,
+					latencyMs: lat, env: env, at: at, msgID: r.ID.String()}
+			}
+		}
+		if state != "" && !at.Before(dayStart) {
+			d := at.UTC().Format("2006-01-02")
+			b := days[d]
+			if b == nil {
+				b = &gin.H{"date": d, "worst": state, "events": int64(1)}
+				days[d] = b
+			} else {
+				(*b)["events"] = (*b)["events"].(int64) + 1
+				if stateRank(state) > stateRank((*b)["worst"].(string)) {
+					(*b)["worst"] = state
+				}
+			}
+		}
+	}
+	// services sorted: worst state first, then name — the down thing is
+	// what the eye should land on
+	svcList := make([]*svc, 0, len(services))
+	for _, v := range services {
+		svcList = append(svcList, v)
+	}
+	sort.Slice(svcList, func(i, j int) bool {
+		ri, rj := stateRank(svcList[i].state), stateRank(svcList[j].state)
+		if ri != rj {
+			return ri > rj
+		}
+		return svcList[i].service < svcList[j].service
+	})
+	svcOut := make([]gin.H, 0, len(svcList))
+	for _, v := range svcList {
+		svcOut = append(svcOut, gin.H{
+			"service": v.service, "state": v.state,
+			"latency_ms": v.latencyMs, "env": v.env,
+			"at": v.at.Format(time.RFC3339), "message_id": v.msgID,
+		})
+	}
+	// dense 30-day strip — days with no events render as 'no_data'
+	dayOut := make([]gin.H, 0, 30)
+	for i := 29; i >= 0; i-- {
+		d := now.AddDate(0, 0, -i).Format("2006-01-02")
+		if b, ok := days[d]; ok {
+			dayOut = append(dayOut, *b)
+		} else {
+			dayOut = append(dayOut, gin.H{"date": d, "worst": "no_data", "events": int64(0)})
+		}
+	}
+	var lastAt any
+	if !lastEvent.IsZero() {
+		lastAt = lastEvent.Format(time.RFC3339)
+	}
+	return gin.H{
+		"services":        svcOut,
+		"days":            dayOut,
+		"kinds":           kinds,
+		"last_event_at":   lastAt,
+		"last_message_id": lastID,
+	}
+}
+
+// opsBoardKind gates which kinds count as health readings: uptime probes,
+// heartbeats and explicit status posts. Empty kind counts too — a monitor
+// that only sends {service, state} still feeds the board. Errors, alerts,
+// deploys and logs render as cards and kind counts but never overwrite a
+// service's health state.
+func opsBoardKind(kind string) bool {
+	switch strings.ToLower(kind) {
+	case "", "status", "uptime", "health", "probe", "heartbeat", "monitor":
+		return true
+	}
+	return false
+}
+
+// stateRank orders health states for "worst of the day" and sort-first.
+// Unknown strings sit between known-good and no_data so a tool's custom
+// state can't silently look healthy.
+func stateRank(s string) int {
+	switch s {
+	case "down", "outage", "critical", "crit", "fatal":
+		return 5
+	case "degraded", "warn", "warning", "error":
+		return 4
+	case "maintenance":
+		return 3
+	case "up", "ok", "operational", "healthy", "resolved":
+		return 1
+	case "no_data":
+		return 0
+	default:
+		return 2
+	}
 }

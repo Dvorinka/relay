@@ -14,12 +14,14 @@ import {
   LockIcon,
   MailIcon,
   PencilIcon,
+  PulseIcon,
   ReplyIcon,
   TrashIcon,
 } from "../../components/icons";
 import { Conversation } from "../conversations/Conversation";
 import { IntakeGuide } from "./IntakeGuide";
 import { EmailAlerts } from "./EmailAlerts";
+import { OpsBar } from "../../components/OpsBar";
 
 // ChannelPage renders one persistent side channel: the same message surface
 // as the project chat, headed by channel controls (rename, agent access,
@@ -72,7 +74,7 @@ export default function ChannelPage() {
     refetch();
   }
 
-  async function setIntake(mode: "" | "receive" | "chat") {
+  async function setIntake(mode: "" | "receive" | "chat" | "ops") {
     const ch = channel();
     if (!ch) return;
     await api.updateChannel(ch.id, { intake_mode: mode }).catch(() => {});
@@ -138,12 +140,16 @@ export default function ChannelPage() {
             text={
               channel()?.intake_mode === "chat"
                 ? "Support intake — live chat"
-                : "Support intake — receive only"
+                : channel()?.intake_mode === "ops"
+                  ? "Ops channel — monitoring & alerts"
+                  : "Support intake — receive only"
             }
             hint={
               channel()?.intake_mode === "chat"
                 ? "The platform posts reports and pulls replies — click for the setup guide"
-                : "The platform posts reports; replies stay in Relay — click for the setup guide"
+                : channel()?.intake_mode === "ops"
+                  ? "Monitors, CI and error trackers POST structured events here — click for the setup guide"
+                  : "The platform posts reports; replies stay in Relay — click for the setup guide"
             }
           >
             <button
@@ -151,8 +157,17 @@ export default function ChannelPage() {
               class="flex items-center gap-1 rounded-full bg-hover px-2 py-0.5 text-[10.5px] font-medium text-muted transition-colors hover:text-fg"
               onClick={() => setGuideOpen(true)}
             >
-              <InboxIcon class="h-3 w-3" />
-              {channel()?.intake_mode === "chat" ? "intake · chat" : "intake"}
+              <Show
+                when={channel()?.intake_mode === "ops"}
+                fallback={<InboxIcon class="h-3 w-3" />}
+              >
+                <PulseIcon class="h-3 w-3" />
+              </Show>
+              {channel()?.intake_mode === "chat"
+                ? "intake · chat"
+                : channel()?.intake_mode === "ops"
+                  ? "ops"
+                  : "intake"}
             </button>
           </Tip>
         </Show>
@@ -221,6 +236,30 @@ export default function ChannelPage() {
                 }
               >
                 <ReplyIcon class="h-4 w-4" />
+              </button>
+            </Tip>
+            <Tip
+              text={
+                channel()?.intake_mode === "ops"
+                  ? "Ops mode — on"
+                  : "Enable ops — monitoring & alerts"
+              }
+              hint="Ops channels surface a status board and render meta posts as cards"
+            >
+              <button
+                type="button"
+                aria-label="Toggle ops mode"
+                aria-pressed={channel()?.intake_mode === "ops"}
+                class={`${headerBtn} ${
+                  channel()?.intake_mode === "ops" ? "text-accent" : ""
+                }`}
+                onClick={() =>
+                  void setIntake(
+                    channel()?.intake_mode === "ops" ? "receive" : "ops",
+                  )
+                }
+              >
+                <PulseIcon class="h-4 w-4" />
               </button>
             </Tip>
           </Show>
@@ -294,10 +333,19 @@ export default function ChannelPage() {
           }
         >
           {(ch: Channel) => (
-            <Conversation
-              projectId={params.projectId}
-              conversation={ch as ApiConversation}
-            />
+            <div class="flex min-h-0 flex-1 flex-col">
+              <Show when={ch.intake_mode === "ops"}>
+                <OpsBar
+                  conversationId={ch.id}
+                  projectId={params.projectId}
+                  onSetup={() => setGuideOpen(true)}
+                />
+              </Show>
+              <Conversation
+                projectId={params.projectId}
+                conversation={ch as ApiConversation}
+              />
+            </div>
           )}
         </Show>
       </div>

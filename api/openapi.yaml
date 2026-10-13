@@ -1633,7 +1633,7 @@ paths:
     patch:
       operationId: updateChannel
       summary: Rename a channel, toggle agent access, or set support-intake mode
-      description: "agents_blocked=true hides the channel from MCP agents entirely - its messages no longer appear in list_conversations, get_messages, send_message or search. intake_mode marks the channel as a support-intake surface: 'receive' accepts hook posts; 'chat' additionally lets the hook token pull channel messages (live support chat); '' disables intake."
+      description: "agents_blocked=true hides the channel from MCP agents entirely - its messages no longer appear in list_conversations, get_messages, send_message or search. intake_mode marks the channel as an intake surface: 'receive' accepts hook posts; 'chat' additionally lets the hook token pull channel messages (live support chat); 'ops' is a monitoring/command-center channel whose meta posts feed the ops summary; '' disables intake."
       tags: [conversations]
       parameters:
         - name: channelId
@@ -1651,7 +1651,7 @@ paths:
                 agents_blocked: { type: boolean }
                 intake_mode:
                   type: string
-                  enum: ["", receive, chat]
+                  enum: ["", receive, chat, ops]
                 intake:
                   type: boolean
                   deprecated: true
@@ -1753,6 +1753,57 @@ paths:
                   messages:
                     type: array
                     items: { $ref: "#/components/schemas/Message" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/conversations/{conversationId}/ops:
+    get:
+      operationId: opsSummary
+      summary: Control-center summary over the channel's structured (meta) posts
+      description: >-
+        Folds meta-carrying messages into the ops surface: the latest state
+        per service (worst first), a dense 30-day strip of worst-state-per-day
+        buckets, per-kind counts over the 35-day window, and the newest event
+        pointer. Channels with intake_mode="ops" show this as their header;
+        any member can query it.
+      tags: [conversations]
+      parameters: [ { $ref: "#/components/parameters/ConversationId" } ]
+      responses:
+        "200":
+          description: Ops summary
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [conversation_id, services, days, kinds]
+                properties:
+                  conversation_id: { type: string, format: uuid }
+                  services:
+                    type: array
+                    description: "Latest reported state per service, worst state first"
+                    items:
+                      type: object
+                      properties:
+                        service: { type: string }
+                        state: { type: string }
+                        latency_ms: { type: integer, format: int64 }
+                        env: { type: string }
+                        at: { type: string, format: date-time }
+                        message_id: { type: string, format: uuid }
+                  days:
+                    type: array
+                    description: "30 entries oldest→newest; 'worst' is the day's worst reported state ('no_data' when silent)"
+                    items:
+                      type: object
+                      properties:
+                        date: { type: string }
+                        worst: { type: string }
+                        events: { type: integer }
+                  kinds:
+                    type: object
+                    additionalProperties: { type: integer }
+                    description: "meta.kind → event count across the window"
+                  last_event_at: { type: ["string", "null"], format: date-time }
+                  last_message_id: { type: string, format: uuid }
         "403": { $ref: "#/components/responses/Forbidden" }
 
   /api/messages/{messageId}/forward:
@@ -3770,7 +3821,19 @@ paths:
                 from: { type: string, description: "external sender, e.g. 'Alice <alice@acme.com>'" }
                 subject: { type: string }
                 key: { type: string, description: "Ticket key — first post opens a dedicated sub-chat; same-key posts join it" }
-                kind: { type: string, maxLength: 40, description: "Report type — free-form ('bug', 'feature', …). Overrides the hook's default kind; lands as a kind:<x> tag and a `kind` label in the header" }
+                kind: { type: string, maxLength: 40, description: "Report type — free-form ('bug', 'feature', 'status', 'error', …). Overrides the hook's default kind; lands as a kind:<x> tag and a `kind` label in the header" }
+                service: { type: string, maxLength: 120, description: "Ops: the monitored entity ('api', 'web', 'db'). Latest state per service feeds the ops summary" }
+                state: { type: string, maxLength: 24, description: "Ops: health state — up|ok|operational, degraded|warn, down|outage|critical, maintenance; unknown values render neutral" }
+                latency_ms: { type: integer, format: int64, description: "Ops: probe latency in milliseconds" }
+                level: { type: string, maxLength: 16, description: "Ops: log/error severity — debug|info|warn|error|fatal" }
+                env: { type: string, maxLength: 60, description: "Ops: environment tag (prod, staging, eu-1…)" }
+                release: { type: string, maxLength: 120, description: "Ops: version/commit the event belongs to" }
+                url: { type: string, maxLength: 500, description: "Ops: link back to the source (dashboard, run, trace)" }
+                fields:
+                  type: object
+                  additionalProperties: true
+                  description: "Ops: arbitrary labelled values rendered on the message card (max 24 entries; values stringified to 200 chars)"
+                at: { type: string, format: date-time, description: "Ops: event timestamp; defaults to receipt time. Drives service-state ordering and day buckets" }
                 attachments:
                   type: array
                   maxItems: 5
@@ -4626,6 +4689,10 @@ components:
           type: array
           description: "Free-form classification tags (frontend, backend, visual, mcp, …); lowercase slug, max 8"
           items: { type: string, pattern: "^[a-z0-9][a-z0-9-]{0,23}$" }
+        meta:
+          type: ["object", "null"]
+          additionalProperties: true
+          description: "Structured payload on ops/intake posts — kind, service, state, latency_ms, level, env, release, url, at, fields{} — rendered as a distinct card and aggregated by the ops summary"
         silent:
           type: boolean
           description: "Agent progress update posted without notifications — clients should not toast it"
@@ -4756,7 +4823,7 @@ components:
           description: "True hides the channel from MCP agents entirely"
         intake_mode:
           type: string
-          enum: ["", receive, chat]
+          enum: ["", receive, chat, ops]
           description: "Support-intake mode: 'receive' accepts reports; 'chat' also exposes GET /api/hooks/{token}/messages so the platform can pull replies"
         intake:
           type: boolean

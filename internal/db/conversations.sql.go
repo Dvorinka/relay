@@ -243,8 +243,8 @@ func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (C
 }
 
 const createMessage = `-- name: CreateMessage :one
-insert into messages (conversation_id, author_user_id, body, parent_id, mentions, forwarded_from, tags, silent, client_msg_id)
-values ($1, $2, $3, $4, coalesce($5, '[]'::jsonb), $6, coalesce($7, '{}'::text[]), coalesce($8, false), $9)
+insert into messages (conversation_id, author_user_id, body, parent_id, mentions, forwarded_from, tags, silent, client_msg_id, meta)
+values ($1, $2, $3, $4, coalesce($5, '[]'::jsonb), $6, coalesce($7, '{}'::text[]), coalesce($8, false), $9, $10)
 on conflict (conversation_id, client_msg_id) where client_msg_id is not null do nothing
 returning id
 `
@@ -259,6 +259,7 @@ type CreateMessageParams struct {
 	Tags           interface{} `json:"tags"`
 	Silent         interface{} `json:"silent"`
 	ClientMsgID    pgtype.Text `json:"client_msg_id"`
+	Meta           []byte      `json:"meta"`
 }
 
 // client_msg_id dedupes offline-outbox replays: a second insert with the
@@ -274,6 +275,7 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (p
 		arg.Tags,
 		arg.Silent,
 		arg.ClientMsgID,
+		arg.Meta,
 	)
 	var id pgtype.UUID
 	err := row.Scan(&id)
@@ -523,7 +525,7 @@ func (q *Queries) GetConversationForUser(ctx context.Context, arg GetConversatio
 }
 
 const getMessageByID = `-- name: GetMessageByID :one
-select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.silent, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.meta, m.silent, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
        m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
        coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
@@ -558,6 +560,7 @@ type GetMessageByIDRow struct {
 	Body               string             `json:"body"`
 	Mentions           []byte             `json:"mentions"`
 	Tags               []string           `json:"tags"`
+	Meta               []byte             `json:"meta"`
 	Silent             bool               `json:"silent"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	EditedAt           pgtype.Timestamptz `json:"edited_at"`
@@ -590,6 +593,7 @@ func (q *Queries) GetMessageByID(ctx context.Context, id pgtype.UUID) (GetMessag
 		&i.Body,
 		&i.Mentions,
 		&i.Tags,
+		&i.Meta,
 		&i.Silent,
 		&i.CreatedAt,
 		&i.EditedAt,
@@ -874,7 +878,7 @@ func (q *Queries) ListChannels(ctx context.Context, projectID pgtype.UUID) ([]Co
 }
 
 const listHookChannelMessages = `-- name: ListHookChannelMessages :many
-select m.id, m.conversation_id, m.body, m.tags, m.created_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.tags, m.meta, m.created_at, m.parent_id,
        m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
        coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name
 from messages m
@@ -902,6 +906,7 @@ type ListHookChannelMessagesRow struct {
 	ConversationID     pgtype.UUID        `json:"conversation_id"`
 	Body               string             `json:"body"`
 	Tags               []string           `json:"tags"`
+	Meta               []byte             `json:"meta"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	ParentID           pgtype.UUID        `json:"parent_id"`
 	AuthorUserID       pgtype.UUID        `json:"author_user_id"`
@@ -931,6 +936,7 @@ func (q *Queries) ListHookChannelMessages(ctx context.Context, arg ListHookChann
 			&i.ConversationID,
 			&i.Body,
 			&i.Tags,
+			&i.Meta,
 			&i.CreatedAt,
 			&i.ParentID,
 			&i.AuthorUserID,
@@ -949,7 +955,7 @@ func (q *Queries) ListHookChannelMessages(ctx context.Context, arg ListHookChann
 }
 
 const listMessages = `-- name: ListMessages :many
-select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.silent, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.meta, m.silent, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
        m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
        coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
@@ -997,6 +1003,7 @@ type ListMessagesRow struct {
 	Body               string             `json:"body"`
 	Mentions           []byte             `json:"mentions"`
 	Tags               []string           `json:"tags"`
+	Meta               []byte             `json:"meta"`
 	Silent             bool               `json:"silent"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	EditedAt           pgtype.Timestamptz `json:"edited_at"`
@@ -1042,6 +1049,7 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]L
 			&i.Body,
 			&i.Mentions,
 			&i.Tags,
+			&i.Meta,
 			&i.Silent,
 			&i.CreatedAt,
 			&i.EditedAt,
@@ -1075,7 +1083,7 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]L
 }
 
 const listPinnedMessages = `-- name: ListPinnedMessages :many
-select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.silent, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.meta, m.silent, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
        m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
        coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
@@ -1113,6 +1121,7 @@ type ListPinnedMessagesRow struct {
 	Body               string             `json:"body"`
 	Mentions           []byte             `json:"mentions"`
 	Tags               []string           `json:"tags"`
+	Meta               []byte             `json:"meta"`
 	Silent             bool               `json:"silent"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	EditedAt           pgtype.Timestamptz `json:"edited_at"`
@@ -1152,6 +1161,7 @@ func (q *Queries) ListPinnedMessages(ctx context.Context, conversationID pgtype.
 			&i.Body,
 			&i.Mentions,
 			&i.Tags,
+			&i.Meta,
 			&i.Silent,
 			&i.CreatedAt,
 			&i.EditedAt,
@@ -1342,7 +1352,7 @@ func (q *Queries) MarkMessageRead(ctx context.Context, arg MarkMessageReadParams
 }
 
 const mentionsForUser = `-- name: MentionsForUser :many
-select m.id, m.conversation_id, m.body, m.tags, m.silent, m.created_at, m.edited_at,
+select m.id, m.conversation_id, m.body, m.tags, m.meta, m.silent, m.created_at, m.edited_at,
        m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
        coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
@@ -1376,6 +1386,7 @@ type MentionsForUserRow struct {
 	ConversationID       pgtype.UUID        `json:"conversation_id"`
 	Body                 string             `json:"body"`
 	Tags                 []string           `json:"tags"`
+	Meta                 []byte             `json:"meta"`
 	Silent               bool               `json:"silent"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 	EditedAt             pgtype.Timestamptz `json:"edited_at"`
@@ -1407,6 +1418,7 @@ func (q *Queries) MentionsForUser(ctx context.Context, userID pgtype.UUID) ([]Me
 			&i.ConversationID,
 			&i.Body,
 			&i.Tags,
+			&i.Meta,
 			&i.Silent,
 			&i.CreatedAt,
 			&i.EditedAt,
@@ -1471,6 +1483,44 @@ func (q *Queries) MessageReadByAgent(ctx context.Context, messageID pgtype.UUID)
 	return exists, err
 }
 
+const opsStatusEvents = `-- name: OpsStatusEvents :many
+select m.id, m.created_at, m.meta
+from messages m
+where m.conversation_id = $1
+  and m.deleted_at is null
+  and m.meta is not null
+  and m.created_at > now() - interval '35 days'
+order by m.created_at asc
+`
+
+type OpsStatusEventsRow struct {
+	ID        pgtype.UUID        `json:"id"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	Meta      []byte             `json:"meta"`
+}
+
+// ops-channel control center: every meta-carrying post in the window.
+// Service states, uptime day-buckets and counts derive in Go.
+func (q *Queries) OpsStatusEvents(ctx context.Context, conversationID pgtype.UUID) ([]OpsStatusEventsRow, error) {
+	rows, err := q.db.Query(ctx, opsStatusEvents, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OpsStatusEventsRow{}
+	for rows.Next() {
+		var i OpsStatusEventsRow
+		if err := rows.Scan(&i.ID, &i.CreatedAt, &i.Meta); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const parentAuthorID = `-- name: ParentAuthorID :one
 select m2.author_user_id
 from messages m
@@ -1506,7 +1556,7 @@ func (q *Queries) PinMessage(ctx context.Context, id pgtype.UUID) (PinMessageRow
 }
 
 const recentProjectMessages = `-- name: RecentProjectMessages :many
-select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.silent, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.meta, m.silent, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
        m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
        coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
@@ -1531,6 +1581,7 @@ type RecentProjectMessagesRow struct {
 	Body               string             `json:"body"`
 	Mentions           []byte             `json:"mentions"`
 	Tags               []string           `json:"tags"`
+	Meta               []byte             `json:"meta"`
 	Silent             bool               `json:"silent"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	EditedAt           pgtype.Timestamptz `json:"edited_at"`
@@ -1561,6 +1612,7 @@ func (q *Queries) RecentProjectMessages(ctx context.Context, projectID pgtype.UU
 			&i.Body,
 			&i.Mentions,
 			&i.Tags,
+			&i.Meta,
 			&i.Silent,
 			&i.CreatedAt,
 			&i.EditedAt,

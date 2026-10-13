@@ -23,7 +23,7 @@ select * from conversations where project_id = sqlc.arg(project_id)
 order by created_at;
 
 -- name: SearchMessagesInProject :many
-select m.id, m.conversation_id, m.body, m.tags, m.silent, m.created_at, m.edited_at,
+select m.id, m.conversation_id, m.body, m.tags, m.meta, m.silent, m.created_at, m.edited_at,
        m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
        coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar
@@ -53,8 +53,8 @@ left join users u on u.id = i.assignee_id
 where i.id = sqlc.arg(id);
 
 -- name: CreateAgentMessage :one
-insert into messages (conversation_id, author_agent_id, body, parent_id, mentions, forwarded_from, tags, silent)
-values (sqlc.arg(conversation_id), sqlc.arg(agent_id), sqlc.arg(body), sqlc.narg(parent_id), coalesce(sqlc.narg(mentions), '[]'::jsonb), sqlc.narg(forwarded_from), coalesce(sqlc.narg(tags), '{}'::text[]), coalesce(sqlc.narg(silent), false))
+insert into messages (conversation_id, author_agent_id, body, parent_id, mentions, forwarded_from, tags, silent, meta)
+values (sqlc.arg(conversation_id), sqlc.arg(agent_id), sqlc.arg(body), sqlc.narg(parent_id), coalesce(sqlc.narg(mentions), '[]'::jsonb), sqlc.narg(forwarded_from), coalesce(sqlc.narg(tags), '{}'::text[]), coalesce(sqlc.narg(silent), false), sqlc.narg(meta))
 returning id;
 
 -- name: PinMessageAgent :one
@@ -68,7 +68,7 @@ where id = sqlc.arg(id) and deleted_at is null
 returning id, conversation_id;
 
 -- name: GetMessageFull :one
-select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.silent, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
+select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.meta, m.silent, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
        m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
        coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
