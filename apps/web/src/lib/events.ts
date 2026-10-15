@@ -27,6 +27,10 @@ let bridged = false;
 const HEARTBEAT_MISS_MS = 75_000;
 let lastFrame = Date.now();
 let everConnected = false;
+// A 401 is permanent until the session changes — retrying it just spams
+// the network tab on the login screen. Probed once per failure burst.
+let authBlocked = false;
+let authProbe: Promise<boolean> | undefined;
 let watchdog: ReturnType<typeof setInterval> | undefined;
 let visBound = false;
 let upBound = false;
@@ -58,7 +62,7 @@ function resyncSoon() {
 function startWatchdog() {
   if (!watchdog) {
     watchdog = setInterval(() => {
-      if (net.isLocal()) return;
+      if (net.isLocal() || authBlocked) return;
       if (Date.now() - lastFrame > HEARTBEAT_MISS_MS) connect();
     }, 15_000);
   }
@@ -68,6 +72,7 @@ function startWatchdog() {
       if (
         document.visibilityState === "visible" &&
         !net.isLocal() &&
+        !authBlocked &&
         Date.now() - lastFrame > HEARTBEAT_MISS_MS
       ) {
         connect();
@@ -112,6 +117,7 @@ function connectBridge(token: string): boolean {
 
 function connect() {
   const wasConnected = everConnected;
+  authBlocked = false;
   source?.close();
   bridged = false;
   if (retry) {
@@ -147,10 +153,35 @@ function connect() {
   };
   es.onerror = () => {
     es.close();
-    // backoff: 1s, 2s, 4s … capped at 30s
-    const delay = Math.min(30000, 1000 * 2 ** attempts++);
-    retry = setTimeout(connect, delay);
+    if (source === es) source = undefined;
+    // No token means auth is cookie-only or absent — one cheap probe
+    // distinguishes "session expired/absent" (stop) from a network blip
+    // (back off and retry).
+    if (!token) {
+      authProbe ??= fetch(`${base}/api/auth/session`)
+        .then((r) => r.ok)
+        .catch(() => true) // probe unreachable: treat as blip, keep retrying
+        .finally(() => {
+          authProbe = undefined;
+        });
+      void authProbe.then((authed) => {
+        if (!authed) {
+          authBlocked = true;
+          return;
+        }
+        scheduleRetry();
+      });
+      return;
+    }
+    scheduleRetry();
   };
+}
+
+// backoff: 1s, 2s, 4s … capped at 30s
+function scheduleRetry() {
+  if (authBlocked) return;
+  const delay = Math.min(30000, 1000 * 2 ** attempts++);
+  retry = setTimeout(connect, delay);
 }
 
 // emitLocal feeds a synthetic event to subscribers. Local mode has no SSE;
