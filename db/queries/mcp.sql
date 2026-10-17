@@ -17,16 +17,23 @@ select project_id from attachments where id = sqlc.arg(id);
 
 -- name: ListProjectConversations :many
 -- agents never see channels flagged agents_blocked nor expired threads
-select * from conversations where project_id = sqlc.arg(project_id)
-  and not agents_blocked
-  and (expires_at is null or expires_at > now())
-order by created_at;
+select c.*, i.number as issue_number, i.title as issue_title from conversations c
+  left join issues i on i.id = c.issue_id
+  where c.project_id = sqlc.arg(project_id)
+  and not c.agents_blocked
+  and (c.expires_at is null or c.expires_at > now())
+order by c.created_at;
 
 -- name: SearchMessagesInProject :many
+-- operator grammar is parsed in mcpserver and passed as narg fields:
+--   q = remaining substring, author = from:, chan = in:, has_image/has_file,
+--   before_ts/after_ts = before:/after: date bounds
 select m.id, m.conversation_id, m.body, m.tags, m.silent, m.created_at, m.edited_at,
        m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
        coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
-       coalesce(u.avatar_key, a.avatar_key) as author_avatar
+       coalesce(u.avatar_key, a.avatar_key) as author_avatar,
+       c.title as conversation_title, c.kind as conversation_kind,
+       exists (select 1 from message_attachments ma where ma.message_id = m.id) as has_attachments
 from messages m
 join conversations c on c.id = m.conversation_id
 left join users u on u.id = m.author_user_id
@@ -34,7 +41,19 @@ left join agents a on a.id = m.author_agent_id
 where c.project_id = sqlc.arg(project_id)
   and m.deleted_at is null
   and not c.agents_blocked
-  and m.body ilike '%' || sqlc.arg(q) || '%'
+  and (sqlc.narg(q)::text is null or m.body ilike '%' || sqlc.narg(q)::text || '%')
+  and (sqlc.narg(author)::text is null or
+       coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') ilike sqlc.narg(author)::text)
+  and (sqlc.narg(chan)::text is null or c.kind = sqlc.narg(chan)::text
+       or c.title ilike '%' || sqlc.narg(chan)::text || '%')
+  and (not coalesce(sqlc.narg(has_image)::bool, false) or
+       exists (select 1 from message_attachments ma
+               join attachments att on att.id = ma.attachment_id
+               where ma.message_id = m.id and att.content_type like 'image/%'))
+  and (not coalesce(sqlc.narg(has_file)::bool, false) or
+       exists (select 1 from message_attachments ma where ma.message_id = m.id))
+  and (sqlc.narg(before_ts)::timestamptz is null or m.created_at < sqlc.narg(before_ts)::timestamptz)
+  and (sqlc.narg(after_ts)::timestamptz is null or m.created_at >= sqlc.narg(after_ts)::timestamptz)
 order by m.created_at desc
 limit sqlc.arg(lim);
 
@@ -43,6 +62,7 @@ select i.*, u.name as assignee_name, u.avatar_key as assignee_avatar
 from issues i
 left join users u on u.id = i.assignee_id
 where i.project_id = sqlc.arg(project_id)
+  and (sqlc.narg(status)::text is null or i.status = sqlc.narg(status)::text)
 order by i.number desc
 limit sqlc.arg(lim);
 

@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -244,6 +245,10 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithDescription("Cross-project work feed across all granted projects: open issues, open GitHub PRs, and the latest messages — what needs attention right now."),
 	), s.activity)
 
+	srv.AddTool(mcp.NewTool("list_unread",
+		mcp.WithDescription("Every conversation with unread messages across all granted projects — the agent's inbox. Each row carries project key, conversation id, kind, name, and unread count. Start here on a new session."),
+	), s.listUnread)
+
 	srv.AddTool(mcp.NewTool("list_projects",
 		mcp.WithDescription("List the projects this agent has been granted access to."),
 	), s.listProjects)
@@ -295,6 +300,7 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithDescription("List issues in a granted project."),
 		mcp.WithString("project_id", mcp.Required()),
 		mcp.WithNumber("limit", mcp.Description("Max issues, default 50, cap 200")),
+		mcp.WithString("status", mcp.Description("Filter by status: backlog|todo|in_progress|review|done|cancelled")),
 	), s.listIssues)
 
 	srv.AddTool(mcp.NewTool("get_issue",
@@ -898,6 +904,12 @@ func (s *Service) listConversations(ctx context.Context, req mcp.CallToolRequest
 			unread[u.ConversationID.String()] = int(u.Unread)
 		}
 	}
+	// issue conversations carry no title — surface the computed key and
+	// title so listings show "INV-3" instead of a bare UUID.
+	pkey := ""
+	if proj, err := s.q.GetProjectByID(ctx, pid); err == nil {
+		pkey = proj.Key
+	}
 	out := make([]gin.H, 0, len(rows))
 	for _, c := range rows {
 		e := gin.H{
@@ -907,12 +919,65 @@ func (s *Service) listConversations(ctx context.Context, req mcp.CallToolRequest
 		if c.Title.Valid {
 			e["name"] = c.Title.String
 		}
+		if c.IssueNumber.Valid {
+			e["issue_key"] = fmt.Sprintf("%s-%d", pkey, c.IssueNumber.Int32)
+			if c.IssueTitle.Valid {
+				e["issue_title"] = c.IssueTitle.String
+			}
+		}
 		if c.ExpiresAt.Valid {
 			e["expires_at"] = c.ExpiresAt.Time
 		}
 		out = append(out, e)
 	}
 	return jsonResult(out)
+}
+
+// listUnread is the server-side version of `relay-cli unread`: one row per
+// conversation that has unread messages for this agent, across every
+// granted project. Same query pair the CLI composes client-side.
+func (s *Service) listUnread(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	a := agent(ctx)
+	projects, err := s.q.ListGrantedProjects(ctx, a.ID)
+	if err != nil {
+		return errResult(err)
+	}
+	out := []gin.H{}
+	for _, p := range projects {
+		convs, err := s.q.ListProjectConversations(ctx, p.ID)
+		if err != nil {
+			return errResult(err)
+		}
+		unread := make(map[string]int)
+		if urows, err := s.q.AgentConversationUnread(ctx, db.AgentConversationUnreadParams{
+			ProjectID: p.ID, AgentID: a.ID,
+		}); err == nil {
+			for _, u := range urows {
+				unread[u.ConversationID.String()] = int(u.Unread)
+			}
+		}
+		for _, c := range convs {
+			n := unread[c.ID.String()]
+			if n == 0 {
+				continue
+			}
+			e := gin.H{
+				"id": c.ID, "kind": c.Kind, "unread_count": n,
+				"project": gin.H{"id": p.ID, "key": p.Key, "name": p.Name},
+			}
+			if c.Title.Valid {
+				e["name"] = c.Title.String
+			}
+			if c.IssueNumber.Valid {
+				e["issue_key"] = fmt.Sprintf("%s-%d", p.Key, c.IssueNumber.Int32)
+				if c.IssueTitle.Valid {
+					e["issue_title"] = c.IssueTitle.String
+				}
+			}
+			out = append(out, e)
+		}
+	}
+	return jsonResult(gin.H{"unread": out})
 }
 
 // checkAgentConversation refuses channels flagged agents_blocked and
@@ -992,8 +1057,14 @@ func (s *Service) getMessages(ctx context.Context, req mcp.CallToolRequest) (*mc
 	if v := strings.ToLower(strings.TrimSpace(req.GetString("tag", ""))); v != "" {
 		tag = pgtype.Text{String: v, Valid: true}
 	}
+	var before pgtype.UUID
+	if v := strings.TrimSpace(req.GetString("before_id", "")); v != "" {
+		if err := before.Scan(v); err != nil || !before.Valid {
+			return mcp.NewToolResultError("invalid before_id"), nil
+		}
+	}
 	rows, err := s.q.ListMessages(ctx, db.ListMessagesParams{
-		ConversationID: cid, Lim: int32(lim), Tag: tag,
+		ConversationID: cid, Lim: int32(lim), Tag: tag, Before: before,
 	})
 	if err != nil {
 		return errResult(err)
@@ -1353,20 +1424,71 @@ func (s *Service) searchMessages(ctx context.Context, req mcp.CallToolRequest) (
 		return errResult(err)
 	}
 	lim := clampInt(req.GetInt("limit", 20), 1, 100)
-	rows, err := s.q.SearchMessagesInProject(ctx, db.SearchMessagesInProjectParams{
-		ProjectID: pid, Q: pgtype.Text{String: q, Valid: true}, Lim: int32(lim),
-	})
+	sp := db.SearchMessagesInProjectParams{ProjectID: pid, Lim: int32(lim)}
+	var terms []string
+	for _, tok := range strings.Fields(q) {
+		k, v, ok := strings.Cut(tok, ":")
+		switch {
+		case !ok || v == "":
+			terms = append(terms, tok)
+		case k == "from":
+			sp.Author = pgtype.Text{String: v, Valid: true}
+		case k == "in":
+			sp.Chan = pgtype.Text{String: v, Valid: true}
+		case k == "has" && (v == "image" || v == "file"):
+			if v == "image" {
+				sp.HasImage = pgtype.Bool{Bool: true, Valid: true}
+			} else {
+				sp.HasFile = pgtype.Bool{Bool: true, Valid: true}
+			}
+		case k == "before" || k == "after":
+			ts, err := parseSearchDate(v)
+			if err != nil {
+				return mcp.NewToolResultError("bad " + k + ": date — use YYYY-MM-DD or RFC3339"), nil
+			}
+			if k == "before" {
+				sp.BeforeTs = ts
+			} else {
+				sp.AfterTs = ts
+			}
+		default:
+			terms = append(terms, tok)
+		}
+	}
+	if rest := strings.Join(terms, " "); strings.TrimSpace(rest) != "" {
+		sp.Q = pgtype.Text{String: rest, Valid: true}
+	}
+	rows, err := s.q.SearchMessagesInProject(ctx, sp)
 	if err != nil {
 		return errResult(err)
 	}
 	out := make([]gin.H, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, gin.H{
+		e := gin.H{
 			"id": r.ID, "conversation_id": r.ConversationID, "body": r.Body,
 			"created_at": r.CreatedAt.Time, "author_name": r.AuthorName,
-		})
+			"author_kind":       r.AuthorKindSnapshot,
+			"conversation_kind": r.ConversationKind,
+			"tags":              r.Tags,
+			"has_attachments":   r.HasAttachments,
+		}
+		if r.ConversationTitle.Valid {
+			e["conversation_title"] = r.ConversationTitle.String
+		}
+		out = append(out, e)
 	}
 	return jsonResult(out)
+}
+
+// parseSearchDate accepts YYYY-MM-DD or full RFC3339 for the before:/after:
+// search operators.
+func parseSearchDate(v string) (pgtype.Timestamptz, error) {
+	for _, layout := range []string{"2006-01-02", time.RFC3339} {
+		if t, err := time.Parse(layout, v); err == nil {
+			return pgtype.Timestamptz{Time: t, Valid: true}, nil
+		}
+	}
+	return pgtype.Timestamptz{}, errors.New("bad date")
 }
 
 func (s *Service) listIssues(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1378,8 +1500,12 @@ func (s *Service) listIssues(ctx context.Context, req mcp.CallToolRequest) (*mcp
 		return errResult(err)
 	}
 	lim := clampInt(req.GetInt("limit", 50), 1, 200)
+	var status pgtype.Text
+	if v := strings.ToLower(strings.TrimSpace(req.GetString("status", ""))); v != "" {
+		status = pgtype.Text{String: v, Valid: true}
+	}
 	rows, err := s.q.ListProjectIssuesForAgent(ctx, db.ListProjectIssuesForAgentParams{
-		ProjectID: pid, Lim: int32(lim),
+		ProjectID: pid, Lim: int32(lim), Status: status,
 	})
 	if err != nil {
 		return errResult(err)

@@ -403,22 +403,44 @@ func (q *Queries) GetMessageFull(ctx context.Context, id pgtype.UUID) (GetMessag
 }
 
 const listProjectConversations = `-- name: ListProjectConversations :many
-select id, project_id, kind, issue_id, created_at, brief_id, parent_message_id, title, created_by_user, created_by_agent, creator_name_snapshot, expires_at, agents_blocked, intake_mode, email_alerts from conversations where project_id = $1
-  and not agents_blocked
-  and (expires_at is null or expires_at > now())
-order by created_at
+select c.id, c.project_id, c.kind, c.issue_id, c.created_at, c.brief_id, c.parent_message_id, c.title, c.created_by_user, c.created_by_agent, c.creator_name_snapshot, c.expires_at, c.agents_blocked, c.intake_mode, c.email_alerts, i.number as issue_number, i.title as issue_title from conversations c
+  left join issues i on i.id = c.issue_id
+  where c.project_id = $1
+  and not c.agents_blocked
+  and (c.expires_at is null or c.expires_at > now())
+order by c.created_at
 `
 
+type ListProjectConversationsRow struct {
+	ID                  pgtype.UUID        `json:"id"`
+	ProjectID           pgtype.UUID        `json:"project_id"`
+	Kind                string             `json:"kind"`
+	IssueID             pgtype.UUID        `json:"issue_id"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	BriefID             pgtype.UUID        `json:"brief_id"`
+	ParentMessageID     pgtype.UUID        `json:"parent_message_id"`
+	Title               pgtype.Text        `json:"title"`
+	CreatedByUser       pgtype.UUID        `json:"created_by_user"`
+	CreatedByAgent      pgtype.UUID        `json:"created_by_agent"`
+	CreatorNameSnapshot string             `json:"creator_name_snapshot"`
+	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
+	AgentsBlocked       bool               `json:"agents_blocked"`
+	IntakeMode          string             `json:"intake_mode"`
+	EmailAlerts         []string           `json:"email_alerts"`
+	IssueNumber         pgtype.Int4        `json:"issue_number"`
+	IssueTitle          pgtype.Text        `json:"issue_title"`
+}
+
 // agents never see channels flagged agents_blocked nor expired threads
-func (q *Queries) ListProjectConversations(ctx context.Context, projectID pgtype.UUID) ([]Conversation, error) {
+func (q *Queries) ListProjectConversations(ctx context.Context, projectID pgtype.UUID) ([]ListProjectConversationsRow, error) {
 	rows, err := q.db.Query(ctx, listProjectConversations, projectID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Conversation{}
+	items := []ListProjectConversationsRow{}
 	for rows.Next() {
-		var i Conversation
+		var i ListProjectConversationsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.ProjectID,
@@ -435,6 +457,8 @@ func (q *Queries) ListProjectConversations(ctx context.Context, projectID pgtype
 			&i.AgentsBlocked,
 			&i.IntakeMode,
 			&i.EmailAlerts,
+			&i.IssueNumber,
+			&i.IssueTitle,
 		); err != nil {
 			return nil, err
 		}
@@ -451,12 +475,14 @@ select i.id, i.project_id, i.number, i.title, i.description, i.status, i.priorit
 from issues i
 left join users u on u.id = i.assignee_id
 where i.project_id = $1
+  and ($2::text is null or i.status = $2::text)
 order by i.number desc
-limit $2
+limit $3
 `
 
 type ListProjectIssuesForAgentParams struct {
 	ProjectID pgtype.UUID `json:"project_id"`
+	Status    pgtype.Text `json:"status"`
 	Lim       int32       `json:"lim"`
 }
 
@@ -485,7 +511,7 @@ type ListProjectIssuesForAgentRow struct {
 }
 
 func (q *Queries) ListProjectIssuesForAgent(ctx context.Context, arg ListProjectIssuesForAgentParams) ([]ListProjectIssuesForAgentRow, error) {
-	rows, err := q.db.Query(ctx, listProjectIssuesForAgent, arg.ProjectID, arg.Lim)
+	rows, err := q.db.Query(ctx, listProjectIssuesForAgent, arg.ProjectID, arg.Status, arg.Lim)
 	if err != nil {
 		return nil, err
 	}
@@ -696,7 +722,9 @@ const searchMessagesInProject = `-- name: SearchMessagesInProject :many
 select m.id, m.conversation_id, m.body, m.tags, m.silent, m.created_at, m.edited_at,
        m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
        coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
-       coalesce(u.avatar_key, a.avatar_key) as author_avatar
+       coalesce(u.avatar_key, a.avatar_key) as author_avatar,
+       c.title as conversation_title, c.kind as conversation_kind,
+       exists (select 1 from message_attachments ma where ma.message_id = m.id) as has_attachments
 from messages m
 join conversations c on c.id = m.conversation_id
 left join users u on u.id = m.author_user_id
@@ -704,15 +732,33 @@ left join agents a on a.id = m.author_agent_id
 where c.project_id = $1
   and m.deleted_at is null
   and not c.agents_blocked
-  and m.body ilike '%' || $2 || '%'
+  and ($2::text is null or m.body ilike '%' || $2::text || '%')
+  and ($3::text is null or
+       coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') ilike $3::text)
+  and ($4::text is null or c.kind = $4::text
+       or c.title ilike '%' || $4::text || '%')
+  and (not coalesce($5::bool, false) or
+       exists (select 1 from message_attachments ma
+               join attachments att on att.id = ma.attachment_id
+               where ma.message_id = m.id and att.content_type like 'image/%'))
+  and (not coalesce($6::bool, false) or
+       exists (select 1 from message_attachments ma where ma.message_id = m.id))
+  and ($7::timestamptz is null or m.created_at < $7::timestamptz)
+  and ($8::timestamptz is null or m.created_at >= $8::timestamptz)
 order by m.created_at desc
-limit $3
+limit $9
 `
 
 type SearchMessagesInProjectParams struct {
-	ProjectID pgtype.UUID `json:"project_id"`
-	Q         pgtype.Text `json:"q"`
-	Lim       int32       `json:"lim"`
+	ProjectID pgtype.UUID        `json:"project_id"`
+	Q         pgtype.Text        `json:"q"`
+	Author    pgtype.Text        `json:"author"`
+	Chan      pgtype.Text        `json:"chan"`
+	HasImage  pgtype.Bool        `json:"has_image"`
+	HasFile   pgtype.Bool        `json:"has_file"`
+	BeforeTs  pgtype.Timestamptz `json:"before_ts"`
+	AfterTs   pgtype.Timestamptz `json:"after_ts"`
+	Lim       int32              `json:"lim"`
 }
 
 type SearchMessagesInProjectRow struct {
@@ -728,10 +774,27 @@ type SearchMessagesInProjectRow struct {
 	AuthorKindSnapshot string             `json:"author_kind_snapshot"`
 	AuthorName         string             `json:"author_name"`
 	AuthorAvatar       pgtype.Text        `json:"author_avatar"`
+	ConversationTitle  pgtype.Text        `json:"conversation_title"`
+	ConversationKind   string             `json:"conversation_kind"`
+	HasAttachments     bool               `json:"has_attachments"`
 }
 
+// operator grammar is parsed in mcpserver and passed as narg fields:
+//
+//	q = remaining substring, author = from:, chan = in:, has_image/has_file,
+//	before_ts/after_ts = before:/after: date bounds
 func (q *Queries) SearchMessagesInProject(ctx context.Context, arg SearchMessagesInProjectParams) ([]SearchMessagesInProjectRow, error) {
-	rows, err := q.db.Query(ctx, searchMessagesInProject, arg.ProjectID, arg.Q, arg.Lim)
+	rows, err := q.db.Query(ctx, searchMessagesInProject,
+		arg.ProjectID,
+		arg.Q,
+		arg.Author,
+		arg.Chan,
+		arg.HasImage,
+		arg.HasFile,
+		arg.BeforeTs,
+		arg.AfterTs,
+		arg.Lim,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -752,6 +815,9 @@ func (q *Queries) SearchMessagesInProject(ctx context.Context, arg SearchMessage
 			&i.AuthorKindSnapshot,
 			&i.AuthorName,
 			&i.AuthorAvatar,
+			&i.ConversationTitle,
+			&i.ConversationKind,
+			&i.HasAttachments,
 		); err != nil {
 			return nil, err
 		}

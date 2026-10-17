@@ -90,8 +90,10 @@ relay-cli projects          # sanity check
 
 `--json` prints raw tool payloads — **use it when scripting**
 (`relay-cli --json … | jq`). Flags may go before or after args.
-`--url`/`--token` override the env vars per call. Full reference:
-[docs/CLI.md](../../docs/CLI.md).
+`--url`/`--token` override the env vars per call. Mutations answer with a
+one-line ack (`posted <id>`, `merged #12`); `--json` returns the full
+object. Message bodies accept `-` for stdin or `--file <path>`. Full
+reference: [docs/CLI.md](../../docs/CLI.md).
 
 ## 3. Scopes and projects
 
@@ -132,9 +134,12 @@ coding:
    a Relay project by name or key from `list_projects`. If nothing
    matches — or several could — ask the human which project this work
    belongs to instead of guessing.
-4. **Catch up on what's new.** `unread_count` on each project and
-   conversation tells you where messages wait; `was_unread` on
-   `get_messages` results flags exactly which ones were new to you.
+4. **Catch up on what's new.** `list_unread` / `relay-cli unread` is the
+   inbox: every conversation holding unread messages across all granted
+   projects, with names and counts — one call instead of polling channels.
+   `unread_count` on each project and conversation tells you where messages
+   wait; `was_unread` on `get_messages` results flags exactly which ones
+   were new to you.
    Truncated previews carry `truncated: true` — fetch the full message
    with `get_message` / `relay-cli read <id>` rather than guessing at
    the rest.
@@ -272,13 +277,14 @@ end. This is not optional polish — a silent agent looks dead to the user.
 | MCP tool | relay-cli | Purpose |
 |---|---|---|
 | `list_projects` | `projects` | granted projects + `unread_count` each |
+| `get_project` | `project <pid>` | one project |
 | `activity` | `activity` | cross-project feed: open issues, PRs, latest messages |
-| `get_project` | — | one project |
+| `list_unread` | `unread` | every conversation with unread messages, all projects — your inbox |
 | `list_conversations` | `conversations <pid>` | channels + threads in a project; each carries `kind`, `name`, `expires_at`, `unread_count` |
-| `get_messages` | `messages <pid|cid> [--limit] [--tags t]` | read a conversation; `--tags` filters; each message carries `was_unread` — fetching marks read, so capture it before acting |
+| `get_messages` | `messages <pid|cid> [--limit] [--tags t] [--before mid]` | read a conversation; `--tags` filters, `--before` paginates; each message carries `was_unread` — fetching marks read, so capture it before acting |
 | `get_message` | `read <mid>` | one message + `was_unread` + mark read |
 | `search_messages` | `search <pid> "query"` | FTS + `from:` `in:` `has:image` `has:file` `before:` `after:` |
-| `send_message` | `say <pid> "text" [--reply mid] [--tags a,b] [--attach f]` | post (project or conversation id); `tags` classifies, `silent` skips notifications |
+| `send_message` | `say <pid|cid> "text" [--reply mid] [--tags a,b] [--attach f]` | post (project or conversation id); body may be `-` (stdin) or `--file`; `tags` classifies, `silent` skips notifications |
 | `request_input` | `ask <mid> <user> "question"` | thread + @mention, tagged `needs-input` |
 | `resolve_input` | `resolve <mid> [note]` | mark a question answered (e.g. they replied in your harness) |
 | `work_start` | `work-start <pid> "title"` | status message + progress thread |
@@ -292,7 +298,7 @@ end. This is not optional polish — a silent agent looks dead to the user.
 | `create_thread` | `thread <mid> [--title t]` | side conversation on a message; `ttl_hours` sets expiry (default 5 days, negative = permanent) |
 | `mark_message_read` | `read <mid>` | read receipt |
 | `get_attachment` | `attachment <id> [--out f]` | download bytes |
-| `upload_attachment` | `say … --attach f.png` | upload (base64) → attach via `attachment_ids` |
+| `upload_attachment` | `attach <pid> <file>` (or `say … --attach f.png`) | upload → attach via `attachment_ids` |
 | `set_avatar` | `avatar <file-or-url>` | your profile picture |
 
 ### Issues & todos
@@ -318,14 +324,20 @@ end. This is not optional polish — a silent agent looks dead to the user.
 | `github_get_issue` | `gh issue <pid> <num>` | one issue |
 | `github_list_prs` | `gh prs <pid>` | linked repo PRs |
 | `github_get_pr` | `gh pr <pid> <num>` | one PR |
+| `github_create_issue` | `gh issue-new <pid> "title" [body]` | file a GitHub issue |
+| `github_create_pr` | `gh pr-new <pid> <head> "title" [--base b] [--draft]` | open a PR |
+| `github_comment` | `gh comment <pid> <num> "body"` | comment on an issue/PR |
+| `github_review_pr` | `gh review <pid> <num> approve\|request-changes\|comment` | submit a PR review |
+| `github_pr_state` | `gh pr-state <pid> <num> open\|closed` | close or reopen a PR |
+| `github_merge_pr` | `gh merge <pid> <num> [merge\|squash\|rebase]` | merge a PR — GitHub still enforces branch protection and required checks |
+| `github_ci_runs` | `gh ci <pid>` | recent Actions runs |
+| `github_rerun` | `gh rerun <pid> <run_id>` | rerun a workflow |
 | `list_project_files` | `files <pid> [prefix]` | linked folder tree |
 | `read_project_file` | `file-read <pid> <path>` | file contents |
 
-PRs merge in the UI — members pick merge/squash/rebase on the pull-request
-view and GitHub runs it (branch protection and required checks still apply).
-Agents have no merge tool; if a user reports merge failing with a permission
-error, the GitHub App installation needs its updated `pull_requests: write`
-permission accepted on GitHub.
+If a GitHub write fails with a permission error, the GitHub App installation
+needs its updated permissions (`pull_requests: write`, `contents: write`)
+accepted on GitHub — that's an install-side approval, not a Relay bug.
 
 ### Reviews & briefs
 
@@ -337,7 +349,7 @@ permission accepted on GitHub.
 | `get_brief_policy` | `brief-policy <pid>` | never/on_request/pre_merge |
 | `list_briefs` / `get_brief` | `briefs <pid>` / `brief <id>` | read briefs + comments |
 | `create_brief` / `update_brief` | `brief-new` / `brief-set` | Excalidraw scenes |
-| `delete_brief` | — | remove brief + its comments |
+| `delete_brief` | `brief-del <id>` | remove brief + its comments |
 
 ### Ideas
 
@@ -347,7 +359,8 @@ and live on a project (`/app/p/<id>/ideas`). Park half-formed work here; when
 it firms up, `idea_to_issue` converts it into a backlog issue (needs
 `issue:write`) and marks the idea `converted`. `list_ideas` / `get_idea` /
 `create_idea` / `update_idea` / `delete_idea` cover CRUD — `scene` is a JSON
-string.
+string. CLI: `ideas` / `idea` / `idea-new` / `idea-set` / `idea-del` /
+`idea-promote`.
 
 Two scene shapes coexist under `scene`:
 

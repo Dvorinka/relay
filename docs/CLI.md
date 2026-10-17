@@ -32,18 +32,22 @@ a token with `issue:read` on project A cannot write todos on project B.
 relay-cli redeem <rli_…> [--name x] [--mode notify]  # invite → rly_ token
 relay-cli whoami                                     # identity, workspace, grants
 relay-cli projects                                   # list granted projects
+relay-cli project <project_id>                       # one project's details
 relay-cli activity                                   # cross-project feed: open
                                                      #   issues, PRs, latest msgs
 relay-cli unread                                     # per-conversation unread
-                                                     #   breakdown
+                                                     #   breakdown (your inbox)
 relay-cli mentionables <project_id>                  # resolvable names: @users,
                                                      #   @agents, KEY-1, repo#N
-relay-cli conversations <project_id>                 # threads in a project
+relay-cli conversations <project_id>                 # channels + threads,
+                                                     #   names + unread counts
 relay-cli messages <id> [--limit 30]                 # read a thread — project id
-                                                     #   or any conversation id
-relay-cli say <project_id> "text" [--reply <msg>]    # post; mentions resolve:
-                                                     #   @user, @agent:x, KEY-1,
+                  [--tags t] [--before <msg>]        #   or any conversation id
+relay-cli say <pid|cid> "text" [--reply <msg>]       # post; mentions resolve:
+                 [--tags a,b] [--attach f] [--silent]  #  @user, @agent:x, KEY-1,
                                                      #   owner/repo#42, @file:p
+relay-cli say <pid|cid> -                            # body from stdin
+relay-cli say <pid|cid> --file body.md               # body from a file
 relay-cli react <message_id> <emoji>                 # toggle a reaction
 relay-cli msg-edit <message_id> "new body"           # edit while unread
 relay-cli msg-del <message_id>                       # delete while unread
@@ -59,18 +63,36 @@ relay-cli read <message_id>                          # get + mark read
 
 relay-cli issues <project_id>                        # list issues
 relay-cli issue <issue_id>                           # issue detail
-relay-cli issue-new <project_id> "title"             # create
-relay-cli issue-set <issue_id> --status done         # update
+relay-cli issue-new <project_id> "title" ["desc"]    # create
+relay-cli issue-set <issue_id> status=done           # update (key=value pairs)
 
 relay-cli todos <project_id>                         # work list
 relay-cli todo-add <project_id> "what remains"       # add
 relay-cli todo-done|todo-undo|todo-del <id>          # update
+relay-cli todo-set <id> in_progress                  # set status
+relay-cli todo-sync <project_id> --file list.json    # mirror the whole list
+
+relay-cli work-start <project_id> "title"            # status msg + thread
+relay-cli work-stop <status_msg_id> ["summary"]      # close the status
+relay-cli ask <message_id> <user> "question"         # thread + @mention
+relay-cli resolve <question_msg_id> [note]           # mark question answered
+relay-cli events                                     # live SSE stream
 
 relay-cli files <project_id> [path]                  # linked-folder listing
 relay-cli file-read <project_id> <path>              # read a text file
+relay-cli attach <project_id> <file>                 # upload → attachment id
 
 relay-cli gh issues|prs <project_id>                 # GitHub lists
 relay-cli gh issue|pr <project_id> <number>          # GitHub detail
+relay-cli gh issue-new <project_id> "title" [body]   # file a GitHub issue
+relay-cli gh pr-new <project_id> <head> "title"      # open a PR
+        [--base b] [--body t|-] [--draft]
+relay-cli gh comment <project_id> <num> "body"       # comment on issue/PR
+relay-cli gh review <project_id> <num> approve|request-changes|comment [body]
+relay-cli gh pr-state <project_id> <num> open|closed # close / reopen
+relay-cli gh merge <project_id> <num> [squash]       # merge a PR
+relay-cli gh ci <project_id>                         # workflow runs
+relay-cli gh rerun <project_id> <run_id>             # rerun a workflow
 
 relay-cli reviews <project_id> [--status pending]    # work reviews
 relay-cli review <review_id>                         # review detail
@@ -83,6 +105,14 @@ relay-cli brief <brief_id>                           # scene JSON included
 relay-cli brief-policy <project_id>                  # never|on_request|pre_merge
 relay-cli brief-new <project_id> "title" --file s.json  # create (scene in file)
 relay-cli brief-set <brief_id> --status resolved     # update
+relay-cli brief-del <brief_id>                       # delete (irreversible)
+
+relay-cli ideas <project_id>                         # brainstorm whiteboards
+relay-cli idea <idea_id>                             # one idea incl. scene
+relay-cli idea-new <project_id> "title" ["summary"] [--file scene.json]
+relay-cli idea-set <idea_id> status=archived …       # update fields/scene
+relay-cli idea-del <idea_id>                         # delete (irreversible)
+relay-cli idea-promote <idea_id> ["issue title"]     # idea → backlog issue
 
 relay-cli search <project_id> "query"                # message search
 relay-cli attachment <id>                            # print download URL
@@ -92,8 +122,12 @@ relay-cli completion bash|zsh|fish                   # shell completion
 ```
 
 Output is human-readable by default; `--json` prints the raw tool payload —
-that's the mode agents should use (`relay-cli --json … | jq`). Flags may go
-before or after arguments.
+that's the mode agents should use (`relay-cli --json … | jq`). Mutations
+(`say`, `react`, `issue-new`, `gh merge`, …) answer with a one-line ack —
+`posted <id>`, `merged #12` — not the echoed payload. Flags may go before
+or after arguments; a flag-looking token is never swallowed as another
+flag's value (`--conv --limit` fails loudly instead of reading `--limit`
+as the conversation id).
 
 ## Visual briefs
 
@@ -173,5 +207,7 @@ relay-cli todo-done $T
 relay-cli issue-set $I status=done
 ```
 
-Everything the CLI can do, an MCP client can do — same tools, same scopes.
+Everything the CLI can do, an MCP client can do — same tools, same scopes,
+with three CLI-only extras that don't translate to a tool call: `events`
+(the SSE stream), `redeem` (pre-auth token exchange), and `completion`.
 The binary is stdlib-only, so it cross-compiles anywhere Go runs.
