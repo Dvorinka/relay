@@ -575,6 +575,13 @@ const impl = {
       .sort((a, b) => (b.pinned_at ?? "").localeCompare(a.pinned_at ?? ""))
       .map((m) => ({ ...m, thread: withReplyCount(threadOf(m.id)) })),
   }),
+  opsSummary: async (conversationId: string) => ({
+    conversation_id: conversationId,
+    services: [],
+    days: [],
+    kinds: {},
+    last_event_at: null,
+  }),
   forwardMessage: async (messageId: string, projectId: string) => {
     const src = findMessage(messageId);
     if (!src) notFound();

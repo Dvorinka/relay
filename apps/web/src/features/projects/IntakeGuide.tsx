@@ -139,6 +139,38 @@ channel — e.g. one channel per customer, kinds per report type.`,
   };
 }
 
+// opsSnippet — the structured payload ops channels aggregate. Same
+// endpoint, richer shape: kind+service+state drive the status strip.
+function opsSnippet(url: string): string {
+  return `HOOK_URL="${url}"
+
+# uptime probe (cron every minute)
+curl -X POST "$HOOK_URL" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "kind":       "status",
+    "service":    "api",
+    "state":      "up",        // up | degraded | down | maintenance
+    "latency_ms": 84,
+    "env":        "prod",
+    "url":        "https://grafana.example.com/d/api",
+    "fields":     { "region": "eu-central" }
+  }'
+
+# error tracker
+curl -X POST "$HOOK_URL" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "kind":    "error",
+    "service": "web",
+    "level":   "error",        // debug | info | warn | error | fatal
+    "release": "v0.9.11",
+    "subject": "TypeError: n.items is undefined",
+    "message": "stack trace or error detail here",
+    "key":     "err-a91f"      // same key -> one ticket thread per bug
+  }'`;
+}
+
 // chatRepliesSnippet — the pull path shown when the channel is in
 // live-chat mode.
 function chatRepliesSnippet(url: string): string {
@@ -282,7 +314,7 @@ export function IntakeGuide(props: {
   channel: () => Channel | undefined;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onMode: (mode: "" | "receive" | "chat") => void;
+  onMode: (mode: "" | "receive" | "chat" | "ops") => void;
 }) {
   const [hooks, { refetch }] = createResource(
     () => (props.open ? props.projectId : null),
@@ -295,7 +327,9 @@ export function IntakeGuide(props: {
 
   const base = () => (net.serverUrl() || window.location.origin) + "/api/hooks/";
   const url = () => freshUrl() || base() + "<token>";
-  const body = () => snippets(url())[tab()];
+  const opsMode = () => props.channel()?.intake_mode === "ops";
+  const body = () =>
+    opsMode() && tab() === "curl" ? opsSnippet(url()) : snippets(url())[tab()];
 
   return (
     <Dialog.Root
@@ -309,15 +343,21 @@ export function IntakeGuide(props: {
             <div class="flex items-start gap-2">
               <div class="min-w-0 flex-1">
                 <Dialog.Title class="text-[14px] font-semibold">
-                  Support intake — #{props.channel()?.name ?? "channel"}
+                  {props.channel()?.intake_mode === "ops"
+                    ? "Ops intake — "
+                    : "Support intake — "}
+                  #{props.channel()?.name ?? "channel"}
                 </Dialog.Title>
                 <Dialog.Description class="mt-1 text-[12px] text-muted">
-                  Anything that can POST JSON can file a report into this
-                  channel. The path token is the credential — keep it
-                  server-side.{" "}
+                  {props.channel()?.intake_mode === "ops"
+                    ? "Anything that can POST JSON can feed this board — uptime probes, error trackers, CI, deploy bots. Structured fields land on message.meta and drive the status strip above."
+                    : "Anything that can POST JSON can file a report into this channel. "}
+                  The path token is the credential — keep it server-side.{" "}
                   {props.channel()?.intake_mode === "chat"
                     ? "Live chat is on — the token can also pull replies."
-                    : "Receive-only — replies stay inside Relay."}
+                    : props.channel()?.intake_mode === "ops"
+                      ? "Events flow in only — the board above is the output."
+                      : "Receive-only — replies stay inside Relay."}
                 </Dialog.Description>
               </div>
               <Dialog.CloseTrigger class="rounded p-1 text-muted transition-colors hover:bg-hover hover:text-fg">
@@ -374,6 +414,27 @@ export function IntakeGuide(props: {
                     {"{name, content_type, data: base64}"}
                   </code>
                 </span>
+                <Show when={props.channel()?.intake_mode === "ops"}>
+                  <code class="font-mono text-fg">service · state</code>
+                  <span class="text-muted">
+                    the monitored entity +{" "}
+                    <code class="font-mono">up | degraded | down | maintenance</code>{" "}
+                    — latest per service drives the board
+                  </span>
+                  <code class="font-mono text-fg">latency_ms · level</code>
+                  <span class="text-muted">
+                    probe latency · severity debug…fatal
+                  </span>
+                  <code class="font-mono text-fg">env · release · url · at</code>
+                  <span class="text-muted">
+                    environment, version, source link, event time
+                  </span>
+                  <code class="font-mono text-fg">fields</code>
+                  <span class="text-muted">
+                    <code class="font-mono">{"{label: value}"}</code> — any
+                    key/value pairs, rendered on the card
+                  </span>
+                </Show>
               </div>
             </div>
 
@@ -412,47 +473,71 @@ export function IntakeGuide(props: {
             </div>
 
             <div class="mt-4 rounded-md border border-border bg-hover/40 px-3 py-2.5">
-              <h3 class="text-[12px] font-semibold">4 · Replies back to your product</h3>
+              <h3 class="text-[12px] font-semibold">
+                {opsMode()
+                  ? "4 · Reading the board"
+                  : "4 · Replies back to your product"}
+              </h3>
               <Show
-                when={props.channel()?.intake_mode === "chat"}
+                when={opsMode()}
                 fallback={
-                  <p class="mt-1 text-[11.5px] leading-relaxed text-muted">
-                    This channel is{" "}
-                    <span class="font-medium text-fg">receive-only</span> —
-                    replies stay inside Relay. Flip on{" "}
-                    <span class="font-medium text-fg">live chat</span> in the
-                    channel header to let the platform pull replies, or create
-                    an outbound <code class="font-mono">message.created</code>{" "}
-                    webhook (project → Webhooks) to push them.
-                  </p>
+                  <Show
+                    when={props.channel()?.intake_mode === "chat"}
+                    fallback={
+                      <p class="mt-1 text-[11.5px] leading-relaxed text-muted">
+                        This channel is{" "}
+                        <span class="font-medium text-fg">receive-only</span>{" "}
+                        — replies stay inside Relay. Flip on{" "}
+                        <span class="font-medium text-fg">live chat</span> in
+                        the channel header to let the platform pull replies, or
+                        create an outbound{" "}
+                        <code class="font-mono">message.created</code> webhook
+                        (project → Webhooks) to push them.
+                      </p>
+                    }
+                  >
+                    <p class="mt-1 text-[11.5px] leading-relaxed text-muted">
+                      <span class="font-medium text-fg">Live chat is on.</span>{" "}
+                      Each ticket is a sub-chat under this channel — whatever
+                      the team posts inside it is what the platform pulls. Poll
+                      the same token at{" "}
+                      <code class="font-mono">
+                        GET {"<hook-url>"}/messages?key=…&after=…
+                      </code>{" "}
+                      (120 reads/min) or subscribe an outbound webhook to{" "}
+                      <code class="font-mono">message.created</code> for push.
+                      Either way, skip posts tagged{" "}
+                      <code class="font-mono">"webhook"</code> /{" "}
+                      <code class="font-mono">via_hook</code> — forwarding them
+                      back would echo-loop.
+                    </p>
+                    <div class="mt-2 rounded-md border border-border bg-bg">
+                      <div class="flex items-center justify-between border-b border-border/60 px-3 py-1.5">
+                        <span class="text-[10.5px] font-medium uppercase tracking-wider text-muted">
+                          pull replies
+                        </span>
+                        <CopyButton text={() => chatRepliesSnippet(url())} />
+                      </div>
+                      <pre class="overflow-auto px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre">
+                        {chatRepliesSnippet(url())}
+                      </pre>
+                    </div>
+                  </Show>
                 }
               >
                 <p class="mt-1 text-[11.5px] leading-relaxed text-muted">
-                  <span class="font-medium text-fg">Live chat is on.</span>{" "}
-                  Each ticket is a sub-chat under this channel — whatever
-                  the team posts inside it is what the platform pulls. Poll
-                  the same token at{" "}
-                  <code class="font-mono">
-                    GET {"<hook-url>"}/messages?key=…&after=…
-                  </code>{" "}
-                  (120 reads/min) or subscribe an outbound webhook to{" "}
-                  <code class="font-mono">message.created</code> for push.
-                  Either way, skip posts tagged{" "}
-                  <code class="font-mono">"webhook"</code> /{" "}
-                  <code class="font-mono">via_hook</code> — forwarding them
-                  back would echo-loop.
+                  The strip above the channel is the product:{" "}
+                  <span class="font-medium text-fg">service pills</span> track
+                  the latest <code class="font-mono">state</code> per{" "}
+                  <code class="font-mono">service</code>, the{" "}
+                  <span class="font-medium text-fg">30-day bar</span> colors
+                  each day by its worst state, and every post renders as a
+                  card in the feed. Agents can read the same summary via the{" "}
+                  <code class="font-mono">ops_summary</code> MCP tool — or
+                  block them entirely with the lock toggle in the header.{" "}
+                  <code class="font-mono">GET /api/conversations/&lt;id&gt;/ops</code>{" "}
+                  serves the raw aggregation for your own dashboards.
                 </p>
-                <div class="mt-2 rounded-md border border-border bg-bg">
-                  <div class="flex items-center justify-between border-b border-border/60 px-3 py-1.5">
-                    <span class="text-[10.5px] font-medium uppercase tracking-wider text-muted">
-                      pull replies
-                    </span>
-                    <CopyButton text={() => chatRepliesSnippet(url())} />
-                  </div>
-                  <pre class="overflow-auto px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre">
-                    {chatRepliesSnippet(url())}
-                  </pre>
-                </div>
               </Show>
             </div>
 

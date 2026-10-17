@@ -11,6 +11,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"path"
 	"strconv"
@@ -269,13 +271,22 @@ func (s *Service) handleInbound(c *gin.Context) {
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, s.bodyCap())
 	var req struct {
-		Message     string `json:"message"`
-		Text        string `json:"text"`
-		Body        string `json:"body"`
-		From        string `json:"from"`
-		Subject     string `json:"subject"`
-		Key         string `json:"key"`
-		Kind        string `json:"kind"`
+		Message     string         `json:"message"`
+		Text        string         `json:"text"`
+		Body        string         `json:"body"`
+		From        string         `json:"from"`
+		Subject     string         `json:"subject"`
+		Key         string         `json:"key"`
+		Kind        string         `json:"kind"`
+		Service     string         `json:"service"`
+		State       string         `json:"state"`
+		LatencyMs   *int64         `json:"latency_ms"`
+		Level       string         `json:"level"`
+		Env         string         `json:"env"`
+		Release     string         `json:"release"`
+		URL         string         `json:"url"`
+		Fields      map[string]any `json:"fields"`
+		At          string         `json:"at"`
 		Attachments []struct {
 			Name        string `json:"name"`
 			ContentType string `json:"content_type"`
@@ -296,12 +307,25 @@ func (s *Service) handleInbound(c *gin.Context) {
 	from := oneLine(req.From, 200)
 	subject := oneLine(req.Subject, 200)
 	key := oneLine(req.Key, 200)
-	// kind = the platform's own report type (bug, feature, …) — free-form.
-	// Payload wins over the hook's default.
+	// kind = the platform's own report type (bug, feature, status, error, …)
+	// — free-form. Payload wins over the hook's default.
 	kind := oneLine(req.Kind, 40)
 	if kind == "" {
 		kind = hook.Kind
 	}
+	// Structured ops payload — monitoring state, error level, arbitrary
+	// labelled fields. Lands on messages.meta; ops channels aggregate it.
+	meta := buildOpsMeta(kind, opsFields{
+		Service:   oneLine(req.Service, 120),
+		State:     strings.ToLower(oneLine(req.State, 24)),
+		LatencyMs: req.LatencyMs,
+		Level:     strings.ToLower(oneLine(req.Level, 16)),
+		Env:       oneLine(req.Env, 60),
+		Release:   oneLine(req.Release, 120),
+		URL:       oneLine(req.URL, 500),
+		Fields:    req.Fields,
+		At:        oneLine(req.At, 60),
+	})
 	body = strings.TrimSpace(body)
 	if body == "" {
 		body = subject
@@ -383,6 +407,7 @@ func (s *Service) handleInbound(c *gin.Context) {
 		ParentID:       msgParent,
 		Body:           body,
 		Tags:           tags,
+		Meta:           meta,
 	})
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
@@ -443,7 +468,7 @@ func (s *Service) handleInbound(c *gin.Context) {
 		if m, err := s.q.GetMessageByID(c.Request.Context(), mid); err == nil {
 			out := conversations.MessageJSON(conversations.MessageView{
 				ID: m.ID, ConversationID: m.ConversationID, ParentID: m.ParentID,
-				Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Silent: m.Silent,
+				Body: m.Body, Mentions: m.Mentions, Tags: m.Tags, Meta: m.Meta, Silent: m.Silent,
 				CreatedAt: m.CreatedAt, EditedAt: m.EditedAt,
 				AuthorUserID: m.AuthorUserID, AuthorAgentID: m.AuthorAgentID,
 				AuthorKindSnapshot: m.AuthorKindSnapshot,
@@ -586,6 +611,12 @@ func (s *Service) handleInboundMessages(c *gin.Context) {
 			"via_hook":    viaHook,
 			"created_at":  m.CreatedAt,
 		}
+		if len(m.Meta) > 0 {
+			var meta any
+			if json.Unmarshal(m.Meta, &meta) == nil {
+				msg["meta"] = meta
+			}
+		}
 		// Lift intake metadata out of the tag list for convenience.
 		for _, t := range m.Tags {
 			switch {
@@ -630,6 +661,90 @@ func renderHookHead(tpl, from, subject, kind, key string) string {
 		"{from}", from, "{subject}", subject, "{kind}", kind, "{key}", key,
 	)
 	return strings.TrimSpace(r.Replace(tpl))
+}
+
+// opsFields is the structured part of an inbound payload. Any monitoring,
+// CI, error-tracking or homegrown tool can POST these; Relay stores them
+// verbatim (validated + size-capped) so ops channels and cards can render
+// them without Relay knowing the sender's schema.
+type opsFields struct {
+	Service   string
+	State     string
+	LatencyMs *int64
+	Level     string
+	Env       string
+	Release   string
+	URL       string
+	Fields    map[string]any
+	At        string
+}
+
+const opsMetaCap = 8 << 10 // 8KiB — stacks belong in body, meta stays lean
+
+// buildOpsMeta assembles the jsonb meta blob. Nil when the post carries no
+// structured data at all (kind alone doesn't make a message "ops").
+func buildOpsMeta(kind string, f opsFields) []byte {
+	m := map[string]any{}
+	if kind != "" {
+		m["kind"] = kind
+	}
+	if f.Service != "" {
+		m["service"] = f.Service
+	}
+	if f.State != "" {
+		m["state"] = f.State
+	}
+	if f.LatencyMs != nil {
+		v := *f.LatencyMs
+		if v < 0 {
+			v = 0
+		}
+		if v > 86400000 { // a day in ms — beyond that it's a bug upstream
+			v = 86400000
+		}
+		m["latency_ms"] = v
+	}
+	if f.Level != "" {
+		m["level"] = f.Level
+	}
+	if f.Env != "" {
+		m["env"] = f.Env
+	}
+	if f.Release != "" {
+		m["release"] = f.Release
+	}
+	if f.URL != "" {
+		m["url"] = f.URL
+	}
+	if f.At != "" {
+		if ts, err := time.Parse(time.RFC3339, f.At); err == nil {
+			m["at"] = ts.UTC().Format(time.RFC3339)
+		}
+	}
+	if len(f.Fields) > 0 {
+		fl := map[string]string{}
+		for k, v := range f.Fields {
+			if len(fl) >= 24 {
+				break
+			}
+			k = oneLine(k, 40)
+			if k == "" {
+				continue
+			}
+			fl[k] = oneLine(fmt.Sprintf("%v", v), 200)
+		}
+		if len(fl) > 0 {
+			m["fields"] = fl
+		}
+	}
+	if len(m) == 0 || (len(m) == 1 && kind != "") {
+		return nil
+	}
+	b, err := json.Marshal(m)
+	if err != nil || len(b) > opsMetaCap {
+		return nil
+	}
+	return b
 }
 
 // oneLine squashes metadata fields (from/subject/key) to a single trimmed

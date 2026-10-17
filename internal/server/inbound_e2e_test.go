@@ -326,3 +326,100 @@ func TestInboundIntake(t *testing.T) {
 		t.Fatalf("disabled hook read: %d", code)
 	}
 }
+
+// Ops intake — a monitoring channel (intake_mode='ops') plus structured
+// payloads that land on messages.meta and feed the ops summary endpoint.
+func TestInboundOpsChannel(t *testing.T) {
+	c, _, _, projID := e2eSetup(t, "ops")
+
+	code, ch := c.call("POST", "/api/projects/"+projID+"/channels",
+		`{"name":"ops-board"}`)
+	if code != 200 && code != 201 {
+		t.Fatalf("channel: %d %v", code, ch)
+	}
+	chanID := ch["channel"].(map[string]any)["id"].(string)
+
+	// 'ops' is a legal intake_mode now — bogus still 400s.
+	code, up := c.call("PATCH", "/api/channels/"+chanID, `{"intake_mode":"ops"}`)
+	if code != 200 {
+		t.Fatalf("ops mode patch: %d %v", code, up)
+	}
+	if up["channel"].(map[string]any)["intake_mode"] != "ops" {
+		t.Fatalf("intake_mode not stored: %v", up)
+	}
+
+	code, hook := c.call("POST", "/api/projects/"+projID+"/hooks",
+		fmt.Sprintf(`{"name":"probe","conversation_id":%q}`, chanID))
+	if code != 201 {
+		t.Fatalf("hook: %d %v", code, hook)
+	}
+	tok, _ := hook["token"].(string)
+	if tok == "" {
+		t.Fatalf("no token: %v", hook)
+	}
+	post := func(p string) (int, map[string]any) {
+		return c.call("POST", "/api/hooks/"+tok, p)
+	}
+
+	// Two probes — api down then up; latest state wins the board.
+	if code, r := post(`{"kind":"status","service":"api","state":"down","latency_ms":0,"env":"prod","message":"api unreachable"}`); code != 202 {
+		t.Fatalf("down post: %d %v", code, r)
+	}
+	code, r := post(`{"kind":"status","service":"api","state":"up","latency_ms":84,"env":"prod","message":"api recovered","fields":{"region":"eu"}}`)
+	if code != 202 {
+		t.Fatalf("up post: %d %v", code, r)
+	}
+	// an error event from a tracker
+	code, re := post(`{"kind":"error","service":"web","level":"error","release":"v1.0.0","subject":"TypeError","message":"n.items undefined"}`)
+	if code != 202 {
+		t.Fatalf("error post: %d %v", code, re)
+	}
+	msgID := re["message_id"].(string)
+
+	// The message carries meta end to end.
+	code, lst := c.call("GET", "/api/conversations/"+chanID+"/messages", "")
+	if code != 200 {
+		t.Fatalf("messages: %d", code)
+	}
+	var found map[string]any
+	for _, m := range lst["messages"].([]any) {
+		mm := m.(map[string]any)
+		if mm["id"] == msgID {
+			found = mm
+		}
+	}
+	if found == nil {
+		t.Fatalf("error post missing from channel")
+	}
+	meta, _ := found["meta"].(map[string]any)
+	if meta["kind"] != "error" || meta["service"] != "web" || meta["level"] != "error" {
+		t.Fatalf("meta not on message: %v", found["meta"])
+	}
+
+	// The ops summary folds them: api recovered (up), web has no state so
+	// no service pill — but kind counts register the error.
+	code, ops := c.call("GET", "/api/conversations/"+chanID+"/ops", "")
+	if code != 200 {
+		t.Fatalf("ops summary: %d %v", code, ops)
+	}
+	svcs, _ := ops["services"].([]any)
+	if len(svcs) != 1 {
+		t.Fatalf("expected 1 service (only api reported state): %v", svcs)
+	}
+	svc := svcs[0].(map[string]any)
+	if svc["service"] != "api" || svc["state"] != "up" {
+		t.Fatalf("api should read up after recovery: %v", svc)
+	}
+	kinds, _ := ops["kinds"].(map[string]any)
+	if kinds["status"] != float64(2) || kinds["error"] != float64(1) {
+		t.Fatalf("kind counts wrong: %v", kinds)
+	}
+	days, _ := ops["days"].([]any)
+	if len(days) != 30 {
+		t.Fatalf("ops strip must hold 30 days: %v", len(days))
+	}
+	today := days[29].(map[string]any)
+	if today["worst"] != "down" {
+		t.Fatalf("today saw a down probe — worst should be down: %v", today)
+	}
+}
