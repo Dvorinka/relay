@@ -85,6 +85,8 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	reviewSvc := reviews.NewService(log, pool)
 	avSvc := avatars.NewService(log, pool, store, cfg.Limited)
 	hub := events.New()
+	projSvc.Bus = hub
+	avSvc.Bus = hub
 	convSvc.Bus = hub
 	issueSvc.Bus = hub
 	todoSvc.Bus = hub

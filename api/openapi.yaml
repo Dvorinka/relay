@@ -3250,8 +3250,9 @@ paths:
       description: |
         Streams `message.created`, `message.updated`, `message.deleted`,
         `message.read`, `reaction.updated`, `issue.created`,
-        `issue.updated`, `todo.changed`, `conversation.cleared` and
-        `thread.updated` events as `data:` JSON frames. `message.read`
+        `issue.updated`, `todo.changed`, `conversation.cleared`,
+        `thread.updated`, `project.created` and `project.updated` events
+        as `data:` JSON frames. `message.read`
         carries `{conversation_id, message_ids, agent}` — an agent's named
         read receipt. Events are filtered to projects the caller can
         access. Heartbeat comments every 25s.

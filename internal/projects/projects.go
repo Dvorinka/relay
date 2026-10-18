@@ -4,6 +4,7 @@
 package projects
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -13,9 +14,11 @@ import (
 	"github.com/Dvorinka/relay/internal/auth"
 	"github.com/Dvorinka/relay/internal/conversations"
 	"github.com/Dvorinka/relay/internal/db"
+	"github.com/Dvorinka/relay/internal/events"
 	"github.com/Dvorinka/relay/internal/httpx"
 	"github.com/Dvorinka/relay/internal/statuses"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -25,6 +28,9 @@ import (
 type Service struct {
 	q   *db.Queries
 	log *zap.Logger
+	// Bus fans out project.* SSE events so other sessions (and the user's
+	// other devices) see a created/renamed project without a reload.
+	Bus *events.Hub
 }
 
 func NewService(log *zap.Logger, pool *pgxpool.Pool) *Service {
@@ -223,7 +229,24 @@ func (s *Service) handleCreate(c *gin.Context) {
 	_ = s.q.AddProjectMember(c.Request.Context(), db.AddProjectMemberParams{
 		ProjectID: p.ID, UserID: user.ID,
 	})
+	s.publish(c.Request.Context(), p.ID, "project.created")
 	c.JSON(http.StatusCreated, projectJSON(db.GetProjectByIDRow(p)))
+}
+
+// publish emits a project.* frame carrying the freshly-read row. The SSE
+// membership gate delivers it to every workspace member — including the
+// actor's own other sessions, which is the point.
+func (s *Service) publish(ctx context.Context, id pgtype.UUID, typ string) {
+	if s.Bus == nil {
+		return
+	}
+	row, err := s.q.GetProjectByID(ctx, id)
+	if err != nil {
+		return
+	}
+	pid, _ := uuid.FromBytes(row.ID.Bytes[:])
+	s.Bus.Publish(events.Event{Type: typ, ProjectID: pid,
+		Data: map[string]any{"project": projectJSON(row)}})
 }
 
 func deref(s *string) string {
@@ -271,6 +294,7 @@ func (s *Service) handleUpdate(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
+	s.publish(c.Request.Context(), row.ID, "project.updated")
 	c.JSON(http.StatusOK, projectJSON(db.GetProjectByIDRow(row)))
 }
 

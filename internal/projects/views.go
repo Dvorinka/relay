@@ -35,6 +35,7 @@ func (s *Service) handleSetStatuses(c *gin.Context) {
 			httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 			return
 		}
+		s.publish(c.Request.Context(), p.ID, "project.updated")
 		c.JSON(http.StatusOK, gin.H{"statuses": statuses.Defaults()})
 		return
 	}
@@ -49,6 +50,7 @@ func (s *Service) handleSetStatuses(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
+	s.publish(c.Request.Context(), p.ID, "project.updated")
 	c.JSON(http.StatusOK, gin.H{"statuses": req.Statuses})
 }
 
@@ -86,6 +88,7 @@ func (s *Service) handleSetLocalPath(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
+	s.publish(c.Request.Context(), p.ID, "project.updated")
 	c.JSON(http.StatusOK, gin.H{"local_path": textOrNil(val)})
 }
 
