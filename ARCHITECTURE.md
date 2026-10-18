@@ -114,9 +114,9 @@ generated types only; writing API types by hand is a review rejection.
 ## Realtime
 
 SSE at `/api/events`. Event families: `message.*` (created/updated/deleted/
-read), `channel.*`, `thread.*`, `issue.updated`, `reaction.updated`,
-`github.ci`, `reminder.fired`, `review.*`, plus ephemeral `typing` and
-`presence.update`. A single in-process hub fans out to subscribers; other
+read), `channel.*`, `thread.*`, `project.*` (created/updated), `issue.updated`,
+`reaction.updated`, `github.ci`, `reminder.fired`, `review.*`, plus ephemeral
+`typing` and `presence.update`. A single in-process hub fans out to subscribers; other
 packages and the webhook dispatcher can subscribe in-process too.
 
 Known ceiling: one process only. If Relay ever runs multi-instance, swap the

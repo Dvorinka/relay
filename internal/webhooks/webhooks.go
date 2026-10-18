@@ -45,6 +45,7 @@ var EventCatalog = []string{
 	"todo.created", "todo.updated",
 	"review.created", "review.responded",
 	"attachment.created",
+	"project.created", "project.updated",
 }
 
 type Service struct {

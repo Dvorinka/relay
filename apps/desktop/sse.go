@@ -3,9 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
-	"net"
 	"net/http"
-	"net/http/httptrace"
 	"net/url"
 	"strings"
 	"sync"
@@ -93,17 +91,18 @@ func (a *App) streamEvents(
 	target string,
 	emitFn func(string),
 ) bool {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	// Idle detection cancels the request context rather than setting a conn
+	// read deadline: under HTTP/2 httptrace hands back the shared connection
+	// (or none), so a deadline there either never existed or would poison
+	// unrelated streams on the same conn. Context cancel kills only this
+	// request's read — a half-open stream (NAT/proxy drop, tunnel restart)
+	// that stops delivering lines unblocks and reconnects.
+	rctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	req, err := http.NewRequestWithContext(rctx, http.MethodGet, target, nil)
 	if err != nil {
 		return false
 	}
-	// Grab the conn so reads get an idle deadline — a half-open stream
-	// (NAT/proxy drop, tunnel restart) blocks ReadString forever, and only
-	// ctx cancellation would ever unblock it.
-	var conn net.Conn
-	req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
-		GotConn: func(info httptrace.GotConnInfo) { conn = info.Conn },
-	}))
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
 	resp, err := http.DefaultClient.Do(req)
@@ -114,13 +113,10 @@ func (a *App) streamEvents(
 	if resp.StatusCode != http.StatusOK {
 		return false
 	}
+	// The server heartbeats every 25s; silence past sseIdleTimeout is dead.
+	idle := time.AfterFunc(sseIdleTimeout, cancel)
+	defer idle.Stop()
 	br := bufio.NewReaderSize(resp.Body, 64<<10)
-	defer func() {
-		if conn != nil {
-			// Clear the deadline so a keep-alive-reused conn isn't poisoned.
-			_ = conn.SetReadDeadline(time.Time{})
-		}
-	}()
 	var data strings.Builder
 	dispatch := func() {
 		if data.Len() == 0 {
@@ -130,10 +126,10 @@ func (a *App) streamEvents(
 		data.Reset()
 	}
 	for {
-		if conn != nil {
-			_ = conn.SetReadDeadline(time.Now().Add(sseIdleTimeout))
-		}
 		line, err := br.ReadString('\n')
+		if err == nil {
+			idle.Reset(sseIdleTimeout)
+		}
 		if len(line) > 0 {
 			line = strings.TrimRight(line, "\r\n")
 			switch {
