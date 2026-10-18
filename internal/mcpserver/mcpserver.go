@@ -598,7 +598,7 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 			"or timeout_s elapses. Use after submit_review when review_mode is 'gate'. Returns the review "+
 			"with its final status and the responder's note."),
 		mcp.WithString("review_id", mcp.Required()),
-		mcp.WithNumber("timeout_s", mcp.Description("Max wait, default 60, cap 300")),
+		mcp.WithNumber("timeout_s", mcp.Description("Max seconds to block, default 55, cap 55. Returns 'pending' on timeout — re-call to keep waiting. The cap stays under common proxy/client read timeouts so the stream can't be severed mid-flight.")),
 	), s.awaitReview)
 
 	// --- visual briefs ---
@@ -3569,7 +3569,12 @@ func (s *Service) awaitReview(ctx context.Context, req mcp.CallToolRequest) (*mc
 	if s.Bus == nil {
 		return errResult(errors.New("event hub unavailable; poll get_review instead"))
 	}
-	timeout := clampInt(req.GetInt("timeout_s", 60), 1, 300)
+	// Capped low on purpose: a streamable-HTTP call that outlives the
+	// client's or a fronting proxy's read timeout gets severed mid-flight,
+	// and some MCP clients mark the whole transport dead when that
+	// happens. 55s sits under the common 60-100s ceilings; callers that
+	// want to wait longer re-call on the returned "pending" state.
+	timeout := clampInt(req.GetInt("timeout_s", 55), 1, 55)
 	rid := r.ID.String()
 	sub, ch := s.Bus.Subscribe()
 	defer s.Bus.Unsubscribe(sub)
