@@ -200,7 +200,12 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	mailSvc.RegisterRoutes(priv)
 
 	// external agents: bearer-token MCP, not session cookies
-	r.POST("/mcp", mcpHandler)
+	// Any — streamable HTTP is more than POST: GET opens the server's
+	// listen stream, DELETE terminates the session, HEAD probes. Routing
+	// only POST let those fall to NoRoute as 404s, which MCP clients can
+	// read as a dead transport. The mcp-go handler dispatches per method
+	// and 404s what it doesn't support — the spec-correct surface.
+	r.Any("/mcp", mcpHandler)
 
 	mountStatic(r, cfg.StaticDir)
 	return r

@@ -2466,6 +2466,23 @@ paths:
       responses:
         "200": { description: JSON-RPC response }
         "401": { description: "Missing, revoked, or expired token" }
+    get:
+      operationId: mcpListen
+      summary: Open the server-initiated message stream
+      description: >-
+        Optional per the streamable-HTTP spec — a GET with the session id
+        opens an SSE listen stream for server-initiated messages.
+      tags: [mcp]
+      security: [ { mcpBearer: [] } ]
+      responses:
+        "200": { description: "text/event-stream" }
+    delete:
+      operationId: mcpSessionEnd
+      summary: Terminate an MCP session
+      tags: [mcp]
+      security: [ { mcpBearer: [] } ]
+      responses:
+        "200": { description: "Session terminated" }
 
   /api/github/app:
     get:
