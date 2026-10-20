@@ -402,13 +402,23 @@ func (c *Client) GetIssue(ctx context.Context, installID int64, owner, repo stri
 
 // ListPRs is the dev-panel call: open PRs, first page.
 func (c *Client) ListPRs(ctx context.Context, installID int64, owner, repo string) ([]PR, error) {
+	return c.ListPRsWithState(ctx, installID, owner, repo, "open")
+}
+
+// ListPRsWithState honors GitHub's state param (open|closed|all); "merged"
+// is folded client-side by the caller — the list endpoint carries merged_at
+// but has no merged state of its own.
+func (c *Client) ListPRsWithState(ctx context.Context, installID int64, owner, repo, state string) ([]PR, error) {
+	if state != "open" && state != "closed" && state != "all" {
+		state = "open"
+	}
 	tok, err := c.installationToken(ctx, installID)
 	if err != nil {
 		return nil, err
 	}
 	var out []PR
 	err = c.do(ctx, "GET",
-		fmt.Sprintf("%s/repos/%s/%s/pulls?state=open&per_page=50", apiBase, owner, repo),
+		fmt.Sprintf("%s/repos/%s/%s/pulls?state=%s&per_page=50", apiBase, owner, repo, state),
 		tok, nil, &out)
 	return out, err
 }

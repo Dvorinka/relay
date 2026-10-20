@@ -68,7 +68,7 @@ var (
 	flagLimit   = flag.Int("limit", 30, "message/issue list size")
 	flagFile    = flag.String("file", "", "payload file: review JSON, message body, scene JSON (- for stdin)")
 	flagStatus  = flag.String("status", "", "status filter or new status (reviews, idea-set)")
-	flagTimeout = flag.Int("timeout", 60, "review wait timeout in seconds")
+	flagTimeout = flag.Int("timeout", 60, "review/await wait timeout in seconds")
 	flagReply   = flag.String("reply", "", "message id this send replies to")
 	flagTags    = flag.String("tags", "", "comma-separated message tags (say/messages)")
 	flagConv    = flag.String("conv", "", "conversation id (only when the positional id is ambiguous)")
@@ -462,14 +462,21 @@ func render(kind string, raw json.RawMessage) {
 			if m["was_unread"] == true {
 				suffix += "  [new]"
 			}
+			body := str(m, "body")
+			if body == "" {
+				body = str(m, "excerpt")
+			}
 			fmt.Printf("%s %s  %s\n%s%s\n", str(m, "id"), name,
-				fmtTime(m["created_at"]), str(m, "body"), suffix)
+				fmtTime(m["created_at"]), body, suffix)
 			for _, a := range list(m, "attachments") {
 				am := asMap(a)
 				fmt.Printf("  └ attach %s  %s  %s\n",
 					str(am, "filename"), humanSize(num(am["size_bytes"])), str(am, "id"))
 			}
 			fmt.Println()
+		}
+		if nb := str(top, "next_before"); nb != "" {
+			fmt.Printf("… older — relay-cli messages <id> --before %s\n", nb)
 		}
 	case "issues":
 		for _, i := range rows("issues") {
@@ -547,6 +554,9 @@ func render(kind string, raw json.RawMessage) {
 			fmt.Printf("grant      %-8s %s\n", str(m, "key"), str(m, "id"))
 		}
 	case "search":
+		if n := num(top["total"]); n > 0 {
+			fmt.Printf("%d match(es)\n\n", n)
+		}
 		for _, it := range rows("results") {
 			m := asMap(it)
 			who := str(m, "author_name")
@@ -564,8 +574,12 @@ func render(kind string, raw json.RawMessage) {
 			for _, t := range list(m, "tags") {
 				extra += fmt.Sprintf("  #%v", t)
 			}
+			body := str(m, "body")
+			if body == "" {
+				body = str(m, "excerpt")
+			}
 			fmt.Printf("%s %s  %s  in %s%s\n  %s\n\n", str(m, "id"), who,
-				fmtTime(m["created_at"]), where, extra, truncate(str(m, "body"), 140))
+				fmtTime(m["created_at"]), where, extra, truncate(body, 140))
 		}
 	case "issue":
 		m := top
@@ -617,6 +631,17 @@ func render(kind string, raw json.RawMessage) {
 			}
 			fmt.Printf("%-8s %-9s %4d  %-26s %s\n",
 				str(p, "key"), str(m, "kind"), num(m["unread_count"]), name, str(m, "id"))
+			if lu := asMap(m["latest_unread"]); lu != nil {
+				fmt.Printf("         └ %s: %s\n", str(lu, "author"),
+					truncate(str(lu, "excerpt"), 90))
+			}
+		}
+	case "inbox":
+		for _, it := range rows("items") {
+			m := asMap(it)
+			fmt.Printf("%-7s %-16s %s  %s\n  %s\n",
+				str(m, "kind"), str(asMap(m["author"]), "name"), fmtTime(m["at"]),
+				str(m, "message_id"), truncate(str(m, "excerpt"), 90))
 		}
 	case "mentionables":
 		for _, u := range list(top, "users") {
@@ -689,6 +714,8 @@ Chat
   project <project_id>                  one project's details
   activity                              cross-project feed: open issues, PRs, latest messages
   unread                                per-conversation unread breakdown
+  inbox                                 mentions, replies and unread aimed at you
+  await <project_id|conversation_id>    block until a reply lands (--timeout s)
   conversations <project_id>            list conversations (id, kind, name, unread)
   mentionables <project_id>             names that resolve: @users, @agents, KEY-1, repo#N
   messages <project_id|conversation_id> list messages (--tags t, --before id to paginate)
@@ -854,6 +881,19 @@ Environment: RELAY_URL, RELAY_TOKEN.
 	case "project":
 		run("project", "get_project",
 			map[string]any{"project_id": need(args, 1, "project_id")})
+
+	case "inbox":
+		run("inbox", "inbox", map[string]any{"limit": *flagLimit})
+
+	case "await":
+		// block until a human posts in the conversation (timeout_s <= 55)
+		a := map[string]any{"timeout_s": *flagTimeout}
+		if *flagConv != "" {
+			a["conversation_id"] = *flagConv
+		} else {
+			a["project_id"] = need(args, 1, "project_id or conversation_id")
+		}
+		run("await", "await_message", a)
 
 	case "unread":
 		// Prefer the server-side rollup (one call); fall back to composing

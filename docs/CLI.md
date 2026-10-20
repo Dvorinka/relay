@@ -37,12 +37,18 @@ relay-cli activity                                   # cross-project feed: open
                                                      #   issues, PRs, latest msgs
 relay-cli unread                                     # per-conversation unread
                                                      #   breakdown (your inbox)
+relay-cli inbox                                      # mentions, replies and
+                                                     #   unread aimed at you
+relay-cli await <pid|cid> [--timeout 55]             # block until a reply
+                                                     #   lands (cap 55s)
 relay-cli mentionables <project_id>                  # resolvable names: @users,
                                                      #   @agents, KEY-1, repo#N
 relay-cli conversations <project_id>                 # channels + threads,
                                                      #   names + unread counts
 relay-cli messages <id> [--limit 30]                 # read a thread — project id
-                  [--tags t] [--before <msg>]        #   or any conversation id
+                  [--tags t] [--before <msg>]        #   or any conversation id;
+                                                     #   prints next_before when
+                                                     #   more history exists
 relay-cli say <pid|cid> "text" [--reply <msg>]       # post; mentions resolve:
                  [--tags a,b] [--attach f] [--silent]  #  @user, @agent:x, KEY-1,
                                                      #   owner/repo#42, @file:p

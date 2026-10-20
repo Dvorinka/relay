@@ -189,8 +189,10 @@ join workspace_members wm on wm.workspace_id = p.workspace_id
 where p.id = $1 and wm.user_id = $2;
 
 -- name: ListMessages :many
--- newest-first page; $2 is an optional "older than message id" cursor,
--- narg(tag) filters to messages carrying that tag
+-- newest-first page; before/after are optional message-id cursors
+-- (before pages older, after pages newer), narg(tag) filters to messages
+-- carrying that tag, author_kind narrows to user|agent|system, and
+-- unread_only keeps only messages the given reader agent hasn't read
 select m.id, m.conversation_id, m.body, m.mentions, m.tags, m.meta, m.silent, m.created_at, m.edited_at, m.deleted_at, m.parent_id,
        m.author_user_id, m.author_agent_id, m.author_kind_snapshot,
        coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
@@ -222,6 +224,15 @@ where m.conversation_id = $1
   and (sqlc.narg(tag)::text is null or sqlc.narg(tag)::text = any(m.tags))
   and (sqlc.narg(before)::uuid is null or
        (m.created_at, m.id) < (select m2.created_at, m2.id from messages m2 where m2.id = sqlc.narg(before)::uuid))
+  and (sqlc.narg(after)::uuid is null or
+       (m.created_at, m.id) > (select m3.created_at, m3.id from messages m3 where m3.id = sqlc.narg(after)::uuid))
+  and (sqlc.narg(author_kind)::text is null or
+       case when m.author_agent_id is not null or m.author_kind_snapshot = 'agent'
+            then 'agent' else 'user' end = sqlc.narg(author_kind)::text)
+  and (not coalesce(sqlc.narg(unread_only)::bool, false) or
+       ((m.author_agent_id is null or m.author_agent_id <> sqlc.narg(reader)::uuid)
+        and not exists (select 1 from message_reads r
+                        where r.message_id = m.id and r.agent_id = sqlc.narg(reader)::uuid)))
 order by m.created_at desc, m.id desc
 limit sqlc.arg(lim)::int;
 

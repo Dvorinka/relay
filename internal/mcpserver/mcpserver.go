@@ -16,6 +16,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -62,6 +63,14 @@ type Agent struct {
 	GrantScopes []string
 }
 
+// toolEntry is one registered tool's manifest row — whoami's capabilities
+// list and get_guide's machine manifest both read it.
+type toolEntry struct {
+	Name     string   `json:"name"`
+	Required []string `json:"required_args"`
+	Optional []string `json:"optional_args"`
+}
+
 // Service wires tools to the database and object storage.
 type Service struct {
 	q         *db.Queries
@@ -70,6 +79,8 @@ type Service struct {
 	limited   bool
 	gh        *github.Service
 	log       *zap.Logger
+	version   string
+	tools     []toolEntry
 	// Bus publishes domain events for SSE subscribers. Optional.
 	Bus *events.Hub
 	// Push fans out web-push notifications. Optional.
@@ -83,14 +94,18 @@ type Service struct {
 // New builds the gin handler for POST /mcp. It performs bearer auth,
 // rate limiting, and last_used_at bookkeeping, then hands the request
 // to the mcp-go streamable HTTP transport.
-func New(q *db.Queries, store *storage.Store, maxUpload int64, limited bool, log *zap.Logger, gh *github.Service, hub *events.Hub, pushSvc *push.Service) gin.HandlerFunc {
+func New(q *db.Queries, store *storage.Store, maxUpload int64, limited bool, log *zap.Logger, gh *github.Service, hub *events.Hub, pushSvc *push.Service, version string) gin.HandlerFunc {
+	if version == "" {
+		version = "dev"
+	}
 	s := &Service{
-		q: q, store: store, maxUpload: maxUpload, limited: limited, gh: gh, log: log, Bus: hub, Push: pushSvc,
+		q: q, store: store, maxUpload: maxUpload, limited: limited, gh: gh, log: log,
+		Bus: hub, Push: pushSvc, version: version,
 		windows: make(map[[16]byte]time.Time),
 		counts:  make(map[[16]byte]int),
 	}
 
-	mcpSrv := server.NewMCPServer("relay", "0.1.0",
+	mcpSrv := server.NewMCPServer("relay", version,
 		server.WithToolCapabilities(true))
 	s.registerTools(mcpSrv)
 
@@ -103,7 +118,8 @@ func New(q *db.Queries, store *storage.Store, maxUpload int64, limited bool, log
 			return
 		}
 		if !s.allow(agent.TokenID) {
-			jsonRPCError(c.Writer, "rate limit exceeded", -32001)
+			jsonRPCErrorData(c.Writer, "rate limit exceeded", -32001,
+				gin.H{"retry_after_ms": s.retryAfterMs(agent.TokenID)})
 			return
 		}
 		// last_used_at reflects real MCP traffic only
@@ -117,11 +133,21 @@ func New(q *db.Queries, store *storage.Store, maxUpload int64, limited bool, log
 }
 
 func jsonRPCError(w http.ResponseWriter, msg string, code int) {
+	jsonRPCErrorData(w, msg, code, nil)
+}
+
+// jsonRPCErrorData carries an optional data object — the rate-limit reply
+// uses it for retry_after_ms so clients can back off deterministically.
+func jsonRPCErrorData(w http.ResponseWriter, msg string, code int, data gin.H) {
+	e := gin.H{"code": code, "message": msg}
+	if data != nil {
+		e["data"] = data
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(gin.H{
 		"jsonrpc": "2.0",
-		"error":   gin.H{"code": code, "message": msg},
+		"error":   e,
 		"id":      nil,
 	})
 }
@@ -155,6 +181,22 @@ func (s *Service) allow(tokenID pgtype.UUID) bool {
 	}
 	s.counts[key]++
 	return s.counts[key] <= requestsPerMinute
+}
+
+// retryAfterMs reports how long until the token's current rate window
+// resets — surfaced as retry_after_ms in the -32001 error payload.
+func (s *Service) retryAfterMs(tokenID pgtype.UUID) int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	start, ok := s.windows[tokenID.Bytes]
+	if !ok {
+		return 0
+	}
+	ms := time.Until(start.Add(time.Minute)).Milliseconds()
+	if ms < 0 {
+		return 0
+	}
+	return ms
 }
 
 func agent(ctx context.Context) *Agent {
@@ -215,6 +257,11 @@ func hasScope(granted []string, required string) bool {
 	return false
 }
 
+// errResult is reserved for existence/scope lookups and backend failures —
+// "not found or not granted" is the deliberate anti-enumeration text.
+// Argument-validation errors (uuidArg, RequireString, bad enum/date) must
+// bypass it and return mcp.NewToolResultError(err.Error()) directly so
+// callers see what they got wrong.
 func errResult(err error) (*mcp.CallToolResult, error) {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return mcp.NewToolResultError("not found or not granted"), nil
@@ -230,63 +277,151 @@ func jsonResult(v any) (*mcp.CallToolResult, error) {
 	return r, nil
 }
 
+// readOnlyTools mark pure reads: they write no state, so cautious clients
+// never need a confirmation prompt for them.
+var readOnlyTools = map[string]bool{
+	"get_guide": true, "whoami": true, "activity": true, "list_unread": true,
+	"list_projects": true, "get_project": true, "list_conversations": true,
+	"ops_summary": true, "get_messages": true, "get_message": true,
+	"get_attachment": true, "search_messages": true, "list_issues": true,
+	"get_issue": true, "list_pins": true, "list_project_files": true,
+	"read_project_file": true, "todo_list": true, "list_mentionables": true,
+	"get_review": true, "list_reviews": true, "await_review": true,
+	"await_message": true, "inbox": true,
+	"get_brief_policy": true, "list_briefs": true, "get_brief": true,
+	"list_ideas": true, "get_idea": true,
+	"github_list_issues": true, "github_get_issue": true, "github_list_prs": true,
+	"github_get_pr": true, "github_ci_runs": true,
+}
+
+// destructiveTools are the real deletes (plus todo_sync, which deletes
+// whatever the caller omits). Everything else that mutates is a reversible
+// write — destructiveHint stays false on it.
+var destructiveTools = map[string]bool{
+	"delete_message": true, "todo_delete": true, "todo_sync": true,
+	"delete_brief": true, "delete_idea": true,
+}
+
+// toolAnns sets the hints clients gate on. mcp-go defaults every tool to
+// destructiveHint:true — mislabeling reads and plain writes — so every
+// registered tool gets explicit annotations reflecting what it does.
+// github_* are the only tools reaching outside this server (openWorld).
+func toolAnns(name string) mcp.ToolAnnotation {
+	ro := readOnlyTools[name]
+	return mcp.ToolAnnotation{
+		ReadOnlyHint:    mcp.ToBoolPtr(ro),
+		DestructiveHint: mcp.ToBoolPtr(!ro && destructiveTools[name]),
+		OpenWorldHint:   mcp.ToBoolPtr(strings.HasPrefix(name, "github_")),
+	}
+}
+
+// addTool registers the tool, fixes its annotations, and records its
+// manifest row for whoami (capabilities) and get_guide (tool manifest).
+func (s *Service) addTool(srv *server.MCPServer, t mcp.Tool, h server.ToolHandlerFunc) {
+	t.Annotations = toolAnns(t.Name)
+	reqd := map[string]bool{}
+	for _, r := range t.InputSchema.Required {
+		reqd[r] = true
+	}
+	opt := make([]string, 0, len(t.InputSchema.Properties))
+	for name := range t.InputSchema.Properties {
+		if !reqd[name] {
+			opt = append(opt, name)
+		}
+	}
+	sort.Strings(opt)
+	s.tools = append(s.tools, toolEntry{
+		Name: t.Name, Required: t.InputSchema.Required, Optional: opt,
+	})
+	srv.AddTool(t, h)
+}
+
 func (s *Service) registerTools(srv *server.MCPServer) {
-	srv.AddTool(mcp.NewTool("get_guide",
-		mcp.WithDescription("The Relay agent onboarding guide — read this before anything else on a new workspace. Covers transports, scopes, the expected workflow, unread/truncation fields, and error handling. Always available here, via `relay-cli guide`, or GET /api/agent-guide."),
+	s.addTool(srv, mcp.NewTool("get_guide",
+		mcp.WithDescription("The Relay agent onboarding guide — read this before anything else on a new workspace. Returns the prose guide plus a machine-readable manifest of every registered tool (required/optional args), the reply flow, and mention syntax — the self-describing first contact. Also via `relay-cli guide` or GET /api/agent-guide."),
 	), func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return mcp.NewToolResultText(agentdoc.Guide), nil
+		return jsonResult(gin.H{
+			"guide": agentdoc.Guide,
+			"manifest": gin.H{
+				"tools": s.tools,
+				"reply_flow": "send_message with reply_to=<message_id> — conversation_id is inferred from the target; pass conversation_id/project_id explicitly only when starting a new top-level message",
+				"mention_syntax": "@name mentions a workspace member, @agent:<slug> an agent, KEY-1 an issue, owner/repo#N a GitHub issue/PR, @file:<path> a linked local file",
+				"minimal_mode":   "most read tools accept minimal:true — bodies/descriptions become 200-char excerpts with truncated:true",
+				"wait_for_reply": "await_message {conversation_id, timeout_s<=55} long-polls for a reply from another author; inbox lists mentions, replies and unread in one call",
+			},
+		})
 	})
 
-	srv.AddTool(mcp.NewTool("whoami",
-		mcp.WithDescription("This agent's identity: name, slug, workspace, review mode, and granted projects — call first on a new session to learn who you are and what you can reach."),
+	s.addTool(srv, mcp.NewTool("whoami",
+		mcp.WithDescription("This agent's identity: name, slug, workspace, review mode, granted projects, server_version, and capabilities (the registered tool list) — call first on a new session to learn who you are and what this server supports."),
 	), s.whoami)
 
-	srv.AddTool(mcp.NewTool("activity",
+	s.addTool(srv, mcp.NewTool("activity",
 		mcp.WithDescription("Cross-project work feed across all granted projects: open issues, open GitHub PRs, and the latest messages — what needs attention right now."),
+		mcp.WithBoolean("minimal", mcp.Description("true trims message bodies to 200-char excerpts")),
 	), s.activity)
 
-	srv.AddTool(mcp.NewTool("list_unread",
-		mcp.WithDescription("Every conversation with unread messages across all granted projects — the agent's inbox. Each row carries project key, conversation id, kind, name, and unread count. Start here on a new session."),
+	s.addTool(srv, mcp.NewTool("list_unread",
+		mcp.WithDescription("Conversations with unread messages — the agent's triage list. Each row carries project key, conversation id, kind, name, unread count, and the latest unread message's id+excerpt. Optional project_id scopes to one project. Start here on a new session; inbox adds mentions/replies."),
+		mcp.WithString("project_id", mcp.Description("Scope to one granted project")),
 	), s.listUnread)
 
-	srv.AddTool(mcp.NewTool("list_projects",
+	s.addTool(srv, mcp.NewTool("inbox",
+		mcp.WithDescription("What is aimed at this agent in one call: @mentions, replies to your messages, and unread messages across granted conversations — [{kind: mention|reply|unread, message_id, conversation_id, project, excerpt, at}]."),
+		mcp.WithNumber("limit", mcp.Description("Max items, default 50, cap 100")),
+	), s.inbox)
+
+	s.addTool(srv, mcp.NewTool("await_message",
+		mcp.WithDescription("Block until a message from a different author lands in the conversation — the human-reply wait. Returns {status:'message', message:{...}} on arrival, {status:'timeout'} after timeout_s (default 55, cap 55 — re-call to keep waiting). Also returns immediately if an unread reply is already waiting."),
+		mcp.WithString("conversation_id"),
+		mcp.WithString("project_id", mcp.Description("Resolves the project's main conversation")),
+		mcp.WithNumber("timeout_s", mcp.Description("Max seconds to block, default 55, cap 55")),
+	), s.awaitMessage)
+
+	s.addTool(srv, mcp.NewTool("list_projects",
 		mcp.WithDescription("List the projects this agent has been granted access to."),
 	), s.listProjects)
 
-	srv.AddTool(mcp.NewTool("get_project",
+	s.addTool(srv, mcp.NewTool("get_project",
 		mcp.WithDescription("Get one granted project's details."),
 		mcp.WithString("project_id", mcp.Required(), mcp.Description("Project UUID")),
 	), s.getProject)
 
-	srv.AddTool(mcp.NewTool("list_conversations",
-		mcp.WithDescription("List conversations in a granted project."),
+	s.addTool(srv, mcp.NewTool("list_conversations",
+		mcp.WithDescription("List conversations in a granted project, most recently active first — each row carries last_message_at, last_message_excerpt, and message_count so the active channel is findable without extra calls."),
 		mcp.WithString("project_id", mcp.Required()),
+		mcp.WithBoolean("minimal", mcp.Description("true drops the excerpt field")),
 	), s.listConversations)
 
-	srv.AddTool(mcp.NewTool("ops_summary",
+	s.addTool(srv, mcp.NewTool("ops_summary",
 		mcp.WithDescription("Control-center view over a channel's structured (meta) posts: latest state per service, a 30-day uptime strip, and per-kind counts. Use on ops/monitoring channels; agents_blocked channels refuse."),
 		mcp.WithString("conversation_id", mcp.Required()),
 	), s.opsSummary)
 
-	srv.AddTool(mcp.NewTool("get_messages",
-		mcp.WithDescription("List messages in a conversation (newest first). Pass conversation_id, or project_id for the project's main thread."),
+	s.addTool(srv, mcp.NewTool("get_messages",
+		mcp.WithDescription("List messages in a conversation (newest first). Pass conversation_id, or project_id for the project's main thread. before/after take a message id as the page cursor; next_before in the response is the cursor for the next older page."),
 		mcp.WithString("conversation_id"),
 		mcp.WithString("project_id", mcp.Description("Resolves the project's main conversation")),
-		mcp.WithNumber("limit", mcp.Description("Max messages, default 50, cap 200")),
+		mcp.WithNumber("limit", mcp.Description("Max messages, default 50, cap 100")),
 		mcp.WithString("tag", mcp.Description("Only messages carrying this tag")),
+		mcp.WithString("before", mcp.Description("Only messages older than this message id (cursor; before_id also accepted)")),
+		mcp.WithString("after", mcp.Description("Only messages newer than this message id (cursor)")),
+		mcp.WithBoolean("unread_only", mcp.Description("Only messages this agent has not read")),
+		mcp.WithString("author_kind", mcp.Description("user|agent|system")),
+		mcp.WithBoolean("minimal", mcp.Description("true replaces body with a 200-char excerpt and drops heavy nested fields")),
 	), s.getMessages)
 
-	srv.AddTool(mcp.NewTool("get_message",
+	s.addTool(srv, mcp.NewTool("get_message",
 		mcp.WithDescription("Get one message by id."),
 		mcp.WithString("message_id", mcp.Required()),
 	), s.getMessage)
 
-	srv.AddTool(mcp.NewTool("get_attachment",
+	s.addTool(srv, mcp.NewTool("get_attachment",
 		mcp.WithDescription("Get an attachment's metadata and a download_url — fetch it with your rly_ bearer token (curl -o file \"<relay-base><download_url>\" -H \"Authorization: Bearer $TOKEN\"). Images also arrive as an MCP image block; small non-images inline as data_base64."),
 		mcp.WithString("attachment_id", mcp.Required()),
 	), s.getAttachment)
 
-	srv.AddTool(mcp.NewTool("upload_attachment",
+	s.addTool(srv, mcp.NewTool("upload_attachment",
 		mcp.WithDescription("Upload a file (base64) to a granted project and get an attachment id to pass as send_message's attachment_ids. Images render inline in the app."),
 		mcp.WithString("project_id", mcp.Required()),
 		mcp.WithString("name", mcp.Required(), mcp.Description("Filename, e.g. diagram.png")),
@@ -294,27 +429,36 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithString("content_type", mcp.Description("Optional declared MIME type; sniffed type wins")),
 	), s.uploadAttachment)
 
-	srv.AddTool(mcp.NewTool("search_messages",
-		mcp.WithDescription("Full-text-ish search (case-insensitive substring) over a project's messages."),
+	s.addTool(srv, mcp.NewTool("search_messages",
+		mcp.WithDescription("Full-text-ish search (case-insensitive substring) over a project's messages. Inline operators still work (from:, in:, has:image|file, before:, after:); the explicit args below win over them. Returns total plus per-hit excerpt around the match."),
 		mcp.WithString("project_id", mcp.Required()),
-		mcp.WithString("query", mcp.Required()),
+		mcp.WithString("query", mcp.Description("Search terms — optional when filters do the work")),
 		mcp.WithNumber("limit", mcp.Description("Max results, default 20, cap 100")),
+		mcp.WithString("conversation_id", mcp.Description("Scope to one conversation")),
+		mcp.WithString("author_kind", mcp.Description("user|agent|system")),
+		mcp.WithString("author_name", mcp.Description("Author name pattern (ILIKE)")),
+		mcp.WithString("since", mcp.Description("Only messages at/after this time — RFC3339 or YYYY-MM-DD")),
+		mcp.WithString("until", mcp.Description("Only messages before this time — RFC3339 or YYYY-MM-DD")),
+		mcp.WithBoolean("has_attachments", mcp.Description("true = only with attachments, false = only without")),
+		mcp.WithBoolean("minimal", mcp.Description("true drops tags/meta and keeps only the excerpt row")),
 	), s.searchMessages)
 
-	srv.AddTool(mcp.NewTool("list_issues",
+	s.addTool(srv, mcp.NewTool("list_issues",
 		mcp.WithDescription("List issues in a granted project."),
 		mcp.WithString("project_id", mcp.Required()),
 		mcp.WithNumber("limit", mcp.Description("Max issues, default 50, cap 200")),
 		mcp.WithString("status", mcp.Description("Filter by status: backlog|todo|in_progress|review|done|cancelled")),
+		mcp.WithBoolean("minimal", mcp.Description("true replaces description with a 200-char excerpt")),
 	), s.listIssues)
 
-	srv.AddTool(mcp.NewTool("get_issue",
+	s.addTool(srv, mcp.NewTool("get_issue",
 		mcp.WithDescription("Get one issue by id."),
 		mcp.WithString("issue_id", mcp.Required()),
+		mcp.WithBoolean("minimal", mcp.Description("true replaces description with a 200-char excerpt")),
 	), s.getIssue)
 
-	srv.AddTool(mcp.NewTool("send_message",
-		mcp.WithDescription("Post a message as this agent. For a direct, self-contained answer always pass reply_to so the reply threads under the triggering message. For anything bigger — plans, work in progress, open questions, anything needing back-and-forth — prefer create_thread first and post inside the thread. @username in the body notifies that user (their inbox + push): use it whenever a specific person's input is needed."),
+	s.addTool(srv, mcp.NewTool("send_message",
+		mcp.WithDescription("Post a message as this agent. For a direct, self-contained answer always pass reply_to so the reply threads under the triggering message — conversation_id is inferred from reply_to, so replying never requires knowing the conversation. For anything bigger — plans, work in progress, open questions, anything needing back-and-forth — prefer create_thread first and post inside the thread. @username in the body notifies that user (their inbox + push): use it whenever a specific person's input is needed. Pass client_msg_id (any unique string) to make retries safe — a duplicate returns the original message."),
 		mcp.WithString("project_id"),
 		mcp.WithString("conversation_id"),
 		mcp.WithString("body", mcp.Required(), mcp.Description("Markdown body")),
@@ -323,83 +467,99 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithBoolean("silent", mcp.Description("true posts without any notification/push — use for routine progress updates inside a work thread. @mentions in a silent message still notify.")),
 		mcp.WithString("attachment_ids", mcp.Description("Comma-separated attachment UUIDs from upload_attachment, max 20")),
 		mcp.WithString("meta", mcp.Description("Optional JSON object rendered as a structured card — ops channels aggregate it. Recognized keys: kind, service, state (up|degraded|down|maintenance…), latency_ms, level, env, release, url, at, fields{label:value}")),
+		mcp.WithString("client_msg_id", mcp.Description("Agent-generated idempotency key — a duplicate submit returns the original message instead of double-posting")),
 	), s.sendMessage)
 
-	srv.AddTool(mcp.NewTool("edit_message",
+	// reply is an alias of send_message (kept for agents that guess the name);
+	// prefer send_message. Same schema, same handler.
+	s.addTool(srv, mcp.NewTool("reply",
+		mcp.WithDescription("Alias of send_message (kept for agents that guess the name); prefer send_message. Identical args — typically {body, reply_to} suffices, conversation_id is inferred."),
+		mcp.WithString("project_id"),
+		mcp.WithString("conversation_id"),
+		mcp.WithString("body", mcp.Required(), mcp.Description("Markdown body")),
+		mcp.WithString("reply_to", mcp.Description("Message UUID this message replies to")),
+		mcp.WithString("tags", mcp.Description("Comma-separated tags classifying the message, e.g. frontend,backend,visual,mcp")),
+		mcp.WithBoolean("silent", mcp.Description("true posts without any notification/push — use for routine progress updates inside a work thread. @mentions in a silent message still notify.")),
+		mcp.WithString("attachment_ids", mcp.Description("Comma-separated attachment UUIDs from upload_attachment, max 20")),
+		mcp.WithString("meta", mcp.Description("Optional JSON object rendered as a structured card — ops channels aggregate it. Recognized keys: kind, service, state (up|degraded|down|maintenance…), latency_ms, level, env, release, url, at, fields{label:value}")),
+		mcp.WithString("client_msg_id", mcp.Description("Agent-generated idempotency key — a duplicate submit returns the original message instead of double-posting")),
+	), s.sendMessage)
+
+	s.addTool(srv, mcp.NewTool("edit_message",
 		mcp.WithDescription("Edit one of this agent's own messages. Allowed only while no agent has read it."),
 		mcp.WithString("message_id", mcp.Required()),
 		mcp.WithString("body", mcp.Required(), mcp.Description("New markdown body")),
 	), s.editMessage)
 
-	srv.AddTool(mcp.NewTool("delete_message",
+	s.addTool(srv, mcp.NewTool("delete_message",
 		mcp.WithDescription("Delete one of this agent's own messages. Allowed only while no agent has read it."),
 		mcp.WithString("message_id", mcp.Required()),
 	), s.deleteMessage)
 
-	srv.AddTool(mcp.NewTool("create_thread",
+	s.addTool(srv, mcp.NewTool("create_thread",
 		mcp.WithDescription("Open (or get) the thread rooted at a message: a focused side conversation. Use it for anything bigger than a quick answer — plans in progress, multi-step work, open questions, anything that needs back-and-forth — so the channel stays readable. Posts a 'started a thread' notice into the channel. One thread per message; threads cannot nest. Afterwards post into it via send_message with conversation_id=<thread id>."),
 		mcp.WithString("message_id", mcp.Required()),
 		mcp.WithString("title", mcp.Description("Optional thread title; defaults to the parent excerpt")),
 		mcp.WithNumber("ttl_hours", mcp.Description("Hours until the thread expires. Default 120 (5 days); a negative value makes it permanent.")),
 	), s.createThread)
 
-	srv.AddTool(mcp.NewTool("request_input",
+	s.addTool(srv, mcp.NewTool("request_input",
 		mcp.WithDescription("Ask a person for input and keep the exchange in one place: opens a thread on the given message (if it isn't already in one), then posts your question inside it @mentioning the user so it lands in their inbox and push. Use this whenever you are blocked on a human — missing context, a decision, credentials — instead of leaving a bare channel message."),
 		mcp.WithString("message_id", mcp.Required(), mcp.Description("the message your question responds to; the thread roots on it (or on itself when it already lives in a thread)")),
 		mcp.WithString("user", mcp.Required(), mcp.Description("workspace member name to @mention, e.g. tdvorak")),
 		mcp.WithString("question", mcp.Required(), mcp.Description("what you need from them")),
 	), s.requestInput)
 
-	srv.AddTool(mcp.NewTool("resolve_input",
+	s.addTool(srv, mcp.NewTool("resolve_input",
 		mcp.WithDescription("Mark a request_input question resolved: removes its 'needs-input' tag and, when note is given, posts the answer into the same thread. Call this when the user answered you outside Relay (e.g. in your CLI/IDE harness) so the chat thread shows the question is handled."),
 		mcp.WithString("message_id", mcp.Required(), mcp.Description("the request_input question message id")),
 		mcp.WithString("note", mcp.Description("optional: how it was resolved, e.g. 'answered in CLI — use staging env'")),
 	), s.resolveInput)
 
-	srv.AddTool(mcp.NewTool("work_start",
+	s.addTool(srv, mcp.NewTool("work_start",
 		mcp.WithDescription("Announce you are starting work: posts one status message in the project conversation and opens a progress thread on it. Post ongoing updates into that thread with send_message silent=true — never as new top-level messages. Call work_stop when finished."),
 		mcp.WithString("project_id", mcp.Required()),
 		mcp.WithString("title", mcp.Required(), mcp.Description("short description of the work, e.g. 'Fixing invite revocation'")),
 		mcp.WithString("conversation_id", mcp.Description("override target conversation; defaults to the project chat")),
 	), s.workStart)
 
-	srv.AddTool(mcp.NewTool("work_stop",
+	s.addTool(srv, mcp.NewTool("work_stop",
 		mcp.WithDescription("Finish a work_start status message: clears its 'work-in-progress' tag and posts an optional summary into the progress thread. Always call when you finish or abandon the work so the chat shows the true state."),
 		mcp.WithString("message_id", mcp.Required(), mcp.Description("the status message id returned by work_start")),
 		mcp.WithString("summary", mcp.Description("optional closing summary posted into the thread")),
 	), s.workStop)
 
-	srv.AddTool(mcp.NewTool("pin_message",
+	s.addTool(srv, mcp.NewTool("pin_message",
 		mcp.WithDescription("Pin (or unpin) a message in its conversation. Pinned messages surface in the channel's pins list."),
 		mcp.WithString("message_id", mcp.Required()),
 		mcp.WithBoolean("pinned", mcp.Required(), mcp.Description("true to pin, false to unpin")),
 	), s.pinMessage)
 
-	srv.AddTool(mcp.NewTool("list_pins",
+	s.addTool(srv, mcp.NewTool("list_pins",
 		mcp.WithDescription("List a conversation's pinned messages, newest pin first."),
 		mcp.WithString("conversation_id"),
 		mcp.WithString("project_id", mcp.Description("shorthand for the project's conversation")),
 	), s.listPins)
 
-	srv.AddTool(mcp.NewTool("forward_message",
+	s.addTool(srv, mcp.NewTool("forward_message",
 		mcp.WithDescription("Forward a message into another granted project's conversation. The copy credits the original author."),
 		mcp.WithString("message_id", mcp.Required()),
 		mcp.WithString("project_id", mcp.Required(), mcp.Description("target project the agent is granted on")),
 	), s.forwardMessage)
 
-	srv.AddTool(mcp.NewTool("react_to_message",
+	s.addTool(srv, mcp.NewTool("react_to_message",
 		mcp.WithDescription("Toggle an emoji reaction on a message."),
 		mcp.WithString("message_id", mcp.Required()),
 		mcp.WithString("emoji", mcp.Required(), mcp.Description("e.g. 👀 ✅ 🎉")),
 	), s.reactToMessage)
 
-	srv.AddTool(mcp.NewTool("set_avatar",
+	s.addTool(srv, mcp.NewTool("set_avatar",
 		mcp.WithDescription("Set this agent's profile picture. Pass image_base64 (png/jpeg/gif/webp/avif, max 2 MiB decoded) or image_url and the server fetches it."),
 		mcp.WithString("image_base64", mcp.Description("Base64-encoded image bytes")),
 		mcp.WithString("image_url", mcp.Description("http(s) image URL the server downloads and stores")),
 	), s.setAvatar)
 
-	srv.AddTool(mcp.NewTool("create_issue",
+	s.addTool(srv, mcp.NewTool("create_issue",
 		mcp.WithDescription("Create an issue in a granted project."),
 		mcp.WithString("project_id", mcp.Required()),
 		mcp.WithString("title", mcp.Required()),
@@ -407,7 +567,7 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithString("priority", mcp.Description("none|low|medium|high|urgent")),
 	), s.createIssue)
 
-	srv.AddTool(mcp.NewTool("update_issue",
+	s.addTool(srv, mcp.NewTool("update_issue",
 		mcp.WithDescription("Update an issue's title/description/status/priority."),
 		mcp.WithString("issue_id", mcp.Required()),
 		mcp.WithString("title"),
@@ -416,36 +576,39 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithString("priority", mcp.Description("none|low|medium|high|urgent")),
 	), s.updateIssue)
 
-	srv.AddTool(mcp.NewTool("github_list_issues",
+	s.addTool(srv, mcp.NewTool("github_list_issues",
 		mcp.WithDescription("List open GitHub issues on the project's linked repository."),
 		mcp.WithString("project_id", mcp.Required()),
 	), s.ghListIssues)
 
-	srv.AddTool(mcp.NewTool("github_get_issue",
+	s.addTool(srv, mcp.NewTool("github_get_issue",
 		mcp.WithDescription("Get one GitHub issue (with body) from the project's linked repository."),
 		mcp.WithString("project_id", mcp.Required()),
 		mcp.WithNumber("number", mcp.Required()),
 	), s.ghGetIssue)
 
-	srv.AddTool(mcp.NewTool("github_list_prs",
-		mcp.WithDescription("List open pull requests on the project's linked repository."),
+	s.addTool(srv, mcp.NewTool("github_list_prs",
+		mcp.WithDescription("List pull requests on the project's linked repository."),
 		mcp.WithString("project_id", mcp.Required()),
+		mcp.WithString("state", mcp.Description("open|closed|merged|all — default open; merged selects merged PRs")),
+		mcp.WithString("author", mcp.Description("GitHub login of the PR author")),
+		mcp.WithString("q", mcp.Description("Search query narrowing the list (title/body search syntax)")),
 	), s.ghListPRs)
 
-	srv.AddTool(mcp.NewTool("github_get_pr",
+	s.addTool(srv, mcp.NewTool("github_get_pr",
 		mcp.WithDescription("Get one pull request from the project's linked repository."),
 		mcp.WithString("project_id", mcp.Required()),
 		mcp.WithNumber("number", mcp.Required()),
 	), s.ghGetPR)
 
-	srv.AddTool(mcp.NewTool("github_create_issue",
+	s.addTool(srv, mcp.NewTool("github_create_issue",
 		mcp.WithDescription("File a new issue on the project's linked GitHub repository. The issue is mirrored onto the project board."),
 		mcp.WithString("project_id", mcp.Required()),
 		mcp.WithString("title", mcp.Required()),
 		mcp.WithString("body"),
 	), s.ghCreateIssue)
 
-	srv.AddTool(mcp.NewTool("github_create_pr",
+	s.addTool(srv, mcp.NewTool("github_create_pr",
 		mcp.WithDescription("Open a pull request on the project's linked repository. head = source branch, base defaults to the repo's default branch."),
 		mcp.WithString("project_id", mcp.Required()),
 		mcp.WithString("head", mcp.Required()),
@@ -455,14 +618,14 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithBoolean("draft"),
 	), s.ghCreatePR)
 
-	srv.AddTool(mcp.NewTool("github_comment",
+	s.addTool(srv, mcp.NewTool("github_comment",
 		mcp.WithDescription("Post a comment on a GitHub issue or pull request."),
 		mcp.WithString("project_id", mcp.Required()),
 		mcp.WithNumber("number", mcp.Required()),
 		mcp.WithString("body", mcp.Required()),
 	), s.ghComment)
 
-	srv.AddTool(mcp.NewTool("github_review_pr",
+	s.addTool(srv, mcp.NewTool("github_review_pr",
 		mcp.WithDescription("Submit a review on a pull request. event = APPROVE | REQUEST_CHANGES | COMMENT. body required for REQUEST_CHANGES."),
 		mcp.WithString("project_id", mcp.Required()),
 		mcp.WithNumber("number", mcp.Required()),
@@ -470,56 +633,56 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithString("body"),
 	), s.ghReviewPR)
 
-	srv.AddTool(mcp.NewTool("github_pr_state",
+	s.addTool(srv, mcp.NewTool("github_pr_state",
 		mcp.WithDescription("Close or reopen a pull request."),
 		mcp.WithString("project_id", mcp.Required()),
 		mcp.WithNumber("number", mcp.Required()),
 		mcp.WithString("state", mcp.Required(), mcp.Enum("open", "closed")),
 	), s.ghSetPRState)
 
-	srv.AddTool(mcp.NewTool("github_merge_pr",
+	s.addTool(srv, mcp.NewTool("github_merge_pr",
 		mcp.WithDescription("Merge a pull request. method = merge | squash | rebase. GitHub enforces branch protection and required checks; the call fails if GitHub refuses."),
 		mcp.WithString("project_id", mcp.Required()),
 		mcp.WithNumber("number", mcp.Required()),
 		mcp.WithString("method", mcp.Enum("merge", "squash", "rebase")),
 	), s.ghMergePR)
 
-	srv.AddTool(mcp.NewTool("github_ci_runs",
+	s.addTool(srv, mcp.NewTool("github_ci_runs",
 		mcp.WithDescription("List recent GitHub Actions workflow runs for the project's linked repository."),
 		mcp.WithString("project_id", mcp.Required()),
 	), s.ghCIRuns)
 
-	srv.AddTool(mcp.NewTool("github_rerun",
+	s.addTool(srv, mcp.NewTool("github_rerun",
 		mcp.WithDescription("Rerun a completed GitHub Actions workflow run."),
 		mcp.WithString("project_id", mcp.Required()),
 		mcp.WithNumber("run_id", mcp.Required()),
 	), s.ghRerun)
 
-	srv.AddTool(mcp.NewTool("list_project_files",
+	s.addTool(srv, mcp.NewTool("list_project_files",
 		mcp.WithDescription("List one directory level of the project's linked local folder. Omit path for the root."),
 		mcp.WithString("project_id", mcp.Required()),
 		mcp.WithString("path"),
 	), s.listProjectFiles)
 
-	srv.AddTool(mcp.NewTool("read_project_file",
+	s.addTool(srv, mcp.NewTool("read_project_file",
 		mcp.WithDescription("Read a UTF-8 file (<=256KB) from the project's linked local folder."),
 		mcp.WithString("project_id", mcp.Required()),
 		mcp.WithString("path", mcp.Required()),
 	), s.readProjectFile)
 
-	srv.AddTool(mcp.NewTool("todo_list",
+	s.addTool(srv, mcp.NewTool("todo_list",
 		mcp.WithDescription("List the project's todo/work-tracking list (agent-managed)."),
 		mcp.WithString("project_id", mcp.Required()),
 	), s.todoList)
 
-	srv.AddTool(mcp.NewTool("todo_add",
+	s.addTool(srv, mcp.NewTool("todo_add",
 		mcp.WithDescription("Add a todo item to the project's work list. Optionally link an issue_id."),
 		mcp.WithString("project_id", mcp.Required()),
 		mcp.WithString("content", mcp.Required()),
 		mcp.WithString("issue_id"),
 	), s.todoAdd)
 
-	srv.AddTool(mcp.NewTool("todo_update",
+	s.addTool(srv, mcp.NewTool("todo_update",
 		mcp.WithDescription("Update a todo: content, status (todo|in_progress|done), done flag, or linked issue."),
 		mcp.WithString("todo_id", mcp.Required()),
 		mcp.WithString("content"),
@@ -528,23 +691,23 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithString("issue_id"),
 	), s.todoUpdate)
 
-	srv.AddTool(mcp.NewTool("todo_delete",
+	s.addTool(srv, mcp.NewTool("todo_delete",
 		mcp.WithDescription("Delete a todo item."),
 		mcp.WithString("todo_id", mcp.Required()),
 	), s.todoDelete)
 
-	srv.AddTool(mcp.NewTool("todo_sync",
+	s.addTool(srv, mcp.NewTool("todo_sync",
 		mcp.WithDescription("Mirror your harness task list into Relay in one call: pass the full current list and this tool creates, updates, reorders, and deletes your todos to match. Items echo back the Relay id — pass it on later syncs to keep rows stable. Other agents' todos are untouched. Call it whenever your task list changes so the app shows live progress."),
 		mcp.WithString("project_id", mcp.Required()),
 		mcp.WithArray("items", mcp.Required(), mcp.Description("ordered list: [{id?, content, status?, issue_id?}] — status todo|in_progress|done; omit id to create")),
 	), s.todoSync)
 
-	srv.AddTool(mcp.NewTool("mark_message_read",
+	s.addTool(srv, mcp.NewTool("mark_message_read",
 		mcp.WithDescription("Mark a message as read by this agent."),
 		mcp.WithString("message_id", mcp.Required()),
 	), s.markRead)
 
-	srv.AddTool(mcp.NewTool("list_mentionables",
+	s.addTool(srv, mcp.NewTool("list_mentionables",
 		mcp.WithDescription("Everything addressable in a project: workspace members (@name), agents (@agent-slug), issues (KEY-1), and linked GitHub repos (owner/repo#N). Check this before @mentioning — request_input's user argument takes a member name from this list."),
 		mcp.WithString("project_id", mcp.Required()),
 	), s.listMentionables)
@@ -554,7 +717,7 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 	// consistent board: summary, per-file changes, autonomous decisions,
 	// required human actions, verification steps, links.
 
-	srv.AddTool(mcp.NewTool("submit_review",
+	s.addTool(srv, mcp.NewTool("submit_review",
 		mcp.WithDescription("Submit a structured review of completed work for human approval. "+
 			"Required fields: project_id, title, summary. Provide files as [{path,status,additions,deletions,note}] "+
 			"(status: added|modified|deleted|renamed; optional patch), decisions as [{decision,rationale}], "+
@@ -582,18 +745,18 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithString("supersedes", mcp.Description("Review UUID this revision replaces")),
 	), s.submitReview)
 
-	srv.AddTool(mcp.NewTool("get_review",
+	s.addTool(srv, mcp.NewTool("get_review",
 		mcp.WithDescription("Get one review with its status and any human response."),
 		mcp.WithString("review_id", mcp.Required()),
 	), s.getReview)
 
-	srv.AddTool(mcp.NewTool("list_reviews",
+	s.addTool(srv, mcp.NewTool("list_reviews",
 		mcp.WithDescription("List reviews in a granted project, newest first."),
 		mcp.WithString("project_id", mcp.Required()),
 		mcp.WithString("status", mcp.Description("Filter: pending|approved|changes_requested|superseded")),
 	), s.listReviews)
 
-	srv.AddTool(mcp.NewTool("await_review",
+	s.addTool(srv, mcp.NewTool("await_review",
 		mcp.WithDescription("Block until a review gets a human verdict (approved or changes_requested), "+
 			"or timeout_s elapses. Use after submit_review when review_mode is 'gate'. Returns the review "+
 			"with its final status and the responder's note."),
@@ -607,23 +770,23 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 	// create), 'on_request' (create only when asked), 'pre_merge' (expected
 	// before merge-worthy reviews).
 
-	srv.AddTool(mcp.NewTool("get_brief_policy",
+	s.addTool(srv, mcp.NewTool("get_brief_policy",
 		mcp.WithDescription("Get the project's brief policy (never|on_request|pre_merge) — call before deciding whether to produce a visual brief."),
 		mcp.WithString("project_id", mcp.Required()),
 	), s.getBriefPolicy)
 
-	srv.AddTool(mcp.NewTool("list_briefs",
+	s.addTool(srv, mcp.NewTool("list_briefs",
 		mcp.WithDescription("List visual briefs in a granted project, newest first."),
 		mcp.WithString("project_id", mcp.Required()),
 		mcp.WithString("issue_id", mcp.Description("Filter by linked Relay issue UUID")),
 	), s.listBriefs)
 
-	srv.AddTool(mcp.NewTool("get_brief",
+	s.addTool(srv, mcp.NewTool("get_brief",
 		mcp.WithDescription("Get one brief including its scene JSON and comment conversation id."),
 		mcp.WithString("brief_id", mcp.Required()),
 	), s.getBrief)
 
-	srv.AddTool(mcp.NewTool("create_brief",
+	s.addTool(srv, mcp.NewTool("create_brief",
 		mcp.WithDescription("Create a visual brief explaining a change. 'scene' is Excalidraw JSON "+
 			"({elements: [...], appState?: {...}, files?: {...}}). Full Excalidraw vocabulary is accepted "+
 			"and renders in the app's embedded editor; keep to rectangle|ellipse|diamond|arrow|line|text "+
@@ -638,7 +801,7 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithString("scene", mcp.Description("Excalidraw scene as a JSON string")),
 	), s.createBrief)
 
-	srv.AddTool(mcp.NewTool("update_brief",
+	s.addTool(srv, mcp.NewTool("update_brief",
 		mcp.WithDescription("Update a brief's title, summary, status (open|resolved|archived), or replace its "+
 			"Excalidraw scene after feedback. Scenes edited by users in the app's embedded Excalidraw editor "+
 			"come back as full Excalidraw JSON — preserve elements/files fields when revising."),
@@ -649,7 +812,7 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithString("scene", mcp.Description("Replacement Excalidraw scene JSON")),
 	), s.updateBrief)
 
-	srv.AddTool(mcp.NewTool("delete_brief",
+	s.addTool(srv, mcp.NewTool("delete_brief",
 		mcp.WithDescription("Delete a brief and its comment conversation. Irreversible."),
 		mcp.WithString("brief_id", mcp.Required()),
 	), s.deleteBrief)
@@ -659,17 +822,17 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 	// or agent drafts before real work exists. They reuse the brief scopes —
 	// same visual-doc family — and convert into issues via idea_to_issue.
 
-	srv.AddTool(mcp.NewTool("list_ideas",
+	s.addTool(srv, mcp.NewTool("list_ideas",
 		mcp.WithDescription("List brainstorm ideas in a granted project, recently updated first."),
 		mcp.WithString("project_id", mcp.Required()),
 	), s.listIdeas)
 
-	srv.AddTool(mcp.NewTool("get_idea",
+	s.addTool(srv, mcp.NewTool("get_idea",
 		mcp.WithDescription("Get one idea including its Excalidraw scene JSON."),
 		mcp.WithString("idea_id", mcp.Required()),
 	), s.getIdea)
 
-	srv.AddTool(mcp.NewTool("create_idea",
+	s.addTool(srv, mcp.NewTool("create_idea",
 		mcp.WithDescription("Create a brainstorm idea on a granted project: title, plain-language summary, "+
 			"and an optional Excalidraw scene ({elements: [...]}) for mindmaps/sketches. Use this to park "+
 			"half-formed work on the Ideas page until it's worth an issue."),
@@ -679,7 +842,7 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithString("scene", mcp.Description("Excalidraw scene as a JSON string")),
 	), s.createIdea)
 
-	srv.AddTool(mcp.NewTool("update_idea",
+	s.addTool(srv, mcp.NewTool("update_idea",
 		mcp.WithDescription("Update an idea's title, summary, status (open|converted|archived), or scene JSON."),
 		mcp.WithString("idea_id", mcp.Required()),
 		mcp.WithString("title"),
@@ -688,12 +851,12 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithString("scene", mcp.Description("Replacement Excalidraw scene JSON")),
 	), s.updateIdea)
 
-	srv.AddTool(mcp.NewTool("delete_idea",
+	s.addTool(srv, mcp.NewTool("delete_idea",
 		mcp.WithDescription("Delete an idea. Irreversible."),
 		mcp.WithString("idea_id", mcp.Required()),
 	), s.deleteIdea)
 
-	srv.AddTool(mcp.NewTool("idea_to_issue",
+	s.addTool(srv, mcp.NewTool("idea_to_issue",
 		mcp.WithDescription("Convert an idea into a backlog issue on its project (requires issue:write). "+
 			"The idea is kept, marked 'converted'."),
 		mcp.WithString("idea_id", mcp.Required()),
@@ -783,6 +946,18 @@ func messageJSON(m db.GetMessageFullRow) gin.H {
 			"avatar": avatar,
 		},
 	}
+}
+
+// excerpt collapses whitespace and cuts s at n runes; the bool reports
+// truncation so callers can emit truncated:true. minimal:true read modes
+// and the inbox/activity feeds use it to bound payload size.
+func excerpt(s string, n int) (string, bool) {
+	s = strings.Join(strings.Fields(s), " ")
+	r := []rune(s)
+	if len(r) <= n {
+		return s, false
+	}
+	return string(r[:n]) + "…", true
 }
 
 // resolveMentions binds extracted refs to rows. Same contract as the REST
@@ -879,7 +1054,7 @@ func (s *Service) listProjects(ctx context.Context, _ mcp.CallToolRequest) (*mcp
 func (s *Service) getProject(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	pid, err := uuidArg(req, "project_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if err := s.scope(ctx, pid, "project:read"); err != nil {
 		return errResult(err)
@@ -898,7 +1073,7 @@ func (s *Service) getProject(ctx context.Context, req mcp.CallToolRequest) (*mcp
 func (s *Service) listConversations(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	pid, err := uuidArg(req, "project_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if err := s.scope(ctx, pid, "message:read"); err != nil {
 		return errResult(err)
@@ -921,11 +1096,24 @@ func (s *Service) listConversations(ctx context.Context, req mcp.CallToolRequest
 	if proj, err := s.q.GetProjectByID(ctx, pid); err == nil {
 		pkey = proj.Key
 	}
+	minimal := req.GetBool("minimal", false)
 	out := make([]gin.H, 0, len(rows))
 	for _, c := range rows {
 		e := gin.H{
 			"id": c.ID, "kind": c.Kind, "issue_id": c.IssueID, "created_at": c.CreatedAt.Time,
-			"unread_count": unread[c.ID.String()],
+			"unread_count":  unread[c.ID.String()],
+			"message_count": c.MessageCount,
+		}
+		if c.LastMessageAt.Valid {
+			e["last_message_at"] = c.LastMessageAt.Time
+			e["last_author"] = c.LastAuthor
+			if !minimal {
+				ex, tr := excerpt(c.LastBody, 200)
+				e["last_message_excerpt"] = ex
+				if tr {
+					e["last_message_truncated"] = true
+				}
+			}
 		}
 		if c.Title.Valid {
 			e["name"] = c.Title.String
@@ -946,35 +1134,68 @@ func (s *Service) listConversations(ctx context.Context, req mcp.CallToolRequest
 
 // listUnread is the server-side version of `relay-cli unread`: one row per
 // conversation that has unread messages for this agent, across every
-// granted project. Same query pair the CLI composes client-side.
-func (s *Service) listUnread(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+// granted project (or the one project_id scopes to). Each row carries the
+// latest unread message's id + excerpt so an agent can triage without
+// opening every conversation.
+func (s *Service) listUnread(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	a := agent(ctx)
-	projects, err := s.q.ListGrantedProjects(ctx, a.ID)
-	if err != nil {
-		return errResult(err)
-	}
-	out := []gin.H{}
-	for _, p := range projects {
-		convs, err := s.q.ListProjectConversations(ctx, p.ID)
+	var projects []db.Project
+	if v := strings.TrimSpace(req.GetString("project_id", "")); v != "" {
+		pid, err := uuidArg(req, "project_id")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		if err := s.scope(ctx, pid, "message:read"); err != nil {
+			return errResult(err)
+		}
+		p, err := s.q.GetProjectByID(ctx, pid)
 		if err != nil {
 			return errResult(err)
 		}
-		unread := make(map[string]int)
+		projects = []db.Project{{ID: p.ID, Key: p.Key, Name: p.Name}}
+	} else {
+		var err error
+		projects, err = s.q.ListGrantedProjects(ctx, a.ID)
+		if err != nil {
+			return errResult(err)
+		}
+	}
+	out := []gin.H{}
+	for _, p := range projects {
+		unread := make(map[string]db.AgentConversationUnreadRow)
 		if urows, err := s.q.AgentConversationUnread(ctx, db.AgentConversationUnreadParams{
 			ProjectID: p.ID, AgentID: a.ID,
 		}); err == nil {
 			for _, u := range urows {
-				unread[u.ConversationID.String()] = int(u.Unread)
+				unread[u.ConversationID.String()] = u
 			}
 		}
+		if len(unread) == 0 {
+			continue
+		}
+		convs, err := s.q.ListProjectConversations(ctx, p.ID)
+		if err != nil {
+			return errResult(err)
+		}
 		for _, c := range convs {
-			n := unread[c.ID.String()]
-			if n == 0 {
+			u, ok := unread[c.ID.String()]
+			if !ok || u.Unread == 0 {
 				continue
 			}
 			e := gin.H{
-				"id": c.ID, "kind": c.Kind, "unread_count": n,
+				"id": c.ID, "kind": c.Kind, "unread_count": int(u.Unread),
 				"project": gin.H{"id": p.ID, "key": p.Key, "name": p.Name},
+			}
+			if u.LatestID.Valid {
+				ex, tr := excerpt(u.LatestBody, 200)
+				latest := gin.H{
+					"message_id": u.LatestID, "author": u.LatestAuthor,
+					"excerpt": ex, "at": u.LatestAt.Time,
+				}
+				if tr {
+					latest["truncated"] = true
+				}
+				e["latest_unread"] = latest
 			}
 			if c.Title.Valid {
 				e["name"] = c.Title.String
@@ -991,13 +1212,177 @@ func (s *Service) listUnread(ctx context.Context, _ mcp.CallToolRequest) (*mcp.C
 	return jsonResult(gin.H{"unread": out})
 }
 
+// inbox answers "what is aimed at me" in one call: @mentions, replies to
+// this agent's messages, and unread messages across granted conversations.
+// Priority dedupes a message that qualifies under more than one lane
+// (mention > reply > unread); rows carry excerpts, not bodies.
+func (s *Service) inbox(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	a := agent(ctx)
+	lim := clampInt(req.GetInt("limit", 50), 1, 100)
+	// fetch over the cap so priority dedupe doesn't drop distinct lanes
+	fetch := int32(lim)
+
+	item := func(id, cid pgtype.UUID, body string, at pgtype.Timestamptz,
+		pid pgtype.UUID, pkey, pname, author, kind, lane string, parent pgtype.UUID) gin.H {
+		ex, tr := excerpt(body, 200)
+		e := gin.H{
+			"kind": lane, "message_id": id, "conversation_id": cid,
+			"excerpt": ex, "truncated": tr, "at": at.Time,
+			"author":  gin.H{"name": author, "kind": kind},
+			"project": gin.H{"id": pid, "key": pkey, "name": pname},
+		}
+		if parent.Valid {
+			e["parent_id"] = parent
+		}
+		return e
+	}
+	seen := map[string]bool{}
+	out := []gin.H{}
+	if rows, err := s.q.AgentInboxMentions(ctx, db.AgentInboxMentionsParams{
+		AgentID: a.ID, Lim: fetch,
+	}); err == nil {
+		for _, r := range rows {
+			seen[r.ID.String()] = true
+			out = append(out, item(r.ID, r.ConversationID, r.Body, r.CreatedAt,
+				r.ProjectID, r.ProjectKey, r.ProjectName, r.AuthorName, r.AuthorKind, "mention", pgtype.UUID{}))
+		}
+	}
+	if rows, err := s.q.AgentInboxReplies(ctx, db.AgentInboxRepliesParams{
+		AgentID: a.ID, Lim: fetch,
+	}); err == nil {
+		for _, r := range rows {
+			if seen[r.ID.String()] {
+				continue
+			}
+			seen[r.ID.String()] = true
+			out = append(out, item(r.ID, r.ConversationID, r.Body, r.CreatedAt,
+				r.ProjectID, r.ProjectKey, r.ProjectName, r.AuthorName, r.AuthorKind, "reply", r.ParentID))
+		}
+	}
+	if rows, err := s.q.AgentInboxUnread(ctx, db.AgentInboxUnreadParams{
+		AgentID: a.ID, Lim: fetch,
+	}); err == nil {
+		for _, r := range rows {
+			if seen[r.ID.String()] {
+				continue
+			}
+			seen[r.ID.String()] = true
+			out = append(out, item(r.ID, r.ConversationID, r.Body, r.CreatedAt,
+				r.ProjectID, r.ProjectKey, r.ProjectName, r.AuthorName, r.AuthorKind, "unread", pgtype.UUID{}))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i]["at"].(time.Time).After(out[j]["at"].(time.Time))
+	})
+	if len(out) > lim {
+		out = out[:lim]
+	}
+	return jsonResult(gin.H{"items": out})
+}
+
+// awaitMessage is the human-reply wait: block until a message from a
+// different author lands in the conversation, or the timeout expires. The
+// cap mirrors await_review — a streamable-HTTP call that outlives a client
+// or proxy read timeout gets severed mid-flight and some MCP clients mark
+// the whole transport dead, so 55s stays under the common ceilings and
+// callers re-call to keep waiting.
+func (s *Service) awaitMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	cid, toolErr := s.resolveConversationArg(ctx, req)
+	if toolErr != nil {
+		return toolErr, nil
+	}
+	pid, err := s.q.ResolveConversationProject(ctx, cid)
+	if err != nil {
+		return errResult(err)
+	}
+	if err := s.scope(ctx, pid, "message:read"); err != nil {
+		return errResult(err)
+	}
+	a := agent(ctx)
+
+	// latestUnread returns the newest unread message from another author —
+	// the initial check doubles as the hub-less fallback poll.
+	latestUnread := func() (*db.ListMessagesRow, error) {
+		rows, err := s.q.ListMessages(ctx, db.ListMessagesParams{
+			ConversationID: cid, Lim: 1,
+			UnreadOnly: pgtype.Bool{Bool: true, Valid: true},
+			Reader:     a.ID,
+		})
+		if err != nil || len(rows) == 0 {
+			return nil, err
+		}
+		return &rows[0], nil
+	}
+	respond := func(mid pgtype.UUID) (*mcp.CallToolResult, error) {
+		m, err := s.q.GetMessageFull(ctx, mid)
+		if err != nil {
+			return errResult(err)
+		}
+		return jsonResult(gin.H{"status": "message", "message": s.messageJSONFull(ctx, m)})
+	}
+	if r, err := latestUnread(); err == nil && r != nil {
+		return respond(r.ID)
+	}
+	timeout := clampInt(req.GetInt("timeout_s", 55), 1, 55)
+	timer := time.NewTimer(time.Duration(timeout) * time.Second)
+	defer timer.Stop()
+
+	if s.Bus == nil {
+		// jarvis: poll fallback for hub-less deployments — 2s tick, still
+		// ctx.Done-aware. LISTEN/NOTIFY is the upgrade if replicas appear.
+		tick := time.NewTicker(2 * time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-tick.C:
+				if r, err := latestUnread(); err == nil && r != nil {
+					return respond(r.ID)
+				}
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-timer.C:
+				return jsonResult(gin.H{"status": "timeout"})
+			}
+		}
+	}
+	sub, ch := s.Bus.Subscribe()
+	defer s.Bus.Unsubscribe(sub)
+	cidStr := cid.String()
+	for {
+		select {
+		case e, ok := <-ch:
+			if !ok {
+				return errResult(errors.New("event hub closed"))
+			}
+			if e.Type != "message.created" || e.Data["conversation_id"] != cidStr {
+				continue
+			}
+			// own post bounced back through the bus isn't a reply
+			if msg, ok := e.Data["message"].(map[string]any); ok {
+				if au, ok := msg["author"].(map[string]any); ok {
+					if fmt.Sprint(au["id"]) == a.ID.String() {
+						continue
+					}
+				}
+			}
+			if r, err := latestUnread(); err == nil && r != nil {
+				return respond(r.ID)
+			}
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-timer.C:
+			return jsonResult(gin.H{"status": "timeout"})
+		}
+	}
+}
+
 // opsSummary is the agent-facing control center: same fold as the web
 // /channels/:id/ops endpoint, gated by checkAgentConversation so
 // agents_blocked channels stay dark.
 func (s *Service) opsSummary(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	cid, err := uuidArg(req, "conversation_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if err := s.checkAgentConversation(ctx, cid); err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -1090,19 +1475,36 @@ func (s *Service) getMessages(ctx context.Context, req mcp.CallToolRequest) (*mc
 	if err := s.scope(ctx, pid, "message:read"); err != nil {
 		return errResult(err)
 	}
-	lim := clampInt(req.GetInt("limit", 50), 1, 200)
+	lim := clampInt(req.GetInt("limit", 50), 1, 100)
 	var tag pgtype.Text
 	if v := strings.ToLower(strings.TrimSpace(req.GetString("tag", ""))); v != "" {
 		tag = pgtype.Text{String: v, Valid: true}
 	}
+	// before is the page cursor — the older before_id name still works.
 	var before pgtype.UUID
-	if v := strings.TrimSpace(req.GetString("before_id", "")); v != "" {
+	if v := strings.TrimSpace(req.GetString("before", req.GetString("before_id", ""))); v != "" {
 		if err := before.Scan(v); err != nil || !before.Valid {
-			return mcp.NewToolResultError("invalid before_id"), nil
+			return mcp.NewToolResultError("invalid before"), nil
 		}
 	}
+	var after pgtype.UUID
+	if v := strings.TrimSpace(req.GetString("after", "")); v != "" {
+		if err := after.Scan(v); err != nil || !after.Valid {
+			return mcp.NewToolResultError("invalid after"), nil
+		}
+	}
+	var kindFilter pgtype.Text
+	if v := strings.ToLower(strings.TrimSpace(req.GetString("author_kind", ""))); v != "" {
+		if v != "user" && v != "agent" && v != "system" {
+			return mcp.NewToolResultError("invalid author_kind — user|agent|system"), nil
+		}
+		kindFilter = pgtype.Text{String: v, Valid: true}
+	}
+	unreadOnly := pgtype.Bool{Bool: req.GetBool("unread_only", false), Valid: true}
 	rows, err := s.q.ListMessages(ctx, db.ListMessagesParams{
 		ConversationID: cid, Lim: int32(lim), Tag: tag, Before: before,
+		After: after, AuthorKind: kindFilter, UnreadOnly: unreadOnly,
+		Reader: agent(ctx).ID,
 	})
 	if err != nil {
 		return errResult(err)
@@ -1134,22 +1536,43 @@ func (s *Service) getMessages(ctx context.Context, req mcp.CallToolRequest) (*mc
 		}
 	}
 	s.publishRead(ctx, cid, newlyRead)
-	attsByMsg := s.attachmentsByMessage(ctx, ids)
+	minimal := req.GetBool("minimal", false)
+	var attsByMsg map[string][]gin.H
+	if !minimal {
+		attsByMsg = s.attachmentsByMessage(ctx, ids)
+	}
 	out := make([]gin.H, 0, len(rows))
 	for _, r := range rows {
+		// own posts are never "new" to their author
+		wasUnread := !readBefore[r.ID.String()] && r.AuthorAgentID != agent(ctx).ID
+		if minimal {
+			ex, tr := excerpt(r.Body, 200)
+			out = append(out, gin.H{
+				"id": r.ID, "conversation_id": r.ConversationID,
+				"excerpt": ex, "truncated": tr,
+				"created_at": r.CreatedAt.Time,
+				"author":     gin.H{"name": r.AuthorName, "kind": authorKind(db.GetMessageFullRow(r))},
+				"was_unread": wasUnread,
+			})
+			continue
+		}
 		m := messageJSON(db.GetMessageFullRow(r))
 		m["attachments"] = attsByMsg[r.ID.String()]
-		// own posts are never "new" to their author
-		m["was_unread"] = !readBefore[r.ID.String()] && r.AuthorAgentID != agent(ctx).ID
+		m["was_unread"] = wasUnread
 		out = append(out, m)
 	}
-	return jsonResult(out)
+	// next_before continues the page — the oldest row's id is the cursor.
+	res := gin.H{"messages": out}
+	if len(rows) == lim {
+		res["next_before"] = rows[len(rows)-1].ID.String()
+	}
+	return jsonResult(res)
 }
 
 func (s *Service) getMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	mid, err := uuidArg(req, "message_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	pid, err := s.q.ResolveMessageProject(ctx, mid)
 	if err != nil {
@@ -1185,7 +1608,7 @@ func (s *Service) getMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp
 func (s *Service) getAttachment(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	aid, err := uuidArg(req, "attachment_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	pid, err := s.q.ResolveAttachmentProject(ctx, aid)
 	if err != nil {
@@ -1402,7 +1825,7 @@ func (s *Service) uploadAttachment(ctx context.Context, req mcp.CallToolRequest)
 	}
 	pid, err := uuidArg(req, "project_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if err := s.scope(ctx, pid, "attachment:write"); err != nil {
 		return errResult(err)
@@ -1452,15 +1875,12 @@ func (s *Service) uploadAttachment(ctx context.Context, req mcp.CallToolRequest)
 func (s *Service) searchMessages(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	pid, err := uuidArg(req, "project_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if err := s.scope(ctx, pid, "message:read"); err != nil {
 		return errResult(err)
 	}
-	q, err := req.RequireString("query")
-	if err != nil {
-		return errResult(err)
-	}
+	q := strings.TrimSpace(req.GetString("query", ""))
 	lim := clampInt(req.GetInt("limit", 20), 1, 100)
 	sp := db.SearchMessagesInProjectParams{ProjectID: pid, Lim: int32(lim)}
 	var terms []string
@@ -1493,6 +1913,39 @@ func (s *Service) searchMessages(ctx context.Context, req mcp.CallToolRequest) (
 			terms = append(terms, tok)
 		}
 	}
+	// explicit args win over the inline operators
+	if v := strings.TrimSpace(req.GetString("author_name", "")); v != "" {
+		sp.Author = pgtype.Text{String: v, Valid: true}
+	}
+	if v := strings.ToLower(strings.TrimSpace(req.GetString("author_kind", ""))); v != "" {
+		if v != "user" && v != "agent" && v != "system" {
+			return mcp.NewToolResultError("invalid author_kind — user|agent|system"), nil
+		}
+		sp.AuthorKind = pgtype.Text{String: v, Valid: true}
+	}
+	if v := strings.TrimSpace(req.GetString("conversation_id", "")); v != "" {
+		var cid pgtype.UUID
+		if err := cid.Scan(v); err != nil || !cid.Valid {
+			return mcp.NewToolResultError("invalid conversation_id"), nil
+		}
+		sp.ConversationID = cid
+	}
+	for _, arg := range [][2]string{{"since", "after_ts"}, {"until", "before_ts"}} {
+		if v := strings.TrimSpace(req.GetString(arg[0], "")); v != "" {
+			ts, err := parseSearchDate(v)
+			if err != nil {
+				return mcp.NewToolResultError("bad " + arg[0] + " — use YYYY-MM-DD or RFC3339"), nil
+			}
+			if arg[0] == "since" {
+				sp.AfterTs = ts
+			} else {
+				sp.BeforeTs = ts
+			}
+		}
+	}
+	if b, ok := optionalBool(req, "has_attachments"); ok {
+		sp.HasAttachments = pgtype.Bool{Bool: b, Valid: true}
+	}
 	if rest := strings.Join(terms, " "); strings.TrimSpace(rest) != "" {
 		sp.Q = pgtype.Text{String: rest, Valid: true}
 	}
@@ -1500,22 +1953,53 @@ func (s *Service) searchMessages(ctx context.Context, req mcp.CallToolRequest) (
 	if err != nil {
 		return errResult(err)
 	}
+	total := 0
+	if len(rows) > 0 {
+		total = int(rows[0].Total)
+	}
+	minimal := req.GetBool("minimal", false)
 	out := make([]gin.H, 0, len(rows))
 	for _, r := range rows {
+		// excerpt centers on the first match; unmatched hits lead from the top
+		body := r.Body
+		needle := sp.Q.String
+		idx := -1
+		if needle != "" {
+			idx = strings.Index(strings.ToLower(body), strings.ToLower(needle))
+		}
+		if idx > 40 {
+			body = "…" + body[idx-40:]
+		}
+		ex, tr := excerpt(body, 200)
 		e := gin.H{
-			"id": r.ID, "conversation_id": r.ConversationID, "body": r.Body,
+			"id": r.ID, "conversation_id": r.ConversationID,
+			"excerpt": ex, "truncated": tr,
 			"created_at": r.CreatedAt.Time, "author_name": r.AuthorName,
 			"author_kind":       r.AuthorKindSnapshot,
 			"conversation_kind": r.ConversationKind,
-			"tags":              r.Tags,
 			"has_attachments":   r.HasAttachments,
+		}
+		if !minimal {
+			e["body"] = r.Body
+			e["tags"] = r.Tags
 		}
 		if r.ConversationTitle.Valid {
 			e["conversation_title"] = r.ConversationTitle.String
 		}
 		out = append(out, e)
 	}
-	return jsonResult(out)
+	return jsonResult(gin.H{"total": total, "results": out})
+}
+
+// optionalBool distinguishes "unset" from false — tri-state filters like
+// has_attachments need all three positions.
+func optionalBool(req mcp.CallToolRequest, name string) (bool, bool) {
+	v, ok := req.GetArguments()[name]
+	if !ok {
+		return false, false
+	}
+	b, ok := v.(bool)
+	return b, ok
 }
 
 // parseSearchDate accepts YYYY-MM-DD or full RFC3339 for the before:/after:
@@ -1532,7 +2016,7 @@ func parseSearchDate(v string) (pgtype.Timestamptz, error) {
 func (s *Service) listIssues(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	pid, err := uuidArg(req, "project_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if err := s.scope(ctx, pid, "issue:read"); err != nil {
 		return errResult(err)
@@ -1549,9 +2033,17 @@ func (s *Service) listIssues(ctx context.Context, req mcp.CallToolRequest) (*mcp
 		return errResult(err)
 	}
 	pKey, _ := s.projectKey(ctx, pid)
+	minimal := req.GetBool("minimal", false)
 	out := make([]gin.H, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, issueJSON(issueFromRow(r), r.AssigneeName, pKey))
+		j := issueJSON(issueFromRow(r), r.AssigneeName, pKey)
+		if minimal {
+			ex, tr := excerpt(r.Description, 200)
+			delete(j, "description")
+			j["excerpt"] = ex
+			j["truncated"] = tr
+		}
+		out = append(out, j)
 	}
 	return jsonResult(out)
 }
@@ -1568,7 +2060,7 @@ func issueFromRow(r db.ListProjectIssuesForAgentRow) db.Issue {
 func (s *Service) getIssue(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	iid, err := uuidArg(req, "issue_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	pid, err := s.q.ResolveIssueProject(ctx, iid)
 	if err != nil {
@@ -1582,12 +2074,19 @@ func (s *Service) getIssue(ctx context.Context, req mcp.CallToolRequest) (*mcp.C
 		return errResult(err)
 	}
 	pKey, _ := s.projectKey(ctx, pid)
-	return jsonResult(issueJSON(db.Issue{
+	out := issueJSON(db.Issue{
 		ID: r.ID, ProjectID: r.ProjectID, Number: r.Number, Title: r.Title,
 		Description: r.Description, Status: r.Status, Priority: r.Priority,
 		AssigneeID: r.AssigneeID, AgentID: r.AgentID, CreatedBy: r.CreatedBy,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-	}, r.AssigneeName, pKey))
+	}, r.AssigneeName, pKey)
+	if req.GetBool("minimal", false) {
+		ex, tr := excerpt(r.Description, 200)
+		delete(out, "description")
+		out["excerpt"] = ex
+		out["truncated"] = tr
+	}
+	return jsonResult(out)
 }
 
 func (s *Service) projectKey(ctx context.Context, pid pgtype.UUID) (string, error) {
@@ -1659,12 +2158,31 @@ func (s *Service) sendMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 		if err := s.scope(ctx, pid, "message:write"); err != nil {
 			return errResult(err)
 		}
+	} else if v := req.GetString("reply_to", ""); v != "" {
+		// reply_to alone routes: resolve parent → its conversation → its
+		// project → scope. One error for missing and ungranted so the id
+		// can't be enumerated.
+		var p pgtype.UUID
+		if err := p.Scan(v); err != nil || !p.Valid {
+			return mcp.NewToolResultError("invalid reply_to"), nil
+		}
+		parentMsg, err := s.q.GetMessageByID(ctx, p)
+		if err != nil || parentMsg.DeletedAt.Valid {
+			return mcp.NewToolResultError("reply_to not found or not granted"), nil
+		}
+		cid = parentMsg.ConversationID
+		if pid, err = s.q.ResolveConversationProject(ctx, cid); err != nil {
+			return mcp.NewToolResultError("reply_to not found or not granted"), nil
+		}
+		if err := s.scope(ctx, pid, "message:write"); err != nil {
+			return mcp.NewToolResultError("reply_to not found or not granted"), nil
+		}
 	} else {
 		return mcp.NewToolResultError("conversation_id or project_id required"), nil
 	}
 	body, err := req.RequireString("body")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if strings.TrimSpace(body) == "" || len(body) > conversations.MaxMessageBodyChars {
 		return mcp.NewToolResultError("body is empty or too large"), nil
@@ -1724,11 +2242,36 @@ func (s *Service) sendMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 		}
 		meta = []byte(v)
 	}
+	var clientMsgID pgtype.Text
+	if v := strings.TrimSpace(req.GetString("client_msg_id", "")); v != "" {
+		if len(v) > 200 {
+			return mcp.NewToolResultError("client_msg_id too long (200 chars max)"), nil
+		}
+		clientMsgID = pgtype.Text{String: v, Valid: true}
+	}
 	id, err := s.q.CreateAgentMessage(ctx, db.CreateAgentMessageParams{
 		ConversationID: cid, AgentID: agent(ctx).ID, Body: body, ParentID: parent,
 		Mentions: mj, Tags: tags, Silent: silent, Meta: meta,
+		ClientMsgID: clientMsgID,
 	})
 	if err != nil {
+		// a repeat submit with the same client_msg_id no-ops in SQL —
+		// return the original row instead of double-posting.
+		if clientMsgID.Valid && errors.Is(err, pgx.ErrNoRows) {
+			existing, lerr := s.q.GetMessageIDByClientMsgID(ctx, db.GetMessageIDByClientMsgIDParams{
+				ConversationID: cid, ClientMsgID: clientMsgID,
+			})
+			if lerr != nil {
+				return errResult(lerr)
+			}
+			m, gerr := s.q.GetMessageFull(ctx, existing)
+			if gerr != nil {
+				return errResult(gerr)
+			}
+			out := s.messageJSONFull(ctx, m)
+			out["deduplicated"] = true
+			return jsonResult(out)
+		}
 		return errResult(err)
 	}
 	for i, aid := range attIDs {
@@ -1766,14 +2309,14 @@ func (s *Service) sendMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 func (s *Service) createIssue(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	pid, err := uuidArg(req, "project_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if err := s.scope(ctx, pid, "issue:write"); err != nil {
 		return errResult(err)
 	}
 	title, err := req.RequireString("title")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if strings.TrimSpace(title) == "" || len(title) > 200 {
 		return mcp.NewToolResultError("title must be 1..200 chars"), nil
@@ -1805,7 +2348,7 @@ func (s *Service) createIssue(ctx context.Context, req mcp.CallToolRequest) (*mc
 func (s *Service) updateIssue(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	iid, err := uuidArg(req, "issue_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	pid, err := s.q.ResolveIssueProject(ctx, iid)
 	if err != nil {
@@ -1844,7 +2387,7 @@ func (s *Service) updateIssue(ctx context.Context, req mcp.CallToolRequest) (*mc
 func (s *Service) editMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	mid, err := uuidArg(req, "message_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	pid, err := s.q.ResolveMessageProject(ctx, mid)
 	if err != nil {
@@ -1862,7 +2405,7 @@ func (s *Service) editMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 	}
 	body, err := req.RequireString("body")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if strings.TrimSpace(body) == "" || len(body) > conversations.MaxMessageBodyChars {
 		return mcp.NewToolResultError("body is empty or too large"), nil
@@ -1886,7 +2429,7 @@ func (s *Service) editMessage(ctx context.Context, req mcp.CallToolRequest) (*mc
 func (s *Service) deleteMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	mid, err := uuidArg(req, "message_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	pid, err := s.q.ResolveMessageProject(ctx, mid)
 	if err != nil {
@@ -2046,7 +2589,7 @@ func (s *Service) postThreadNotice(ctx context.Context, parentConvID, threadID p
 func (s *Service) createThread(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	mid, err := uuidArg(req, "message_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	pid, err := s.q.ResolveMessageProject(ctx, mid)
 	if err != nil {
@@ -2073,16 +2616,16 @@ func (s *Service) createThread(ctx context.Context, req mcp.CallToolRequest) (*m
 func (s *Service) requestInput(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	mid, err := uuidArg(req, "message_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	who, err := req.RequireString("user")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	who = strings.TrimSpace(strings.TrimPrefix(who, "@"))
 	question, err := req.RequireString("question")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	question = strings.TrimSpace(question)
 	if who == "" || question == "" {
@@ -2160,7 +2703,7 @@ func (s *Service) requestInput(ctx context.Context, req mcp.CallToolRequest) (*m
 func (s *Service) resolveInput(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	mid, err := uuidArg(req, "message_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	pid, err := s.q.ResolveMessageProject(ctx, mid)
 	if err != nil {
@@ -2216,7 +2759,7 @@ func (s *Service) resolveInput(ctx context.Context, req mcp.CallToolRequest) (*m
 func (s *Service) workStart(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	pid, err := uuidArg(req, "project_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if err := s.scope(ctx, pid, "message:write"); err != nil {
 		return errResult(err)
@@ -2273,7 +2816,7 @@ func (s *Service) workStart(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 func (s *Service) workStop(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	mid, err := uuidArg(req, "message_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	pid, err := s.q.ResolveMessageProject(ctx, mid)
 	if err != nil {
@@ -2324,7 +2867,7 @@ func (s *Service) workStop(ctx context.Context, req mcp.CallToolRequest) (*mcp.C
 func (s *Service) pinMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	mid, err := uuidArg(req, "message_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	pid, err := s.q.ResolveMessageProject(ctx, mid)
 	if err != nil {
@@ -2387,11 +2930,11 @@ func (s *Service) listPins(ctx context.Context, req mcp.CallToolRequest) (*mcp.C
 func (s *Service) forwardMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	mid, err := uuidArg(req, "message_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	tid, err := uuidArg(req, "project_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	src, err := s.q.GetMessageFull(ctx, mid)
 	if err != nil || src.DeletedAt.Valid {
@@ -2447,7 +2990,7 @@ func (s *Service) forwardMessage(ctx context.Context, req mcp.CallToolRequest) (
 func (s *Service) reactToMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	mid, err := uuidArg(req, "message_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	pid, err := s.q.ResolveMessageProject(ctx, mid)
 	if err != nil {
@@ -2458,7 +3001,7 @@ func (s *Service) reactToMessage(ctx context.Context, req mcp.CallToolRequest) (
 	}
 	emoji, err := req.RequireString("emoji")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	emoji = strings.TrimSpace(emoji)
 	if emoji == "" || len(emoji) > 32 {
@@ -2539,7 +3082,7 @@ func (s *Service) setAvatar(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 func (s *Service) markRead(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	mid, err := uuidArg(req, "message_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	pid, err := s.q.ResolveMessageProject(ctx, mid)
 	if err != nil {
@@ -2570,10 +3113,18 @@ func (s *Service) markRead(ctx context.Context, req mcp.CallToolRequest) (*mcp.C
 // `relay-cli whoami` for MCP-native clients.
 func (s *Service) whoami(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	a := agent(ctx)
+	names := make([]string, 0, len(s.tools))
+	for _, t := range s.tools {
+		names = append(names, t.Name)
+	}
+	sort.Strings(names)
 	out := gin.H{
 		"id": a.ID, "name": a.Name, "slug": a.Slug,
 		"review_mode": a.ReviewMode, "grant_all": a.GrantAll,
 		"grant_scopes": a.GrantScopes,
+		"server_version": s.version,
+		// the registered tool list — feature-detect instead of guessing names
+		"capabilities": names,
 	}
 	if ws, err := s.q.GetWorkspaceByID(ctx, a.WorkspaceID); err == nil {
 		out["workspace"] = gin.H{"id": ws.ID, "name": ws.Name, "slug": ws.Slug}
@@ -2592,8 +3143,9 @@ func (s *Service) whoami(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallT
 
 // activity mirrors GET /api/me/activity for agents — open issues, GitHub PRs
 // and fresh messages across every granted project in one call.
-func (s *Service) activity(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Service) activity(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	a := agent(ctx)
+	minimal := req.GetBool("minimal", false)
 	issues := []gin.H{}
 	prs := []gin.H{}
 	if rows, err := s.q.ListGrantedOpenIssues(ctx, a.ID); err == nil {
@@ -2614,13 +3166,21 @@ func (s *Service) activity(ctx context.Context, _ mcp.CallToolRequest) (*mcp.Cal
 	msgs := []gin.H{}
 	if rows, err := s.q.ListGrantedRecentMessages(ctx, a.ID); err == nil {
 		for _, m := range rows {
-			msgs = append(msgs, gin.H{
+			e := gin.H{
 				"id": m.ID, "conversation_id": m.ConversationID,
-				"body": m.Body, "created_at": m.CreatedAt.Time,
+				"created_at": m.CreatedAt.Time,
 				"conversation_kind": m.ConversationKind,
 				"project":           gin.H{"id": m.ProjectID, "key": m.ProjectKey, "name": m.ProjectName},
 				"author":            gin.H{"name": m.AuthorName, "kind": m.AuthorKind},
-			})
+			}
+			if minimal {
+				ex, tr := excerpt(m.Body, 200)
+				e["excerpt"] = ex
+				e["truncated"] = tr
+			} else {
+				e["body"] = m.Body
+			}
+			msgs = append(msgs, e)
 		}
 	}
 	return jsonResult(gin.H{
@@ -2633,7 +3193,7 @@ func (s *Service) activity(ctx context.Context, _ mcp.CallToolRequest) (*mcp.Cal
 func (s *Service) listMentionables(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	pid, err := uuidArg(req, "project_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if err := s.scope(ctx, pid, "project:read"); err != nil {
 		return errResult(err)
@@ -2774,17 +3334,40 @@ func (s *Service) ghListPRs(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 	if err != nil {
 		return errResult(err)
 	}
+	wantState := strings.ToLower(strings.TrimSpace(req.GetString("state", "open")))
+	state := wantState
+	switch state {
+	case "open", "closed", "all":
+	case "merged":
+		// GitHub's API has no merged state — closed + merged_at filter below
+		state = "closed"
+	default:
+		return mcp.NewToolResultError("invalid state — open|closed|merged|all"), nil
+	}
+	author := strings.ToLower(strings.TrimSpace(req.GetString("author", "")))
+	query := strings.ToLower(strings.TrimSpace(req.GetString("q", "")))
 	cli, err := s.ghClient(ctx)
 	if err != nil {
 		return errResult(err)
 	}
-	prs, err := cli.ListPRs(ctx, r.InstallationID, r.Owner, r.Name)
+	prs, err := cli.ListPRsWithState(ctx, r.InstallationID, r.Owner, r.Name, state)
 	if err != nil {
 		return errResult(err)
 	}
+	wantMerged := wantState == "merged"
 	full := r.Owner + "/" + r.Name
 	out := make([]gin.H, 0, len(prs))
 	for _, p := range prs {
+		if wantMerged && p.MergedAt == nil && !p.Merged {
+			continue
+		}
+		if author != "" && strings.ToLower(p.User.Login) != author {
+			continue
+		}
+		if query != "" && !strings.Contains(strings.ToLower(p.Title), query) &&
+			!strings.Contains(strings.ToLower(p.Body), query) {
+			continue
+		}
 		out = append(out, ghPRJSON(p, full))
 	}
 	return jsonResult(out)
@@ -3058,7 +3641,7 @@ func todoOut(t db.ListTodosRow) gin.H {
 func (s *Service) todoList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	pid, err := uuidArg(req, "project_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if err := s.scope(ctx, pid, "issue:read"); err != nil {
 		return errResult(err)
@@ -3077,11 +3660,11 @@ func (s *Service) todoList(ctx context.Context, req mcp.CallToolRequest) (*mcp.C
 func (s *Service) todoAdd(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	pid, err := uuidArg(req, "project_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	content, err := req.RequireString("content")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if err := s.scope(ctx, pid, "issue:write"); err != nil {
 		return errResult(err)
@@ -3178,7 +3761,7 @@ func (s *Service) todoDelete(ctx context.Context, req mcp.CallToolRequest) (*mcp
 func (s *Service) todoSync(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	pid, err := uuidArg(req, "project_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if err := s.scope(ctx, pid, "issue:write"); err != nil {
 		return errResult(err)
@@ -3411,14 +3994,14 @@ func mcpReviewJSON(r db.GetReviewRow) gin.H {
 func (s *Service) submitReview(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	pid, err := uuidArg(req, "project_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if err := s.scope(ctx, pid, "review:write"); err != nil {
 		return errResult(err)
 	}
 	title, err := req.RequireString("title")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	title = strings.TrimSpace(title)
 	if len(title) == 0 || len(title) > 200 {
@@ -3426,7 +4009,7 @@ func (s *Service) submitReview(ctx context.Context, req mcp.CallToolRequest) (*m
 	}
 	summary, err := req.RequireString("summary")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if len(summary) > 20000 {
 		return errResult(errors.New("summary exceeds 20KB"))
@@ -3534,7 +4117,7 @@ func (s *Service) getReview(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 func (s *Service) listReviews(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	pid, err := uuidArg(req, "project_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if err := s.scope(ctx, pid, "review:read"); err != nil {
 		return errResult(err)
@@ -3627,7 +4210,7 @@ func (s *Service) localRoot(ctx context.Context, pid pgtype.UUID) (string, error
 func (s *Service) listProjectFiles(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	pid, err := uuidArg(req, "project_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if err := s.scope(ctx, pid, "file:read"); err != nil {
 		return errResult(err)
@@ -3666,7 +4249,7 @@ func (s *Service) listProjectFiles(ctx context.Context, req mcp.CallToolRequest)
 func (s *Service) readProjectFile(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	pid, err := uuidArg(req, "project_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if err := s.scope(ctx, pid, "file:read"); err != nil {
 		return errResult(err)
@@ -3722,7 +4305,7 @@ func (s *Service) briefPolicyFor(ctx context.Context, pid pgtype.UUID) string {
 func (s *Service) getBriefPolicy(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	pid, err := uuidArg(req, "project_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if err := s.scope(ctx, pid, "project:read"); err != nil {
 		return errResult(err)
@@ -3733,7 +4316,7 @@ func (s *Service) getBriefPolicy(ctx context.Context, req mcp.CallToolRequest) (
 func (s *Service) listBriefs(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	pid, err := uuidArg(req, "project_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if err := s.scope(ctx, pid, "brief:read"); err != nil {
 		return errResult(err)
@@ -3763,7 +4346,7 @@ func (s *Service) listBriefs(ctx context.Context, req mcp.CallToolRequest) (*mcp
 func (s *Service) getBrief(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	bid, err := uuidArg(req, "brief_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	b, err := s.q.GetBrief(ctx, bid)
 	if err != nil {
@@ -3783,7 +4366,7 @@ func (s *Service) getBrief(ctx context.Context, req mcp.CallToolRequest) (*mcp.C
 func (s *Service) createBrief(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	pid, err := uuidArg(req, "project_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if err := s.scope(ctx, pid, "brief:write"); err != nil {
 		return errResult(err)
@@ -3793,7 +4376,7 @@ func (s *Service) createBrief(ctx context.Context, req mcp.CallToolRequest) (*mc
 	}
 	title, err := req.RequireString("title")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if t := strings.TrimSpace(title); t == "" || len(t) > 200 {
 		return mcp.NewToolResultError("title must be 1..200 chars"), nil
@@ -3841,7 +4424,7 @@ func (s *Service) createBrief(ctx context.Context, req mcp.CallToolRequest) (*mc
 func (s *Service) updateBrief(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	bid, err := uuidArg(req, "brief_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	b, err := s.q.GetBrief(ctx, bid)
 	if err != nil {
@@ -3890,7 +4473,7 @@ func issueKey(projectKey string, number pgtype.Int4) string {
 func (s *Service) deleteBrief(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	bid, err := uuidArg(req, "brief_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	b, err := s.q.GetBrief(ctx, bid)
 	if err != nil {
@@ -3931,7 +4514,7 @@ func ideaJSONMCP(i db.Idea, projectKey, authorName string) gin.H {
 func (s *Service) listIdeas(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	pid, err := uuidArg(req, "project_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if err := s.scope(ctx, pid, "brief:read"); err != nil {
 		return errResult(err)
@@ -3954,7 +4537,7 @@ func (s *Service) listIdeas(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 func (s *Service) getIdea(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	id, err := uuidArg(req, "idea_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	i, err := s.q.GetIdea(ctx, id)
 	if err != nil {
@@ -3973,14 +4556,14 @@ func (s *Service) getIdea(ctx context.Context, req mcp.CallToolRequest) (*mcp.Ca
 func (s *Service) createIdea(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	pid, err := uuidArg(req, "project_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if err := s.scope(ctx, pid, "brief:write"); err != nil {
 		return errResult(err)
 	}
 	title, err := req.RequireString("title")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	if t := strings.TrimSpace(title); t == "" || len(t) > 200 {
 		return mcp.NewToolResultError("title must be 1..200 chars"), nil
@@ -4014,7 +4597,7 @@ func (s *Service) createIdea(ctx context.Context, req mcp.CallToolRequest) (*mcp
 func (s *Service) updateIdea(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	id, err := uuidArg(req, "idea_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	i, err := s.q.GetIdea(ctx, id)
 	if err != nil {
@@ -4056,7 +4639,7 @@ func (s *Service) updateIdea(ctx context.Context, req mcp.CallToolRequest) (*mcp
 func (s *Service) deleteIdea(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	id, err := uuidArg(req, "idea_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	i, err := s.q.GetIdea(ctx, id)
 	if err != nil {
@@ -4074,7 +4657,7 @@ func (s *Service) deleteIdea(ctx context.Context, req mcp.CallToolRequest) (*mcp
 func (s *Service) ideaToIssue(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	id, err := uuidArg(req, "idea_id")
 	if err != nil {
-		return errResult(err)
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	i, err := s.q.GetIdea(ctx, id)
 	if err != nil {
