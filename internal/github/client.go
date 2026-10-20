@@ -342,13 +342,23 @@ func (c *Client) ListIssuesAll(ctx context.Context, installID int64, owner, repo
 
 // ListIssues is the dev-panel call: open issues only, first page, cheap.
 func (c *Client) ListIssues(ctx context.Context, installID int64, owner, repo string) ([]GHIssue, error) {
+	return c.ListIssuesWithState(ctx, installID, owner, repo, "open")
+}
+
+// ListIssuesWithState honors GitHub's state param (open|closed|all) —
+// mirrors ListPRsWithState; the issues endpoint still returns PRs, so
+// those are folded out client-side.
+func (c *Client) ListIssuesWithState(ctx context.Context, installID int64, owner, repo, state string) ([]GHIssue, error) {
+	if state != "open" && state != "closed" && state != "all" {
+		state = "open"
+	}
 	tok, err := c.installationToken(ctx, installID)
 	if err != nil {
 		return nil, err
 	}
 	var out []GHIssue
 	err = c.do(ctx, "GET",
-		fmt.Sprintf("%s/repos/%s/%s/issues?state=open&per_page=50", apiBase, owner, repo),
+		fmt.Sprintf("%s/repos/%s/%s/issues?state=%s&per_page=50", apiBase, owner, repo, state),
 		tok, nil, &out)
 	if err != nil {
 		return nil, err
