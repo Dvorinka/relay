@@ -2296,3 +2296,493 @@ func TestChannelsAndExpiry(t *testing.T) {
 		t.Fatalf("channel still listed after delete: %v", list)
 	}
 }
+
+// MCP agent ergonomics: reply alias + reply_to routing, validation-error
+// text, annotations, minimal/cursor reads, inbox, await_message delivery,
+// and client_msg_id dedupe — the surface agents actually drive.
+func TestMCPAgentSurface(t *testing.T) {
+	dsn := os.Getenv("RELAY_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("RELAY_TEST_DATABASE_URL unset")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	goose.SetBaseFS(relaydb.MigrationsFS)
+	if err := goose.SetDialect("postgres"); err != nil {
+		t.Fatal(err)
+	}
+	if err := goose.UpContext(ctx, stdlib.OpenDBFromPool(pool), "migrations"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "delete from rate_limits"); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Config{
+		DatabaseURL:     dsn,
+		AuthSecret:      "test-secret-test-secret-test-secret",
+		InsecureDev:     true,
+		SessionTTLHours: 1,
+	}
+	srv := httptest.NewServer(New(cfg, zap.NewNop(), pool, "test"))
+	defer srv.Close()
+	c := &e2eClient{t: t, base: srv.URL}
+
+	code, _ := c.call("POST", "/api/auth/register",
+		fmt.Sprintf(`{"email":"surf-%d@relay.dev","password":"surfpass12345","name":"Surf"}`,
+			time.Now().UnixNano()))
+	if code != 201 && code != 200 {
+		t.Fatal("register")
+	}
+	code, ws := c.call("POST", "/api/workspaces", `{"name":"Surf WS"}`)
+	if code != 201 && code != 200 {
+		t.Fatal("workspace")
+	}
+	wsID := ws["id"].(string)
+	code, proj := c.call("POST", "/api/projects",
+		fmt.Sprintf(`{"workspace_id":%q,"key":"SURF","name":"Surf Lab"}`, wsID))
+	if code != 201 && code != 200 {
+		t.Fatal("project")
+	}
+	projID := proj["id"].(string)
+
+	code, agent := c.call("POST", "/api/workspaces/"+wsID+"/agents",
+		`{"name":"Surf Bot","review_mode":"notify"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("agent: %d %v", code, agent)
+	}
+	agentID := agent["id"].(string)
+	slug, _ := agent["slug"].(string)
+	code, _ = c.call("PUT", fmt.Sprintf("/api/agents/%s/projects/%s", agentID, projID),
+		`{"scopes":["project:read","message:read","message:write","issue:read"]}`)
+	if code != 200 {
+		t.Fatalf("grant: %d", code)
+	}
+	// second project, also granted — cross-conversation reply_to test fodder
+	code, proj2 := c.call("POST", "/api/projects",
+		fmt.Sprintf(`{"workspace_id":%q,"key":"SR2","name":"Surf Lab 2"}`, wsID))
+	if code != 201 && code != 200 {
+		t.Fatal("project 2")
+	}
+	proj2ID := proj2["id"].(string)
+	code, _ = c.call("PUT", fmt.Sprintf("/api/agents/%s/projects/%s", agentID, proj2ID),
+		`{"scopes":["project:read","message:read","message:write"]}`)
+	if code != 200 {
+		t.Fatalf("grant2: %d", code)
+	}
+	code, tok := c.call("POST", fmt.Sprintf("/api/agents/%s/tokens", agentID), `{"name":"e2e"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("mint: %d %v", code, tok)
+	}
+	token := tok["token"].(string)
+
+	sid, _ := c.mcp(token, "", "1", "initialize",
+		`{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"e2e","version":"0"}}`)
+	if sid == "" {
+		t.Fatal("no mcp session id")
+	}
+	req, _ := http.NewRequest("POST", srv.URL+"/mcp",
+		strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/initialized"}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Mcp-Session-Id", sid)
+	req.Header.Set("Content-Type", "application/json")
+	_, _ = http.DefaultClient.Do(req)
+
+	toolText := func(env map[string]any) string {
+		result, _ := env["result"].(map[string]any)
+		content, _ := result["content"].([]any)
+		if len(content) == 0 {
+			return ""
+		}
+		m, _ := content[0].(map[string]any)
+		s, _ := m["text"].(string)
+		return s
+	}
+	callTool := func(id, name, args string) map[string]any {
+		_, env := c.mcp(token, sid, id, "tools/call",
+			fmt.Sprintf(`{"name":%q,"arguments":%s}`, name, args))
+		return env
+	}
+	// toolJSON decodes a tool result whether jsonResult emitted an object
+	// or a bare array — structuredContent mirrors the content text either way.
+	toolJSON := func(env map[string]any) any {
+		result, _ := env["result"].(map[string]any)
+		if sc := result["structuredContent"]; sc != nil {
+			return sc
+		}
+		content, _ := result["content"].([]any)
+		if len(content) == 0 {
+			return nil
+		}
+		var parsed any
+		_ = json.Unmarshal([]byte(content[0].(map[string]any)["text"].(string)), &parsed)
+		return parsed
+	}
+	toolMap := func(env map[string]any) map[string]any {
+		m, _ := toolJSON(env).(map[string]any)
+		return m
+	}
+	toolList := func(env map[string]any) []any {
+		l, _ := toolJSON(env).([]any)
+		return l
+	}
+
+	// user posts the first message via REST
+	code, conv := c.call("GET", "/api/projects/"+projID+"/conversation", "")
+	if code != 200 {
+		t.Fatalf("conversation: %d %v", code, conv)
+	}
+	convID := conv["id"].(string)
+	longBody := strings.Repeat("Dependabot bumps a dependency with a very long changelog. ", 8)
+	code, m1 := c.call("POST", "/api/conversations/"+convID+"/messages",
+		fmt.Sprintf(`{"body":%q}`, longBody))
+	if code != 201 && code != 200 {
+		t.Fatalf("post: %d %v", code, m1)
+	}
+	msgU := m1["id"].(string)
+
+	// --- tools/list: reply exists; annotations reflect behavior ---
+	_, env := c.mcp(token, sid, "2", "tools/list", `{}`)
+	tools, _ := env["result"].(map[string]any)["tools"].([]any)
+	anns := map[string]map[string]any{}
+	for _, t00 := range tools {
+		tm := t00.(map[string]any)
+		anns[tm["name"].(string)] = tm["annotations"].(map[string]any)
+	}
+	if anns["reply"] == nil {
+		t.Fatal("reply alias not registered")
+	}
+	for _, name := range []string{"get_messages", "activity", "list_unread", "whoami", "await_review", "await_message", "inbox", "search_messages", "list_issues"} {
+		a := anns[name]
+		if a == nil || a["readOnlyHint"] != true || a["destructiveHint"] == true {
+			t.Fatalf("%s annotations = %v, want readOnly+non-destructive", name, a)
+		}
+	}
+	for _, name := range []string{"delete_message", "todo_delete", "delete_idea"} {
+		if anns[name]["destructiveHint"] != true {
+			t.Fatalf("%s should be destructive: %v", name, anns[name])
+		}
+	}
+	if anns["send_message"]["destructiveHint"] == true ||
+		anns["idea_to_issue"]["destructiveHint"] == true {
+		t.Fatal("write/transform tools mislabeled destructive")
+	}
+
+	// --- a bogus tool name is a protocol error, not a transport failure ---
+	_, env = c.mcp(token, sid, "3", "tools/call",
+		`{"name":"nonexistent_tool","arguments":{}}`)
+	errObj, _ := env["error"].(map[string]any)
+	if errObj == nil {
+		t.Fatalf("bogus tool produced no JSON-RPC error: %v", env)
+	}
+	if msg, _ := errObj["message"].(string); !strings.Contains(strings.ToLower(msg), "tool") {
+		t.Fatalf("bogus tool error = %v", errObj)
+	}
+
+	// --- validation errors surface verbatim ---
+	env = callTool("4", "get_message", `{"message_id":"x"}`)
+	if got := toolText(env); got != "invalid message_id" {
+		t.Fatalf("get_message bad id = %q", got)
+	}
+	env = callTool("41", "send_message", fmt.Sprintf(`{"conversation_id":%q}`, convID))
+	if got := toolText(env); !strings.Contains(got, "body") {
+		t.Fatalf("missing body error = %q", got)
+	}
+
+	// --- reply alias posts as child of reply_to with no conversation_id ---
+	env = callTool("5", "reply",
+		fmt.Sprintf(`{"body":"alias reply","reply_to":%q}`, msgU))
+	r1 := toolMap(env)
+	if p, _ := r1["parent"].(map[string]any); p["id"] != msgU {
+		t.Fatalf("reply alias parent = %v", r1["parent"])
+	}
+	// --- send_message infers conversation_id from reply_to ---
+	env = callTool("6", "send_message",
+		fmt.Sprintf(`{"body":"inferred reply","reply_to":%q}`, msgU))
+	r2 := toolMap(env)
+	if p, _ := r2["parent"].(map[string]any); p["id"] != msgU {
+		t.Fatalf("inferred reply parent = %v", r2["parent"])
+	}
+	if r2["conversation_id"] != convID {
+		t.Fatalf("inferred conversation = %v, want %s", r2["conversation_id"], convID)
+	}
+	// explicit conversation + foreign reply_to must still be rejected
+	code, conv2 := c.call("GET", "/api/projects/"+proj2ID+"/conversation", "")
+	if code != 200 {
+		t.Fatalf("conversation2: %d", code)
+	}
+	code, mB := c.call("POST", "/api/conversations/"+conv2["id"].(string)+"/messages",
+		`{"body":"other project message"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("post2: %d %v", code, mB)
+	}
+	env = callTool("7", "send_message",
+		fmt.Sprintf(`{"conversation_id":%q,"body":"cross","reply_to":%q}`, convID, mB["id"]))
+	if got := toolText(env); !strings.Contains(got, "not a message in this conversation") {
+		t.Fatalf("cross-conversation reply_to = %q", got)
+	}
+	// reply_to an ungranted/deleted message → the anti-enumeration text
+	env = callTool("8", "send_message",
+		`{"body":"ghost","reply_to":"00000000-0000-0000-0000-000000000000"}`)
+	if got := toolText(env); got != "reply_to not found or not granted" {
+		t.Fatalf("missing reply_to = %q", got)
+	}
+
+	// --- client_msg_id dedupes a retried send ---
+	ck := fmt.Sprintf("e2e-dedupe-%d", time.Now().UnixNano())
+	args := fmt.Sprintf(`{"conversation_id":%q,"body":"idempotent post","client_msg_id":%q}`, convID, ck)
+	env = callTool("9", "send_message", args)
+	d1 := toolMap(env)
+	env = callTool("10", "send_message", args)
+	d2 := toolMap(env)
+	if d1["id"] != d2["id"] || d2["deduplicated"] != true {
+		t.Fatalf("client_msg_id dedupe failed: %v vs %v", d1["id"], d2)
+	}
+	var rowCount int
+	if err := pool.QueryRow(ctx,
+		"select count(*) from messages where client_msg_id = $1 and conversation_id = $2",
+		ck, convID).Scan(&rowCount); err != nil {
+		t.Fatal(err)
+	}
+	if rowCount != 1 {
+		t.Fatalf("dedupe wrote %d rows", rowCount)
+	}
+
+	// --- get_messages: wrapped shape, cursor, filters, minimal ---
+	env = callTool("11", "get_messages",
+		fmt.Sprintf(`{"conversation_id":%q,"limit":2}`, convID))
+	gm := toolMap(env)
+	msgs, _ := gm["messages"].([]any)
+	if len(msgs) != 2 || gm["next_before"] == nil {
+		t.Fatalf("get_messages page1 = %v", gm)
+	}
+	nb := gm["next_before"].(string)
+	env = callTool("12", "get_messages",
+		fmt.Sprintf(`{"conversation_id":%q,"before":%q,"limit":50}`, convID, nb))
+	page2 := toolMap(env)["messages"].([]any)
+	for _, mm := range page2 {
+		if mm.(map[string]any)["id"] == msgs[0].(map[string]any)["id"] {
+			t.Fatal("cursor page overlaps page 1")
+		}
+	}
+	env = callTool("13", "get_messages",
+		fmt.Sprintf(`{"conversation_id":%q,"author_kind":"user"}`, convID))
+	for _, mm := range toolMap(env)["messages"].([]any) {
+		au := mm.(map[string]any)["author"].(map[string]any)
+		if au["kind"] != "user" {
+			t.Fatalf("author_kind filter leaked %v", au)
+		}
+	}
+	env = callTool("14", "get_messages",
+		fmt.Sprintf(`{"conversation_id":%q,"minimal":true}`, convID))
+	for _, mm := range toolMap(env)["messages"].([]any) {
+		m := mm.(map[string]any)
+		if m["body"] != nil || m["excerpt"] == nil {
+			t.Fatalf("minimal row shape = %v", m)
+		}
+	}
+	// unread_only: the agent read everything above; a fresh user post is the
+	// only unread row
+	code, mR := c.call("POST", "/api/conversations/"+convID+"/messages",
+		`{"body":"fresh user reply"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("post mR: %d", code)
+	}
+	env = callTool("15", "get_messages",
+		fmt.Sprintf(`{"conversation_id":%q,"unread_only":true}`, convID))
+	ur := toolMap(env)["messages"].([]any)
+	if len(ur) != 1 || ur[0].(map[string]any)["id"] != mR["id"] {
+		t.Fatalf("unread_only = %v", ur)
+	}
+
+	// --- list_conversations: last-message fields + count ---
+	env = callTool("16", "list_conversations", fmt.Sprintf(`{"project_id":%q}`, projID))
+	var convRow map[string]any
+	for _, rr := range toolList(env) {
+		if r := rr.(map[string]any); r["id"] == convID {
+			convRow = r
+		}
+	}
+	if convRow == nil {
+		t.Fatalf("conversation row missing in %v", toolJSON(env))
+	}
+	if convRow["last_message_at"] == nil || convRow["message_count"] == nil ||
+		convRow["last_message_excerpt"] == nil {
+		t.Fatalf("list_conversations row = %v", convRow)
+	}
+
+	// --- list_unread: scoped to one project, latest excerpt present ---
+	// (a fresh user post — the unread_only fetch above read mR as a receipt)
+	code, mU := c.call("POST", "/api/conversations/"+convID+"/messages",
+		`{"body":"second unread"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("post mU: %d", code)
+	}
+	env = callTool("17", "list_unread", fmt.Sprintf(`{"project_id":%q}`, projID))
+	lu := toolMap(env)
+	var uRow map[string]any
+	for _, rr := range lu["unread"].([]any) {
+		if r := rr.(map[string]any); r["id"] == convID {
+			uRow = r
+		}
+	}
+	if uRow == nil {
+		t.Fatalf("unread row missing: %v", lu)
+	}
+	if latest, _ := uRow["latest_unread"].(map[string]any); latest == nil ||
+		latest["message_id"] != mU["id"] || latest["excerpt"] == nil {
+		t.Fatalf("latest_unread = %v", uRow["latest_unread"])
+	}
+	// ungranted scope refuses
+	env = callTool("18", "list_unread",
+		`{"project_id":"00000000-0000-0000-0000-000000000000"}`)
+	if got := toolText(env); !strings.Contains(got, "not granted") &&
+		!strings.Contains(got, "no grant") && !strings.Contains(got, "missing scope") {
+		t.Fatalf("ungranted list_unread = %q", got)
+	}
+
+	// --- activity minimal: excerpts, no body key ---
+	env = callTool("19", "activity", `{"minimal":true}`)
+	act := toolMap(env)
+	for _, mm := range act["recent_messages"].([]any) {
+		m := mm.(map[string]any)
+		if m["body"] != nil || m["excerpt"] == nil {
+			t.Fatalf("activity minimal row = %v", m)
+		}
+	}
+
+	// --- search_messages: total + excerpt + filters ---
+	env = callTool("20", "search_messages",
+		fmt.Sprintf(`{"project_id":%q,"query":"idempotent"}`, projID))
+	sr := toolMap(env)
+	if sr["total"].(float64) != 1 {
+		t.Fatalf("search total = %v", sr)
+	}
+	hit := sr["results"].([]any)[0].(map[string]any)
+	if hit["excerpt"] == nil {
+		t.Fatalf("search hit lacks excerpt: %v", hit)
+	}
+	env = callTool("21", "search_messages",
+		fmt.Sprintf(`{"project_id":%q,"query":"idempotent","author_kind":"user"}`, projID))
+	if toolMap(env)["total"].(float64) != 0 {
+		t.Fatal("author_kind=user matched an agent message")
+	}
+	env = callTool("22", "search_messages",
+		fmt.Sprintf(`{"project_id":%q,"query":"idempotent","author_kind":"agent","has_attachments":false}`, projID))
+	if toolMap(env)["total"].(float64) != 1 {
+		t.Fatal("author_kind=agent filter failed")
+	}
+	env = callTool("23", "search_messages",
+		fmt.Sprintf(`{"project_id":%q,"query":"idempotent","conversation_id":%q}`, projID, conv2["id"]))
+	if toolMap(env)["total"].(float64) != 0 {
+		t.Fatal("conversation_id filter leaked another conversation's rows")
+	}
+	env = callTool("24", "search_messages",
+		fmt.Sprintf(`{"project_id":%q,"query":"idempotent","since":"2999-01-01"}`, projID))
+	if toolMap(env)["total"].(float64) != 0 {
+		t.Fatal("since filter did not exclude the hit")
+	}
+	env = callTool("25", "search_messages",
+		fmt.Sprintf(`{"project_id":%q,"query":"idempotent","author_kind":"bogus"}`, projID))
+	if got := toolText(env); !strings.Contains(got, "invalid author_kind") {
+		t.Fatalf("bad author_kind = %q", got)
+	}
+
+	// --- inbox: mention + reply lanes ---
+	code, mMen := c.call("POST", "/api/conversations/"+convID+"/messages",
+		fmt.Sprintf(`{"body":"@%s take a look"}`, slug))
+	if code != 201 && code != 200 {
+		t.Fatalf("mention post: %d %v", code, mMen)
+	}
+	code, mRep := c.call("POST", "/api/conversations/"+convID+"/messages",
+		fmt.Sprintf(`{"body":"reply to the agent","parent_id":%q}`, d1["id"]))
+	if code != 201 && code != 200 {
+		t.Fatalf("reply post: %d %v", code, mRep)
+	}
+	env = callTool("26", "inbox", `{"limit":20}`)
+	items := toolMap(env)["items"].([]any)
+	kinds := map[string]bool{}
+	for _, it := range items {
+		row := it.(map[string]any)
+		kinds[row["kind"].(string)] = true
+		if row["excerpt"] == nil || row["message_id"] == nil {
+			t.Fatalf("inbox row = %v", row)
+		}
+	}
+	if !kinds["mention"] || !kinds["reply"] || !kinds["unread"] {
+		t.Fatalf("inbox kinds = %v (items %v)", kinds, items)
+	}
+
+	// --- await_message: timeout then live delivery ---
+	// drain conv2 first — an already-unread reply short-circuits the wait
+	env = callTool("34", "get_messages", fmt.Sprintf(`{"conversation_id":%q}`, conv2["id"]))
+	_ = env
+	env = callTool("27", "await_message",
+		fmt.Sprintf(`{"conversation_id":%q,"timeout_s":2}`, conv2["id"]))
+	if got := toolMap(env)["status"]; got != "timeout" {
+		t.Fatalf("await timeout = %v", got)
+	}
+	// an already-unread reply short-circuits the wait
+	env = callTool("28", "await_message",
+		fmt.Sprintf(`{"conversation_id":%q,"timeout_s":5}`, convID))
+	aw := toolMap(env)
+	if aw["status"] != "message" {
+		t.Fatalf("await pending reply = %v", aw)
+	}
+	// live delivery: human posts while the agent waits
+	type awaitRes struct{ env map[string]any }
+	done := make(chan awaitRes, 1)
+	go func() {
+		_, env := c.mcp(token, sid, "29", "tools/call",
+			fmt.Sprintf(`{"name":"await_message","arguments":{"conversation_id":%q,"timeout_s":15}}`, conv2["id"]))
+		done <- awaitRes{env}
+	}()
+	time.Sleep(400 * time.Millisecond)
+	code, mLive := c.call("POST", "/api/conversations/"+conv2["id"].(string)+"/messages",
+		`{"body":"live human reply"}`)
+	if code != 201 && code != 200 {
+		t.Fatalf("live post: %d %v", code, mLive)
+	}
+	select {
+	case got := <-done:
+		res := toolMap(got.env)
+		if res["status"] != "message" {
+			t.Fatalf("await live = %v", res)
+		}
+		if msg, _ := res["message"].(map[string]any); msg["id"] != mLive["id"] {
+			t.Fatalf("await delivered %v, want %v", msg["id"], mLive["id"])
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("await_message did not deliver the live post")
+	}
+
+	// --- whoami: version + capabilities ---
+	env = callTool("30", "whoami", `{}`)
+	wh := toolMap(env)
+	if wh["server_version"] != "test" {
+		t.Fatalf("server_version = %v", wh["server_version"])
+	}
+	caps, _ := wh["capabilities"].([]any)
+	var hasReply bool
+	for _, cp := range caps {
+		if cp == "reply" {
+			hasReply = true
+		}
+	}
+	if !hasReply {
+		t.Fatalf("capabilities missing reply: %v", caps)
+	}
+
+	// --- get_guide: machine-readable manifest ---
+	env = callTool("31", "get_guide", `{}`)
+	gd := toolMap(env)
+	manifest, _ := gd["manifest"].(map[string]any)
+	if manifest == nil || manifest["tools"] == nil || manifest["reply_flow"] == nil {
+		t.Fatalf("guide manifest = %v", gd["manifest"])
+	}
+}

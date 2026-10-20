@@ -134,9 +134,11 @@ coding:
    a Relay project by name or key from `list_projects`. If nothing
    matches — or several could — ask the human which project this work
    belongs to instead of guessing.
-4. **Catch up on what's new.** `list_unread` / `relay-cli unread` is the
-   inbox: every conversation holding unread messages across all granted
-   projects, with names and counts — one call instead of polling channels.
+4. **Catch up on what's new.** `inbox` / `relay-cli inbox` is the single
+   call for what's aimed at you: @mentions, replies to your messages, and
+   unread across granted conversations — each row carries the excerpt.
+   `list_unread` / `relay-cli unread` is the per-conversation breakdown
+   (optionally `project_id`-scoped, with the latest unread excerpt).
    `unread_count` on each project and conversation tells you where messages
    wait; `was_unread` on `get_messages` results flags exactly which ones
    were new to you.
@@ -256,10 +258,13 @@ end. This is not optional polish — a silent agent looks dead to the user.
   `needs-input`. If they answer in your harness (CLI/IDE) instead of
   Relay, call `resolve_input` with the note so the thread shows it was
   handled — the question stops nagging.
-- **Re-check for new messages while you work.** Users reply mid-run. Poll
-  `get_messages` between steps, or better, subscribe to
-  `/api/agent/events` for the whole session — don't surface requests that
-  arrived while you worked only after `work_stop`.
+- **Re-check for new messages while you work.** Users reply mid-run. When
+  you asked a question and have nothing else to do, `await_message`
+  long-polls the conversation (up to `timeout_s` = 55s, `{"status":"timeout"}`
+  on expiry — re-call to keep waiting). Otherwise poll `get_messages`
+  between steps or subscribe to `/api/agent/events` for the whole session —
+  don't surface requests that arrived while you worked only after
+  `work_stop`.
 - **Your reads are visible.** Fetching a message marks it read and the
   app shows the user *which* agent read it (named receipts with your
   avatar). Don't claim you haven't seen something after fetching it —
@@ -278,13 +283,16 @@ end. This is not optional polish — a silent agent looks dead to the user.
 |---|---|---|
 | `list_projects` | `projects` | granted projects + `unread_count` each |
 | `get_project` | `project <pid>` | one project |
-| `activity` | `activity` | cross-project feed: open issues, PRs, latest messages |
-| `list_unread` | `unread` | every conversation with unread messages, all projects — your inbox |
-| `list_conversations` | `conversations <pid>` | channels + threads in a project; each carries `kind`, `name`, `expires_at`, `unread_count` |
-| `get_messages` | `messages <pid|cid> [--limit] [--tags t] [--before mid]` | read a conversation; `--tags` filters, `--before` paginates; each message carries `was_unread` — fetching marks read, so capture it before acting |
+| `activity` | `activity` | cross-project feed: open issues, PRs, latest messages (`minimal:true` trims to excerpts) |
+| `list_unread` | `unread` | conversations with unread, all projects or `--conv`-scoped `project_id`; each row carries `latest_unread` excerpt |
+| `inbox` | `inbox` | what's aimed at you: `mention`/`reply`/`unread` rows with excerpts |
+| `await_message` | `await <pid|cid> [--timeout s]` | block for a reply from another author; `{status:"timeout"}` at the cap — re-call to keep waiting |
+| `list_conversations` | `conversations <pid>` | channels + threads, most recent activity first; `last_message_at`/`last_message_excerpt`/`message_count` + `kind`, `name`, `expires_at`, `unread_count` |
+| `get_messages` | `messages <pid|cid> [--limit] [--tags t] [--before mid]` | read a conversation; returns `{messages:[…], next_before?}` — pass `next_before` back as `before` to page older; `after` pages newer; `unread_only`, `author_kind` (user\|agent\|system), `minimal` trim the output; `was_unread` flags what was new — fetching marks read, so capture it before acting |
 | `get_message` | `read <mid>` | one message + `was_unread` + mark read |
-| `search_messages` | `search <pid> "query"` | FTS + `from:` `in:` `has:image` `has:file` `before:` `after:` |
-| `send_message` | `say <pid|cid> "text" [--reply mid] [--tags a,b] [--attach f]` | post (project or conversation id); body may be `-` (stdin) or `--file`; `tags` classifies, `silent` skips notifications |
+| `search_messages` | `search <pid> "query"` | `{total, results:[…]}` with match-centered excerpts; inline `from:` `in:` `has:image` `has:file` `before:` `after:` plus `conversation_id`, `author_kind`, `author_name`, `since`/`until` (RFC3339 or YYYY-MM-DD), `has_attachments`, `minimal` |
+| `send_message` | `say <pid|cid> "text" [--reply mid] [--tags a,b] [--attach f]` | post (project, conversation, or bare `reply_to` — the conversation is inferred); body may be `-` (stdin) or `--file`; `tags` classifies, `silent` skips notifications, `client_msg_id` dedupes retried sends |
+| `reply` | — | alias of `send_message` kept for agents that guess the name — prefer `send_message` |
 | `request_input` | `ask <mid> <user> "question"` | thread + @mention, tagged `needs-input` |
 | `resolve_input` | `resolve <mid> [note]` | mark a question answered (e.g. they replied in your harness) |
 | `work_start` | `work-start <pid> "title"` | status message + progress thread |
@@ -305,8 +313,8 @@ end. This is not optional polish — a silent agent looks dead to the user.
 
 | MCP tool | relay-cli | Purpose |
 |---|---|---|
-| `list_issues` | `issues <pid>` | tracker list |
-| `get_issue` | `issue <id>` | detail + comments |
+| `list_issues` | `issues <pid>` | tracker list (`minimal:true` → excerpt instead of description) |
+| `get_issue` | `issue <id>` | detail + comments (`minimal:true` trims the description) |
 | `create_issue` | `issue-new <pid> "title" [desc]` | new issue |
 | `update_issue` | `issue-set <id> status=done …` | status/priority/etc |
 | `todo_list` | `todos <pid>` | work list |
@@ -322,7 +330,7 @@ end. This is not optional polish — a silent agent looks dead to the user.
 |---|---|---|
 | `github_list_issues` | `gh issues <pid>` | linked repo issues |
 | `github_get_issue` | `gh issue <pid> <num>` | one issue |
-| `github_list_prs` | `gh prs <pid>` | linked repo PRs |
+| `github_list_prs` | `gh prs <pid>` | linked repo PRs — `state` open\|closed\|merged\|all, `author`, `q` |
 | `github_get_pr` | `gh pr <pid> <num>` | one PR |
 | `github_create_issue` | `gh issue-new <pid> "title" [body]` | file a GitHub issue |
 | `github_create_pr` | `gh pr-new <pid> <head> "title" [--base b] [--draft]` | open a PR |
@@ -411,14 +419,34 @@ relay-cli say <pid> "Login form is live on staging" --tags frontend,visual
 
 - `unauthorized` — token missing/revoked; re-check `RELAY_TOKEN`.
 - `forbidden` / scope error — the grant doesn't cover it; ask the human.
+- **Argument errors say exactly what's wrong** — `invalid message_id`,
+  `required argument "body" not found`, `invalid author_kind`. Fix the
+  call, don't re-guess.
+- **`not found or not granted` is deliberate** — for a missing id *or* a
+  real permission wall the text is the same, so ids can't be enumerated
+  from outside a grant. `reply_to` routing errors read `reply_to not found
+  or not granted`. If you got this on something you believe exists, check
+  the grant first, then the id.
+- Rate limiting answers `rate limit exceeded` with `retry_after_ms` in the
+  error's `data` — wait that long before retrying.
 - `not_found` on edit/delete — usually means the message is already
   read by someone else; post a follow-up instead.
 - Attachments and avatars accept file bytes or an `image_url` the server
   fetches itself (public URLs only — private/loopback hosts refused).
 - `messages <project_id>` reads the project's main conversation; for a
   thread or brief conversation pass the conversation id directly.
-- Pagination: `get_messages`/`messages --limit`; older pages via
-  `before_id`. Attachments come inline on each message object.
+- Pagination: `get_messages` returns `{messages: […], next_before: "<id>"}`;
+  pass `next_before` back as `before` (or `--before <id>` in the CLI) for
+  the next older page. `after` pages forward.
+- **Right-size your reads.** Long bodies (bot dumps, pasted logs) can turn
+  one call into a hundred-KB payload — pass `minimal: true` on the read
+  tools when you only need to triage, then `get_message` the ones that
+  matter.
+- `whoami` returns `server_version` and `capabilities` (the registered
+  tool list) — feature-detect instead of guessing tool names.
+- `get_guide` additionally returns a machine-readable `manifest` (tool
+  names + required/optional args, reply flow, mention syntax) alongside
+  the prose — useful when you can't render markdown.
 
 ## 8. End-to-end example
 

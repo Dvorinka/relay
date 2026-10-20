@@ -29,9 +29,16 @@ func (q *Queries) AddReactionAgent(ctx context.Context, arg AddReactionAgentPara
 }
 
 const agentConversationUnread = `-- name: AgentConversationUnread :many
-select m.conversation_id, count(*)::int as unread
+select m.conversation_id, count(*)::int as unread,
+       (array_agg(m.id order by m.created_at desc, m.id desc))[1]::uuid as latest_id,
+       (array_agg(m.body order by m.created_at desc, m.id desc))[1]::text as latest_body,
+       (array_agg(coalesce(u.name, au.name, nullif(m.author_name_snapshot, ''), '')
+                  order by m.created_at desc, m.id desc))[1]::text as latest_author,
+       max(m.created_at)::timestamptz as latest_at
 from messages m
 join conversations c on c.id = m.conversation_id
+left join users u on u.id = m.author_user_id
+left join agents au on au.id = m.author_agent_id
 where c.project_id = $1
   and m.deleted_at is null
   and not c.agents_blocked
@@ -48,11 +55,17 @@ type AgentConversationUnreadParams struct {
 }
 
 type AgentConversationUnreadRow struct {
-	ConversationID pgtype.UUID `json:"conversation_id"`
-	Unread         int32       `json:"unread"`
+	ConversationID pgtype.UUID        `json:"conversation_id"`
+	Unread         int32              `json:"unread"`
+	LatestID       pgtype.UUID        `json:"latest_id"`
+	LatestBody     string             `json:"latest_body"`
+	LatestAuthor   string             `json:"latest_author"`
+	LatestAt       pgtype.Timestamptz `json:"latest_at"`
 }
 
-// unread count per conversation for this agent; own posts don't count
+// unread count per conversation for this agent; own posts don't count.
+// latest_* carries the newest unread message so a triage listing can show
+// what arrived without opening each conversation.
 func (q *Queries) AgentConversationUnread(ctx context.Context, arg AgentConversationUnreadParams) ([]AgentConversationUnreadRow, error) {
 	rows, err := q.db.Query(ctx, agentConversationUnread, arg.ProjectID, arg.AgentID)
 	if err != nil {
@@ -62,7 +75,245 @@ func (q *Queries) AgentConversationUnread(ctx context.Context, arg AgentConversa
 	items := []AgentConversationUnreadRow{}
 	for rows.Next() {
 		var i AgentConversationUnreadRow
-		if err := rows.Scan(&i.ConversationID, &i.Unread); err != nil {
+		if err := rows.Scan(
+			&i.ConversationID,
+			&i.Unread,
+			&i.LatestID,
+			&i.LatestBody,
+			&i.LatestAuthor,
+			&i.LatestAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const agentInboxMentions = `-- name: AgentInboxMentions :many
+select m.id, m.conversation_id, m.body, m.created_at,
+       c.project_id, p.key as project_key, p.name as project_name,
+       coalesce(u.name, au.name, nullif(m.author_name_snapshot, ''), '') as author_name,
+       case when m.author_agent_id is not null or m.author_kind_snapshot = 'agent'
+            then 'agent' else 'user' end as author_kind
+from messages m
+join conversations c on c.id = m.conversation_id
+join projects p on p.id = c.project_id
+join agents a on a.id = $1
+left join agent_project_permissions g
+       on g.agent_id = a.id and g.project_id = p.id
+left join users u on u.id = m.author_user_id
+left join agents au on au.id = m.author_agent_id
+where m.deleted_at is null
+  and not c.agents_blocked
+  and p.workspace_id = a.workspace_id
+  and ('message:read' = any(g.scopes)
+       or (a.grant_all and 'message:read' = any(a.grant_scopes)))
+  and (m.author_agent_id is null or m.author_agent_id <> a.id)
+  and (m.body ~* ('\m@(agent:)?' || a.slug || '\M')
+       or exists (select 1
+                  from jsonb_array_elements(coalesce(m.mentions, '[]'::jsonb)) elem
+                  where elem->>'kind' = 'agent'
+                    and elem->>'id' = a.id::text))
+order by m.created_at desc, m.id desc
+limit $2::int
+`
+
+type AgentInboxMentionsParams struct {
+	AgentID pgtype.UUID `json:"agent_id"`
+	Lim     int32       `json:"lim"`
+}
+
+type AgentInboxMentionsRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	ConversationID pgtype.UUID        `json:"conversation_id"`
+	Body           string             `json:"body"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	ProjectKey     string             `json:"project_key"`
+	ProjectName    string             `json:"project_name"`
+	AuthorName     string             `json:"author_name"`
+	AuthorKind     string             `json:"author_kind"`
+}
+
+// messages aimed at this agent: a resolved kind=agent mention or a bare
+// @slug / @agent:slug in the body. Restricted to projects where the agent
+// holds message:read (explicit grant, or grant_all + the scope); own posts
+// and agents_blocked channels never surface.
+func (q *Queries) AgentInboxMentions(ctx context.Context, arg AgentInboxMentionsParams) ([]AgentInboxMentionsRow, error) {
+	rows, err := q.db.Query(ctx, agentInboxMentions, arg.AgentID, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentInboxMentionsRow{}
+	for rows.Next() {
+		var i AgentInboxMentionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ConversationID,
+			&i.Body,
+			&i.CreatedAt,
+			&i.ProjectID,
+			&i.ProjectKey,
+			&i.ProjectName,
+			&i.AuthorName,
+			&i.AuthorKind,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const agentInboxReplies = `-- name: AgentInboxReplies :many
+select m.id, m.conversation_id, m.body, m.created_at, m.parent_id,
+       c.project_id, p.key as project_key, p.name as project_name,
+       coalesce(u.name, au.name, nullif(m.author_name_snapshot, ''), '') as author_name,
+       case when m.author_agent_id is not null or m.author_kind_snapshot = 'agent'
+            then 'agent' else 'user' end as author_kind
+from messages m
+join messages pm on pm.id = m.parent_id and pm.author_agent_id = $1
+join conversations c on c.id = m.conversation_id
+join projects p on p.id = c.project_id
+join agents a on a.id = $1
+left join agent_project_permissions g
+       on g.agent_id = a.id and g.project_id = p.id
+left join users u on u.id = m.author_user_id
+left join agents au on au.id = m.author_agent_id
+where m.deleted_at is null
+  and not c.agents_blocked
+  and p.workspace_id = a.workspace_id
+  and ('message:read' = any(g.scopes)
+       or (a.grant_all and 'message:read' = any(a.grant_scopes)))
+  and (m.author_agent_id is null or m.author_agent_id <> a.id)
+order by m.created_at desc, m.id desc
+limit $2::int
+`
+
+type AgentInboxRepliesParams struct {
+	AgentID pgtype.UUID `json:"agent_id"`
+	Lim     int32       `json:"lim"`
+}
+
+type AgentInboxRepliesRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	ConversationID pgtype.UUID        `json:"conversation_id"`
+	Body           string             `json:"body"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	ParentID       pgtype.UUID        `json:"parent_id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	ProjectKey     string             `json:"project_key"`
+	ProjectName    string             `json:"project_name"`
+	AuthorName     string             `json:"author_name"`
+	AuthorKind     string             `json:"author_kind"`
+}
+
+// replies to messages this agent authored — same grant predicate as
+// AgentInboxMentions
+func (q *Queries) AgentInboxReplies(ctx context.Context, arg AgentInboxRepliesParams) ([]AgentInboxRepliesRow, error) {
+	rows, err := q.db.Query(ctx, agentInboxReplies, arg.AgentID, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentInboxRepliesRow{}
+	for rows.Next() {
+		var i AgentInboxRepliesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ConversationID,
+			&i.Body,
+			&i.CreatedAt,
+			&i.ParentID,
+			&i.ProjectID,
+			&i.ProjectKey,
+			&i.ProjectName,
+			&i.AuthorName,
+			&i.AuthorKind,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const agentInboxUnread = `-- name: AgentInboxUnread :many
+select m.id, m.conversation_id, m.body, m.created_at,
+       c.project_id, p.key as project_key, p.name as project_name,
+       coalesce(u.name, au.name, nullif(m.author_name_snapshot, ''), '') as author_name,
+       case when m.author_agent_id is not null or m.author_kind_snapshot = 'agent'
+            then 'agent' else 'user' end as author_kind
+from messages m
+join conversations c on c.id = m.conversation_id
+join projects p on p.id = c.project_id
+join agents a on a.id = $1
+left join agent_project_permissions g
+       on g.agent_id = a.id and g.project_id = p.id
+left join users u on u.id = m.author_user_id
+left join agents au on au.id = m.author_agent_id
+where m.deleted_at is null
+  and not c.agents_blocked
+  and p.workspace_id = a.workspace_id
+  and ('message:read' = any(g.scopes)
+       or (a.grant_all and 'message:read' = any(a.grant_scopes)))
+  and (m.author_agent_id is null or m.author_agent_id <> a.id)
+  and not exists (select 1 from message_reads r
+                  where r.message_id = m.id and r.agent_id = a.id)
+order by m.created_at desc, m.id desc
+limit $2::int
+`
+
+type AgentInboxUnreadParams struct {
+	AgentID pgtype.UUID `json:"agent_id"`
+	Lim     int32       `json:"lim"`
+}
+
+type AgentInboxUnreadRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	ConversationID pgtype.UUID        `json:"conversation_id"`
+	Body           string             `json:"body"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	ProjectKey     string             `json:"project_key"`
+	ProjectName    string             `json:"project_name"`
+	AuthorName     string             `json:"author_name"`
+	AuthorKind     string             `json:"author_kind"`
+}
+
+// newest unread messages across every conversation the agent can read —
+// the "what did I miss" lane of the inbox tool
+func (q *Queries) AgentInboxUnread(ctx context.Context, arg AgentInboxUnreadParams) ([]AgentInboxUnreadRow, error) {
+	rows, err := q.db.Query(ctx, agentInboxUnread, arg.AgentID, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentInboxUnreadRow{}
+	for rows.Next() {
+		var i AgentInboxUnreadRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ConversationID,
+			&i.Body,
+			&i.CreatedAt,
+			&i.ProjectID,
+			&i.ProjectKey,
+			&i.ProjectName,
+			&i.AuthorName,
+			&i.AuthorKind,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -145,8 +396,9 @@ func (q *Queries) AgentProjectUnread(ctx context.Context, agentID pgtype.UUID) (
 }
 
 const createAgentMessage = `-- name: CreateAgentMessage :one
-insert into messages (conversation_id, author_agent_id, body, parent_id, mentions, forwarded_from, tags, silent, meta)
-values ($1, $2, $3, $4, coalesce($5, '[]'::jsonb), $6, coalesce($7, '{}'::text[]), coalesce($8, false), $9)
+insert into messages (conversation_id, author_agent_id, body, parent_id, mentions, forwarded_from, tags, silent, client_msg_id, meta)
+values ($1, $2, $3, $4, coalesce($5, '[]'::jsonb), $6, coalesce($7, '{}'::text[]), coalesce($8, false), $9, $10)
+on conflict (conversation_id, client_msg_id) where client_msg_id is not null do nothing
 returning id
 `
 
@@ -159,9 +411,12 @@ type CreateAgentMessageParams struct {
 	ForwardedFrom  pgtype.UUID `json:"forwarded_from"`
 	Tags           interface{} `json:"tags"`
 	Silent         interface{} `json:"silent"`
+	ClientMsgID    pgtype.Text `json:"client_msg_id"`
 	Meta           []byte      `json:"meta"`
 }
 
+// client_msg_id dedupes mid-flight MCP retries: a repeat insert with the
+// same key no-ops (zero rows) and the caller returns the stored message.
 func (q *Queries) CreateAgentMessage(ctx context.Context, arg CreateAgentMessageParams) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, createAgentMessage,
 		arg.ConversationID,
@@ -172,6 +427,7 @@ func (q *Queries) CreateAgentMessage(ctx context.Context, arg CreateAgentMessage
 		arg.ForwardedFrom,
 		arg.Tags,
 		arg.Silent,
+		arg.ClientMsgID,
 		arg.Meta,
 	)
 	var id pgtype.UUID
@@ -407,12 +663,25 @@ func (q *Queries) GetMessageFull(ctx context.Context, id pgtype.UUID) (GetMessag
 }
 
 const listProjectConversations = `-- name: ListProjectConversations :many
-select c.id, c.project_id, c.kind, c.issue_id, c.created_at, c.brief_id, c.parent_message_id, c.title, c.created_by_user, c.created_by_agent, c.creator_name_snapshot, c.expires_at, c.agents_blocked, c.intake_mode, c.email_alerts, i.number as issue_number, i.title as issue_title from conversations c
+select c.id, c.project_id, c.kind, c.issue_id, c.created_at, c.brief_id, c.parent_message_id, c.title, c.created_by_user, c.created_by_agent, c.creator_name_snapshot, c.expires_at, c.agents_blocked, c.intake_mode, c.email_alerts, i.number as issue_number, i.title as issue_title,
+       lm.message_count, lm.last_message_at, lm.last_body, lm.last_author
+from conversations c
   left join issues i on i.id = c.issue_id
+  left join lateral (
+    select count(*)::int as message_count,
+           max(m.created_at)::timestamptz as last_message_at,
+           (array_agg(m.body order by m.created_at desc, m.id desc))[1]::text as last_body,
+           (array_agg(coalesce(u.name, au.name, nullif(m.author_name_snapshot, ''), '')
+                      order by m.created_at desc, m.id desc))[1]::text as last_author
+    from messages m
+    left join users u on u.id = m.author_user_id
+    left join agents au on au.id = m.author_agent_id
+    where m.conversation_id = c.id and m.deleted_at is null
+  ) lm on true
   where c.project_id = $1
   and not c.agents_blocked
   and (c.expires_at is null or c.expires_at > now())
-order by c.created_at
+order by lm.last_message_at desc nulls last, c.created_at
 `
 
 type ListProjectConversationsRow struct {
@@ -433,9 +702,15 @@ type ListProjectConversationsRow struct {
 	EmailAlerts         []string           `json:"email_alerts"`
 	IssueNumber         pgtype.Int4        `json:"issue_number"`
 	IssueTitle          pgtype.Text        `json:"issue_title"`
+	MessageCount        int32              `json:"message_count"`
+	LastMessageAt       pgtype.Timestamptz `json:"last_message_at"`
+	LastBody            string             `json:"last_body"`
+	LastAuthor          string             `json:"last_author"`
 }
 
-// agents never see channels flagged agents_blocked nor expired threads
+// agents never see channels flagged agents_blocked nor expired threads.
+// The lateral fold adds activity signals (count, last at/body/author) so
+// listing answers "which channel is live" without a query per row.
 func (q *Queries) ListProjectConversations(ctx context.Context, projectID pgtype.UUID) ([]ListProjectConversationsRow, error) {
 	rows, err := q.db.Query(ctx, listProjectConversations, projectID)
 	if err != nil {
@@ -463,6 +738,10 @@ func (q *Queries) ListProjectConversations(ctx context.Context, projectID pgtype
 			&i.EmailAlerts,
 			&i.IssueNumber,
 			&i.IssueTitle,
+			&i.MessageCount,
+			&i.LastMessageAt,
+			&i.LastBody,
+			&i.LastAuthor,
 		); err != nil {
 			return nil, err
 		}
@@ -728,7 +1007,8 @@ select m.id, m.conversation_id, m.body, m.tags, m.meta, m.silent, m.created_at, 
        coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') as author_name,
        coalesce(u.avatar_key, a.avatar_key) as author_avatar,
        c.title as conversation_title, c.kind as conversation_kind,
-       exists (select 1 from message_attachments ma where ma.message_id = m.id) as has_attachments
+       exists (select 1 from message_attachments ma where ma.message_id = m.id) as has_attachments,
+       count(*) over ()::int as total
 from messages m
 join conversations c on c.id = m.conversation_id
 left join users u on u.id = m.author_user_id
@@ -737,32 +1017,42 @@ where c.project_id = $1
   and m.deleted_at is null
   and not c.agents_blocked
   and ($2::text is null or m.body ilike '%' || $2::text || '%')
-  and ($3::text is null or
-       coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') ilike $3::text)
-  and ($4::text is null or c.kind = $4::text
-       or c.title ilike '%' || $4::text || '%')
-  and (not coalesce($5::bool, false) or
+  and ($3::uuid is null or m.conversation_id = $3::uuid)
+  and ($4::text is null or
+       coalesce(u.name, a.name, nullif(m.author_name_snapshot, ''), '') ilike $4::text)
+  and ($5::text is null or
+       case when m.author_agent_id is not null or m.author_kind_snapshot = 'agent'
+            then 'agent' else 'user' end = $5::text)
+  and ($6::text is null or c.kind = $6::text
+       or c.title ilike '%' || $6::text || '%')
+  and ($7::bool is null or
+       exists (select 1 from message_attachments ma where ma.message_id = m.id)
+       = $7::bool)
+  and (not coalesce($8::bool, false) or
        exists (select 1 from message_attachments ma
                join attachments att on att.id = ma.attachment_id
                where ma.message_id = m.id and att.content_type like 'image/%'))
-  and (not coalesce($6::bool, false) or
+  and (not coalesce($9::bool, false) or
        exists (select 1 from message_attachments ma where ma.message_id = m.id))
-  and ($7::timestamptz is null or m.created_at < $7::timestamptz)
-  and ($8::timestamptz is null or m.created_at >= $8::timestamptz)
+  and ($10::timestamptz is null or m.created_at < $10::timestamptz)
+  and ($11::timestamptz is null or m.created_at >= $11::timestamptz)
 order by m.created_at desc
-limit $9
+limit $12
 `
 
 type SearchMessagesInProjectParams struct {
-	ProjectID pgtype.UUID        `json:"project_id"`
-	Q         pgtype.Text        `json:"q"`
-	Author    pgtype.Text        `json:"author"`
-	Chan      pgtype.Text        `json:"chan"`
-	HasImage  pgtype.Bool        `json:"has_image"`
-	HasFile   pgtype.Bool        `json:"has_file"`
-	BeforeTs  pgtype.Timestamptz `json:"before_ts"`
-	AfterTs   pgtype.Timestamptz `json:"after_ts"`
-	Lim       int32              `json:"lim"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	Q              pgtype.Text        `json:"q"`
+	ConversationID pgtype.UUID        `json:"conversation_id"`
+	Author         pgtype.Text        `json:"author"`
+	AuthorKind     pgtype.Text        `json:"author_kind"`
+	Chan           pgtype.Text        `json:"chan"`
+	HasAttachments pgtype.Bool        `json:"has_attachments"`
+	HasImage       pgtype.Bool        `json:"has_image"`
+	HasFile        pgtype.Bool        `json:"has_file"`
+	BeforeTs       pgtype.Timestamptz `json:"before_ts"`
+	AfterTs        pgtype.Timestamptz `json:"after_ts"`
+	Lim            int32              `json:"lim"`
 }
 
 type SearchMessagesInProjectRow struct {
@@ -782,18 +1072,26 @@ type SearchMessagesInProjectRow struct {
 	ConversationTitle  pgtype.Text        `json:"conversation_title"`
 	ConversationKind   string             `json:"conversation_kind"`
 	HasAttachments     bool               `json:"has_attachments"`
+	Total              int32              `json:"total"`
 }
 
 // operator grammar is parsed in mcpserver and passed as narg fields:
 //
 //	q = remaining substring, author = from:, chan = in:, has_image/has_file,
-//	before_ts/after_ts = before:/after: date bounds
+//	before_ts/after_ts = before:/after: date bounds.
+//
+// Tool args map onto the same columns: conversation_id, author_kind,
+// has_attachments (tri-state — null ignores), plus a windowed total so
+// callers get the full hit count under the row limit.
 func (q *Queries) SearchMessagesInProject(ctx context.Context, arg SearchMessagesInProjectParams) ([]SearchMessagesInProjectRow, error) {
 	rows, err := q.db.Query(ctx, searchMessagesInProject,
 		arg.ProjectID,
 		arg.Q,
+		arg.ConversationID,
 		arg.Author,
+		arg.AuthorKind,
 		arg.Chan,
+		arg.HasAttachments,
 		arg.HasImage,
 		arg.HasFile,
 		arg.BeforeTs,
@@ -824,6 +1122,7 @@ func (q *Queries) SearchMessagesInProject(ctx context.Context, arg SearchMessage
 			&i.ConversationTitle,
 			&i.ConversationKind,
 			&i.HasAttachments,
+			&i.Total,
 		); err != nil {
 			return nil, err
 		}
