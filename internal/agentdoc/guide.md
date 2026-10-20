@@ -284,7 +284,7 @@ end. This is not optional polish — a silent agent looks dead to the user.
 | `list_projects` | `projects` | granted projects + `unread_count` each |
 | `get_project` | `project <pid>` | one project |
 | `activity` | `activity` | cross-project feed: open issues, PRs, latest messages (`minimal:true` trims to excerpts) |
-| `list_unread` | `unread` | conversations with unread, all projects or `--conv`-scoped `project_id`; each row carries `latest_unread` excerpt |
+| `list_unread` | `unread [--project K]` | conversations with unread, all projects or project-scoped; each row carries `latest_unread` excerpt |
 | `inbox` | `inbox` | what's aimed at you: `mention`/`reply`/`unread` rows with excerpts |
 | `await_message` | `await <pid|cid> [--timeout s]` | block for a reply from another author; `{status:"timeout"}` at the cap — re-call to keep waiting |
 | `list_conversations` | `conversations <pid>` | channels + threads, most recent activity first; `last_message_at`/`last_message_excerpt`/`message_count` + `kind`, `name`, `expires_at`, `unread_count` |
@@ -328,7 +328,7 @@ end. This is not optional polish — a silent agent looks dead to the user.
 
 | MCP tool | relay-cli | Purpose |
 |---|---|---|
-| `github_list_issues` | `gh issues <pid>` | linked repo issues |
+| `github_list_issues` | `gh issues <pid>` | linked repo issues — `state` open\|closed\|all, `author`, `q` |
 | `github_get_issue` | `gh issue <pid> <num>` | one issue |
 | `github_list_prs` | `gh prs <pid>` | linked repo PRs — `state` open\|closed\|merged\|all, `author`, `q` |
 | `github_get_pr` | `gh pr <pid> <num>` | one PR |

@@ -38,7 +38,8 @@
 //	relay-cli completion bash|zsh|fish
 //
 // Global flags: --url, --token, --json (raw tool payloads), --limit, --out,
-// --file, --status, --timeout, --reply, --conv, --repo
+// --file, --status, --timeout, --reply, --conv, --repo, --minimal, --after,
+// --unread, --kind, --author, --since, --until, --attachments, --project, --q
 package main
 
 import (
@@ -82,7 +83,16 @@ var (
 	flagBody    = flag.String("body", "", "body text/file target for gh commands (- for stdin)")
 	flagDraft   = flag.Bool("draft", false, "open the PR as a draft (gh pr-new)")
 	flagMethod  = flag.String("method", "", "merge method: merge|squash|rebase (gh merge; default: repo default)")
-	flagProject = flag.String("project", "", "filter events to one project (id or key)")
+	flagProject = flag.String("project", "", "scope to one project (unread, events; id or key)")
+	flagMinimal = flag.Bool("minimal", false, "trim heavy fields to excerpts/flags (messages, search, issues, issue, activity, pins, gh issue, briefs, brief, ideas, idea, reviews, review)")
+	flagAfter   = flag.String("after", "", "paginate messages after this message id")
+	flagUnread  = flag.Bool("unread", false, "messages: only unread messages")
+	flagKind    = flag.String("kind", "", "author kind: user|agent|system (messages, search)")
+	flagAuthor  = flag.String("author", "", "author filter (search, gh prs/issues)")
+	flagSince   = flag.String("since", "", "search lower bound (YYYY-MM-DD or RFC3339)")
+	flagUntil   = flag.String("until", "", "search upper bound (YYYY-MM-DD or RFC3339)")
+	flagAttachd = flag.Bool("attachments", false, "search: only messages with attachments")
+	flagQ       = flag.String("q", "", "extra query filter (gh prs/issues)")
 )
 
 var rpcID atomic.Int64
@@ -431,6 +441,9 @@ func render(kind string, raw json.RawMessage) {
 				extra += "  expires " + fmtTime(e)
 			}
 			fmt.Printf("%s  %-9s %-28s%s\n", str(m, "id"), str(m, "kind"), name, extra)
+			if ex := str(m, "last_message_excerpt"); ex != "" {
+				fmt.Printf("         └ %s: %s\n", str(m, "last_author"), truncate(ex, 90))
+			}
 		}
 	case "messages":
 		msgs := rows("messages")
@@ -465,6 +478,9 @@ func render(kind string, raw json.RawMessage) {
 			body := str(m, "body")
 			if body == "" {
 				body = str(m, "excerpt")
+				if m["truncated"] == true {
+					suffix += "  [truncated — relay-cli read " + str(m, "id") + "]"
+				}
 			}
 			fmt.Printf("%s %s  %s\n%s%s\n", str(m, "id"), name,
 				fmtTime(m["created_at"]), body, suffix)
@@ -585,8 +601,15 @@ func render(kind string, raw json.RawMessage) {
 		m := top
 		fmt.Printf("%s  %-9s %-6s %s\n", str(m, "key"), str(m, "status"),
 			str(m, "priority"), str(m, "title"))
-		if d := str(m, "description"); d != "" {
+		d := str(m, "description")
+		if d == "" {
+			d = str(m, "excerpt")
+		}
+		if d != "" {
 			fmt.Println(truncate(d, 400))
+			if m["truncated"] == true {
+				fmt.Println("…(truncated — drop --minimal for the full description)")
+			}
 		}
 	case "project":
 		m := top
@@ -610,7 +633,11 @@ func render(kind string, raw json.RawMessage) {
 		m := top
 		fmt.Printf("#%v  %-8s %s\n%s\n", m["number"], str(m, "state"),
 			str(m, "title"), str(m, "url"))
-		if d := str(m, "body"); d != "" {
+		d := str(m, "body")
+		if d == "" {
+			d = str(m, "excerpt")
+		}
+		if d != "" {
 			fmt.Println(truncate(d, 400))
 		}
 	case "unread":
@@ -643,6 +670,15 @@ func render(kind string, raw json.RawMessage) {
 				str(m, "kind"), str(asMap(m["author"]), "name"), fmtTime(m["at"]),
 				str(m, "message_id"), truncate(str(m, "excerpt"), 90))
 		}
+	case "await":
+		if str(top, "status") != "message" {
+			fmt.Println("no reply within timeout")
+			break
+		}
+		m := asMap(top["message"])
+		fmt.Printf("%s %s  %s\n  %s\n", str(m, "id"),
+			str(asMap(m["author"]), "name"), fmtTime(m["created_at"]),
+			truncate(str(m, "body"), 140))
 	case "mentionables":
 		for _, u := range list(top, "users") {
 			fmt.Printf("@%s\n", str(asMap(u), "name"))
@@ -677,10 +713,14 @@ func render(kind string, raw json.RawMessage) {
 			fmt.Println("RECENT MESSAGES")
 			for _, it := range msgs {
 				m := asMap(it)
+				body := str(m, "body")
+				if body == "" {
+					body = str(m, "excerpt")
+				}
 				fmt.Printf("  %-10s %-16s %.60s\n",
 					str(asMap(m["project"]), "key"),
 					str(asMap(m["author"]), "name"),
-					str(m, "body"))
+					body)
 			}
 		}
 		if len(list(top, "open_prs"))+len(list(top, "open_issues"))+len(list(top, "recent_messages")) == 0 {
@@ -873,7 +913,11 @@ Environment: RELAY_URL, RELAY_TOKEN.
 		run("whoami", "whoami", nil)
 
 	case "activity":
-		run("activity", "activity", nil)
+		a := map[string]any{}
+		if *flagMinimal {
+			a["minimal"] = true
+		}
+		run("activity", "activity", a)
 
 	case "projects":
 		run("projects", "list_projects", nil)
@@ -898,7 +942,11 @@ Environment: RELAY_URL, RELAY_TOKEN.
 	case "unread":
 		// Prefer the server-side rollup (one call); fall back to composing
 		// it from list_projects + list_conversations on older servers.
-		if res, err := s.tool("list_unread", nil); err == nil {
+		var ua map[string]any
+		if *flagProject != "" {
+			ua = map[string]any{"project_id": projectID(s, *flagProject)}
+		}
+		if res, err := s.tool("list_unread", ua); err == nil {
 			out("unread", res)
 			return
 		}
@@ -919,6 +967,10 @@ Environment: RELAY_URL, RELAY_TOKEN.
 		}
 		total := 0
 		for _, p := range projects {
+			if *flagProject != "" && str(p, "key") != *flagProject &&
+				str(p, "id") != *flagProject && str(p, "slug") != *flagProject {
+				continue
+			}
 			pid := str(p, "id")
 			res, err := s.tool("list_conversations", map[string]any{"project_id": pid})
 			if err != nil {
@@ -977,7 +1029,19 @@ Environment: RELAY_URL, RELAY_TOKEN.
 			a["tag"] = *flagTags
 		}
 		if *flagBefore != "" {
-			a["before_id"] = *flagBefore
+			a["before"] = *flagBefore
+		}
+		if *flagAfter != "" {
+			a["after"] = *flagAfter
+		}
+		if *flagUnread {
+			a["unread_only"] = true
+		}
+		if *flagKind != "" {
+			a["author_kind"] = *flagKind
+		}
+		if *flagMinimal {
+			a["minimal"] = true
 		}
 		run("messages", "get_messages", a)
 
@@ -988,19 +1052,34 @@ Environment: RELAY_URL, RELAY_TOKEN.
 	case "say":
 		// say <pid|cid> "text" | - | --file f — the server resolves a bare
 		// conversation id in the project_id slot, so channels and threads
-		// are addressable positionally.
-		pid := need(args, 1, "project_id or conversation_id")
-		var text string
+		// are addressable positionally. With --reply alone (say --reply <mid>
+		// --body "text") the server infers the conversation from the target.
+		var pid, text string
+		if len(args) > 1 {
+			pid = args[1]
+		}
 		if len(args) > 2 {
 			text = args[2]
 		}
+		if text == "" && *flagBody != "" {
+			text = *flagBody
+		}
 		text = readArgBody(text)
-		a := map[string]any{"project_id": pid, "body": text}
+		a := map[string]any{"body": text}
+		if pid != "" {
+			a["project_id"] = pid
+		}
 		if *flagConv != "" {
 			a["conversation_id"] = *flagConv
 		}
 		if *flagReply != "" {
 			a["reply_to"] = *flagReply
+		}
+		if pid == "" && *flagConv == "" && *flagReply == "" {
+			fail("say needs a project/conversation id (or --reply)")
+		}
+		if *flagAttach != "" && pid == "" {
+			fail("--attach needs a project id")
 		}
 		if *flagTags != "" {
 			a["tags"] = *flagTags
@@ -1055,8 +1134,11 @@ Environment: RELAY_URL, RELAY_TOKEN.
 		})
 
 	case "pins":
-		run("messages", "list_pins",
-			map[string]any{"project_id": need(args, 1, "project_id or conversation_id")})
+		a := map[string]any{"project_id": need(args, 1, "project_id or conversation_id")}
+		if *flagMinimal {
+			a["minimal"] = true
+		}
+		run("messages", "list_pins", a)
 
 	case "forward":
 		runOK("forwarded", "forward_message", map[string]any{
@@ -1094,10 +1176,17 @@ Environment: RELAY_URL, RELAY_TOKEN.
 		if *flagStatus != "" {
 			a["status"] = *flagStatus
 		}
+		if *flagMinimal {
+			a["minimal"] = true
+		}
 		run("issues", "list_issues", a)
 
 	case "issue":
-		run("issue", "get_issue", map[string]any{"issue_id": need(args, 1, "issue_id")})
+		a := map[string]any{"issue_id": need(args, 1, "issue_id")}
+		if *flagMinimal {
+			a["minimal"] = true
+		}
+		run("issue", "get_issue", a)
 
 	case "issue-new":
 		pid := need(args, 1, "project_id")
@@ -1205,12 +1294,38 @@ Environment: RELAY_URL, RELAY_TOKEN.
 		streamEvents(s)
 
 	case "search":
-		// search <pid> "query" — operators: from: in: has:image|has:file
-		// before:YYYY-MM-DD after:YYYY-MM-DD
-		run("search", "search_messages", map[string]any{
+		// search <pid> ["query"] — operators: from: in: has:image|has:file
+		// before:YYYY-MM-DD after:YYYY-MM-DD; query optional when filters
+		// (--conv --kind --author --since --until --attachments) carry it
+		a := map[string]any{
 			"project_id": need(args, 1, "project_id"),
-			"query":      need(args, 2, "query"),
-		})
+			"limit":      *flagLimit,
+		}
+		if len(args) > 2 {
+			a["query"] = args[2]
+		}
+		if *flagConv != "" {
+			a["conversation_id"] = *flagConv
+		}
+		if *flagKind != "" {
+			a["author_kind"] = *flagKind
+		}
+		if *flagAuthor != "" {
+			a["author_name"] = *flagAuthor
+		}
+		if *flagSince != "" {
+			a["since"] = *flagSince
+		}
+		if *flagUntil != "" {
+			a["until"] = *flagUntil
+		}
+		if *flagAttachd {
+			a["has_attachments"] = true
+		}
+		if *flagMinimal {
+			a["minimal"] = true
+		}
+		run("search", "search_messages", a)
 
 	case "files":
 		a := map[string]any{"project_id": need(args, 1, "project_id")}
@@ -1249,11 +1364,32 @@ Environment: RELAY_URL, RELAY_TOKEN.
 		switch sub {
 		case "issues":
 			name = "github_list_issues"
+			if *flagStatus != "" {
+				a["state"] = *flagStatus
+			}
+			if *flagQ != "" {
+				a["q"] = *flagQ
+			}
+			if *flagAuthor != "" {
+				a["author"] = *flagAuthor
+			}
 		case "prs":
 			name = "github_list_prs"
+			if *flagStatus != "" {
+				a["state"] = *flagStatus
+			}
+			if *flagAuthor != "" {
+				a["author"] = *flagAuthor
+			}
+			if *flagQ != "" {
+				a["q"] = *flagQ
+			}
 		case "issue":
 			name = "github_get_issue"
 			a["number"] = atoi(need(args, 3, "number"))
+			if *flagMinimal {
+				a["minimal"] = true
+			}
 		case "pr":
 			name = "github_get_pr"
 			a["number"] = atoi(need(args, 3, "number"))
@@ -1363,10 +1499,17 @@ Environment: RELAY_URL, RELAY_TOKEN.
 		if *flagStatus != "" {
 			a["status"] = *flagStatus
 		}
+		if *flagMinimal {
+			a["minimal"] = true
+		}
 		run("reviews", "list_reviews", a)
 
 	case "review":
-		run("review", "get_review", map[string]any{"review_id": need(args, 1, "review_id")})
+		a := map[string]any{"review_id": need(args, 1, "review_id")}
+		if *flagMinimal {
+			a["minimal"] = true
+		}
+		run("review", "get_review", a)
 
 	case "review-submit":
 		// The structured payload (files/decisions/actions/…) is read as
@@ -1404,10 +1547,17 @@ Environment: RELAY_URL, RELAY_TOKEN.
 		if len(args) > 2 {
 			a["issue_id"] = args[2]
 		}
+		if *flagMinimal {
+			a["minimal"] = true
+		}
 		run("briefs", "list_briefs", a)
 
 	case "brief":
-		run("", "get_brief", map[string]any{"brief_id": need(args, 1, "brief_id")})
+		a := map[string]any{"brief_id": need(args, 1, "brief_id")}
+		if *flagMinimal {
+			a["minimal"] = true
+		}
+		run("", "get_brief", a)
 
 	case "brief-policy":
 		run("", "get_brief_policy", map[string]any{"project_id": need(args, 1, "project_id")})
@@ -1467,11 +1617,18 @@ Environment: RELAY_URL, RELAY_TOKEN.
 			map[string]any{"brief_id": need(args, 1, "brief_id")})
 
 	case "ideas":
-		run("ideas", "list_ideas",
-			map[string]any{"project_id": need(args, 1, "project_id")})
+		a := map[string]any{"project_id": need(args, 1, "project_id")}
+		if *flagMinimal {
+			a["minimal"] = true
+		}
+		run("ideas", "list_ideas", a)
 
 	case "idea":
-		run("idea", "get_idea", map[string]any{"idea_id": need(args, 1, "idea_id")})
+		a := map[string]any{"idea_id": need(args, 1, "idea_id")}
+		if *flagMinimal {
+			a["minimal"] = true
+		}
+		run("idea", "get_idea", a)
 
 	case "idea-new":
 		// idea-new <pid> <title> ["summary"] [--file scene.json]
@@ -1773,6 +1930,34 @@ func need(args []string, i int, what string) string {
 	return args[i]
 }
 
+// projectID resolves an id, key or slug to the project uuid — MCP args
+// take the uuid, so a friendlier --project REL value gets looked up.
+func projectID(s *session, v string) string {
+	if len(v) == 36 && strings.Count(v, "-") == 4 {
+		return v // already an id
+	}
+	res, err := s.tool("list_projects", nil)
+	if err != nil {
+		fail(err)
+	}
+	var top anyMap
+	var projects []any
+	if err := json.Unmarshal(res, &projects); err != nil {
+		if err := json.Unmarshal(res, &top); err != nil {
+			fail("parse projects:", err)
+		}
+		projects = list(top, "projects")
+	}
+	for _, p := range projects {
+		m := asMap(p)
+		if str(m, "key") == v || str(m, "slug") == v || str(m, "id") == v {
+			return str(m, "id")
+		}
+	}
+	fail("unknown project:", v)
+	return ""
+}
+
 func atoi(s string) int {
 	var n int
 	if _, err := fmt.Sscanf(s, "%d", &n); err != nil {
@@ -1782,7 +1967,7 @@ func atoi(s string) int {
 }
 
 func completionScript(shell string) string {
-	cmds := "guide whoami projects project activity unread conversations mentionables messages read say react msg-edit msg-del " +
+	cmds := "guide whoami projects project activity unread inbox await conversations mentionables messages read say react msg-edit msg-del " +
 		"pin unpin pins forward thread avatar issues " +
 		"issue issue-new issue-set todos todo-add todo-done todo-undo todo-del " +
 		"todo-set todo-sync work-start work-stop ask resolve events " +

@@ -35,8 +35,9 @@ relay-cli projects                                   # list granted projects
 relay-cli project <project_id>                       # one project's details
 relay-cli activity                                   # cross-project feed: open
                                                      #   issues, PRs, latest msgs
-relay-cli unread                                     # per-conversation unread
-                                                     #   breakdown (your inbox)
+relay-cli unread [--project KEY]                     # per-conversation unread
+                                                     #   breakdown (your inbox),
+                                                     #   optionally one project
 relay-cli inbox                                      # mentions, replies and
                                                      #   unread aimed at you
 relay-cli await <pid|cid> [--timeout 55]             # block until a reply
@@ -47,11 +48,13 @@ relay-cli conversations <project_id>                 # channels + threads,
                                                      #   names + unread counts
 relay-cli messages <id> [--limit 30]                 # read a thread — project id
                   [--tags t] [--before <msg>]        #   or any conversation id;
-                                                     #   prints next_before when
-                                                     #   more history exists
+                  [--after <msg>] [--unread]         #   prints next_before when
+                  [--kind agent] [--minimal]         #   more history exists
 relay-cli say <pid|cid> "text" [--reply <msg>]       # post; mentions resolve:
                  [--tags a,b] [--attach f] [--silent]  #  @user, @agent:x, KEY-1,
                                                      #   owner/repo#42, @file:p
+relay-cli say --reply <msg> --body "text"            # reply without an id —
+                                                     #   conversation inferred
 relay-cli say <pid|cid> -                            # body from stdin
 relay-cli say <pid|cid> --file body.md               # body from a file
 relay-cli react <message_id> <emoji>                 # toggle a reaction
@@ -67,8 +70,8 @@ relay-cli thread <message_id> [--title t]            # side conversation
 relay-cli avatar <file-or-https-url>                 # set your profile picture
 relay-cli read <message_id>                          # get + mark read
 
-relay-cli issues <project_id>                        # list issues
-relay-cli issue <issue_id>                           # issue detail
+relay-cli issues <project_id> [--minimal]            # list issues
+relay-cli issue <issue_id> [--minimal]               # issue detail
 relay-cli issue-new <project_id> "title" ["desc"]    # create
 relay-cli issue-set <issue_id> status=done           # update (key=value pairs)
 
@@ -88,7 +91,8 @@ relay-cli files <project_id> [path]                  # linked-folder listing
 relay-cli file-read <project_id> <path>              # read a text file
 relay-cli attach <project_id> <file>                 # upload → attachment id
 
-relay-cli gh issues|prs <project_id>                 # GitHub lists
+relay-cli gh issues|prs <project_id>                 # GitHub lists —
+        [--status open|closed|all] [--author l] [--q x]  #   (prs also: merged)
 relay-cli gh issue|pr <project_id> <number>          # GitHub detail
 relay-cli gh issue-new <project_id> "title" [body]   # file a GitHub issue
 relay-cli gh pr-new <project_id> <head> "title"      # open a PR
@@ -120,7 +124,9 @@ relay-cli idea-set <idea_id> status=archived …       # update fields/scene
 relay-cli idea-del <idea_id>                         # delete (irreversible)
 relay-cli idea-promote <idea_id> ["issue title"]     # idea → backlog issue
 
-relay-cli search <project_id> "query"                # message search
+relay-cli search <project_id> ["query"]              # message search — query
+        [--conv id] [--kind agent] [--author name]   #   optional when filters
+        [--since YYYY-MM-DD] [--until D] [--attachments] [--minimal]
 relay-cli attachment <id>                            # print download URL
 relay-cli attachment <id> --out shot.png             # download
 

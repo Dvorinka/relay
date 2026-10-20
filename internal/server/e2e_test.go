@@ -2760,6 +2760,12 @@ func TestMCPAgentSurface(t *testing.T) {
 	case <-time.After(20 * time.Second):
 		t.Fatal("await_message did not deliver the live post")
 	}
+	// delivery writes a read receipt — the message no longer counts unread
+	env = callTool("29", "get_messages",
+		fmt.Sprintf(`{"conversation_id":%q,"unread_only":true}`, conv2["id"]))
+	if n := len(toolMap(env)["messages"].([]any)); n != 0 {
+		t.Fatalf("await delivered message still unread (%d)", n)
+	}
 
 	// --- whoami: version + capabilities ---
 	env = callTool("30", "whoami", `{}`)

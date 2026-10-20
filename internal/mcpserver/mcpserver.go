@@ -539,6 +539,7 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithDescription("List a conversation's pinned messages, newest pin first."),
 		mcp.WithString("conversation_id"),
 		mcp.WithString("project_id", mcp.Description("shorthand for the project's conversation")),
+		mcp.WithBoolean("minimal", mcp.Description("true replaces body with a 200-char excerpt and drops heavy nested fields")),
 	), s.listPins)
 
 	s.addTool(srv, mcp.NewTool("forward_message",
@@ -577,14 +578,18 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 	), s.updateIssue)
 
 	s.addTool(srv, mcp.NewTool("github_list_issues",
-		mcp.WithDescription("List open GitHub issues on the project's linked repository."),
+		mcp.WithDescription("List GitHub issues on the project's linked repository."),
 		mcp.WithString("project_id", mcp.Required()),
+		mcp.WithString("state", mcp.Description("open|closed|all — default open")),
+		mcp.WithString("author", mcp.Description("GitHub login of the issue author")),
+		mcp.WithString("q", mcp.Description("title/body substring filter")),
 	), s.ghListIssues)
 
 	s.addTool(srv, mcp.NewTool("github_get_issue",
 		mcp.WithDescription("Get one GitHub issue (with body) from the project's linked repository."),
 		mcp.WithString("project_id", mcp.Required()),
 		mcp.WithNumber("number", mcp.Required()),
+		mcp.WithBoolean("minimal", mcp.Description("true replaces body with a 200-char excerpt")),
 	), s.ghGetIssue)
 
 	s.addTool(srv, mcp.NewTool("github_list_prs",
@@ -748,12 +753,14 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 	s.addTool(srv, mcp.NewTool("get_review",
 		mcp.WithDescription("Get one review with its status and any human response."),
 		mcp.WithString("review_id", mcp.Required()),
+		mcp.WithBoolean("minimal", mcp.Description("true drops embedded Excalidraw scenes (has_scenes flag stays)")),
 	), s.getReview)
 
 	s.addTool(srv, mcp.NewTool("list_reviews",
 		mcp.WithDescription("List reviews in a granted project, newest first."),
 		mcp.WithString("project_id", mcp.Required()),
 		mcp.WithString("status", mcp.Description("Filter: pending|approved|changes_requested|superseded")),
+		mcp.WithBoolean("minimal", mcp.Description("true drops embedded Excalidraw scenes (has_scenes flag stays)")),
 	), s.listReviews)
 
 	s.addTool(srv, mcp.NewTool("await_review",
@@ -779,11 +786,13 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		mcp.WithDescription("List visual briefs in a granted project, newest first."),
 		mcp.WithString("project_id", mcp.Required()),
 		mcp.WithString("issue_id", mcp.Description("Filter by linked Relay issue UUID")),
+		mcp.WithBoolean("minimal", mcp.Description("true drops scene JSON (has_scene flag stays)")),
 	), s.listBriefs)
 
 	s.addTool(srv, mcp.NewTool("get_brief",
 		mcp.WithDescription("Get one brief including its scene JSON and comment conversation id."),
 		mcp.WithString("brief_id", mcp.Required()),
+		mcp.WithBoolean("minimal", mcp.Description("true drops scene JSON (has_scene flag stays)")),
 	), s.getBrief)
 
 	s.addTool(srv, mcp.NewTool("create_brief",
@@ -825,11 +834,13 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 	s.addTool(srv, mcp.NewTool("list_ideas",
 		mcp.WithDescription("List brainstorm ideas in a granted project, recently updated first."),
 		mcp.WithString("project_id", mcp.Required()),
+		mcp.WithBoolean("minimal", mcp.Description("true drops scene JSON (has_scene flag stays)")),
 	), s.listIdeas)
 
 	s.addTool(srv, mcp.NewTool("get_idea",
 		mcp.WithDescription("Get one idea including its Excalidraw scene JSON."),
 		mcp.WithString("idea_id", mcp.Required()),
+		mcp.WithBoolean("minimal", mcp.Description("true drops scene JSON (has_scene flag stays)")),
 	), s.getIdea)
 
 	s.addTool(srv, mcp.NewTool("create_idea",
@@ -1318,6 +1329,12 @@ func (s *Service) awaitMessage(ctx context.Context, req mcp.CallToolRequest) (*m
 		if err != nil {
 			return errResult(err)
 		}
+		// delivery is a read — write the receipt like get_message does, so
+		// inbox/list_unread don't resurface what was already consumed
+		_ = s.q.MarkMessageReadAgent(ctx, db.MarkMessageReadAgentParams{
+			MessageID: mid, AgentID: a.ID,
+		})
+		s.publishRead(ctx, m.ConversationID, []pgtype.UUID{mid})
 		return jsonResult(gin.H{"status": "message", "message": s.messageJSONFull(ctx, m)})
 	}
 	if r, err := latestUnread(); err == nil && r != nil {
@@ -2918,8 +2935,19 @@ func (s *Service) listPins(ctx context.Context, req mcp.CallToolRequest) (*mcp.C
 	if err != nil {
 		return errResult(err)
 	}
+	minimal := req.GetBool("minimal", false)
 	msgs := make([]gin.H, 0, len(rows))
 	for _, m := range rows {
+		if minimal {
+			ex, tr := excerpt(m.Body, 200)
+			msgs = append(msgs, gin.H{
+				"id": m.ID, "conversation_id": m.ConversationID,
+				"excerpt": ex, "truncated": tr,
+				"created_at": m.CreatedAt.Time,
+				"author":     gin.H{"name": m.AuthorName, "kind": authorKind(db.GetMessageFullRow(m))},
+			})
+			continue
+		}
 		msgs = append(msgs, messageJSON(db.GetMessageFullRow(m)))
 	}
 	return jsonResult(map[string]any{"messages": msgs})
@@ -3283,17 +3311,32 @@ func (s *Service) ghListIssues(ctx context.Context, req mcp.CallToolRequest) (*m
 	if err != nil {
 		return errResult(err)
 	}
+	state := strings.ToLower(strings.TrimSpace(req.GetString("state", "open")))
+	switch state {
+	case "open", "closed", "all":
+	default:
+		return mcp.NewToolResultError("invalid state — open|closed|all"), nil
+	}
+	author := strings.ToLower(strings.TrimSpace(req.GetString("author", "")))
+	query := strings.ToLower(strings.TrimSpace(req.GetString("q", "")))
 	cli, err := s.ghClient(ctx)
 	if err != nil {
 		return errResult(err)
 	}
-	issues, err := cli.ListIssues(ctx, r.InstallationID, r.Owner, r.Name)
+	issues, err := cli.ListIssuesWithState(ctx, r.InstallationID, r.Owner, r.Name, state)
 	if err != nil {
 		return errResult(err)
 	}
 	full := r.Owner + "/" + r.Name
 	out := make([]gin.H, 0, len(issues))
 	for _, i := range issues {
+		if author != "" && strings.ToLower(i.User.Login) != author {
+			continue
+		}
+		if query != "" && !strings.Contains(strings.ToLower(i.Title), query) &&
+			!strings.Contains(strings.ToLower(i.Body), query) {
+			continue
+		}
 		out = append(out, ghIssueJSON(i, full))
 	}
 	return jsonResult(out)
@@ -3317,7 +3360,13 @@ func (s *Service) ghGetIssue(ctx context.Context, req mcp.CallToolRequest) (*mcp
 		return errResult(err)
 	}
 	out := ghIssueJSON(*i, r.Owner+"/"+r.Name)
-	out["body"] = i.Body
+	if req.GetBool("minimal", false) {
+		ex, tr := excerpt(i.Body, 200)
+		out["excerpt"] = ex
+		out["truncated"] = tr
+	} else {
+		out["body"] = i.Body
+	}
 	return jsonResult(out)
 }
 
@@ -4111,7 +4160,12 @@ func (s *Service) getReview(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 	if err != nil {
 		return errResult(err)
 	}
-	return jsonResult(mcpReviewJSON(r))
+	out := mcpReviewJSON(r)
+	if req.GetBool("minimal", false) {
+		delete(out, "scenes")
+		out["has_scenes"] = len(r.Scenes) > 2
+	}
+	return jsonResult(out)
 }
 
 func (s *Service) listReviews(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -4132,9 +4186,15 @@ func (s *Service) listReviews(ctx context.Context, req mcp.CallToolRequest) (*mc
 	if err != nil {
 		return errResult(err)
 	}
+	minimal := req.GetBool("minimal", false)
 	out := make([]gin.H, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, mcpReviewJSON(listRowAsGet(r)))
+		e := mcpReviewJSON(listRowAsGet(r))
+		if minimal {
+			delete(e, "scenes")
+			e["has_scenes"] = len(r.Scenes) > 2
+		}
+		out = append(out, e)
 	}
 	return jsonResult(out)
 }
@@ -4331,14 +4391,20 @@ func (s *Service) listBriefs(ctx context.Context, req mcp.CallToolRequest) (*mcp
 	if err != nil {
 		return errResult(err)
 	}
+	minimal := req.GetBool("minimal", false)
 	out := make([]gin.H, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, briefJSONMCP(db.Brief{
+		e := briefJSONMCP(db.Brief{
 			ID: r.ID, ProjectID: r.ProjectID, IssueID: r.IssueID,
 			ConversationID: r.ConversationID, Title: r.Title, Summary: r.Summary,
 			Scene: r.Scene, Status: r.Status, CreatedByUser: r.CreatedByUser,
 			CreatedByAgent: r.CreatedByAgent, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-		}, r.AuthorName, issueKey(r.IssueProjectKey, r.IssueNumber)))
+		}, r.AuthorName, issueKey(r.IssueProjectKey, r.IssueNumber))
+		if minimal {
+			delete(e, "scene")
+			e["has_scene"] = len(r.Scene) > 2
+		}
+		out = append(out, e)
 	}
 	return jsonResult(gin.H{"briefs": out, "policy": s.briefPolicyFor(ctx, pid)})
 }
@@ -4355,12 +4421,17 @@ func (s *Service) getBrief(ctx context.Context, req mcp.CallToolRequest) (*mcp.C
 	if err := s.scope(ctx, b.ProjectID, "brief:read"); err != nil {
 		return errResult(err)
 	}
-	return jsonResult(briefJSONMCP(db.Brief{
+	out := briefJSONMCP(db.Brief{
 		ID: b.ID, ProjectID: b.ProjectID, IssueID: b.IssueID,
 		ConversationID: b.ConversationID, Title: b.Title, Summary: b.Summary,
 		Scene: b.Scene, Status: b.Status, CreatedByUser: b.CreatedByUser,
 		CreatedByAgent: b.CreatedByAgent, CreatedAt: b.CreatedAt, UpdatedAt: b.UpdatedAt,
-	}, b.AuthorName, issueKey(b.IssueProjectKey, b.IssueNumber)))
+	}, b.AuthorName, issueKey(b.IssueProjectKey, b.IssueNumber))
+	if req.GetBool("minimal", false) {
+		delete(out, "scene")
+		out["has_scene"] = len(b.Scene) > 2
+	}
+	return jsonResult(out)
 }
 
 func (s *Service) createBrief(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -4523,13 +4594,19 @@ func (s *Service) listIdeas(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 	if err != nil {
 		return errResult(err)
 	}
+	minimal := req.GetBool("minimal", false)
 	out := make([]gin.H, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, ideaJSONMCP(db.Idea{
+		e := ideaJSONMCP(db.Idea{
 			ID: r.ID, ProjectID: r.ProjectID, Title: r.Title, Summary: r.Summary,
 			Scene: r.Scene, Status: r.Status, CreatedByUser: r.CreatedByUser,
 			CreatedByAgent: r.CreatedByAgent, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-		}, r.ProjectKey, r.AuthorName))
+		}, r.ProjectKey, r.AuthorName)
+		if minimal {
+			delete(e, "scene")
+			e["has_scene"] = len(r.Scene) > 2
+		}
+		out = append(out, e)
 	}
 	return jsonResult(gin.H{"ideas": out})
 }
@@ -4546,11 +4623,16 @@ func (s *Service) getIdea(ctx context.Context, req mcp.CallToolRequest) (*mcp.Ca
 	if err := s.ideaScope(ctx, i, "brief:read"); err != nil {
 		return errResult(err)
 	}
-	return jsonResult(ideaJSONMCP(db.Idea{
+	out := ideaJSONMCP(db.Idea{
 		ID: i.ID, ProjectID: i.ProjectID, WorkspaceID: i.WorkspaceID, Title: i.Title, Summary: i.Summary,
 		Scene: i.Scene, Status: i.Status, CreatedByUser: i.CreatedByUser,
 		CreatedByAgent: i.CreatedByAgent, CreatedAt: i.CreatedAt, UpdatedAt: i.UpdatedAt,
-	}, i.ProjectKey.String, i.AuthorName))
+	}, i.ProjectKey.String, i.AuthorName)
+	if req.GetBool("minimal", false) {
+		delete(out, "scene")
+		out["has_scene"] = len(i.Scene) > 2
+	}
+	return jsonResult(out)
 }
 
 func (s *Service) createIdea(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
