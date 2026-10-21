@@ -23,7 +23,9 @@ only — see [Development fallback](#development-fallback).
 - **Issue & PR mirroring** — GitHub issues and pull requests on linked repos
   become Relay issues (`origin: github`; PRs carry `github.kind="pr"` and a
   `/pull/N` link). Edits, closes, merges, and reopens on GitHub update the
-  mirrored issue.
+  mirrored issue. A reconcile sweep re-pulls every linked repo's recent
+  activity at boot and every 10 min, so a missed webhook self-heals instead
+  of leaving a stale mirror.
 - **Bulk import** — Development tab → **Import issues & PRs** (or
   `POST /api/projects/:id/github/import`) pulls the full history:
   `state=all`, paginated, capped at 500 per kind per repo. Open PRs land in

@@ -80,6 +80,51 @@ func TestMergePR(t *testing.T) {
 	}
 }
 
+func TestRecentlyLists(t *testing.T) {
+	var gotPath, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/repos/o/r/issues" {
+			// one real issue + one PR (the endpoint returns both)
+			_, _ = fmt.Fprint(w, `[
+				{"number":1,"title":"bug","state":"closed"},
+				{"number":2,"title":"pr as issue","state":"open","pull_request":{}}
+			]`)
+			return
+		}
+		_, _ = fmt.Fprint(w, `[{"number":3,"title":"pr","state":"closed","merged_at":"2026-01-01T00:00:00Z"}]`)
+	}))
+	defer srv.Close()
+	old := apiBase
+	apiBase = srv.URL
+	defer func() { apiBase = old }()
+
+	cli := NewPATClient("tok")
+	issues, err := cli.ListIssuesRecently(context.Background(), 0, "o", "r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(issues) != 1 || issues[0].Number != 1 {
+		t.Fatalf("issues = %+v, want only the non-PR row", issues)
+	}
+	for _, want := range []string{"state=all", "sort=updated", "direction=desc", "per_page=50"} {
+		if !strings.Contains(gotQuery, want) {
+			t.Fatalf("issues query %q missing %q", gotQuery, want)
+		}
+	}
+	prs, err := cli.ListPRsRecently(context.Background(), 0, "o", "r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prs) != 1 || prs[0].MergedAt == nil {
+		t.Fatalf("prs = %+v, want the merged PR", prs)
+	}
+	if gotPath != "/repos/o/r/pulls" {
+		t.Fatalf("pulls path = %q", gotPath)
+	}
+}
+
 func TestAppJWT(t *testing.T) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {

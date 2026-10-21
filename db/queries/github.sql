@@ -100,3 +100,7 @@ from repositories r
 join projects p on p.id = r.project_id
 where p.workspace_id = sqlc.arg(workspace_id)
 order by r.owner, r.name;
+
+-- name: ListAllRepos :many
+-- every linked repo on the instance — the mirror-reconcile sweep walks them all
+select * from repositories order by owner, name;

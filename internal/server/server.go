@@ -97,6 +97,10 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	// Auto-file: marked messages ("bug:", "enhancement:", …) on repo-linked
 	// projects become GitHub issues mirrored back onto the board.
 	ghSvc.WatchMessages()
+	// Mirror reconcile: webhooks are at-most-once — a delivery lost to a
+	// deploy or transient error leaves a mirrored issue/PR stale forever.
+	// The sweep re-pulls recent repo activity and self-heals drift.
+	go ghSvc.StartReconcile(context.Background())
 	rtSvc := realtime.NewService(hub, pool)
 	searchSvc := search.NewService(pool)
 	hookSvc := webhooks.NewService(log, pool, cfg.PublicURL)
