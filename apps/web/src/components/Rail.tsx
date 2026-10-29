@@ -25,7 +25,7 @@ import {
 } from "../lib/updates";
 import { subscribe } from "../lib/events";
 import { deriveKey, initials } from "../lib/text";
-import { useNav } from "../stores/nav";
+import { useNarrow, useNav } from "../stores/nav";
 import {
   setProjectOrder,
   setProjectSort,
@@ -120,7 +120,7 @@ function ProjectRow(props: {
           aria-label={expanded() ? "Hide channels" : "Show channels"}
           aria-expanded={expanded()}
           onClick={() => setManual(!expanded())}
-          class="hidden shrink-0 rounded p-0.5 text-faint transition-colors hover:text-fg sm:block"
+          class="shrink-0 rounded p-0.5 text-faint transition-colors hover:text-fg"
         >
           <ChevronDownIcon
             class={`h-3 w-3 transition-transform ${expanded() ? "" : "-rotate-90"}`}
@@ -739,7 +739,11 @@ function CollapsedRail(props: { onExpand: () => void }) {
 export function Rail() {
   const session = useSession();
   const projects = useProjects();
-  const { navOpen, closeNav } = useNav();
+  const { navOpen, openNav, closeNav } = useNav();
+  const narrow = useNarrow();
+  // On a phone the aside is either the icon rail or the overlay drawer.
+  // Desktop keeps the resizable column. The drawer sits above thread panels.
+  const drawer = () => narrow() && navOpen();
   const [creating, setCreating] = createSignal(false);
   onMount(refreshUnread);
   const unsub = subscribe((e) => {
@@ -842,27 +846,32 @@ export function Rail() {
 
   return (
     <>
-      <Show when={navOpen()}>
+      <Show when={drawer()}>
         <button
           type="button"
           aria-label="Close navigation"
           onClick={closeNav}
-          class="fixed inset-0 z-30 bg-black/40 md:hidden"
+          class="fixed inset-0 z-[65] bg-black/50"
         />
+        {/* Keep the icon-rail slot so the chat does not jump under the drawer. */}
+        <div class="w-14 shrink-0" />
       </Show>
       <aside
         class={`relative flex shrink-0 flex-col border-r border-border bg-rail ${
-          navOpen()
-            ? "fixed inset-y-0 left-0 z-40 w-64 shadow-2xl"
-            : "hidden md:flex"
+          drawer()
+            ? "fixed inset-y-0 left-0 z-[70] w-64 shadow-2xl"
+            : ""
         }`}
         style={
-          navOpen()
+          drawer()
             ? undefined
-            : { width: collapsed() ? "3.5rem" : `${railW()}px` }
+            : {
+                width:
+                  narrow() || collapsed() ? "3.5rem" : `${railW()}px`,
+              }
         }
       >
-      <Show when={!collapsed() && !navOpen()}>
+      <Show when={!narrow() && !collapsed() && !navOpen()}>
         <div
           class="absolute inset-y-0 right-0 z-10 w-1.5 cursor-col-resize transition-colors hover:bg-accent/40"
           onPointerDown={startDrag}
@@ -871,7 +880,7 @@ export function Rail() {
           aria-label="Resize sidebar"
         />
       </Show>
-      <Show when={!collapsed() && !navOpen()}>
+      <Show when={!narrow() && !collapsed() && !navOpen()}>
         <div class="absolute right-2 top-2.5 z-10">
           <Tip text="Collapse sidebar" hint="Shrink to icons — badges stay visible">
             <button
@@ -886,8 +895,12 @@ export function Rail() {
         </div>
       </Show>
       <Show
-        when={!collapsed() || navOpen()}
-        fallback={<CollapsedRail onExpand={toggleCollapsed} />}
+        when={drawer() || (!narrow() && !collapsed())}
+        fallback={
+          <CollapsedRail
+            onExpand={() => (narrow() ? openNav() : toggleCollapsed())}
+          />
+        }
       >
       <WorkspaceSwitcher />
 

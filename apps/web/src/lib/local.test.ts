@@ -9,7 +9,7 @@ vi.stubGlobal("localStorage", {
   removeItem: () => {},
   clear: () => {},
 });
-const { dumpLocal, importRemoteSnapshot, remoteOriginOf } = await import(
+const { dumpLocal, importRemoteSnapshot, local, remoteOriginOf } = await import(
   "./local"
 );
 
@@ -153,5 +153,27 @@ describe("importRemoteSnapshot", () => {
       expect(remoteOriginOf(id)).toBe(O);
     }
     expect(remoteOriginOf("pX")).toBeUndefined();
+  });
+});
+
+describe("local channels", () => {
+  it("lists one row per project and keeps channels off the main chat", async () => {
+    const p = await local.createProject({ name: "Phone Nav Test" });
+    dumpLocal().projects.push({ ...p });
+    const listed = await local.listProjects();
+    expect(listed.projects.filter((x) => x.id === p.id)).toHaveLength(1);
+
+    const main = await local.projectConversation(p.id);
+    const { channel } = await local.createChannel(p.id, "  ops  ");
+    expect(channel.name).toBe("ops");
+    expect((await local.projectConversation(p.id)).id).toBe(main.id);
+    expect((await local.listChannels(p.id)).channels.map((c) => c.name)).toEqual([
+      "ops",
+    ]);
+    await expect(local.createChannel(p.id, "OPS")).rejects.toThrow(
+      /already exists/,
+    );
+    await local.deleteChannel(channel.id);
+    expect((await local.listChannels(p.id)).channels).toHaveLength(0);
   });
 });

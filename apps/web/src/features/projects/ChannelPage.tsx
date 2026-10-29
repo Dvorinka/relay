@@ -9,6 +9,7 @@ import { confirmDestructive } from "../../components/Confirm";
 import { Spinner, Tip } from "../../components/ui";
 import {
   CheckIcon,
+  ChevronLeftIcon,
   InboxIcon,
   LinkIcon,
   LockIcon,
@@ -103,6 +104,14 @@ export default function ChannelPage() {
   return (
     <div class="flex h-full min-h-0 flex-col">
       <header class="flex h-14 shrink-0 items-center gap-2 border-b border-border px-3 sm:px-4">
+        <button
+          type="button"
+          aria-label="Back to project"
+          onClick={() => navigate(`/app/p/${params.projectId}`)}
+          class="flex h-8 w-8 items-center justify-center rounded-md text-muted transition-colors hover:bg-hover hover:text-fg md:hidden"
+        >
+          <ChevronLeftIcon class="h-4 w-4" />
+        </button>
         <span class="text-[15px] text-faint">#</span>
         <Show
           when={!renaming()}

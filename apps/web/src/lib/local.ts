@@ -31,6 +31,7 @@ import {
   type Project,
   type Reaction,
   type SearchResults,
+  type Channel,
   type Thread,
   type Todo,
   type User,
@@ -49,8 +50,18 @@ interface LocalThread {
   parent_message_id: string;
   parent_conversation: string;
   title: string | null;
+  expires_at?: string | null;
   created_at: string;
 }
+
+// Channel name and flags ride on the conversation row. The wire Conversation
+// type has no name; these fields round-trip through the JSON doc.
+type ChannelConv = Conversation & {
+  name?: string | null;
+  agents_blocked?: boolean;
+  intake_mode?: "" | "receive" | "chat" | "ops";
+  email_alerts?: string[];
+};
 
 interface LocalDB {
   user: User;
@@ -126,6 +137,13 @@ export const localReady: Promise<void> = (async () => {
     const saved = await localStore.get<LocalDB>("doc");
     if (saved) {
       db = { ...emptyDB(), ...saved };
+      // A create that appended onto the live list used to persist the same
+      // project twice. Drop the extras once so the rail stays a single row.
+      const projects = uniqueById(db.projects);
+      if (projects.length !== db.projects.length) {
+        db.projects = projects;
+        save();
+      }
       await rehydrateUrls();
       return;
     }
@@ -236,10 +254,22 @@ const me = () => ({
 
 const findMessage = (id: string) => db.messages.find((m) => m.id === id);
 const findIssue = (id: string) => db.issues.find((i) => i.id === id);
+function uniqueById<T extends { id: string }>(list: T[] | undefined): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const item of list ?? []) {
+    if (!item?.id || seen.has(item.id)) continue;
+    seen.add(item.id);
+    out.push(item);
+  }
+  return out;
+}
+
 const convOf = (projectId: string, issueId?: string) =>
   db.conversations.find(
     (c) =>
       c.kind !== "thread" &&
+      c.kind !== "channel" &&
       c.project_id === projectId &&
       (c.issue_id ?? null) === (issueId ?? null),
   );
@@ -320,8 +350,43 @@ function threadOut(t: LocalThread): Thread {
       ? { author: parent.author.name, preview: parent.body.slice(0, 160) }
       : { author: "Deleted", preview: "Original message was deleted" },
     last_reply_at: replies.at(-1)?.created_at ?? null,
+    expires_at: t.expires_at ?? null,
     created_at: t.created_at,
   };
+}
+
+function threadLive(t: LocalThread): boolean {
+  if (!t.expires_at) return true;
+  const at = Date.parse(t.expires_at);
+  return Number.isNaN(at) || at > Date.now();
+}
+
+function channelName(raw: string): string {
+  const s = raw.trim().replace(/\s+/g, " ");
+  if ([...s].length < 1 || [...s].length > 60) return "";
+  return s;
+}
+
+function asChannel(c: Conversation): Channel {
+  const x = c as ChannelConv;
+  const mode = x.intake_mode ?? "";
+  return {
+    id: c.id,
+    project_id: c.project_id,
+    kind: "channel",
+    name: x.name ?? null,
+    agents_blocked: !!x.agents_blocked,
+    intake_mode: mode,
+    intake: mode !== "",
+    email_alerts: x.email_alerts ?? [],
+    created_at: c.created_at,
+  };
+}
+
+function findChannel(channelId: string): ChannelConv {
+  const c = db.conversations.find((x) => x.id === channelId);
+  if (!c || c.kind !== "channel") notFound();
+  return c as ChannelConv;
 }
 
 // --- the adapter surface (subset of the server client) ---
@@ -340,7 +405,7 @@ const impl = {
     members: [{ user: db.user, role: "owner" }],
   }),
 
-  listProjects: async () => ({ projects: db.projects }),
+  listProjects: async () => ({ projects: uniqueById(db.projects) }),
   createProject: async (input: {
     name: string;
     key?: string;
@@ -442,6 +507,7 @@ const impl = {
   },
   listThreads: async (projectId: string) => ({
     threads: db.threads
+      .filter(threadLive)
       .filter(
         (t) =>
           db.conversations.find((c) => c.id === t.parent_conversation)
@@ -455,6 +521,126 @@ const impl = {
       )
       .map(threadOut),
   }),
+  setThreadExpiry: async (conversationId: string, expiresAt: string | null) => {
+    const t = db.threads.find((x) => x.id === conversationId);
+    if (!t) notFound();
+    t.expires_at = expiresAt;
+    save();
+    const live = threadLive(t);
+    emitLocal({
+      type: live ? "thread.updated" : "thread.deleted",
+      project_id:
+        db.conversations.find((c) => c.id === t.parent_conversation)
+          ?.project_id ?? "",
+      data: { thread: threadOut(t) },
+    });
+    return { thread: live ? threadOut(t) : null, deleted: !live };
+  },
+  listChannels: async (projectId: string) => ({
+    channels: db.conversations
+      .filter((c) => c.kind === "channel" && c.project_id === projectId)
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .map(asChannel),
+  }),
+  createChannel: async (projectId: string, name: string) => {
+    if (!db.projects.some((p) => p.id === projectId)) notFound();
+    const n = channelName(name);
+    if (!n) {
+      throw new ApiClientError(400, "channel name must be 1-60 characters");
+    }
+    const taken = db.conversations.some(
+      (c) =>
+        c.kind === "channel" &&
+        c.project_id === projectId &&
+        (c as ChannelConv).name?.toLowerCase() === n.toLowerCase(),
+    );
+    if (taken) {
+      throw new ApiClientError(409, "a channel with that name already exists");
+    }
+    const conv: ChannelConv = {
+      id: uuid(),
+      project_id: projectId,
+      kind: "channel",
+      issue_id: null,
+      name: n,
+      agents_blocked: false,
+      intake_mode: "",
+      email_alerts: [],
+      created_at: now(),
+    };
+    db.conversations.push(conv);
+    save();
+    const channel = asChannel(conv);
+    emitLocal({
+      type: "channel.created",
+      project_id: projectId,
+      data: { channel },
+    });
+    return { channel };
+  },
+  updateChannel: async (
+    channelId: string,
+    input: {
+      name?: string;
+      agents_blocked?: boolean;
+      intake_mode?: "" | "receive" | "chat" | "ops";
+      email_alerts?: string[];
+    },
+  ) => {
+    const c = findChannel(channelId);
+    if (input.name != null) {
+      const n = channelName(input.name);
+      if (!n) {
+        throw new ApiClientError(400, "channel name must be 1-60 characters");
+      }
+      const taken = db.conversations.some(
+        (x) =>
+          x.id !== c.id &&
+          x.kind === "channel" &&
+          x.project_id === c.project_id &&
+          (x as ChannelConv).name?.toLowerCase() === n.toLowerCase(),
+      );
+      if (taken) {
+        throw new ApiClientError(
+          409,
+          "a channel with that name already exists",
+        );
+      }
+      c.name = n;
+    }
+    if (input.agents_blocked != null) c.agents_blocked = input.agents_blocked;
+    if (input.intake_mode != null) c.intake_mode = input.intake_mode;
+    if (input.email_alerts != null) c.email_alerts = input.email_alerts;
+    save();
+    const channel = asChannel(c);
+    emitLocal({
+      type: "channel.updated",
+      project_id: c.project_id,
+      data: { channel },
+    });
+    return { channel };
+  },
+  deleteChannel: async (channelId: string) => {
+    const c = findChannel(channelId);
+    const threadIds = new Set(
+      db.threads
+        .filter((t) => t.parent_conversation === channelId)
+        .map((t) => t.id),
+    );
+    db.threads = db.threads.filter((t) => !threadIds.has(t.id));
+    db.conversations = db.conversations.filter(
+      (x) => x.id !== channelId && !threadIds.has(x.id),
+    );
+    db.messages = db.messages.filter(
+      (m) => m.conversation_id !== channelId && !threadIds.has(m.conversation_id),
+    );
+    save();
+    emitLocal({
+      type: "channel.deleted",
+      project_id: c.project_id,
+      data: { channel_id: channelId },
+    });
+  },
 
   listMessages: async (
     conversationId: string,
@@ -637,6 +823,8 @@ const impl = {
   },
   markMessageRead: async () => undefined,
   markConversationRead: async () => undefined,
+  sendTyping: async () => undefined,
+  listScheduledMessages: async () => ({ scheduled: [] }),
 
   listIssues: async (
     projectId: string,
@@ -1270,12 +1458,15 @@ const impl = {
 // object URL for an already-loaded attachment (img src can't await).
 const SYNC_READS = new Set(["attachmentURL"]);
 export const local = new Proxy(impl, {
-  get(t, k: string) {
+  get(t, k: string | symbol) {
+    if (typeof k !== "string") return undefined;
     if (SYNC_READS.has(k)) return t[k as keyof typeof t];
+    const fn = t[k as keyof typeof t];
+    // Unknown methods stay undefined so api.ts can say the call needs a
+    // server, instead of throwing "t[k] is not a function".
+    if (typeof fn !== "function") return undefined;
     return (...args: unknown[]) =>
-      localReady.then(() =>
-        (t[k as keyof typeof t] as (...a: unknown[]) => unknown)(...args),
-      );
+      localReady.then(() => (fn as (...a: unknown[]) => unknown)(...args));
   },
 }) as typeof impl;
 

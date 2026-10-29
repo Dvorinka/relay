@@ -58,8 +58,10 @@ import (
 )
 
 var (
-	flagURL     = flag.String("url", envOr("RELAY_URL", "http://localhost:8080"), "Relay base URL")
-	flagToken   = flag.String("token", os.Getenv("RELAY_TOKEN"), "rly_ agent token")
+	flagURL = flag.String("url", envOr("RELAY_URL", "http://localhost:8080"), "Relay base URL")
+	// Empty default on purpose: flag.PrintDefaults echoes defaults into
+	// --help, and a live rly_ token must never land in that output.
+	flagToken   = flag.String("token", "", "rly_ agent token (default: $RELAY_TOKEN)")
 	flagJSON    = flag.Bool("json", false, "raw JSON output")
 	flagOut     = flag.String("out", "", "attachment output file")
 	flagLimit   = flag.Int("limit", 30, "message/issue list size")
@@ -201,11 +203,15 @@ func (s *session) tool(name string, args map[string]any) (json.RawMessage, error
 }
 
 func connect() *session {
-	if *flagToken == "" {
+	token := *flagToken
+	if token == "" {
+		token = os.Getenv("RELAY_TOKEN")
+	}
+	if token == "" {
 		fail("RELAY_TOKEN unset — mint one in the app (agent settings) or run:",
 			"  relay-cli redeem <rli_...> --name my-agent")
 	}
-	s := &session{hc: &http.Client{Timeout: 90 * time.Second}, relays: strings.TrimRight(*flagURL, "/"), token: *flagToken}
+	s := &session{hc: &http.Client{Timeout: 90 * time.Second}, relays: strings.TrimRight(*flagURL, "/"), token: token}
 	_, err := s.call("initialize", map[string]any{
 		"protocolVersion": "2025-06-18",
 		"capabilities":    map[string]any{},
