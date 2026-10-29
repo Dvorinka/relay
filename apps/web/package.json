@@ -17,7 +17,7 @@
     "@excalidraw/excalidraw": "0.18.1",
     "@relay/api-client": "0.0.0",
     "@solidjs/router": "1.0.0",
-    "dompurify": "^3.4.16",
+    "dompurify": "^3.4.17",
     "marked": "^18.0.13",
     "react": "19.3.0",
     "react-dom": "19.3.0",
