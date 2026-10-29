@@ -85,6 +85,8 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	reviewSvc := reviews.NewService(log, pool)
 	avSvc := avatars.NewService(log, pool, store, cfg.Limited)
 	hub := events.New()
+	projSvc.Bus = hub
+	avSvc.Bus = hub
 	convSvc.Bus = hub
 	issueSvc.Bus = hub
 	todoSvc.Bus = hub
@@ -95,6 +97,10 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	// Auto-file: marked messages ("bug:", "enhancement:", …) on repo-linked
 	// projects become GitHub issues mirrored back onto the board.
 	ghSvc.WatchMessages()
+	// Mirror reconcile: webhooks are at-most-once — a delivery lost to a
+	// deploy or transient error leaves a mirrored issue/PR stale forever.
+	// The sweep re-pulls recent repo activity and self-heals drift.
+	go ghSvc.StartReconcile(context.Background())
 	rtSvc := realtime.NewService(hub, pool)
 	searchSvc := search.NewService(pool)
 	hookSvc := webhooks.NewService(log, pool, cfg.PublicURL)
@@ -137,7 +143,7 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 			sweep()
 		}
 	}()
-	mcpHandler := mcpserver.New(db.New(pool), store, cfg.EffectiveUploadMiB()<<20, cfg.Limited, log, ghSvc, hub, pushSvc)
+	mcpHandler := mcpserver.New(db.New(pool), store, cfg.EffectiveUploadMiB()<<20, cfg.Limited, log, ghSvc, hub, pushSvc, version)
 
 	api := r.Group("/api", corsForTokenClients())
 	// Gin 404s unmatched methods before group middleware — handle CORS
@@ -198,7 +204,12 @@ func New(cfg config.Config, log *zap.Logger, pool *pgxpool.Pool, version string)
 	mailSvc.RegisterRoutes(priv)
 
 	// external agents: bearer-token MCP, not session cookies
-	r.POST("/mcp", mcpHandler)
+	// Any — streamable HTTP is more than POST: GET opens the server's
+	// listen stream, DELETE terminates the session, HEAD probes. Routing
+	// only POST let those fall to NoRoute as 404s, which MCP clients can
+	// read as a dead transport. The mcp-go handler dispatches per method
+	// and 404s what it doesn't support — the spec-correct surface.
+	r.Any("/mcp", mcpHandler)
 
 	mountStatic(r, cfg.StaticDir)
 	return r

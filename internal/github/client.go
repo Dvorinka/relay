@@ -342,13 +342,23 @@ func (c *Client) ListIssuesAll(ctx context.Context, installID int64, owner, repo
 
 // ListIssues is the dev-panel call: open issues only, first page, cheap.
 func (c *Client) ListIssues(ctx context.Context, installID int64, owner, repo string) ([]GHIssue, error) {
+	return c.ListIssuesWithState(ctx, installID, owner, repo, "open")
+}
+
+// ListIssuesWithState honors GitHub's state param (open|closed|all) —
+// mirrors ListPRsWithState; the issues endpoint still returns PRs, so
+// those are folded out client-side.
+func (c *Client) ListIssuesWithState(ctx context.Context, installID int64, owner, repo, state string) ([]GHIssue, error) {
+	if state != "open" && state != "closed" && state != "all" {
+		state = "open"
+	}
 	tok, err := c.installationToken(ctx, installID)
 	if err != nil {
 		return nil, err
 	}
 	var out []GHIssue
 	err = c.do(ctx, "GET",
-		fmt.Sprintf("%s/repos/%s/%s/issues?state=open&per_page=50", apiBase, owner, repo),
+		fmt.Sprintf("%s/repos/%s/%s/issues?state=%s&per_page=50", apiBase, owner, repo, state),
 		tok, nil, &out)
 	if err != nil {
 		return nil, err
@@ -402,13 +412,61 @@ func (c *Client) GetIssue(ctx context.Context, installID int64, owner, repo stri
 
 // ListPRs is the dev-panel call: open PRs, first page.
 func (c *Client) ListPRs(ctx context.Context, installID int64, owner, repo string) ([]PR, error) {
+	return c.ListPRsWithState(ctx, installID, owner, repo, "open")
+}
+
+// ListPRsWithState honors GitHub's state param (open|closed|all); "merged"
+// is folded client-side by the caller — the list endpoint carries merged_at
+// but has no merged state of its own.
+func (c *Client) ListPRsWithState(ctx context.Context, installID int64, owner, repo, state string) ([]PR, error) {
+	if state != "open" && state != "closed" && state != "all" {
+		state = "open"
+	}
 	tok, err := c.installationToken(ctx, installID)
 	if err != nil {
 		return nil, err
 	}
 	var out []PR
 	err = c.do(ctx, "GET",
-		fmt.Sprintf("%s/repos/%s/%s/pulls?state=open&per_page=50", apiBase, owner, repo),
+		fmt.Sprintf("%s/repos/%s/%s/pulls?state=%s&per_page=50", apiBase, owner, repo, state),
+		tok, nil, &out)
+	return out, err
+}
+
+// ListIssuesRecently returns the 50 most recently touched issues on the
+// repo (any state, PRs folded out) — the reconcile sweep's read side.
+// jarvis: ceiling 50 items per sweep, upgrade if repos outgrow it.
+func (c *Client) ListIssuesRecently(ctx context.Context, installID int64, owner, repo string) ([]GHIssue, error) {
+	tok, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return nil, err
+	}
+	var out []GHIssue
+	err = c.do(ctx, "GET",
+		fmt.Sprintf("%s/repos/%s/%s/issues?state=all&sort=updated&direction=desc&per_page=50", apiBase, owner, repo),
+		tok, nil, &out)
+	if err != nil {
+		return nil, err
+	}
+	issues := out[:0]
+	for _, i := range out {
+		if i.PullRequest == nil { // issues endpoint returns PRs too
+			issues = append(issues, i)
+		}
+	}
+	return issues, nil
+}
+
+// ListPRsRecently mirrors ListIssuesRecently for pull requests — the
+// updated sort keeps just-merged/closed PRs inside the first page.
+func (c *Client) ListPRsRecently(ctx context.Context, installID int64, owner, repo string) ([]PR, error) {
+	tok, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return nil, err
+	}
+	var out []PR
+	err = c.do(ctx, "GET",
+		fmt.Sprintf("%s/repos/%s/%s/pulls?state=all&sort=updated&direction=desc&per_page=50", apiBase, owner, repo),
 		tok, nil, &out)
 	return out, err
 }

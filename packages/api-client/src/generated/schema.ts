@@ -1405,14 +1405,19 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Open the server-initiated message stream
+         * @description Optional per the streamable-HTTP spec — a GET with the session id opens an SSE listen stream for server-initiated messages.
+         */
+        get: operations["mcpListen"];
         put?: never;
         /**
          * Streamable-HTTP MCP endpoint for external agents
          * @description JSON-RPC MCP surface. Bearer auth with an `rly_` agent token; every tool call resolves token -> agent -> project grant -> scope.
          */
         post: operations["mcpEndpoint"];
-        delete?: never;
+        /** Terminate an MCP session */
+        delete: operations["mcpSessionEnd"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1980,8 +1985,9 @@ export interface paths {
          * Server-sent events for the authenticated user's workspaces
          * @description Streams `message.created`, `message.updated`, `message.deleted`,
          *     `message.read`, `reaction.updated`, `issue.created`,
-         *     `issue.updated`, `todo.changed`, `conversation.cleared` and
-         *     `thread.updated` events as `data:` JSON frames. `message.read`
+         *     `issue.updated`, `todo.changed`, `conversation.cleared`,
+         *     `thread.updated`, `project.created` and `project.updated` events
+         *     as `data:` JSON frames. `message.read`
          *     carries `{conversation_id, message_ids, agent}` — an agent's named
          *     read receipt. Events are filtered to projects the caller can
          *     access. Heartbeat comments every 25s.
@@ -6633,6 +6639,24 @@ export interface operations {
             };
         };
     };
+    mcpListen: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description text/event-stream */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     mcpEndpoint: {
         parameters: {
             query?: never;
@@ -6655,6 +6679,24 @@ export interface operations {
             };
             /** @description Missing, revoked, or expired token */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    mcpSessionEnd: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Session terminated */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

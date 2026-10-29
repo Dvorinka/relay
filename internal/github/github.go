@@ -1570,7 +1570,7 @@ func (s *Service) onIssue(ctx context.Context, p webhookPayload) {
 		nodeID: p.Issue.NodeID,
 		status: issueStatus(p.Issue.State),
 	}
-	_, created, err := s.upsertGitHub(ctx, repo, item)
+	_, created, _, err := s.upsertGitHub(ctx, repo, item)
 	if err != nil {
 		s.log.Warn("mirror issue", zap.Error(err))
 		return
@@ -1635,15 +1635,17 @@ func prStatus(state string, merged, draft bool) string {
 }
 
 // upsertGitHub creates or refreshes the Relay issue mirroring one GitHub
-// object. Returns whether the row was created.
-func (s *Service) upsertGitHub(ctx context.Context, repo db.Repository, in importItem) (pgtype.UUID, bool, error) {
+// object. Returns the issue id, whether the row was created, and whether
+// any mirrored field moved — reconcile leans on `changed` to broadcast
+// real diffs only, and skipping no-op writes keeps updated_at honest.
+func (s *Service) upsertGitHub(ctx context.Context, repo db.Repository, in importItem) (pgtype.UUID, bool, bool, error) {
 	existing, err := s.q.FindIssueByGitHub(ctx, db.FindIssueByGitHubParams{
 		RepoID: repo.ID, Number: pgtype.Int4{Int32: int32(in.number), Valid: true},
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		n, err := s.q.NextIssueNumber(ctx, repo.ProjectID)
 		if err != nil {
-			return pgtype.UUID{}, false, err
+			return pgtype.UUID{}, false, false, err
 		}
 		row, err := s.q.CreateGitHubIssue(ctx, db.CreateGitHubIssueParams{
 			ProjectID: repo.ProjectID, Number: n,
@@ -1656,13 +1658,19 @@ func (s *Service) upsertGitHub(ctx context.Context, repo db.Repository, in impor
 			GhUrl:   pgtype.Text{String: in.url, Valid: in.url != ""},
 		})
 		if err != nil {
-			return pgtype.UUID{}, false, err
+			return pgtype.UUID{}, false, false, err
 		}
 		in.issueID = row.ID
-		return row.ID, true, nil
+		return row.ID, true, true, nil
 	}
 	if err != nil {
-		return pgtype.UUID{}, false, err
+		return pgtype.UUID{}, false, false, err
+	}
+	desc := truncate(in.body, 40000)
+	if existing.Status == in.status && existing.Title == in.title &&
+		existing.Description == desc &&
+		existing.GithubState.String == in.state && existing.GithubUrl.String == in.url {
+		return existing.ID, false, false, nil
 	}
 	if existing.Status != in.status {
 		s.ghActivity(ctx, existing.ID, "github_state",
@@ -1671,19 +1679,19 @@ func (s *Service) upsertGitHub(ctx context.Context, repo db.Repository, in impor
 	row, err := s.q.UpdateGitHubIssue(ctx, db.UpdateGitHubIssueParams{
 		ID:          existing.ID,
 		Title:       pgtype.Text{String: in.title, Valid: true},
-		Description: pgtype.Text{String: truncate(in.body, 40000), Valid: true},
+		Description: pgtype.Text{String: desc, Valid: true},
 		Status:      pgtype.Text{String: in.status, Valid: true},
 		GhState:     pgtype.Text{String: in.state, Valid: in.state != ""},
 		GhUrl:       pgtype.Text{String: in.url, Valid: in.url != ""},
 	})
-	return row.ID, false, err
+	return row.ID, false, true, err
 }
 
 // MirrorIssue mirrors a GitHub issue into Relay's issues table. Exported
 // for the MCP server — an agent filing an issue should land on the board
 // the same way the REST create path does.
 func (s *Service) MirrorIssue(ctx context.Context, repo db.Repository, i GHIssue) (pgtype.UUID, error) {
-	id, _, err := s.upsertGitHub(ctx, repo, importItem{
+	id, _, _, err := s.upsertGitHub(ctx, repo, importItem{
 		kind: "issue", number: i.Number, title: i.Title, body: i.Body,
 		state: i.State, url: i.HTMLURL, nodeID: i.NodeID,
 		status: issueStatus(i.State),
@@ -1693,7 +1701,7 @@ func (s *Service) MirrorIssue(ctx context.Context, repo db.Repository, i GHIssue
 
 // MirrorPR mirrors a GitHub pull request into Relay's issues table.
 func (s *Service) MirrorPR(ctx context.Context, repo db.Repository, p PR) (pgtype.UUID, error) {
-	id, _, err := s.upsertGitHub(ctx, repo, importItem{
+	id, _, _, err := s.upsertGitHub(ctx, repo, importItem{
 		kind: "pr", number: p.Number, title: p.Title, body: p.Body,
 		state: p.State, url: p.HTMLURL, nodeID: p.NodeID,
 		status: prStatus(p.State, p.Merged, p.Draft),
@@ -1737,7 +1745,7 @@ func (s *Service) onPullRequest(ctx context.Context, p webhookPayload) {
 		nodeID: pr.NodeID,
 		status: prStatus(pr.State, pr.Merged, pr.Draft),
 	}
-	_, created, err := s.upsertGitHub(ctx, repo, item)
+	_, created, _, err := s.upsertGitHub(ctx, repo, item)
 	if err != nil {
 		s.log.Warn("mirror pr", zap.Error(err))
 		return
@@ -1836,7 +1844,7 @@ func (s *Service) importRepo(ctx context.Context, cli *Client, repo db.Repositor
 			state: gi.State, url: gi.HTMLURL, nodeID: gi.NodeID,
 			status: issueStatus(gi.State),
 		}
-		id, created, err := s.upsertGitHub(ctx, repo, item)
+		id, created, _, err := s.upsertGitHub(ctx, repo, item)
 		if err != nil {
 			s.log.Warn("import issue", zap.Int("number", gi.Number), zap.Error(err))
 			continue
@@ -1854,7 +1862,7 @@ func (s *Service) importRepo(ctx context.Context, cli *Client, repo db.Repositor
 			state: state, url: pr.HTMLURL, nodeID: pr.NodeID,
 			status: prStatus(pr.State, pr.MergedAt != nil, pr.Draft),
 		}
-		_, created, err := s.upsertGitHub(ctx, repo, item)
+		_, created, _, err := s.upsertGitHub(ctx, repo, item)
 		if err != nil {
 			s.log.Warn("import pr", zap.Int("number", pr.Number), zap.Error(err))
 			continue
@@ -1870,6 +1878,114 @@ func bump(counts any, created bool) {
 		m["created"] = m["created"].(int) + 1
 	} else {
 		m["updated"] = m["updated"].(int) + 1
+	}
+}
+
+// --- mirror reconcile ---
+
+// reconcileEvery bounds how stale a mirrored issue/PR can get when its
+// webhook never lands: the record-then-async-dispatch path drops events
+// that arrive during a deploy or hit a transient error, and GitHub does
+// not redeliver on its own. The sweep re-pulls each linked repo's recent
+// activity through the same upsert path the webhook handlers use.
+const reconcileEvery = 10 * time.Minute
+
+// StartReconcile runs a pass at boot — events lost while the process was
+// down heal on the spot — then every reconcileEvery. Each pass is guarded:
+// pgx panics on a closed pool (tests shut pools while this still runs).
+func (s *Service) StartReconcile(ctx context.Context) {
+	sweep := func() {
+		defer func() {
+			if r := recover(); r != nil {
+				s.log.Warn("github reconcile aborted", zap.Any("panic", r))
+			}
+		}()
+		s.ReconcileAll(ctx)
+	}
+	sweep()
+	t := time.NewTicker(reconcileEvery)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			sweep()
+		}
+	}
+}
+
+// ReconcileAll refreshes every mirrored issue/PR from live repo state.
+// Serialized against webhook dispatch — both paths read-modify-write the
+// same rows, so an unsynchronized sweep could interleave a stale write
+// over a fresh one.
+func (s *Service) ReconcileAll(ctx context.Context) {
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+	cli, err := s.githubClient(ctx)
+	if err != nil {
+		return // GitHub not configured — nothing to reconcile against
+	}
+	repos, err := s.q.ListAllRepos(ctx)
+	if err != nil {
+		s.log.Warn("reconcile repos", zap.Error(err))
+		return
+	}
+	for _, r := range repos {
+		s.reconcileRepo(ctx, cli, r)
+	}
+}
+
+// reconcileRepo re-upserts a repo's recently-touched issues and PRs. Only
+// rows that actually moved get written and broadcast — a sweep must not
+// churn updated_at or spam clients over untouched mirrors.
+func (s *Service) reconcileRepo(ctx context.Context, cli *Client, repo db.Repository) {
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	full := repo.Owner + "/" + repo.Name
+	ghIssues, err := cli.ListIssuesRecently(ctx, repo.InstallationID, repo.Owner, repo.Name)
+	if err != nil {
+		s.log.Warn("reconcile issues", zap.String("repo", full), zap.Error(err))
+	}
+	for _, gi := range ghIssues {
+		s.reconcileItem(ctx, repo, importItem{
+			kind: "issue", number: gi.Number, title: gi.Title, body: gi.Body,
+			state: gi.State, url: gi.HTMLURL, nodeID: gi.NodeID,
+			status: issueStatus(gi.State),
+		})
+	}
+	prs, err := cli.ListPRsRecently(ctx, repo.InstallationID, repo.Owner, repo.Name)
+	if err != nil {
+		s.log.Warn("reconcile prs", zap.String("repo", full), zap.Error(err))
+	}
+	for _, pr := range prs {
+		state := pr.State
+		if pr.MergedAt != nil {
+			state = "merged"
+		}
+		s.reconcileItem(ctx, repo, importItem{
+			kind: "pr", number: pr.Number, title: pr.Title, body: pr.Body,
+			state: state, url: pr.HTMLURL, nodeID: pr.NodeID,
+			status: prStatus(pr.State, pr.MergedAt != nil, pr.Draft),
+		})
+	}
+}
+
+func (s *Service) reconcileItem(ctx context.Context, repo db.Repository, item importItem) {
+	id, created, changed, err := s.upsertGitHub(ctx, repo, item)
+	if err != nil {
+		s.log.Warn("reconcile mirror",
+			zap.String("repo", repo.Owner+"/"+repo.Name),
+			zap.Int("number", item.number), zap.Error(err))
+		return
+	}
+	if created {
+		s.ghActivity(ctx, id, "github_mirrored",
+			fmt.Sprintf(`{"repo":"%s","number":%d,"state":%q,"kind":%q,"source":"reconcile"}`,
+				repo.Owner+"/"+repo.Name, item.number, item.state, item.kind))
+	}
+	if changed {
+		s.publishIssue(repo.ProjectID, id, created)
 	}
 }
 

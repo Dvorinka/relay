@@ -10,6 +10,7 @@ import {
   type Resource,
 } from "solid-js";
 import { api } from "../lib/api";
+import { subscribe } from "../lib/events";
 
 export type ProjectSort = "activity" | "name" | "manual";
 
@@ -76,6 +77,24 @@ export function ProjectsProvider(props: ParentProps) {
   const [projects, { mutate, refetch }] = createResource<Project[]>(
     async () => (await api.listProjects()).projects,
   );
+
+  // Live updates: project.* is the canonical signal; resync covers frames
+  // dropped while the stream was down, and an event keyed to a project we
+  // don't know means its create frame was missed entirely (e.g. the chat
+  // was opened from another device while this stream was dead). One
+  // subscription for the app — the provider never unmounts.
+  subscribe((e) => {
+    if (e.type === "stream.resync" || e.type.startsWith("project.")) {
+      void refetch();
+      return;
+    }
+    if (
+      e.project_id &&
+      !(projects() ?? []).some((p) => p.id === e.project_id)
+    ) {
+      void refetch();
+    }
+  });
 
   const loading = () => projects.state === "pending";
   const sorted = createMemo(() => sortedProjects(projects()));

@@ -21,9 +21,11 @@ import (
 
 	"github.com/Dvorinka/relay/internal/auth"
 	"github.com/Dvorinka/relay/internal/db"
+	"github.com/Dvorinka/relay/internal/events"
 	"github.com/Dvorinka/relay/internal/httpx"
 	"github.com/Dvorinka/relay/internal/storage"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
@@ -153,6 +155,9 @@ type Service struct {
 	store   *storage.Store
 	limited bool
 	log     *zap.Logger
+	// Bus fans out project.updated when a project's icon changes — other
+	// sessions pick up the new icon_url without a reload.
+	Bus *events.Hub
 }
 
 func NewService(log *zap.Logger, pool *pgxpool.Pool, store *storage.Store, limited bool) *Service {
@@ -333,7 +338,19 @@ func (s *Service) handleProjectIcon(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
+	s.publishProjectUpdated(id)
 	c.JSON(http.StatusOK, gin.H{"id": id.String(), "icon_url": "/api/files/" + key})
+}
+
+// publishProjectUpdated tells SSE subscribers the project row changed; a
+// bare id is enough — clients refetch the list rather than merge a payload.
+func (s *Service) publishProjectUpdated(id pgtype.UUID) {
+	if s.Bus == nil {
+		return
+	}
+	pid, _ := uuid.FromBytes(id.Bytes[:])
+	s.Bus.Publish(events.Event{Type: "project.updated", ProjectID: pid,
+		Data: map[string]any{"project_id": id.String()}})
 }
 
 // handleProjectIconFromGithub adopts the first linked repo's GitHub owner
@@ -405,6 +422,7 @@ func (s *Service) handleProjectIconFromGithub(c *gin.Context) {
 		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
 		return
 	}
+	s.publishProjectUpdated(id)
 	c.JSON(http.StatusOK, gin.H{"id": id.String(), "icon_url": "/api/files/" + key})
 }
 

@@ -73,7 +73,7 @@ thread, thread becomes an issue, issue tracks GitHub state.
 - **Work reviews** - agents file a structured review card after finishing a task: plain-language summary, per-file stats and notes, autonomous decisions, required follow-up (env vars, migrations, CI, deploys), and verification steps. Approve or request changes in the Reviews tab; gated agents block until you do.
 - **MCP server** - streamable-HTTP endpoint exposing projects, conversations, messages, attachments, and issues as tools for external agents. Agents get the full GitHub write surface too — create issues/PRs, comment, review, merge, watch CI (`github_create_issue` … `github_rerun`). `get_attachment` returns a token-authenticated `download_url` agents can curl straight to disk, plus a real image content block for inline viewing — no brittle presigned URLs.
 - **Inbound hooks & support intake** - token-authenticated `POST /api/hooks/<token>` drops a message into any channel — CI alerts, deploy bots, and **live support intake** in two modes: *receive only* (reports land, replies stay in Relay) or *receive & send* (live chat — the same token pulls replies via `GET /api/hooks/<token>/messages?key=&after=` so your product's support widget stays in sync). Two switches on the channel header pick the mode; the setup guide walks through hook creation, the payload contract, ready snippets for cURL/JS/Python/Go, and a paste-ready prompt for an AI coding agent to wire the integration into your product. Point your product at the per-customer channel's hook URL and user reports land in Relay as they happen. Beyond `{message}`, the payload accepts `from` (external sender attribution), `subject`, `key` (a stable ticket key — the first post opens a dedicated sub-chat under the channel; same-key posts and staff replies live inside it — one ticket, one sub-chat, listed under the channel in the rail), `kind` (a free-form report type — *bug*, *feature*, whatever your product calls them — rendered as a colored chip and a `kind:<x>` tag for filtering), and up to 5 base64 `attachments` (logs, screenshots) through the normal storage pipeline. Each hook is customizable: a default `kind` and a `header_template` (`{from}`/`{subject}`/`{kind}`/`{key}` placeholders) shape how reports render — or point several hooks at different channels to split types entirely. Pair it with an outbound `message.created` webhook subscription for the reply path back to your app. Managed from project webhooks (rotate, disable, delete); tokens are sha256-stored and rate-limited.
-- **Realtime** - SSE event stream for live messages, issue changes, CI updates, ephemeral typing indicators, and notifications. Drafts — staged attachments included — survive reloads.
+- **Realtime** - SSE event stream for live messages, project changes, issue changes, CI updates, ephemeral typing indicators, and notifications. Drafts — staged attachments included — survive reloads.
 - **Search** - `Ctrl/Cmd+K` across projects, issues, channels, threads, messages, and mirrored GitHub items, backed by Postgres FTS; PR results deep-link into the in-app PR view.
 - **Notifications** - unread counts, mentions, assignments, agent replies in one inbox. Optional **Web Push** (VAPID) delivers mentions and review requests to the browser even when the tab is closed - enable in Settings → Notifications. **Email alerts** — any channel can mail a list of addresses on every new message (support intake, on-call channels): configure SMTP in Settings → Email (in-app, workspace admins) or via `SMTP_*` env, then set the recipient list from the channel header's mail button. Port 465 uses implicit TLS, other ports STARTTLS; the stored password is AES-256-GCM-encrypted under `AUTH_SECRET`.
 - **Mobile outbox** - the Android app queues messages and images when offline and syncs them automatically on reconnect.
@@ -214,13 +214,16 @@ embeds it: agents reach it via the `get_guide` MCP tool,
 `relay-cli guide`, or `GET /api/agent-guide` — the invite prompt already
 tells them to read it.
 
-Tools: `list_projects`, `get_project`, `list_conversations`, `get_messages`,
-`get_message`, `get_attachment`, `search_messages`, `list_issues`,
-`get_issue`, `send_message`, `edit_message`, `delete_message`,
-`create_thread`, `forward_message`, `pin_message`, `list_pins`,
-`react_to_message`, `set_avatar`, `create_issue`, `update_issue`,
-`mark_message_read`, `todo_list`, `todo_add`, `todo_update`,
-`todo_delete`, `list_project_files`, `read_project_file`,
+Tools: `get_guide`, `whoami`, `activity`, `list_projects`, `get_project`,
+`list_conversations`, `get_messages`, `get_message`, `get_attachment`,
+`search_messages`, `list_issues`, `get_issue`, `list_unread`, `inbox`,
+`await_message`, `ops_summary`, `send_message` (+ the `reply` alias),
+`edit_message`, `delete_message`, `create_thread`, `forward_message`,
+`pin_message`, `list_pins`, `react_to_message`, `set_avatar`,
+`create_issue`, `update_issue`, `mark_message_read`, `list_mentionables`,
+`request_input`, `resolve_input`, `work_start`, `work_stop`,
+`todo_list`, `todo_add`, `todo_update`, `todo_delete`, `todo_sync`,
+`list_project_files`, `read_project_file`, `upload_attachment`,
 `github_list_issues`, `github_get_issue`, `github_list_prs`,
 `github_get_pr`, `github_ci_runs`, `github_create_issue`,
 `github_create_pr`, `github_comment`, `github_review_pr`,

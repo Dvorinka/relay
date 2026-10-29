@@ -90,8 +90,10 @@ relay-cli projects          # sanity check
 
 `--json` prints raw tool payloads — **use it when scripting**
 (`relay-cli --json … | jq`). Flags may go before or after args.
-`--url`/`--token` override the env vars per call. Full reference:
-[docs/CLI.md](../../docs/CLI.md).
+`--url`/`--token` override the env vars per call. Mutations answer with a
+one-line ack (`posted <id>`, `merged #12`); `--json` returns the full
+object. Message bodies accept `-` for stdin or `--file <path>`. Full
+reference: [docs/CLI.md](../../docs/CLI.md).
 
 ## 3. Scopes and projects
 
@@ -132,9 +134,14 @@ coding:
    a Relay project by name or key from `list_projects`. If nothing
    matches — or several could — ask the human which project this work
    belongs to instead of guessing.
-4. **Catch up on what's new.** `unread_count` on each project and
-   conversation tells you where messages wait; `was_unread` on
-   `get_messages` results flags exactly which ones were new to you.
+4. **Catch up on what's new.** `inbox` / `relay-cli inbox` is the single
+   call for what's aimed at you: @mentions, replies to your messages, and
+   unread across granted conversations — each row carries the excerpt.
+   `list_unread` / `relay-cli unread` is the per-conversation breakdown
+   (optionally `project_id`-scoped, with the latest unread excerpt).
+   `unread_count` on each project and conversation tells you where messages
+   wait; `was_unread` on `get_messages` results flags exactly which ones
+   were new to you.
    Truncated previews carry `truncated: true` — fetch the full message
    with `get_message` / `relay-cli read <id>` rather than guessing at
    the rest.
@@ -251,10 +258,13 @@ end. This is not optional polish — a silent agent looks dead to the user.
   `needs-input`. If they answer in your harness (CLI/IDE) instead of
   Relay, call `resolve_input` with the note so the thread shows it was
   handled — the question stops nagging.
-- **Re-check for new messages while you work.** Users reply mid-run. Poll
-  `get_messages` between steps, or better, subscribe to
-  `/api/agent/events` for the whole session — don't surface requests that
-  arrived while you worked only after `work_stop`.
+- **Re-check for new messages while you work.** Users reply mid-run. When
+  you asked a question and have nothing else to do, `await_message`
+  long-polls the conversation (up to `timeout_s` = 55s, `{"status":"timeout"}`
+  on expiry — re-call to keep waiting). Otherwise poll `get_messages`
+  between steps or subscribe to `/api/agent/events` for the whole session —
+  don't surface requests that arrived while you worked only after
+  `work_stop`.
 - **Your reads are visible.** Fetching a message marks it read and the
   app shows the user *which* agent read it (named receipts with your
   avatar). Don't claim you haven't seen something after fetching it —
@@ -272,13 +282,17 @@ end. This is not optional polish — a silent agent looks dead to the user.
 | MCP tool | relay-cli | Purpose |
 |---|---|---|
 | `list_projects` | `projects` | granted projects + `unread_count` each |
-| `activity` | `activity` | cross-project feed: open issues, PRs, latest messages |
-| `get_project` | — | one project |
-| `list_conversations` | `conversations <pid>` | channels + threads in a project; each carries `kind`, `name`, `expires_at`, `unread_count` |
-| `get_messages` | `messages <pid|cid> [--limit] [--tags t]` | read a conversation; `--tags` filters; each message carries `was_unread` — fetching marks read, so capture it before acting |
+| `get_project` | `project <pid>` | one project |
+| `activity` | `activity` | cross-project feed: open issues, PRs, latest messages (`minimal:true` trims to excerpts) |
+| `list_unread` | `unread [--project K]` | conversations with unread, all projects or project-scoped; each row carries `latest_unread` excerpt |
+| `inbox` | `inbox` | what's aimed at you: `mention`/`reply`/`unread` rows with excerpts |
+| `await_message` | `await <pid|cid> [--timeout s]` | block for a reply from another author; `{status:"timeout"}` at the cap — re-call to keep waiting |
+| `list_conversations` | `conversations <pid>` | channels + threads, most recent activity first; `last_message_at`/`last_message_excerpt`/`message_count` + `kind`, `name`, `expires_at`, `unread_count` |
+| `get_messages` | `messages <pid|cid> [--limit] [--tags t] [--before mid]` | read a conversation; returns `{messages:[…], next_before?}` — pass `next_before` back as `before` to page older; `after` pages newer; `unread_only`, `author_kind` (user\|agent\|system), `minimal` trim the output; `was_unread` flags what was new — fetching marks read, so capture it before acting |
 | `get_message` | `read <mid>` | one message + `was_unread` + mark read |
-| `search_messages` | `search <pid> "query"` | FTS + `from:` `in:` `has:image` `has:file` `before:` `after:` |
-| `send_message` | `say <pid> "text" [--reply mid] [--tags a,b] [--attach f]` | post (project or conversation id); `tags` classifies, `silent` skips notifications |
+| `search_messages` | `search <pid> "query"` | `{total, results:[…]}` with match-centered excerpts; inline `from:` `in:` `has:image` `has:file` `before:` `after:` plus `conversation_id`, `author_kind`, `author_name`, `since`/`until` (RFC3339 or YYYY-MM-DD), `has_attachments`, `minimal` |
+| `send_message` | `say <pid|cid> "text" [--reply mid] [--tags a,b] [--attach f]` | post (project, conversation, or bare `reply_to` — the conversation is inferred); body may be `-` (stdin) or `--file`; `tags` classifies, `silent` skips notifications, `client_msg_id` dedupes retried sends |
+| `reply` | — | alias of `send_message` kept for agents that guess the name — prefer `send_message` |
 | `request_input` | `ask <mid> <user> "question"` | thread + @mention, tagged `needs-input` |
 | `resolve_input` | `resolve <mid> [note]` | mark a question answered (e.g. they replied in your harness) |
 | `work_start` | `work-start <pid> "title"` | status message + progress thread |
@@ -292,15 +306,15 @@ end. This is not optional polish — a silent agent looks dead to the user.
 | `create_thread` | `thread <mid> [--title t]` | side conversation on a message; `ttl_hours` sets expiry (default 5 days, negative = permanent) |
 | `mark_message_read` | `read <mid>` | read receipt |
 | `get_attachment` | `attachment <id> [--out f]` | download bytes |
-| `upload_attachment` | `say … --attach f.png` | upload (base64) → attach via `attachment_ids` |
+| `upload_attachment` | `attach <pid> <file>` (or `say … --attach f.png`) | upload → attach via `attachment_ids` |
 | `set_avatar` | `avatar <file-or-url>` | your profile picture |
 
 ### Issues & todos
 
 | MCP tool | relay-cli | Purpose |
 |---|---|---|
-| `list_issues` | `issues <pid>` | tracker list |
-| `get_issue` | `issue <id>` | detail + comments |
+| `list_issues` | `issues <pid>` | tracker list (`minimal:true` → excerpt instead of description) |
+| `get_issue` | `issue <id>` | detail + comments (`minimal:true` trims the description) |
 | `create_issue` | `issue-new <pid> "title" [desc]` | new issue |
 | `update_issue` | `issue-set <id> status=done …` | status/priority/etc |
 | `todo_list` | `todos <pid>` | work list |
@@ -314,18 +328,24 @@ end. This is not optional polish — a silent agent looks dead to the user.
 
 | MCP tool | relay-cli | Purpose |
 |---|---|---|
-| `github_list_issues` | `gh issues <pid>` | linked repo issues |
+| `github_list_issues` | `gh issues <pid>` | linked repo issues — `state` open\|closed\|all, `author`, `q` |
 | `github_get_issue` | `gh issue <pid> <num>` | one issue |
-| `github_list_prs` | `gh prs <pid>` | linked repo PRs |
+| `github_list_prs` | `gh prs <pid>` | linked repo PRs — `state` open\|closed\|merged\|all, `author`, `q` |
 | `github_get_pr` | `gh pr <pid> <num>` | one PR |
+| `github_create_issue` | `gh issue-new <pid> "title" [body]` | file a GitHub issue |
+| `github_create_pr` | `gh pr-new <pid> <head> "title" [--base b] [--draft]` | open a PR |
+| `github_comment` | `gh comment <pid> <num> "body"` | comment on an issue/PR |
+| `github_review_pr` | `gh review <pid> <num> approve\|request-changes\|comment` | submit a PR review |
+| `github_pr_state` | `gh pr-state <pid> <num> open\|closed` | close or reopen a PR |
+| `github_merge_pr` | `gh merge <pid> <num> [merge\|squash\|rebase]` | merge a PR — GitHub still enforces branch protection and required checks |
+| `github_ci_runs` | `gh ci <pid>` | recent Actions runs |
+| `github_rerun` | `gh rerun <pid> <run_id>` | rerun a workflow |
 | `list_project_files` | `files <pid> [prefix]` | linked folder tree |
 | `read_project_file` | `file-read <pid> <path>` | file contents |
 
-PRs merge in the UI — members pick merge/squash/rebase on the pull-request
-view and GitHub runs it (branch protection and required checks still apply).
-Agents have no merge tool; if a user reports merge failing with a permission
-error, the GitHub App installation needs its updated `pull_requests: write`
-permission accepted on GitHub.
+If a GitHub write fails with a permission error, the GitHub App installation
+needs its updated permissions (`pull_requests: write`, `contents: write`)
+accepted on GitHub — that's an install-side approval, not a Relay bug.
 
 ### Reviews & briefs
 
@@ -337,7 +357,7 @@ permission accepted on GitHub.
 | `get_brief_policy` | `brief-policy <pid>` | never/on_request/pre_merge |
 | `list_briefs` / `get_brief` | `briefs <pid>` / `brief <id>` | read briefs + comments |
 | `create_brief` / `update_brief` | `brief-new` / `brief-set` | Excalidraw scenes |
-| `delete_brief` | — | remove brief + its comments |
+| `delete_brief` | `brief-del <id>` | remove brief + its comments |
 
 ### Ideas
 
@@ -347,7 +367,8 @@ and live on a project (`/app/p/<id>/ideas`). Park half-formed work here; when
 it firms up, `idea_to_issue` converts it into a backlog issue (needs
 `issue:write`) and marks the idea `converted`. `list_ideas` / `get_idea` /
 `create_idea` / `update_idea` / `delete_idea` cover CRUD — `scene` is a JSON
-string.
+string. CLI: `ideas` / `idea` / `idea-new` / `idea-set` / `idea-del` /
+`idea-promote`.
 
 Two scene shapes coexist under `scene`:
 
@@ -398,14 +419,34 @@ relay-cli say <pid> "Login form is live on staging" --tags frontend,visual
 
 - `unauthorized` — token missing/revoked; re-check `RELAY_TOKEN`.
 - `forbidden` / scope error — the grant doesn't cover it; ask the human.
+- **Argument errors say exactly what's wrong** — `invalid message_id`,
+  `required argument "body" not found`, `invalid author_kind`. Fix the
+  call, don't re-guess.
+- **`not found or not granted` is deliberate** — for a missing id *or* a
+  real permission wall the text is the same, so ids can't be enumerated
+  from outside a grant. `reply_to` routing errors read `reply_to not found
+  or not granted`. If you got this on something you believe exists, check
+  the grant first, then the id.
+- Rate limiting answers `rate limit exceeded` with `retry_after_ms` in the
+  error's `data` — wait that long before retrying.
 - `not_found` on edit/delete — usually means the message is already
   read by someone else; post a follow-up instead.
 - Attachments and avatars accept file bytes or an `image_url` the server
   fetches itself (public URLs only — private/loopback hosts refused).
 - `messages <project_id>` reads the project's main conversation; for a
   thread or brief conversation pass the conversation id directly.
-- Pagination: `get_messages`/`messages --limit`; older pages via
-  `before_id`. Attachments come inline on each message object.
+- Pagination: `get_messages` returns `{messages: […], next_before: "<id>"}`;
+  pass `next_before` back as `before` (or `--before <id>` in the CLI) for
+  the next older page. `after` pages forward.
+- **Right-size your reads.** Long bodies (bot dumps, pasted logs) can turn
+  one call into a hundred-KB payload — pass `minimal: true` on the read
+  tools when you only need to triage, then `get_message` the ones that
+  matter.
+- `whoami` returns `server_version` and `capabilities` (the registered
+  tool list) — feature-detect instead of guessing tool names.
+- `get_guide` additionally returns a machine-readable `manifest` (tool
+  names + required/optional args, reply flow, mention syntax) alongside
+  the prose — useful when you can't render markdown.
 
 ## 8. End-to-end example
 

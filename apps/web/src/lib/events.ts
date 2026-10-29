@@ -63,7 +63,13 @@ function startWatchdog() {
   if (!watchdog) {
     watchdog = setInterval(() => {
       if (net.isLocal() || authBlocked) return;
-      if (Date.now() - lastFrame > HEARTBEAT_MISS_MS) connect();
+      if (Date.now() - lastFrame <= HEARTBEAT_MISS_MS) return;
+      connect();
+      // The stream may be unrecoverable — a desktop shell without the SSE
+      // bridge, or a proxy that buffers EventSource to death. Reconcile
+      // over REST each tick so a dead stream can't freeze the UI until a
+      // reload. A 401 stays blocked so the login screen does not retry.
+      emitLocal({ type: "stream.resync", project_id: "" });
     }, 15_000);
   }
   if (!visBound) {

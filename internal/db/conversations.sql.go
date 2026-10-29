@@ -986,14 +986,27 @@ where m.conversation_id = $1
   and ($2::text is null or $2::text = any(m.tags))
   and ($3::uuid is null or
        (m.created_at, m.id) < (select m2.created_at, m2.id from messages m2 where m2.id = $3::uuid))
+  and ($4::uuid is null or
+       (m.created_at, m.id) > (select m3.created_at, m3.id from messages m3 where m3.id = $4::uuid))
+  and ($5::text is null or
+       case when m.author_agent_id is not null or m.author_kind_snapshot = 'agent'
+            then 'agent' else 'user' end = $5::text)
+  and (not coalesce($6::bool, false) or
+       ((m.author_agent_id is null or m.author_agent_id <> $7::uuid)
+        and not exists (select 1 from message_reads r
+                        where r.message_id = m.id and r.agent_id = $7::uuid)))
 order by m.created_at desc, m.id desc
-limit $4::int
+limit $8::int
 `
 
 type ListMessagesParams struct {
 	ConversationID pgtype.UUID `json:"conversation_id"`
 	Tag            pgtype.Text `json:"tag"`
 	Before         pgtype.UUID `json:"before"`
+	After          pgtype.UUID `json:"after"`
+	AuthorKind     pgtype.Text `json:"author_kind"`
+	UnreadOnly     pgtype.Bool `json:"unread_only"`
+	Reader         pgtype.UUID `json:"reader"`
 	Lim            int32       `json:"lim"`
 }
 
@@ -1027,13 +1040,19 @@ type ListMessagesRow struct {
 	FwdAuthorName      string             `json:"fwd_author_name"`
 }
 
-// newest-first page; $2 is an optional "older than message id" cursor,
-// narg(tag) filters to messages carrying that tag
+// newest-first page; before/after are optional message-id cursors
+// (before pages older, after pages newer), narg(tag) filters to messages
+// carrying that tag, author_kind narrows to user|agent|system, and
+// unread_only keeps only messages the given reader agent hasn't read
 func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]ListMessagesRow, error) {
 	rows, err := q.db.Query(ctx, listMessages,
 		arg.ConversationID,
 		arg.Tag,
 		arg.Before,
+		arg.After,
+		arg.AuthorKind,
+		arg.UnreadOnly,
+		arg.Reader,
 		arg.Lim,
 	)
 	if err != nil {

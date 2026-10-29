@@ -38,7 +38,8 @@
 //	relay-cli completion bash|zsh|fish
 //
 // Global flags: --url, --token, --json (raw tool payloads), --limit, --out,
-// --file, --status, --timeout, --reply, --conv, --repo
+// --file, --status, --timeout, --reply, --conv, --repo, --minimal, --after,
+// --unread, --kind, --author, --since, --until, --attachments, --project, --q
 package main
 
 import (
@@ -59,23 +60,39 @@ import (
 
 var (
 	flagURL = flag.String("url", envOr("RELAY_URL", "http://localhost:8080"), "Relay base URL")
-	// Empty default on purpose: flag.PrintDefaults echoes defaults into
-	// --help, and a live rly_ token must never land in that output.
+	// Deliberately empty default: flag.PrintDefaults echoes defaults into
+	// --help, and a live rly_ token must never end up in help output,
+	// transcripts, or screenshots. RELAY_TOKEN is resolved after parsing.
 	flagToken   = flag.String("token", "", "rly_ agent token (default: $RELAY_TOKEN)")
 	flagJSON    = flag.Bool("json", false, "raw JSON output")
 	flagOut     = flag.String("out", "", "attachment output file")
 	flagLimit   = flag.Int("limit", 30, "message/issue list size")
-	flagFile    = flag.String("file", "", "review payload JSON file (- for stdin)")
-	flagStatus  = flag.String("status", "", "review status filter")
-	flagTimeout = flag.Int("timeout", 60, "review wait timeout in seconds")
+	flagFile    = flag.String("file", "", "payload file: review JSON, message body, scene JSON (- for stdin)")
+	flagStatus  = flag.String("status", "", "status filter or new status (reviews, idea-set)")
+	flagTimeout = flag.Int("timeout", 60, "review/await wait timeout in seconds")
 	flagReply   = flag.String("reply", "", "message id this send replies to")
 	flagTags    = flag.String("tags", "", "comma-separated message tags (say/messages)")
-	flagConv    = flag.String("conv", "", "conversation id (for messages/read in a specific thread)")
+	flagConv    = flag.String("conv", "", "conversation id (only when the positional id is ambiguous)")
 	flagName    = flag.String("name", "", "agent name (redeem)")
 	flagTitle   = flag.String("title", "", "thread title (thread)")
 	flagMode    = flag.String("mode", "notify", "review mode for redeem: notify|gate")
 	flagAttach  = flag.String("attach", "", "comma-separated file paths to upload + attach (say)")
 	flagSilent  = flag.Bool("silent", false, "post without notifications (say, work beats)")
+	flagBefore  = flag.String("before", "", "paginate messages before this message id")
+	flagBase    = flag.String("base", "", "PR base branch (gh pr-new; default: repo default)")
+	flagBody    = flag.String("body", "", "body text/file target for gh commands (- for stdin)")
+	flagDraft   = flag.Bool("draft", false, "open the PR as a draft (gh pr-new)")
+	flagMethod  = flag.String("method", "", "merge method: merge|squash|rebase (gh merge; default: repo default)")
+	flagProject = flag.String("project", "", "scope to one project (unread, events; id or key)")
+	flagMinimal = flag.Bool("minimal", false, "trim heavy fields to excerpts/flags (messages, search, issues, issue, activity, pins, gh issue, briefs, brief, ideas, idea, reviews, review)")
+	flagAfter   = flag.String("after", "", "paginate messages after this message id")
+	flagUnread  = flag.Bool("unread", false, "messages: only unread messages")
+	flagKind    = flag.String("kind", "", "author kind: user|agent|system (messages, search)")
+	flagAuthor  = flag.String("author", "", "author filter (search, gh prs/issues)")
+	flagSince   = flag.String("since", "", "search lower bound (YYYY-MM-DD or RFC3339)")
+	flagUntil   = flag.String("until", "", "search upper bound (YYYY-MM-DD or RFC3339)")
+	flagAttachd = flag.Bool("attachments", false, "search: only messages with attachments")
+	flagQ       = flag.String("q", "", "extra query filter (gh prs/issues)")
 )
 
 var rpcID atomic.Int64
@@ -277,6 +294,102 @@ func num(v any) int {
 	return 0
 }
 
+// negNumber reports whether s is a negative numeric literal (-5, -1.5) —
+// those are legal flag values, unlike another flag's name.
+func negNumber(s string) bool {
+	if len(s) < 2 || s[0] != '-' {
+		return false
+	}
+	return s[1] >= '0' && s[1] <= '9'
+}
+
+// humanSize renders a byte count for attachment listings.
+func humanSize(n int) string {
+	switch {
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.1f KB", float64(n)/(1<<10))
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
+}
+
+// readArgBody resolves a text body: "-" reads stdin, --file reads a file
+// (or stdin on "-"), otherwise the positional argument stands.
+func readArgBody(positional string) string {
+	var raw []byte
+	var err error
+	switch {
+	case *flagFile != "":
+		if *flagFile == "-" {
+			raw, err = io.ReadAll(os.Stdin)
+		} else {
+			raw, err = os.ReadFile(*flagFile)
+		}
+	case positional == "-":
+		raw, err = io.ReadAll(os.Stdin)
+	case positional != "":
+		return positional
+	default:
+		fail("missing body text (or pass - / --file for stdin/file)")
+	}
+	if err != nil {
+		fail(err)
+	}
+	s := strings.TrimRight(string(raw), "\n")
+	if strings.TrimSpace(s) == "" {
+		fail("body is empty")
+	}
+	return s
+}
+
+// confirm prints a one-line acknowledgement for mutations instead of
+// echoing the full payload back. --json still emits everything. It picks
+// the few fields a follow-up command needs (ids, keys, PR numbers).
+func confirm(verb string, raw json.RawMessage) {
+	if *flagJSON {
+		emit(raw)
+		return
+	}
+	var m anyMap
+	if err := json.Unmarshal(raw, &m); err != nil || m == nil {
+		fmt.Println(verb)
+		return
+	}
+	var bits []string
+	seen := map[string]bool{}
+	pick := func(mm anyMap) {
+		for _, k := range []string{"key", "id", "message_id", "number", "issue_number"} {
+			var v string
+			if s := str(mm, k); s != "" {
+				v = s
+			} else if n := num(mm[k]); n != 0 {
+				v = fmt.Sprint(n)
+			}
+			if v != "" && !seen[v] {
+				seen[v] = true
+				bits = append(bits, v)
+			}
+		}
+	}
+	pick(m)
+	for _, k := range []string{"message", "thread", "issue", "idea", "brief", "review"} {
+		if sub := asMap(m[k]); sub != nil {
+			before := len(bits)
+			pick(sub)
+			if len(bits) > before && k == "thread" {
+				bits[before] = "thread " + bits[before]
+			}
+		}
+	}
+	if len(bits) == 0 {
+		fmt.Println(verb)
+		return
+	}
+	fmt.Printf("%s %s\n", verb, strings.Join(bits, " "))
+}
+
 // fmtTime trims an RFC3339 stamp to HH:MM for display.
 func fmtTime(v any) string {
 	s, _ := v.(string)
@@ -312,7 +425,25 @@ func render(kind string, raw json.RawMessage) {
 	case "conversations":
 		for _, c := range rows("conversations") {
 			m := asMap(c)
-			fmt.Printf("%s  %s%s\n", str(m, "id"), str(m, "kind"), unreadSuffix(m))
+			name := str(m, "name")
+			if name == "" {
+				// issue conversations carry the computed key + title
+				name = str(m, "issue_key")
+				if t := str(m, "issue_title"); name != "" && t != "" {
+					name += "  " + t
+				}
+			}
+			if name == "" {
+				name = "-"
+			}
+			extra := unreadSuffix(m)
+			if e := str(m, "expires_at"); e != "" {
+				extra += "  expires " + fmtTime(e)
+			}
+			fmt.Printf("%s  %-9s %-28s%s\n", str(m, "id"), str(m, "kind"), name, extra)
+			if ex := str(m, "last_message_excerpt"); ex != "" {
+				fmt.Printf("         └ %s: %s\n", str(m, "last_author"), truncate(ex, 90))
+			}
 		}
 	case "messages":
 		msgs := rows("messages")
@@ -331,11 +462,7 @@ func render(kind string, raw json.RawMessage) {
 				fmt.Printf("  %s\n  └ reply to %s: %s%s\n", str(p, "id"),
 					str(p, "author"), truncate(str(p, "preview"), 60), truncNote)
 			}
-			atts := len(list(asMap(m), "attachments"))
 			suffix := ""
-			if atts > 0 {
-				suffix = fmt.Sprintf("  [%d attachment(s)]", atts)
-			}
 			if m["pinned_at"] != nil {
 				suffix += "  [pinned]"
 			}
@@ -348,8 +475,24 @@ func render(kind string, raw json.RawMessage) {
 			if m["was_unread"] == true {
 				suffix += "  [new]"
 			}
-			fmt.Printf("%s %s  %s\n%s%s\n\n", str(m, "id"), name,
-				fmtTime(m["created_at"]), str(m, "body"), suffix)
+			body := str(m, "body")
+			if body == "" {
+				body = str(m, "excerpt")
+				if m["truncated"] == true {
+					suffix += "  [truncated — relay-cli read " + str(m, "id") + "]"
+				}
+			}
+			fmt.Printf("%s %s  %s\n%s%s\n", str(m, "id"), name,
+				fmtTime(m["created_at"]), body, suffix)
+			for _, a := range list(m, "attachments") {
+				am := asMap(a)
+				fmt.Printf("  └ attach %s  %s  %s\n",
+					str(am, "filename"), humanSize(num(am["size_bytes"])), str(am, "id"))
+			}
+			fmt.Println()
+		}
+		if nb := str(top, "next_before"); nb != "" {
+			fmt.Printf("… older — relay-cli messages <id> --before %s\n", nb)
 		}
 	case "issues":
 		for _, i := range rows("issues") {
@@ -368,6 +511,12 @@ func render(kind string, raw json.RawMessage) {
 				mark = "x"
 			}
 			fmt.Printf("[%s] %s  %s\n", mark, str(m, "content"), str(m, "id"))
+		}
+	case "ideas":
+		for _, i := range rows("ideas") {
+			m := asMap(i)
+			fmt.Printf("%-10s %-40s %s\n",
+				str(m, "status"), str(m, "title"), str(m, "id"))
 		}
 	case "briefs":
 		if p := str(top, "policy"); p != "" {
@@ -402,6 +551,13 @@ func render(kind string, raw json.RawMessage) {
 			fmt.Printf("%-6s %-8s %s\n", "#"+fmt.Sprint(num(m["number"])),
 				str(m, "state"), str(m, "title"))
 		}
+	case "ghci":
+		for _, it := range rows("workflow_runs") {
+			m := asMap(it)
+			fmt.Printf("%-12s %-10s %-12s %-8s %s\n",
+				fmt.Sprint(num(m["run_number"])), str(m, "status"),
+				str(m, "conclusion"), str(m, "branch"), str(m, "name"))
+		}
 	case "whoami":
 		ws := asMap(top["workspace"])
 		fmt.Printf("%s (@%s)\n", str(top, "name"), str(top, "slug"))
@@ -413,6 +569,116 @@ func render(kind string, raw json.RawMessage) {
 			m := asMap(p)
 			fmt.Printf("grant      %-8s %s\n", str(m, "key"), str(m, "id"))
 		}
+	case "search":
+		if n := num(top["total"]); n > 0 {
+			fmt.Printf("%d match(es)\n\n", n)
+		}
+		for _, it := range rows("results") {
+			m := asMap(it)
+			who := str(m, "author_name")
+			if str(m, "author_kind") == "agent" {
+				who += "·agent"
+			}
+			where := str(m, "conversation_title")
+			if where == "" {
+				where = str(m, "conversation_kind")
+			}
+			extra := ""
+			if m["has_attachments"] == true {
+				extra = "  📎"
+			}
+			for _, t := range list(m, "tags") {
+				extra += fmt.Sprintf("  #%v", t)
+			}
+			body := str(m, "body")
+			if body == "" {
+				body = str(m, "excerpt")
+			}
+			fmt.Printf("%s %s  %s  in %s%s\n  %s\n\n", str(m, "id"), who,
+				fmtTime(m["created_at"]), where, extra, truncate(body, 140))
+		}
+	case "issue":
+		m := top
+		fmt.Printf("%s  %-9s %-6s %s\n", str(m, "key"), str(m, "status"),
+			str(m, "priority"), str(m, "title"))
+		d := str(m, "description")
+		if d == "" {
+			d = str(m, "excerpt")
+		}
+		if d != "" {
+			fmt.Println(truncate(d, 400))
+			if m["truncated"] == true {
+				fmt.Println("…(truncated — drop --minimal for the full description)")
+			}
+		}
+	case "project":
+		m := top
+		fmt.Printf("%s  %s\n%s\n", str(m, "key"), str(m, "name"), str(m, "id"))
+		if d := str(m, "description"); d != "" {
+			fmt.Println(d)
+		}
+	case "idea":
+		m := top
+		fmt.Printf("%-10s %s\n%s\n", str(m, "status"), str(m, "title"), str(m, "id"))
+		if d := str(m, "summary"); d != "" {
+			fmt.Println(d)
+		}
+	case "review":
+		m := top
+		fmt.Printf("%-9s %s\n%s\n", str(m, "status"), str(m, "title"), str(m, "id"))
+		if d := str(m, "summary"); d != "" {
+			fmt.Println(d)
+		}
+	case "ghdetail":
+		m := top
+		fmt.Printf("#%v  %-8s %s\n%s\n", m["number"], str(m, "state"),
+			str(m, "title"), str(m, "url"))
+		d := str(m, "body")
+		if d == "" {
+			d = str(m, "excerpt")
+		}
+		if d != "" {
+			fmt.Println(truncate(d, 400))
+		}
+	case "unread":
+		us := rows("unread")
+		if len(us) == 0 {
+			fmt.Println("all read")
+			break
+		}
+		for _, u := range us {
+			m := asMap(u)
+			p := asMap(m["project"])
+			name := str(m, "name")
+			if name == "" {
+				name = str(m, "issue_key")
+			}
+			if name == "" {
+				name = "-"
+			}
+			fmt.Printf("%-8s %-9s %4d  %-26s %s\n",
+				str(p, "key"), str(m, "kind"), num(m["unread_count"]), name, str(m, "id"))
+			if lu := asMap(m["latest_unread"]); lu != nil {
+				fmt.Printf("         └ %s: %s\n", str(lu, "author"),
+					truncate(str(lu, "excerpt"), 90))
+			}
+		}
+	case "inbox":
+		for _, it := range rows("items") {
+			m := asMap(it)
+			fmt.Printf("%-7s %-16s %s  %s\n  %s\n",
+				str(m, "kind"), str(asMap(m["author"]), "name"), fmtTime(m["at"]),
+				str(m, "message_id"), truncate(str(m, "excerpt"), 90))
+		}
+	case "await":
+		if str(top, "status") != "message" {
+			fmt.Println("no reply within timeout")
+			break
+		}
+		m := asMap(top["message"])
+		fmt.Printf("%s %s  %s\n  %s\n", str(m, "id"),
+			str(asMap(m["author"]), "name"), fmtTime(m["created_at"]),
+			truncate(str(m, "body"), 140))
 	case "mentionables":
 		for _, u := range list(top, "users") {
 			fmt.Printf("@%s\n", str(asMap(u), "name"))
@@ -447,10 +713,14 @@ func render(kind string, raw json.RawMessage) {
 			fmt.Println("RECENT MESSAGES")
 			for _, it := range msgs {
 				m := asMap(it)
+				body := str(m, "body")
+				if body == "" {
+					body = str(m, "excerpt")
+				}
 				fmt.Printf("  %-10s %-16s %.60s\n",
 					str(asMap(m["project"]), "key"),
 					str(asMap(m["author"]), "name"),
-					str(m, "body"))
+					body)
 			}
 		}
 		if len(list(top, "open_prs"))+len(list(top, "open_issues"))+len(list(top, "recent_messages")) == 0 {
@@ -481,16 +751,19 @@ Guide
 
 Chat
   projects                              list granted projects
+  project <project_id>                  one project's details
   activity                              cross-project feed: open issues, PRs, latest messages
   unread                                per-conversation unread breakdown
-  conversations <project_id>            list conversations
+  inbox                                 mentions, replies and unread aimed at you
+  await <project_id|conversation_id>    block until a reply lands (--timeout s)
+  conversations <project_id>            list conversations (id, kind, name, unread)
   mentionables <project_id>             names that resolve: @users, @agents, KEY-1, repo#N
-  messages <project_id|conversation_id> list messages (use --conv for a thread, --tags t to filter)
-  read <project_id|conversation_id>     mark-read alias for messages
-  say <project_id> <body> [--reply id] [--tags a,b] [--attach f.png] [--silent]
-                                              post a message (mentions: @user, KEY-1, repo#42)
+  messages <project_id|conversation_id> list messages (--tags t, --before id to paginate)
+  read <message_id>                     show one message + mark it read
+  say <project_id|conversation_id> <body|-> [--reply id] [--tags a,b] [--attach f.png] [--silent]
+                                              post a message; "-" or --file reads the body from stdin/a file
   react <message_id> <emoji>            toggle a reaction
-  msg-edit <message_id> <body>          edit an unread agent message
+  msg-edit <message_id> <body|->        edit an unread agent message
   msg-del <message_id>                  delete an own unread message
   pin|unpin <message_id>                pin or unpin a message
   pins <project_id|conversation_id>     list pinned messages
@@ -499,10 +772,10 @@ Chat
   avatar <file|url>                     set this agent's profile picture
 
 Work
-  issues <project_id>                   list issues
+  issues <project_id> [--status S]      list issues (backlog|todo|in_progress|review|done|cancelled)
   issue <issue_id>                      show one issue
-  issue-new <project_id> <title>        create an issue
-  issue-set <issue_id> --status S       update an issue
+  issue-new <project_id> <title> [desc] create an issue
+  issue-set <issue_id> key=value …      update an issue
   todos <project_id>                    list todos
   todo-add <project_id> <text>          add a todo
   todo-done|todo-undo|todo-del <id>     update todos
@@ -512,16 +785,27 @@ Work
   work-stop <status_msg_id> [summary]   close the work status
   ask <message_id> <user> <question>    ask a person (thread + @mention)
   resolve <question_msg_id> [note]      mark a question answered
-  events                                stream live events for your grants (Ctrl+C to stop)
+  events [--project KEY] [--json]       stream live events; pretty by default, raw frames with --json
 
 Files & attachments
   files <project_id> [path]             list the linked folder
   file-read <project_id> <path>         read a text file
+  attach <project_id> <file>            upload a file, print its attachment id
   attachment <id> [--out file]          attachment metadata + download
 
 GitHub
   gh issues|prs <project_id>            list GitHub issues / PRs
   gh issue|pr <project_id> <number>     show one
+  gh issue-new <project_id> <title> [body]      file a GitHub issue
+  gh pr-new <project_id> <head> <title> [--base b] [--body t|-] [--draft]
+                                              open a pull request
+  gh comment <project_id> <num> <body|->      comment on an issue/PR
+  gh review <project_id> <num> approve|request-changes|comment [body]
+                                              submit a PR review
+  gh pr-state <project_id> <num> open|closed  close or reopen a PR
+  gh merge <project_id> <num> [merge|squash|rebase]   merge a PR
+  gh ci <project_id>                    recent workflow runs
+  gh rerun <project_id> <run_id>        rerun a workflow run
 
 Reviews
   reviews <project_id> [--status S]     list work reviews
@@ -534,7 +818,16 @@ Briefs (visual explanations)
   brief <brief_id>                      show a brief incl. scene JSON
   brief-new <project_id> <title> --file scene.json   create a brief
   brief-set <brief_id> [--status S] [--file patch]   update a brief
+  brief-del <brief_id>                  delete a brief (irreversible)
   brief-policy <project_id>             show the project's brief policy
+
+Ideas (brainstorm whiteboards)
+  ideas <project_id>                    list ideas
+  idea <idea_id>                        show one idea incl. scene
+  idea-new <project_id> <title> ["summary"] [--file scene.json]   create
+  idea-set <idea_id> key=value … [--file scene.json]              update
+  idea-del <idea_id>                    delete (irreversible)
+  idea-promote <idea_id> ["title"]      convert an idea into a backlog issue
 
   search <project_id> <query>           substring search over messages
   redeem <rli_...> [--name n] [--mode]  exchange an invite for an rly_ token
@@ -560,6 +853,12 @@ Environment: RELAY_URL, RELAY_TOKEN.
 			name := strings.TrimLeft(strings.SplitN(args[i], "=", 2)[0], "-")
 			if f := flag.CommandLine.Lookup(name); f != nil {
 				if bf, ok := f.Value.(interface{ IsBoolFlag() bool }); !ok || !bf.IsBoolFlag() {
+					// Refuse to swallow a flag-looking token as the value —
+					// `--conv --limit 5` must fail loudly, not set
+					// conv="--limit" and silently return empty output.
+					if next := args[end]; strings.HasPrefix(next, "-") && next != "-" && !negNumber(next) {
+						fail("flag --" + name + " needs an argument, got " + next)
+					}
 					end++ // non-bool flag takes the next token as its value
 				}
 			}
@@ -592,6 +891,14 @@ Environment: RELAY_URL, RELAY_TOKEN.
 		}
 		out(kind, res)
 	}
+	// runOK is for mutations: one ack line, not the whole echoed payload.
+	runOK := func(verb, name string, a map[string]any) {
+		res, err := s.tool(name, a)
+		if err != nil {
+			fail(err)
+		}
+		confirm(verb, res)
+	}
 
 	switch args[0] {
 	case "guide":
@@ -606,14 +913,43 @@ Environment: RELAY_URL, RELAY_TOKEN.
 		run("whoami", "whoami", nil)
 
 	case "activity":
-		run("activity", "activity", nil)
+		a := map[string]any{}
+		if *flagMinimal {
+			a["minimal"] = true
+		}
+		run("activity", "activity", a)
 
 	case "projects":
 		run("projects", "list_projects", nil)
 
+	case "project":
+		run("project", "get_project",
+			map[string]any{"project_id": need(args, 1, "project_id")})
+
+	case "inbox":
+		run("inbox", "inbox", map[string]any{"limit": *flagLimit})
+
+	case "await":
+		// block until a human posts in the conversation (timeout_s <= 55)
+		a := map[string]any{"timeout_s": *flagTimeout}
+		if *flagConv != "" {
+			a["conversation_id"] = *flagConv
+		} else {
+			a["project_id"] = need(args, 1, "project_id or conversation_id")
+		}
+		run("await", "await_message", a)
+
 	case "unread":
-		// roll up unread counts: granted projects, then each project's
-		// conversations — same breakdown the app's Inbox shows.
+		// Prefer the server-side rollup (one call); fall back to composing
+		// it from list_projects + list_conversations on older servers.
+		var ua map[string]any
+		if *flagProject != "" {
+			ua = map[string]any{"project_id": projectID(s, *flagProject)}
+		}
+		if res, err := s.tool("list_unread", ua); err == nil {
+			out("unread", res)
+			return
+		}
 		raw, err := s.tool("list_projects", nil)
 		if err != nil {
 			fail(err)
@@ -631,6 +967,10 @@ Environment: RELAY_URL, RELAY_TOKEN.
 		}
 		total := 0
 		for _, p := range projects {
+			if *flagProject != "" && str(p, "key") != *flagProject &&
+				str(p, "id") != *flagProject && str(p, "slug") != *flagProject {
+				continue
+			}
 			pid := str(p, "id")
 			res, err := s.tool("list_conversations", map[string]any{"project_id": pid})
 			if err != nil {
@@ -652,8 +992,15 @@ Environment: RELAY_URL, RELAY_TOKEN.
 					continue
 				}
 				total += n
-				fmt.Printf("%-8s %-8s %4d  %s\n",
-					str(p, "key"), str(c, "kind"), n, str(c, "id"))
+				cname := str(c, "name")
+				if cname == "" {
+					cname = str(c, "issue_key")
+				}
+				if cname == "" {
+					cname = "-"
+				}
+				fmt.Printf("%-8s %-9s %4d  %-26s %s\n",
+					str(p, "key"), str(c, "kind"), n, cname, str(c, "id"))
 			}
 		}
 		if total == 0 {
@@ -674,24 +1021,65 @@ Environment: RELAY_URL, RELAY_TOKEN.
 		if *flagConv != "" {
 			a["conversation_id"] = *flagConv
 		} else {
+			// get_messages resolves a bare id either way — a project id
+			// opens the main conversation, a conversation id reads it.
 			a["project_id"] = pid
 		}
 		if *flagTags != "" {
 			a["tag"] = *flagTags
 		}
+		if *flagBefore != "" {
+			a["before"] = *flagBefore
+		}
+		if *flagAfter != "" {
+			a["after"] = *flagAfter
+		}
+		if *flagUnread {
+			a["unread_only"] = true
+		}
+		if *flagKind != "" {
+			a["author_kind"] = *flagKind
+		}
+		if *flagMinimal {
+			a["minimal"] = true
+		}
 		run("messages", "get_messages", a)
 
 	case "read":
-		id := need(args, 1, "message_id")
-		run("", "get_message", map[string]any{"message_id": id})
-		_, _ = s.tool("mark_message_read", map[string]any{"message_id": id})
+		// get_message already writes the read receipt server-side.
+		run("", "get_message", map[string]any{"message_id": need(args, 1, "message_id")})
 
 	case "say":
-		pid := need(args, 1, "project_id")
-		text := need(args, 2, "message text")
-		a := map[string]any{"project_id": pid, "body": text}
+		// say <pid|cid> "text" | - | --file f — the server resolves a bare
+		// conversation id in the project_id slot, so channels and threads
+		// are addressable positionally. With --reply alone (say --reply <mid>
+		// --body "text") the server infers the conversation from the target.
+		var pid, text string
+		if len(args) > 1 {
+			pid = args[1]
+		}
+		if len(args) > 2 {
+			text = args[2]
+		}
+		if text == "" && *flagBody != "" {
+			text = *flagBody
+		}
+		text = readArgBody(text)
+		a := map[string]any{"body": text}
+		if pid != "" {
+			a["project_id"] = pid
+		}
+		if *flagConv != "" {
+			a["conversation_id"] = *flagConv
+		}
 		if *flagReply != "" {
 			a["reply_to"] = *flagReply
+		}
+		if pid == "" && *flagConv == "" && *flagReply == "" {
+			fail("say needs a project/conversation id (or --reply)")
+		}
+		if *flagAttach != "" && pid == "" {
+			fail("--attach needs a project id")
 		}
 		if *flagTags != "" {
 			a["tags"] = *flagTags
@@ -705,56 +1093,55 @@ Environment: RELAY_URL, RELAY_TOKEN.
 			if f == "" {
 				continue
 			}
-			data, err := os.ReadFile(f)
-			if err != nil {
-				fail("read attachment:", err)
-			}
-			att, err := s.tool("upload_attachment", map[string]any{
-				"project_id":  pid,
-				"name":        filepath.Base(f),
-				"data_base64": base64.StdEncoding.EncodeToString(data),
-			})
-			if err != nil {
-				fail("upload", f+":", err)
-			}
-			var m anyMap
-			_ = json.Unmarshal(att, &m)
-			ids = append(ids, str(m, "id"))
+			ids = append(ids, uploadFile(s, pid, f))
 		}
 		if len(ids) > 0 {
 			a["attachment_ids"] = strings.Join(ids, ",")
 		}
-		run("", "send_message", a)
+		runOK("posted", "send_message", a)
+
+	case "attach":
+		// attach <pid> <file> — standalone upload; the id can later go to
+		// send_message's attachment_ids (--json gives the full object).
+		id := uploadFile(s, need(args, 1, "project_id"), need(args, 2, "file"))
+		fmt.Println(id)
 
 	case "react":
-		run("", "react_to_message", map[string]any{
+		runOK("reacted", "react_to_message", map[string]any{
 			"message_id": need(args, 1, "message_id"),
 			"emoji":      need(args, 2, "emoji"),
 		})
 
 	case "msg-edit":
-		run("", "edit_message", map[string]any{
+		var text string
+		if len(args) > 2 {
+			text = args[2]
+		}
+		runOK("edited", "edit_message", map[string]any{
 			"message_id": need(args, 1, "message_id"),
-			"body":       need(args, 2, "new body"),
+			"body":       readArgBody(text),
 		})
 
 	case "msg-del":
-		run("", "delete_message", map[string]any{
+		runOK("deleted", "delete_message", map[string]any{
 			"message_id": need(args, 1, "message_id"),
 		})
 
 	case "pin", "unpin":
-		run("", "pin_message", map[string]any{
+		runOK(args[0]+"ned", "pin_message", map[string]any{
 			"message_id": need(args, 1, "message_id"),
 			"pinned":     args[0] == "pin",
 		})
 
 	case "pins":
-		run("messages", "list_pins",
-			map[string]any{"project_id": need(args, 1, "project_id or conversation_id")})
+		a := map[string]any{"project_id": need(args, 1, "project_id or conversation_id")}
+		if *flagMinimal {
+			a["minimal"] = true
+		}
+		run("messages", "list_pins", a)
 
 	case "forward":
-		run("", "forward_message", map[string]any{
+		runOK("forwarded", "forward_message", map[string]any{
 			"message_id": need(args, 1, "message_id"),
 			"project_id": need(args, 2, "target project_id"),
 		})
@@ -766,30 +1153,40 @@ Environment: RELAY_URL, RELAY_TOKEN.
 		} else if len(args) > 2 {
 			a["title"] = args[2]
 		}
-		run("", "create_thread", a)
+		runOK("thread", "create_thread", a)
 
 	case "avatar":
 		// avatar <file|url> — files go up base64-encoded; http(s) URLs are
 		// fetched and stored server-side
 		src := need(args, 1, "image file or url")
 		if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
-			run("", "set_avatar", map[string]any{"image_url": src})
+			runOK("avatar set", "set_avatar", map[string]any{"image_url": src})
 			break
 		}
 		raw, err := os.ReadFile(src)
 		if err != nil {
 			fail(err)
 		}
-		run("", "set_avatar", map[string]any{
+		runOK("avatar set", "set_avatar", map[string]any{
 			"image_base64": base64.StdEncoding.EncodeToString(raw),
 		})
 
 	case "issues":
-		run("issues", "list_issues",
-			map[string]any{"project_id": need(args, 1, "project_id")})
+		a := map[string]any{"project_id": need(args, 1, "project_id")}
+		if *flagStatus != "" {
+			a["status"] = *flagStatus
+		}
+		if *flagMinimal {
+			a["minimal"] = true
+		}
+		run("issues", "list_issues", a)
 
 	case "issue":
-		run("", "get_issue", map[string]any{"issue_id": need(args, 1, "issue_id")})
+		a := map[string]any{"issue_id": need(args, 1, "issue_id")}
+		if *flagMinimal {
+			a["minimal"] = true
+		}
+		run("issue", "get_issue", a)
 
 	case "issue-new":
 		pid := need(args, 1, "project_id")
@@ -798,7 +1195,7 @@ Environment: RELAY_URL, RELAY_TOKEN.
 		if len(args) > 3 {
 			a["description"] = args[3]
 		}
-		run("", "create_issue", a)
+		runOK("created", "create_issue", a)
 
 	case "issue-set":
 		id := need(args, 1, "issue_id")
@@ -810,30 +1207,30 @@ Environment: RELAY_URL, RELAY_TOKEN.
 			}
 			a[k] = v
 		}
-		run("", "update_issue", a)
+		runOK("updated", "update_issue", a)
 
 	case "todos":
 		run("todos", "todo_list",
 			map[string]any{"project_id": need(args, 1, "project_id")})
 
 	case "todo-add":
-		run("", "todo_add", map[string]any{
+		runOK("added", "todo_add", map[string]any{
 			"project_id": need(args, 1, "project_id"),
 			"content":    need(args, 2, "content"),
 		})
 
 	case "todo-done", "todo-undo":
-		run("", "todo_update", map[string]any{
+		runOK("ok", "todo_update", map[string]any{
 			"todo_id": need(args, 1, "todo_id"),
 			"done":    args[0] == "todo-done",
 		})
 
 	case "todo-del":
-		run("", "todo_delete", map[string]any{"todo_id": need(args, 1, "todo_id")})
+		runOK("deleted", "todo_delete", map[string]any{"todo_id": need(args, 1, "todo_id")})
 
 	case "todo-set":
 		// todo-set <todo_id> <status> — todo|in_progress|done
-		run("", "todo_update", map[string]any{
+		runOK("ok", "todo_update", map[string]any{
 			"todo_id": need(args, 1, "todo_id"),
 			"status":  need(args, 2, "status (todo|in_progress|done)"),
 		})
@@ -860,11 +1257,11 @@ Environment: RELAY_URL, RELAY_TOKEN.
 		if err := json.Unmarshal(raw, &items); err != nil {
 			fail("bad todo JSON:", err)
 		}
-		run("", "todo_sync", map[string]any{"project_id": pid, "items": items})
+		runOK("synced", "todo_sync", map[string]any{"project_id": pid, "items": items})
 
 	case "work-start":
 		// work-start <project_id> <title> — status message + progress thread
-		run("", "work_start", map[string]any{
+		runOK("working", "work_start", map[string]any{
 			"project_id": need(args, 1, "project_id"),
 			"title":      need(args, 2, "title"),
 		})
@@ -875,11 +1272,11 @@ Environment: RELAY_URL, RELAY_TOKEN.
 		if len(args) > 2 {
 			a["summary"] = args[2]
 		}
-		run("", "work_stop", a)
+		runOK("stopped", "work_stop", a)
 
 	case "ask":
 		// ask <message_id> <user> <question> — thread + @mention
-		run("", "request_input", map[string]any{
+		runOK("asked", "request_input", map[string]any{
 			"message_id": need(args, 1, "message_id"),
 			"user":       need(args, 2, "user"),
 			"question":   need(args, 3, "question"),
@@ -891,16 +1288,44 @@ Environment: RELAY_URL, RELAY_TOKEN.
 		if len(args) > 2 {
 			a["note"] = args[2]
 		}
-		run("", "resolve_input", a)
+		runOK("resolved", "resolve_input", a)
 
 	case "events":
 		streamEvents(s)
 
 	case "search":
-		run("", "search_messages", map[string]any{
+		// search <pid> ["query"] — operators: from: in: has:image|has:file
+		// before:YYYY-MM-DD after:YYYY-MM-DD; query optional when filters
+		// (--conv --kind --author --since --until --attachments) carry it
+		a := map[string]any{
 			"project_id": need(args, 1, "project_id"),
-			"query":      need(args, 2, "query"),
-		})
+			"limit":      *flagLimit,
+		}
+		if len(args) > 2 {
+			a["query"] = args[2]
+		}
+		if *flagConv != "" {
+			a["conversation_id"] = *flagConv
+		}
+		if *flagKind != "" {
+			a["author_kind"] = *flagKind
+		}
+		if *flagAuthor != "" {
+			a["author_name"] = *flagAuthor
+		}
+		if *flagSince != "" {
+			a["since"] = *flagSince
+		}
+		if *flagUntil != "" {
+			a["until"] = *flagUntil
+		}
+		if *flagAttachd {
+			a["has_attachments"] = true
+		}
+		if *flagMinimal {
+			a["minimal"] = true
+		}
+		run("search", "search_messages", a)
 
 	case "files":
 		a := map[string]any{"project_id": need(args, 1, "project_id")}
@@ -931,35 +1356,160 @@ Environment: RELAY_URL, RELAY_TOKEN.
 		emit(res)
 
 	case "gh":
-		sub := need(args, 1, "issues|prs|issue|pr")
+		sub := need(args, 1, "issues|prs|issue|pr|issue-new|pr-new|comment|review|pr-state|merge|ci|rerun")
 		pid := need(args, 2, "project_id")
 		var name string
+		verb := ""
 		a := map[string]any{"project_id": pid}
 		switch sub {
 		case "issues":
 			name = "github_list_issues"
+			if *flagStatus != "" {
+				a["state"] = *flagStatus
+			}
+			if *flagQ != "" {
+				a["q"] = *flagQ
+			}
+			if *flagAuthor != "" {
+				a["author"] = *flagAuthor
+			}
 		case "prs":
 			name = "github_list_prs"
+			if *flagStatus != "" {
+				a["state"] = *flagStatus
+			}
+			if *flagAuthor != "" {
+				a["author"] = *flagAuthor
+			}
+			if *flagQ != "" {
+				a["q"] = *flagQ
+			}
 		case "issue":
 			name = "github_get_issue"
 			a["number"] = atoi(need(args, 3, "number"))
+			if *flagMinimal {
+				a["minimal"] = true
+			}
 		case "pr":
 			name = "github_get_pr"
 			a["number"] = atoi(need(args, 3, "number"))
+		case "issue-new":
+			// gh issue-new <pid> <title> [body|-]
+			name = "github_create_issue"
+			verb = "created"
+			a["title"] = need(args, 3, "title")
+			if len(args) > 4 || *flagBody != "" {
+				body := *flagBody
+				if len(args) > 4 {
+					body = args[4]
+				}
+				a["body"] = readArgBody(body)
+			}
+		case "pr-new":
+			// gh pr-new <pid> <head> <title> [--base b] [--body t|-] [--draft]
+			name = "github_create_pr"
+			verb = "opened"
+			a["head"] = need(args, 3, "head branch")
+			a["title"] = need(args, 4, "title")
+			if *flagBase != "" {
+				a["base"] = *flagBase
+			}
+			if *flagBody != "" {
+				a["body"] = readArgBody(*flagBody)
+			}
+			if *flagDraft {
+				a["draft"] = true
+			}
+		case "comment":
+			// gh comment <pid> <num> <body|->
+			name = "github_comment"
+			verb = "commented"
+			a["number"] = atoi(need(args, 3, "number"))
+			var body string
+			if len(args) > 4 {
+				body = args[4]
+			} else {
+				body = *flagBody
+			}
+			a["body"] = readArgBody(body)
+		case "review":
+			// gh review <pid> <num> approve|request-changes|comment [body|-]
+			name = "github_review_pr"
+			verb = "reviewed"
+			a["number"] = atoi(need(args, 3, "number"))
+			switch ev := need(args, 4, "approve|request-changes|comment"); ev {
+			case "approve":
+				a["event"] = "APPROVE"
+			case "request-changes":
+				a["event"] = "REQUEST_CHANGES"
+			case "comment":
+				a["event"] = "COMMENT"
+			default:
+				fail("review event must be approve|request-changes|comment, got:", ev)
+			}
+			var body string
+			if len(args) > 5 {
+				body = args[5]
+			} else {
+				body = *flagBody
+			}
+			if body != "" || *flagFile != "" {
+				a["body"] = readArgBody(body)
+			}
+		case "pr-state":
+			// gh pr-state <pid> <num> open|closed
+			name = "github_pr_state"
+			verb = "state set"
+			a["number"] = atoi(need(args, 3, "number"))
+			a["state"] = need(args, 4, "open|closed")
+		case "merge":
+			// gh merge <pid> <num> [merge|squash|rebase]
+			name = "github_merge_pr"
+			verb = "merged"
+			a["number"] = atoi(need(args, 3, "number"))
+			if len(args) > 4 {
+				a["method"] = args[4]
+			} else if *flagMethod != "" {
+				a["method"] = *flagMethod
+			}
+		case "ci":
+			name = "github_ci_runs"
+		case "rerun":
+			name = "github_rerun"
+			verb = "rerun"
+			a["run_id"] = atoi(need(args, 3, "run_id"))
 		default:
 			fail("gh subcommand:", sub)
 		}
-		run("gh", name, a)
+		if verb != "" {
+			runOK(verb, name, a)
+			return
+		}
+		kind := "gh"
+		switch sub {
+		case "ci":
+			kind = "ghci"
+		case "issue", "pr":
+			kind = "ghdetail"
+		}
+		run(kind, name, a)
 
 	case "reviews":
 		a := map[string]any{"project_id": need(args, 1, "project_id")}
 		if *flagStatus != "" {
 			a["status"] = *flagStatus
 		}
+		if *flagMinimal {
+			a["minimal"] = true
+		}
 		run("reviews", "list_reviews", a)
 
 	case "review":
-		run("", "get_review", map[string]any{"review_id": need(args, 1, "review_id")})
+		a := map[string]any{"review_id": need(args, 1, "review_id")}
+		if *flagMinimal {
+			a["minimal"] = true
+		}
+		run("review", "get_review", a)
 
 	case "review-submit":
 		// The structured payload (files/decisions/actions/…) is read as
@@ -983,7 +1533,7 @@ Environment: RELAY_URL, RELAY_TOKEN.
 			fail("bad review JSON:", err)
 		}
 		payload["project_id"] = pid
-		run("", "submit_review", payload)
+		runOK("submitted", "submit_review", payload)
 
 	case "review-await":
 		run("", "await_review", map[string]any{
@@ -997,10 +1547,17 @@ Environment: RELAY_URL, RELAY_TOKEN.
 		if len(args) > 2 {
 			a["issue_id"] = args[2]
 		}
+		if *flagMinimal {
+			a["minimal"] = true
+		}
 		run("briefs", "list_briefs", a)
 
 	case "brief":
-		run("", "get_brief", map[string]any{"brief_id": need(args, 1, "brief_id")})
+		a := map[string]any{"brief_id": need(args, 1, "brief_id")}
+		if *flagMinimal {
+			a["minimal"] = true
+		}
+		run("", "get_brief", a)
 
 	case "brief-policy":
 		run("", "get_brief_policy", map[string]any{"project_id": need(args, 1, "project_id")})
@@ -1026,7 +1583,7 @@ Environment: RELAY_URL, RELAY_TOKEN.
 				payload["scene"] = string(b)
 			}
 		}
-		run("", "create_brief", payload)
+		runOK("created", "create_brief", payload)
 
 	case "brief-set":
 		// brief-set <brief_id> — fields via --status/--file
@@ -1053,7 +1610,72 @@ Environment: RELAY_URL, RELAY_TOKEN.
 				payload[k] = v
 			}
 		}
-		run("", "update_brief", payload)
+		runOK("updated", "update_brief", payload)
+
+	case "brief-del":
+		runOK("deleted", "delete_brief",
+			map[string]any{"brief_id": need(args, 1, "brief_id")})
+
+	case "ideas":
+		a := map[string]any{"project_id": need(args, 1, "project_id")}
+		if *flagMinimal {
+			a["minimal"] = true
+		}
+		run("ideas", "list_ideas", a)
+
+	case "idea":
+		a := map[string]any{"idea_id": need(args, 1, "idea_id")}
+		if *flagMinimal {
+			a["minimal"] = true
+		}
+		run("idea", "get_idea", a)
+
+	case "idea-new":
+		// idea-new <pid> <title> ["summary"] [--file scene.json]
+		pid := need(args, 1, "project_id")
+		a := map[string]any{"project_id": pid, "title": need(args, 2, "title")}
+		if len(args) > 3 {
+			a["summary"] = args[3]
+		}
+		if *flagFile != "" {
+			raw, err := readFileOrStdin(*flagFile)
+			if err != nil {
+				fail(err)
+			}
+			a["scene"] = strings.TrimSpace(string(raw))
+		}
+		runOK("created", "create_idea", a)
+
+	case "idea-set":
+		// idea-set <id> [title=..] [summary=..] [status=open|converted|archived] [--file scene.json]
+		a := map[string]any{"idea_id": need(args, 1, "idea_id")}
+		for _, kv := range args[2:] {
+			k, v, ok := strings.Cut(kv, "=")
+			if !ok {
+				fail("expected key=value, got:", kv)
+			}
+			a[k] = v
+		}
+		if *flagFile != "" {
+			raw, err := readFileOrStdin(*flagFile)
+			if err != nil {
+				fail(err)
+			}
+			a["scene"] = strings.TrimSpace(string(raw))
+		}
+		runOK("updated", "update_idea", a)
+
+	case "idea-del":
+		runOK("deleted", "delete_idea",
+			map[string]any{"idea_id": need(args, 1, "idea_id")})
+
+	case "idea-promote":
+		// idea-promote <idea_id> ["issue title"] — idea → backlog issue
+		a := map[string]any{"idea_id": need(args, 1, "idea_id")}
+		if len(args) > 2 {
+			a["title"] = args[2]
+		}
+		runOK("promoted", "idea_to_issue", a)
 
 	case "attachment":
 		res, err := s.tool("get_attachment", map[string]any{"attachment_id": need(args, 1, "id")})
@@ -1125,9 +1747,68 @@ Environment: RELAY_URL, RELAY_TOKEN.
 	}
 }
 
+// uploadFile pushes one file to the project's attachment store and
+// returns its id for attachment_ids / say --attach.
+func uploadFile(s *session, pid, path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fail("read attachment:", err)
+	}
+	att, err := s.tool("upload_attachment", map[string]any{
+		"project_id":  pid,
+		"name":        filepath.Base(path),
+		"data_base64": base64.StdEncoding.EncodeToString(data),
+	})
+	if err != nil {
+		fail("upload", path+":", err)
+	}
+	var m anyMap
+	_ = json.Unmarshal(att, &m)
+	id := str(m, "id")
+	if id == "" {
+		fail("upload", path+": no id in reply")
+	}
+	return id
+}
+
+// readFileOrStdin reads a payload file; "-" means stdin.
+func readFileOrStdin(path string) ([]byte, error) {
+	if path == "-" {
+		return io.ReadAll(os.Stdin)
+	}
+	return os.ReadFile(path)
+}
+
 // streamEvents tails GET /api/agent/events and prints each SSE data line —
 // the agent-side half of live sync (todo.changed, message.created, …).
+// Human mode prints "HH:MM  type  summary"; --json passes raw frames.
+// --project <id|key> narrows the stream to one grant.
 func streamEvents(s *session) {
+	filter := *flagProject
+	if filter != "" && len(filter) != 36 { // a key, not a uuid — resolve
+		raw, err := s.tool("list_projects", nil)
+		if err != nil {
+			fail(err)
+		}
+		var v any
+		_ = json.Unmarshal(raw, &v)
+		var arr []any
+		if l, ok := v.([]any); ok {
+			arr = l
+		} else {
+			arr = list(asMap(v), "projects")
+		}
+		for _, p := range arr {
+			m := asMap(p)
+			if strings.EqualFold(str(m, "key"), filter) {
+				filter = str(m, "id")
+				break
+			}
+		}
+		if len(filter) != 36 {
+			fail("no granted project matching:", *flagProject)
+		}
+	}
 	req, err := http.NewRequest("GET",
 		strings.TrimRight(*flagURL, "/")+"/api/agent/events", nil)
 	if err != nil {
@@ -1150,13 +1831,47 @@ func streamEvents(s *session) {
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
 		line := sc.Text()
-		if data, ok := strings.CutPrefix(line, "data: "); ok {
-			fmt.Println(data)
+		data, ok := strings.CutPrefix(line, "data: ")
+		if !ok {
+			continue
 		}
+		if *flagJSON {
+			fmt.Println(data)
+			continue
+		}
+		var e struct {
+			Type      string         `json:"type"`
+			ProjectID string         `json:"project_id"`
+			Data      map[string]any `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(data), &e); err != nil {
+			fmt.Println(data)
+			continue
+		}
+		if filter != "" && e.ProjectID != filter {
+			continue
+		}
+		fmt.Printf("%s  %-20s %s\n", time.Now().Format("15:04"), e.Type, eventSummary(e.Data))
 	}
 	if err := sc.Err(); err != nil {
 		fail("events stream:", err)
 	}
+}
+
+// eventSummary distils an event payload to one line for the human view.
+func eventSummary(d map[string]any) string {
+	if m := asMap(d["message"]); m != nil {
+		return str(asMap(m["author"]), "name") + ": " + truncate(str(m, "body"), 80)
+	}
+	for _, k := range []string{"title", "content", "key", "summary"} {
+		if s := str(d, k); s != "" {
+			return truncate(s, 80)
+		}
+	}
+	if t := asMap(d["todo"]); t != nil {
+		return truncate(str(t, "content"), 80)
+	}
+	return ""
 }
 
 // redeemInvite exchanges an rli_ invite token for a live rly_ agent token.
@@ -1215,6 +1930,34 @@ func need(args []string, i int, what string) string {
 	return args[i]
 }
 
+// projectID resolves an id, key or slug to the project uuid — MCP args
+// take the uuid, so a friendlier --project REL value gets looked up.
+func projectID(s *session, v string) string {
+	if len(v) == 36 && strings.Count(v, "-") == 4 {
+		return v // already an id
+	}
+	res, err := s.tool("list_projects", nil)
+	if err != nil {
+		fail(err)
+	}
+	var top anyMap
+	var projects []any
+	if err := json.Unmarshal(res, &projects); err != nil {
+		if err := json.Unmarshal(res, &top); err != nil {
+			fail("parse projects:", err)
+		}
+		projects = list(top, "projects")
+	}
+	for _, p := range projects {
+		m := asMap(p)
+		if str(m, "key") == v || str(m, "slug") == v || str(m, "id") == v {
+			return str(m, "id")
+		}
+	}
+	fail("unknown project:", v)
+	return ""
+}
+
 func atoi(s string) int {
 	var n int
 	if _, err := fmt.Sscanf(s, "%d", &n); err != nil {
@@ -1224,12 +1967,13 @@ func atoi(s string) int {
 }
 
 func completionScript(shell string) string {
-	cmds := "guide whoami projects activity unread conversations mentionables messages read say react msg-edit msg-del " +
+	cmds := "guide whoami projects project activity unread inbox await conversations mentionables messages read say react msg-edit msg-del " +
 		"pin unpin pins forward thread avatar issues " +
 		"issue issue-new issue-set todos todo-add todo-done todo-undo todo-del " +
 		"todo-set todo-sync work-start work-stop ask resolve events " +
-		"search files file-read gh reviews review review-submit review-await " +
-		"briefs brief brief-new brief-set brief-policy attachment redeem completion"
+		"search files file-read attach gh reviews review review-submit review-await " +
+		"briefs brief brief-new brief-set brief-del brief-policy " +
+		"ideas idea idea-new idea-set idea-del idea-promote attachment redeem completion"
 	switch shell {
 	case "bash":
 		return "# relay-cli bash completion\n_relay_cli() {\n" +

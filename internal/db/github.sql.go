@@ -263,6 +263,40 @@ func (q *Queries) HasGitHubEvent(ctx context.Context, deliveryID string) (bool, 
 	return exists, err
 }
 
+const listAllRepos = `-- name: ListAllRepos :many
+select id, project_id, installation_id, owner, name, default_branch, linked_by, created_at from repositories order by owner, name
+`
+
+// every linked repo on the instance — the mirror-reconcile sweep walks them all
+func (q *Queries) ListAllRepos(ctx context.Context) ([]Repository, error) {
+	rows, err := q.db.Query(ctx, listAllRepos)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Repository{}
+	for rows.Next() {
+		var i Repository
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.InstallationID,
+			&i.Owner,
+			&i.Name,
+			&i.DefaultBranch,
+			&i.LinkedBy,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listInstallationsForWorkspace = `-- name: ListInstallationsForWorkspace :many
 select id, workspace_id, installation_id, account_login, account_type, created_at from github_installations where workspace_id = $1
 `
