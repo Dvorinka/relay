@@ -343,8 +343,8 @@ func (s *Service) registerTools(srv *server.MCPServer) {
 		return jsonResult(gin.H{
 			"guide": agentdoc.Guide,
 			"manifest": gin.H{
-				"tools": s.tools,
-				"reply_flow": "send_message with reply_to=<message_id> — conversation_id is inferred from the target; pass conversation_id/project_id explicitly only when starting a new top-level message",
+				"tools":          s.tools,
+				"reply_flow":     "send_message with reply_to=<message_id> — conversation_id is inferred from the target; pass conversation_id/project_id explicitly only when starting a new top-level message",
 				"mention_syntax": "@name mentions a workspace member, @agent:<slug> an agent, KEY-1 an issue, owner/repo#N a GitHub issue/PR, @file:<path> a linked local file",
 				"minimal_mode":   "most read tools accept minimal:true — bodies/descriptions become 200-char excerpts with truncated:true",
 				"wait_for_reply": "await_message {conversation_id, timeout_s<=55} long-polls for a reply from another author; inbox lists mentions, replies and unread in one call",
@@ -3149,7 +3149,7 @@ func (s *Service) whoami(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallT
 	out := gin.H{
 		"id": a.ID, "name": a.Name, "slug": a.Slug,
 		"review_mode": a.ReviewMode, "grant_all": a.GrantAll,
-		"grant_scopes": a.GrantScopes,
+		"grant_scopes":   a.GrantScopes,
 		"server_version": s.version,
 		// the registered tool list — feature-detect instead of guessing names
 		"capabilities": names,
@@ -3196,7 +3196,7 @@ func (s *Service) activity(ctx context.Context, req mcp.CallToolRequest) (*mcp.C
 		for _, m := range rows {
 			e := gin.H{
 				"id": m.ID, "conversation_id": m.ConversationID,
-				"created_at": m.CreatedAt.Time,
+				"created_at":        m.CreatedAt.Time,
 				"conversation_kind": m.ConversationKind,
 				"project":           gin.H{"id": m.ProjectID, "key": m.ProjectKey, "name": m.ProjectName},
 				"author":            gin.H{"name": m.AuthorName, "kind": m.AuthorKind},

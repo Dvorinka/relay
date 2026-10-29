@@ -8,8 +8,22 @@ export function useNav() {
   return {
     navOpen,
     toggleNav: () => setNavOpen((v) => !v),
+    openNav: () => setNavOpen(true),
     closeNav: () => setNavOpen(false),
   };
+}
+
+// Phones and narrow windows keep a permanent icon rail. The full project
+// list is the drawer. md (768px) is where the rail becomes the desktop column.
+const narrowQuery =
+  typeof window !== "undefined"
+    ? window.matchMedia("(max-width: 767.98px)")
+    : null;
+const [narrow, setNarrow] = createSignal(narrowQuery?.matches ?? false);
+narrowQuery?.addEventListener("change", (e) => setNarrow(e.matches));
+
+export function useNarrow() {
+  return narrow;
 }
 
 // Phone gesture: swipe in from the left edge opens the drawer, a leftward
@@ -25,9 +39,9 @@ export function initNavSwipe() {
     (e) => {
       const t = e.touches[0];
       if (!t) return;
-      // opening requires starting at the screen edge; closing works anywhere
-      // (when open, the drawer + backdrop cover the content anyway)
-      tracking = (!navOpen() && t.clientX <= 28) || navOpen();
+      // Opening starts on the icon rail (3.5rem). Closing works anywhere —
+      // the drawer and its backdrop cover the content.
+      tracking = (!navOpen() && t.clientX <= 56) || navOpen();
       x0 = t.clientX;
       y0 = t.clientY;
     },

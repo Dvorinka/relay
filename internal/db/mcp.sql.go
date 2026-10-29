@@ -670,9 +670,9 @@ from conversations c
   left join lateral (
     select count(*)::int as message_count,
            max(m.created_at)::timestamptz as last_message_at,
-           (array_agg(m.body order by m.created_at desc, m.id desc))[1]::text as last_body,
-           (array_agg(coalesce(u.name, au.name, nullif(m.author_name_snapshot, ''), '')
-                      order by m.created_at desc, m.id desc))[1]::text as last_author
+           coalesce((array_agg(m.body order by m.created_at desc, m.id desc))[1]::text, '') as last_body,
+           coalesce((array_agg(coalesce(u.name, au.name, nullif(m.author_name_snapshot, ''), '')
+                      order by m.created_at desc, m.id desc))[1]::text, '') as last_author
     from messages m
     left join users u on u.id = m.author_user_id
     left join agents au on au.id = m.author_agent_id
