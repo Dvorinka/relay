@@ -16,7 +16,7 @@ jobs:
           POSTGRES_USER: relay
           POSTGRES_PASSWORD: relay
           POSTGRES_DB: relay_e2e
-        ports: ["5432:5432"]
+        ports: ["15432:5432"]
         options: >-
           --health-cmd pg_isready
           --health-interval 5s
@@ -35,7 +35,7 @@ jobs:
       - run: go build ./...
       - run: go test ./...
         env:
-          RELAY_TEST_DATABASE_URL: postgres://relay:relay@127.0.0.1:5432/relay_e2e?sslmode=disable
+          RELAY_TEST_DATABASE_URL: postgres://relay:relay@127.0.0.1:15432/relay_e2e?sslmode=disable
 
   web:
     runs-on: [self-hosted, linux, x64]
