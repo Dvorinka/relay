@@ -37,5 +37,9 @@
     "lint": "expo lint",
     "bundle": "npm run build:bundle --prefix ../web"
   },
-  "private": true
+  "private": true,
+  "overrides": {
+    "decode-uri-component": "^0.5.1",
+    "node-forge": "^1.4.1"
+  }
 }
