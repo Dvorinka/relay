@@ -5,6 +5,7 @@ import { ConfirmHost } from "./components/Confirm";
 import { ProfileModalHost } from "./components/ProfileModal";
 import { CommitModalHost } from "./features/github/CommitModal";
 import { GitHubCreateModalHost } from "./features/github/CreateModals";
+import { GitHubIssueModalHost } from "./features/github/GitHubIssueModal";
 import { Rail } from "./components/Rail";
 import { ServerBanner } from "./components/ServerBanner";
 import { LimitedBanner } from "./components/LimitedBanner";
@@ -55,6 +56,7 @@ export default function App(props: ParentProps) {
           <ProfileModalHost />
           <CommitModalHost />
           <GitHubCreateModalHost />
+          <GitHubIssueModalHost />
           <ConfirmHost />
         </div>
       </ProjectsProvider>

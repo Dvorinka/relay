@@ -102,7 +102,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Update profile fields (chat name color) */
+        /** Update profile fields (chat name color, GitHub login) */
         patch: operations["updateMe"];
         trace?: never;
     };
@@ -1651,6 +1651,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{projectId}/github/issue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** In-app GitHub issue detail — issue plus comment thread */
+        get: operations["issueDetail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{projectId}/github/pull/merge": {
         parameters: {
             query?: never;
@@ -1725,6 +1742,78 @@ export interface paths {
          * @description Issues and PRs share the same comments API upstream.
          */
         post: operations["commentOnIssue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/github/labels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Label catalog of a linked repository */
+        get: operations["repoLabels"];
+        put?: never;
+        /** Create a label on a linked repository */
+        post: operations["createRepoLabel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/github/assignees": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Assignable users of a linked repository */
+        get: operations["repoAssignees"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/github/issues/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Update a GitHub issue's title, body, labels, or assignees
+         * @description Each provided set replaces the whole list on GitHub. Works on PR numbers too — they share the issues endpoint upstream.
+         */
+        post: operations["updateGitHubIssue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{projectId}/github/issues/state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Close or reopen a GitHub issue */
+        post: operations["setIssueState"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1809,8 +1898,25 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Open pull requests across every linked repo in the workspace */
+        /** Pull requests across every linked repo in the workspace */
         get: operations["workspacePulls"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspaceId}/github/issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Issues across every linked repo in the workspace */
+        get: operations["workspaceIssues"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2650,6 +2756,8 @@ export interface components {
             name: string;
             /** @description Chat name color as */
             name_color?: string | null;
+            /** @description Bound GitHub username; empty = not linked. */
+            github_login?: string;
             avatar_url?: string | null;
             /** Format: date-time */
             created_at?: string;
@@ -3144,6 +3252,10 @@ export interface components {
                  */
                 state?: "open" | "closed" | "merged";
                 url?: string;
+                /** @description GitHub login of the issue/PR author */
+                author?: string;
+                /** @description GitHub avatar URL of the author */
+                avatar_url?: string;
             };
         };
         IssueActivity: {
@@ -3601,6 +3713,8 @@ export interface operations {
                 "application/json": {
                     /** @description #rrggbb, or empty string to clear */
                     name_color?: string;
+                    /** @description GitHub username bound for "mine" filters, or empty to clear */
+                    github_login?: string;
                 };
             };
         };
@@ -7041,11 +7155,55 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        /** @description number, title, state, draft, merged, mergeable, body, url, author, head, base, additions, deletions, changed_files, commit_count, labels, created_at, updated_at, repo */
+                        /** @description number, title, state, draft, merged, mergeable, body, url, author, head, base, additions, deletions, changed_files, commit_count, labels, assignees, reviewers, teams, merged_by, created_at, updated_at, repo */
                         pull?: Record<string, never>;
                         files?: Record<string, never>[];
                         commits?: Record<string, never>[];
                         checks?: Record<string, never>[];
+                        /** @description latest submitted review state per reviewer */
+                        reviews?: Record<string, never>[];
+                        /** @description approved | changes_requested | pending | "" */
+                        review_decision?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            /** @description GitHub upstream error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    issueDetail: {
+        parameters: {
+            query: {
+                /** @description owner/name or repo id; optional when only one repo is linked */
+                repo?: string;
+                number: number;
+            };
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Issue detail bundle */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description number, title, state, body, url, author, avatar_url, author_type, labels, assignees, comment_count, milestone, created_at, updated_at */
+                        issue?: Record<string, never>;
+                        comments?: Record<string, never>[];
+                        repo?: Record<string, never>;
                     };
                 };
             };
@@ -7258,6 +7416,216 @@ export interface operations {
             };
         };
     };
+    repoLabels: {
+        parameters: {
+            query?: {
+                repo?: string;
+            };
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Labels */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        labels?: {
+                            name?: string;
+                            color?: string;
+                            description?: string;
+                        }[];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description GitHub upstream error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    createRepoLabel: {
+        parameters: {
+            query?: {
+                repo?: string;
+            };
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    name: string;
+                    /** @description 6-char hex, with or without '#' */
+                    color?: string;
+                    description?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Created label */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        name?: string;
+                        color?: string;
+                        description?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description GitHub upstream error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    repoAssignees: {
+        parameters: {
+            query?: {
+                repo?: string;
+            };
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Assignable users */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        users?: {
+                            login?: string;
+                            avatar_url?: string;
+                            type?: string;
+                        }[];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description GitHub upstream error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    updateGitHubIssue: {
+        parameters: {
+            query?: {
+                repo?: string;
+            };
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    number: number;
+                    title?: string;
+                    body?: string;
+                    labels?: string[];
+                    assignees?: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description Updated issue fields */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        title?: string;
+                        body?: string;
+                        labels?: Record<string, never>[];
+                        assignees?: Record<string, never>[];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description GitHub upstream error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    setIssueState: {
+        parameters: {
+            query?: {
+                repo?: string;
+            };
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    number: number;
+                    /** @enum {string} */
+                    state: "open" | "closed";
+                };
+            };
+        };
+        responses: {
+            /** @description New issue state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        state?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description GitHub upstream error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     setPullState: {
         parameters: {
             query?: {
@@ -7423,7 +7791,9 @@ export interface operations {
     };
     workspacePulls: {
         parameters: {
-            query?: never;
+            query?: {
+                state?: "open" | "closed" | "all";
+            };
             header?: never;
             path: {
                 workspaceId: string;
@@ -7433,6 +7803,34 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description PR groups keyed by project+repo */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        groups?: Record<string, never>[];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    workspaceIssues: {
+        parameters: {
+            query?: {
+                state?: "open" | "closed" | "all";
+            };
+            header?: never;
+            path: {
+                workspaceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Issue groups keyed by project+repo; issue_id links mirrored Relay issues */
             200: {
                 headers: {
                     [name: string]: unknown;

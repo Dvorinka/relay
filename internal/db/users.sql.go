@@ -14,7 +14,7 @@ import (
 const createUser = `-- name: CreateUser :one
 insert into users (email, password_hash, name)
 values ($1, $2, $3)
-returning id, email, name, created_at
+returning id, email, name, github_login, created_at
 `
 
 type CreateUserParams struct {
@@ -24,10 +24,11 @@ type CreateUserParams struct {
 }
 
 type CreateUserRow struct {
-	ID        pgtype.UUID        `json:"id"`
-	Email     string             `json:"email"`
-	Name      string             `json:"name"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	ID          pgtype.UUID        `json:"id"`
+	Email       string             `json:"email"`
+	Name        string             `json:"name"`
+	GithubLogin string             `json:"github_login"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error) {
@@ -37,13 +38,14 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateU
 		&i.ID,
 		&i.Email,
 		&i.Name,
+		&i.GithubLogin,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-select id, email, password_hash, name, name_color, avatar_key, created_at
+select id, email, password_hash, name, name_color, avatar_key, github_login, created_at
 from users
 where lower(email) = lower($1)
 `
@@ -55,6 +57,7 @@ type GetUserByEmailRow struct {
 	Name         string             `json:"name"`
 	NameColor    pgtype.Text        `json:"name_color"`
 	AvatarKey    pgtype.Text        `json:"avatar_key"`
+	GithubLogin  string             `json:"github_login"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 }
 
@@ -68,24 +71,26 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (GetUserByEm
 		&i.Name,
 		&i.NameColor,
 		&i.AvatarKey,
+		&i.GithubLogin,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-select id, email, name, name_color, avatar_key, created_at
+select id, email, name, name_color, avatar_key, github_login, created_at
 from users
 where id = $1
 `
 
 type GetUserByIDRow struct {
-	ID        pgtype.UUID        `json:"id"`
-	Email     string             `json:"email"`
-	Name      string             `json:"name"`
-	NameColor pgtype.Text        `json:"name_color"`
-	AvatarKey pgtype.Text        `json:"avatar_key"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	ID          pgtype.UUID        `json:"id"`
+	Email       string             `json:"email"`
+	Name        string             `json:"name"`
+	NameColor   pgtype.Text        `json:"name_color"`
+	AvatarKey   pgtype.Text        `json:"avatar_key"`
+	GithubLogin string             `json:"github_login"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
 func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (GetUserByIDRow, error) {
@@ -97,6 +102,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (GetUserByIDR
 		&i.Name,
 		&i.NameColor,
 		&i.AvatarKey,
+		&i.GithubLogin,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -104,7 +110,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (GetUserByIDR
 
 const updateUserAvatar = `-- name: UpdateUserAvatar :one
 update users set avatar_key = $2 where id = $1
-returning id, email, name, name_color, avatar_key, created_at
+returning id, email, name, name_color, avatar_key, github_login, created_at
 `
 
 type UpdateUserAvatarParams struct {
@@ -113,12 +119,13 @@ type UpdateUserAvatarParams struct {
 }
 
 type UpdateUserAvatarRow struct {
-	ID        pgtype.UUID        `json:"id"`
-	Email     string             `json:"email"`
-	Name      string             `json:"name"`
-	NameColor pgtype.Text        `json:"name_color"`
-	AvatarKey pgtype.Text        `json:"avatar_key"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	ID          pgtype.UUID        `json:"id"`
+	Email       string             `json:"email"`
+	Name        string             `json:"name"`
+	NameColor   pgtype.Text        `json:"name_color"`
+	AvatarKey   pgtype.Text        `json:"avatar_key"`
+	GithubLogin string             `json:"github_login"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
 func (q *Queries) UpdateUserAvatar(ctx context.Context, arg UpdateUserAvatarParams) (UpdateUserAvatarRow, error) {
@@ -130,6 +137,42 @@ func (q *Queries) UpdateUserAvatar(ctx context.Context, arg UpdateUserAvatarPara
 		&i.Name,
 		&i.NameColor,
 		&i.AvatarKey,
+		&i.GithubLogin,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const updateUserGitHubLogin = `-- name: UpdateUserGitHubLogin :one
+update users set github_login = $2 where id = $1
+returning id, email, name, name_color, avatar_key, github_login, created_at
+`
+
+type UpdateUserGitHubLoginParams struct {
+	ID          pgtype.UUID `json:"id"`
+	GithubLogin string      `json:"github_login"`
+}
+
+type UpdateUserGitHubLoginRow struct {
+	ID          pgtype.UUID        `json:"id"`
+	Email       string             `json:"email"`
+	Name        string             `json:"name"`
+	NameColor   pgtype.Text        `json:"name_color"`
+	AvatarKey   pgtype.Text        `json:"avatar_key"`
+	GithubLogin string             `json:"github_login"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) UpdateUserGitHubLogin(ctx context.Context, arg UpdateUserGitHubLoginParams) (UpdateUserGitHubLoginRow, error) {
+	row := q.db.QueryRow(ctx, updateUserGitHubLogin, arg.ID, arg.GithubLogin)
+	var i UpdateUserGitHubLoginRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Name,
+		&i.NameColor,
+		&i.AvatarKey,
+		&i.GithubLogin,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -137,7 +180,7 @@ func (q *Queries) UpdateUserAvatar(ctx context.Context, arg UpdateUserAvatarPara
 
 const updateUserNameColor = `-- name: UpdateUserNameColor :one
 update users set name_color = $2 where id = $1
-returning id, email, name, name_color, avatar_key, created_at
+returning id, email, name, name_color, avatar_key, github_login, created_at
 `
 
 type UpdateUserNameColorParams struct {
@@ -146,12 +189,13 @@ type UpdateUserNameColorParams struct {
 }
 
 type UpdateUserNameColorRow struct {
-	ID        pgtype.UUID        `json:"id"`
-	Email     string             `json:"email"`
-	Name      string             `json:"name"`
-	NameColor pgtype.Text        `json:"name_color"`
-	AvatarKey pgtype.Text        `json:"avatar_key"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	ID          pgtype.UUID        `json:"id"`
+	Email       string             `json:"email"`
+	Name        string             `json:"name"`
+	NameColor   pgtype.Text        `json:"name_color"`
+	AvatarKey   pgtype.Text        `json:"avatar_key"`
+	GithubLogin string             `json:"github_login"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
 func (q *Queries) UpdateUserNameColor(ctx context.Context, arg UpdateUserNameColorParams) (UpdateUserNameColorRow, error) {
@@ -163,6 +207,7 @@ func (q *Queries) UpdateUserNameColor(ctx context.Context, arg UpdateUserNameCol
 		&i.Name,
 		&i.NameColor,
 		&i.AvatarKey,
+		&i.GithubLogin,
 		&i.CreatedAt,
 	)
 	return i, err

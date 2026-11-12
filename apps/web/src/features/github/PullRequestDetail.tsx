@@ -13,7 +13,7 @@ import { timeAgo } from "../../lib/time";
 import { FormError, Spinner } from "../../components/ui";
 import { Select } from "../../components/Select";
 import { confirmDestructive } from "../../components/Confirm";
-import { markGitHub } from "./GitHub";
+import { GhAuthor, GhAvatar, GhIssueMeta, markGitHub } from "./GitHub";
 import { openCommit } from "./CommitModal";
 import { ArrowLeftIcon, ExternalLinkIcon } from "../../components/icons";
 
@@ -221,8 +221,21 @@ function PRBody(props: {
         <span class="font-mono"> {pr().repo.full_name}#{pr().number}</span>
         <span>
           {" "}
-          · {pr().author} · {pr().head} → {pr().base} · opened{" "}
+          · <GhAuthor author={pr().author} url={pr().avatar_url} type={pr().author_type} avatarClass="inline-block h-4 w-4 align-[-2px]" /> · {pr().head} → {pr().base} · opened{" "}
           {timeAgo(pr().created_at)}
+          <Show when={pr().merged_by}>
+            {(mb) => (
+              <>
+                {" "}
+                · merged by{" "}
+                <GhAuthor
+                  author={mb().login}
+                  url={mb().avatar_url}
+                  avatarClass="inline-block h-4 w-4 align-[-2px]"
+                />
+              </>
+            )}
+          </Show>
         </span>
       </p>
       <div class="mt-1.5 flex flex-wrap items-center gap-2 text-[11.5px] text-muted">
@@ -242,13 +255,92 @@ function PRBody(props: {
         <Show when={pr().mergeable === "conflicting"}>
           <span class="text-red-600 dark:text-red-400">conflicts</span>
         </Show>
-        <For each={pr().labels}>
-          {(l) => (
-            <span class="rounded-full border border-border px-1.5 text-[10.5px] text-muted">
-              {l}
+        <Show when={props.detail.review_decision === "approved"}>
+          <span class="rounded-full bg-emerald-500/15 px-2 py-px font-medium text-emerald-600 dark:text-emerald-400">
+            approved
+          </span>
+        </Show>
+        <Show when={props.detail.review_decision === "changes_requested"}>
+          <span class="rounded-full bg-red-500/15 px-2 py-px font-medium text-red-600 dark:text-red-400">
+            changes requested
+          </span>
+        </Show>
+        <Show when={props.detail.review_decision === "pending"}>
+          <span class="rounded-full bg-amber-500/15 px-2 py-px font-medium text-amber-600 dark:text-amber-400">
+            review pending
+          </span>
+        </Show>
+        <Show when={(props.detail.reviews?.length ?? 0) > 0}>
+          <span class="flex items-center -space-x-1.5">
+            <For each={props.detail.reviews}>
+              {(rv) => (
+                <span
+                  title={`${rv.login}: ${rv.state.toLowerCase().replace("_", " ")}`}
+                >
+                  <GhAvatar
+                    author={rv.login}
+                    url={rv.avatar_url}
+                    class={`h-4 w-4 ${
+                      rv.state === "APPROVED"
+                        ? "ring-1 ring-emerald-500/70"
+                        : rv.state === "CHANGES_REQUESTED"
+                          ? "ring-1 ring-red-500/70"
+                          : ""
+                    }`}
+                  />
+                </span>
+              )}
+            </For>
+          </span>
+        </Show>
+        <Show when={(pr().reviewers?.length ?? 0) > 0 || (pr().teams?.length ?? 0) > 0}>
+          <span
+            class="flex items-center gap-1"
+            title={`Review requested: ${[...pr().reviewers.map((a) => a.login), ...(pr().teams ?? []).map((t) => `${t.slug} (team)`)].join(", ")}`}
+          >
+            <span class="flex items-center -space-x-1.5">
+              <For each={pr().reviewers.slice(0, 3)}>
+                {(a) => (
+                  <GhAvatar author={a.login} url={a.avatar_url} class="h-4 w-4 ring-1 ring-amber-500/60" />
+                )}
+              </For>
+              <For each={pr().teams ?? []}>
+                {(t) => (
+                  <span
+                    class="flex h-4 w-4 items-center justify-center rounded-full bg-amber-500/15 text-[7.5px] font-semibold text-amber-600 ring-1 ring-amber-500/60 dark:text-amber-400"
+                    title={`Team review requested: ${t.name}`}
+                  >
+                    T
+                  </span>
+                )}
+              </For>
             </span>
-          )}
-        </For>
+            review requested
+          </span>
+        </Show>
+        <Show when={pr().assignees?.length > 0}>
+          <span
+            class="flex items-center gap-1"
+            title={`Assigned: ${pr().assignees.map((a) => a.login).join(", ")}`}
+          >
+            <span class="flex items-center -space-x-1.5">
+              <For each={pr().assignees.slice(0, 3)}>
+                {(a) => (
+                  <GhAvatar author={a.login} url={a.avatar_url} class="h-4 w-4" />
+                )}
+              </For>
+            </span>
+            assigned
+          </span>
+        </Show>
+        <GhIssueMeta
+          projectId={props.projectId}
+          repo={props.repo}
+          number={pr().number}
+          labels={pr().labels ?? []}
+          assignees={pr().assignees ?? []}
+          onApplied={() => props.onMerged()}
+        />
       </div>
       <Show when={state() === "open" && !pr().draft}>
         <div class="mt-3 flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">

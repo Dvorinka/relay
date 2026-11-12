@@ -198,25 +198,27 @@ type InboundHookThread struct {
 }
 
 type Issue struct {
-	ID           pgtype.UUID        `json:"id"`
-	ProjectID    pgtype.UUID        `json:"project_id"`
-	Number       int32              `json:"number"`
-	Title        string             `json:"title"`
-	Description  string             `json:"description"`
-	Status       string             `json:"status"`
-	Priority     string             `json:"priority"`
-	AssigneeID   pgtype.UUID        `json:"assignee_id"`
-	AgentID      pgtype.UUID        `json:"agent_id"`
-	CreatedBy    pgtype.UUID        `json:"created_by"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
-	GithubNodeID pgtype.Text        `json:"github_node_id"`
-	GithubRepoID pgtype.UUID        `json:"github_repo_id"`
-	GithubNumber pgtype.Int4        `json:"github_number"`
-	Origin       string             `json:"origin"`
-	GithubKind   string             `json:"github_kind"`
-	GithubState  pgtype.Text        `json:"github_state"`
-	GithubUrl    pgtype.Text        `json:"github_url"`
+	ID              pgtype.UUID        `json:"id"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	Number          int32              `json:"number"`
+	Title           string             `json:"title"`
+	Description     string             `json:"description"`
+	Status          string             `json:"status"`
+	Priority        string             `json:"priority"`
+	AssigneeID      pgtype.UUID        `json:"assignee_id"`
+	AgentID         pgtype.UUID        `json:"agent_id"`
+	CreatedBy       pgtype.UUID        `json:"created_by"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	GithubNodeID    pgtype.Text        `json:"github_node_id"`
+	GithubRepoID    pgtype.UUID        `json:"github_repo_id"`
+	GithubNumber    pgtype.Int4        `json:"github_number"`
+	Origin          string             `json:"origin"`
+	GithubKind      string             `json:"github_kind"`
+	GithubState     pgtype.Text        `json:"github_state"`
+	GithubUrl       pgtype.Text        `json:"github_url"`
+	GithubAuthor    pgtype.Text        `json:"github_author"`
+	GithubAvatarUrl pgtype.Text        `json:"github_avatar_url"`
 }
 
 type IssueActivity struct {
@@ -460,6 +462,7 @@ type User struct {
 	NameColor     pgtype.Text        `json:"name_color"`
 	LastSeenAt    pgtype.Timestamptz `json:"last_seen_at"`
 	DigestEnabled bool               `json:"digest_enabled"`
+	GithubLogin   string             `json:"github_login"`
 }
 
 type WebhookDelivery struct {

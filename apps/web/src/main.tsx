@@ -22,6 +22,7 @@ import Home from "./pages/Home";
 import Inbox from "./pages/Inbox";
 import Overview from "./pages/Overview";
 import Pulls from "./pages/Pulls";
+import Issues from "./pages/Issues";
 import Saved from "./pages/Saved";
 import AgentProfile from "./pages/AgentProfile";
 import Connect from "./pages/Connect";
@@ -110,6 +111,7 @@ render(
           <Route path="/saved" component={Saved} />
           <Route path="/overview" component={Overview} />
           <Route path="/pulls" component={Pulls} />
+          <Route path="/issues" component={Issues} />
           <Route path="/p/:projectId" component={ProjectPage} />
           <Route path="/p/:projectId/c/:channelId" component={ChannelPage} />
           <Route path="/p/:projectId/board" component={BoardPage} />

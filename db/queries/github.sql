@@ -69,10 +69,12 @@ where github_repo_id = sqlc.arg(repo_id) and github_number = sqlc.arg(number);
 -- name: CreateGitHubIssue :one
 insert into issues (project_id, number, title, description, status, priority,
                     github_node_id, github_repo_id, github_number, origin,
-                    github_kind, github_state, github_url)
+                    github_kind, github_state, github_url,
+                    github_author, github_avatar_url)
 values (sqlc.arg(project_id), sqlc.arg(number), sqlc.arg(title), sqlc.arg(description),
         sqlc.arg(status), 'none', sqlc.arg(node_id), sqlc.arg(repo_id), sqlc.arg(gh_number), 'github',
-        sqlc.arg(kind), sqlc.arg(gh_state), sqlc.arg(gh_url))
+        sqlc.arg(kind), sqlc.arg(gh_state), sqlc.arg(gh_url),
+        sqlc.narg(gh_author), sqlc.narg(gh_avatar_url))
 returning *;
 
 -- name: UpdateGitHubIssue :one
@@ -82,6 +84,8 @@ update issues set
     status = coalesce(sqlc.narg(status)::text, status),
     github_state = coalesce(sqlc.narg(gh_state)::text, github_state),
     github_url = coalesce(sqlc.narg(gh_url)::text, github_url),
+    github_author = coalesce(sqlc.narg(gh_author)::text, github_author),
+    github_avatar_url = coalesce(sqlc.narg(gh_avatar_url)::text, github_avatar_url),
     updated_at = now()
 where id = sqlc.arg(id)
 returning *;

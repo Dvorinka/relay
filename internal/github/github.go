@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -97,6 +98,12 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup, pub *gin.RouterGroup) {
 	g.GET("/projects/:id/github/files", s.projectMemberOnly, s.handleRepoTree)
 	g.GET("/projects/:id/github/files/read", s.projectMemberOnly, s.handleRepoFile)
 	g.GET("/projects/:id/github/pull", s.projectMemberOnly, s.handlePullDetail)
+	g.GET("/projects/:id/github/issue", s.projectMemberOnly, s.handleIssueDetail)
+	g.POST("/projects/:id/github/issues/state", s.projectMemberOnly, s.handleIssueState)
+	g.POST("/projects/:id/github/issues/update", s.projectMemberOnly, s.handleIssueUpdate)
+	g.GET("/projects/:id/github/labels", s.projectMemberOnly, s.handleRepoLabels)
+	g.POST("/projects/:id/github/labels", s.projectMemberOnly, s.handleCreateLabel)
+	g.GET("/projects/:id/github/assignees", s.projectMemberOnly, s.handleRepoAssignees)
 	g.POST("/projects/:id/github/pulls", s.projectMemberOnly, s.handleCreatePull)
 	g.POST("/projects/:id/github/issues", s.projectMemberOnly, s.handleCreateGitHubIssue)
 	g.POST("/messages/:id/github", s.handleFileMessage)
@@ -107,6 +114,7 @@ func (s *Service) RegisterRoutes(g *gin.RouterGroup, pub *gin.RouterGroup) {
 	g.GET("/projects/:id/github/actions", s.projectMemberOnly, s.handleActions)
 	g.POST("/projects/:id/github/actions/rerun", s.projectMemberOnly, s.handleActionRerun)
 	g.GET("/workspaces/:id/github/pulls", s.memberOnly, s.handleWorkspacePulls)
+	g.GET("/workspaces/:id/github/issues", s.memberOnly, s.handleWorkspaceIssues)
 	g.GET("/projects/:id/github/commits", s.projectMemberOnly, s.handleCommits)
 	g.GET("/projects/:id/github/commit", s.projectMemberOnly, s.handleCommitDetail)
 	g.GET("/projects/:id/github/branches", s.projectMemberOnly, s.handleBranches)
@@ -648,6 +656,8 @@ func (s *Service) handleDevelopment(c *gin.Context) {
 				panel.Issues = append(panel.Issues, gin.H{
 					"number": i.Number, "title": i.Title, "state": i.State,
 					"url": i.HTMLURL, "author": i.User.Login,
+					"avatar_url": i.User.AvatarURL, "author_type": i.User.Type,
+					"comments":   i.Comments,
 					"updated_at": i.UpdatedAt,
 				})
 			}
@@ -657,6 +667,7 @@ func (s *Service) handleDevelopment(c *gin.Context) {
 				panel.PRs = append(panel.PRs, gin.H{
 					"number": pr.Number, "title": pr.Title, "state": pr.State,
 					"draft": pr.Draft, "url": pr.HTMLURL, "author": pr.User.Login,
+					"avatar_url": pr.User.AvatarURL, "author_type": pr.User.Type,
 					"head": pr.Head.Ref, "base": pr.Base.Ref,
 					"updated_at": pr.UpdatedAt,
 				})
@@ -734,6 +745,7 @@ func (s *Service) handlePullDetail(c *gin.Context) {
 	if pr.Head.SHA != "" {
 		checks, _ = cli.ListCheckRuns(ctx, repo.InstallationID, repo.Owner, repo.Name, pr.Head.SHA)
 	}
+	reviews, _ := cli.ListPRReviews(ctx, repo.InstallationID, repo.Owner, repo.Name, number)
 	mergeable := ""
 	if pr.Mergeable != nil {
 		if *pr.Mergeable {
@@ -742,9 +754,31 @@ func (s *Service) handlePullDetail(c *gin.Context) {
 			mergeable = "conflicting"
 		}
 	}
-	labels := make([]string, 0, len(pr.Labels))
+	labels := make([]gin.H, 0, len(pr.Labels))
 	for _, l := range pr.Labels {
-		labels = append(labels, l.Name)
+		labels = append(labels, gin.H{"name": l.Name, "color": l.Color})
+	}
+	assignees := make([]gin.H, 0, len(pr.Assignees))
+	for _, a := range pr.Assignees {
+		assignees = append(assignees, gin.H{
+			"login": a.Login, "avatar_url": a.AvatarURL,
+		})
+	}
+	reviewers := make([]gin.H, 0, len(pr.RequestedReviewers))
+	for _, a := range pr.RequestedReviewers {
+		reviewers = append(reviewers, gin.H{
+			"login": a.Login, "avatar_url": a.AvatarURL,
+		})
+	}
+	teams := make([]gin.H, 0, len(pr.RequestedTeams))
+	for _, t := range pr.RequestedTeams {
+		teams = append(teams, gin.H{"slug": t.Slug, "name": t.Name})
+	}
+	var mergedBy gin.H
+	if pr.MergedBy != nil {
+		mergedBy = gin.H{
+			"login": pr.MergedBy.Login, "avatar_url": pr.MergedBy.AvatarURL,
+		}
 	}
 	outFiles := make([]gin.H, 0, len(files))
 	for _, f := range files {
@@ -768,22 +802,53 @@ func (s *Service) handlePullDetail(c *gin.Context) {
 			"conclusion": ch.Conclusion, "url": ch.HTMLURL,
 		})
 	}
+	// Latest submitted state per reviewer — DISMISSED cancels that reviewer's
+	// earlier vote. COMMENTED reviews count as activity, not a decision.
+	latest := map[string]gin.H{}
+	for _, rv := range reviews {
+		latest[rv.User.Login] = gin.H{
+			"login": rv.User.Login, "avatar_url": rv.User.AvatarURL,
+			"state": rv.State, "submitted_at": rv.SubmittedAt,
+		}
+	}
+	outReviews := make([]gin.H, 0, len(latest))
+	decision := ""
+	for _, rv := range latest {
+		outReviews = append(outReviews, rv)
+		switch rv["state"] {
+		case "CHANGES_REQUESTED":
+			decision = "changes_requested"
+		case "APPROVED":
+			if decision == "" {
+				decision = "approved"
+			}
+		}
+	}
+	if decision == "" && len(pr.RequestedReviewers) > 0 {
+		decision = "pending"
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"pull": gin.H{
 			"number": pr.Number, "title": pr.Title, "state": pr.State,
 			"draft": pr.Draft, "merged": pr.Merged, "merged_at": pr.MergedAt,
 			"mergeable": mergeable, "mergeable_state": pr.MergeableState,
 			"body": pr.Body, "url": pr.HTMLURL, "author": pr.User.Login,
+			"avatar_url": pr.User.AvatarURL, "author_type": pr.User.Type,
 			"head": pr.Head.Ref, "base": pr.Base.Ref,
 			"additions": pr.Additions, "deletions": pr.Deletions,
 			"changed_files": pr.ChangedFiles, "commit_count": pr.Commits,
-			"labels":     labels,
+			"labels":    labels,
+			"assignees": assignees, "reviewers": reviewers,
+			"teams":      teams,
+			"merged_by":  mergedBy,
 			"created_at": pr.CreatedAt, "updated_at": pr.UpdatedAt,
 			"repo": repoJSON(repo),
 		},
-		"files":   outFiles,
-		"commits": outCommits,
-		"checks":  outChecks,
+		"files":           outFiles,
+		"commits":         outCommits,
+		"checks":          outChecks,
+		"reviews":         outReviews,
+		"review_decision": decision,
 	})
 }
 
@@ -1090,6 +1155,259 @@ func (s *Service) handleCreatePull(c *gin.Context) {
 	})
 }
 
+// handleIssueDetail bundles a GitHub issue with its comment thread for the
+// in-app issue view — sibling of handlePullDetail.
+func (s *Service) handleIssueDetail(c *gin.Context) {
+	p := project(c)
+	repo, ok := s.linkedRepo(c, p)
+	if !ok {
+		return
+	}
+	number, err := strconv.Atoi(c.Query("number"))
+	if err != nil || number <= 0 {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "number is required")
+		return
+	}
+	cli, err := s.githubClient(c.Request.Context())
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "not_registered", "GitHub is not connected")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+
+	iss, err := cli.GetIssue(ctx, repo.InstallationID, repo.Owner, repo.Name, number)
+	if err != nil {
+		httpx.Error(c, http.StatusBadGateway, "github_error", "could not load the issue")
+		return
+	}
+	// Comments are supplementary — a failure degrades to an empty thread.
+	comments, _ := cli.ListIssueComments(ctx, repo.InstallationID, repo.Owner, repo.Name, number)
+
+	labels := make([]gin.H, 0, len(iss.Labels))
+	for _, l := range iss.Labels {
+		labels = append(labels, gin.H{"name": l.Name, "color": l.Color})
+	}
+	assignees := make([]gin.H, 0, len(iss.Assignees))
+	for _, a := range iss.Assignees {
+		assignees = append(assignees, gin.H{
+			"login": a.Login, "avatar_url": a.AvatarURL,
+		})
+	}
+	outComments := make([]gin.H, 0, len(comments))
+	for _, cm := range comments {
+		outComments = append(outComments, gin.H{
+			"body": cm.Body, "url": cm.HTMLURL,
+			"author": cm.User.Login, "avatar_url": cm.User.AvatarURL,
+			"author_type": cm.User.Type, "created_at": cm.CreatedAt,
+		})
+	}
+	issue := gin.H{
+		"number": iss.Number, "title": iss.Title, "state": iss.State,
+		"body": iss.Body, "url": iss.HTMLURL, "author": iss.User.Login,
+		"avatar_url": iss.User.AvatarURL, "author_type": iss.User.Type,
+		"labels":    labels,
+		"assignees": assignees, "comment_count": iss.Comments,
+		"created_at": iss.CreatedAt, "updated_at": iss.UpdatedAt,
+	}
+	if iss.Milestone != nil {
+		issue["milestone"] = iss.Milestone.Title
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"issue":    issue,
+		"comments": outComments,
+		"repo":     repoJSON(repo),
+	})
+}
+
+// handleIssueState closes or reopens a GitHub issue — mirror of the pull
+// state endpoint.
+func (s *Service) handleIssueState(c *gin.Context) {
+	p := project(c)
+	repo, ok := s.linkedRepo(c, p)
+	if !ok {
+		return
+	}
+	var req struct {
+		Number int    `json:"number"`
+		State  string `json:"state"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Number <= 0 ||
+		(req.State != "open" && req.State != "closed") {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "number and state open|closed are required")
+		return
+	}
+	cli, err := s.githubClient(c.Request.Context())
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "not_registered", "GitHub is not connected")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	if err := cli.SetIssueState(ctx, repo.InstallationID, repo.Owner, repo.Name,
+		req.Number, req.State); err != nil {
+		httpx.Error(c, http.StatusBadGateway, "github_error", truncate(err.Error(), 300))
+		return
+	}
+	s.invalidateDevPanel(p.ID)
+	c.JSON(http.StatusOK, gin.H{"state": req.State})
+}
+
+// handleRepoLabels returns the repo's label catalog — picker options for
+// the issue/PR label editor.
+func (s *Service) handleRepoLabels(c *gin.Context) {
+	p := project(c)
+	repo, ok := s.linkedRepo(c, p)
+	if !ok {
+		return
+	}
+	cli, err := s.githubClient(c.Request.Context())
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "not_registered", "GitHub is not connected")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	labels, err := cli.ListRepoLabels(ctx, repo.InstallationID, repo.Owner, repo.Name)
+	if err != nil {
+		httpx.Error(c, http.StatusBadGateway, "github_error", truncate(err.Error(), 300))
+		return
+	}
+	out := make([]gin.H, 0, len(labels))
+	for _, l := range labels {
+		out = append(out, gin.H{
+			"name": l.Name, "color": l.Color, "description": l.Description,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"labels": out})
+}
+
+var labelColorPattern = regexp.MustCompile(`^[0-9a-fA-F]{6}$`)
+
+// handleCreateLabel defines a new label on the linked repo — feeds the
+// "new label" affordance in the issue/PR meta editor.
+func (s *Service) handleCreateLabel(c *gin.Context) {
+	p := project(c)
+	repo, ok := s.linkedRepo(c, p)
+	if !ok {
+		return
+	}
+	var req struct {
+		Name        string `json:"name"`
+		Color       string `json:"color"`
+		Description string `json:"description"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil ||
+		strings.TrimSpace(req.Name) == "" {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "name is required")
+		return
+	}
+	color := strings.TrimPrefix(strings.TrimSpace(req.Color), "#")
+	if color != "" && !labelColorPattern.MatchString(color) {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "color must be a 6-char hex")
+		return
+	}
+	cli, err := s.githubClient(c.Request.Context())
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "not_registered", "GitHub is not connected")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	l, err := cli.CreateRepoLabel(ctx, repo.InstallationID, repo.Owner, repo.Name,
+		strings.TrimSpace(req.Name), color, req.Description)
+	if err != nil {
+		httpx.Error(c, http.StatusBadGateway, "github_error", truncate(err.Error(), 300))
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{
+		"name": l.Name, "color": l.Color, "description": l.Description,
+	})
+}
+
+// handleRepoAssignees returns the repo's assignable users — picker options
+// for the issue/PR assignee editor.
+func (s *Service) handleRepoAssignees(c *gin.Context) {
+	p := project(c)
+	repo, ok := s.linkedRepo(c, p)
+	if !ok {
+		return
+	}
+	cli, err := s.githubClient(c.Request.Context())
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "not_registered", "GitHub is not connected")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	users, err := cli.ListRepoAssignees(ctx, repo.InstallationID, repo.Owner, repo.Name)
+	if err != nil {
+		httpx.Error(c, http.StatusBadGateway, "github_error", truncate(err.Error(), 300))
+		return
+	}
+	out := make([]gin.H, 0, len(users))
+	for _, u := range users {
+		out = append(out, gin.H{
+			"login": u.Login, "avatar_url": u.AvatarURL, "type": u.Type,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"users": out})
+}
+
+// handleIssueUpdate edits labels/assignees on a GitHub issue — PATCH
+// replaces each set wholesale when provided. Works on PR numbers too.
+func (s *Service) handleIssueUpdate(c *gin.Context) {
+	p := project(c)
+	repo, ok := s.linkedRepo(c, p)
+	if !ok {
+		return
+	}
+	var req struct {
+		Number    int       `json:"number"`
+		Labels    *[]string `json:"labels"`
+		Assignees *[]string `json:"assignees"`
+		Title     *string   `json:"title"`
+		Body      *string   `json:"body"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Number <= 0 ||
+		(req.Labels == nil && req.Assignees == nil && req.Title == nil && req.Body == nil) {
+		httpx.Error(c, http.StatusBadRequest, "bad_request", "number plus at least one field to update are required")
+		return
+	}
+	cli, err := s.githubClient(c.Request.Context())
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "not_registered", "GitHub is not connected")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	patch := IssuePatch{Labels: req.Labels, Assignees: req.Assignees, Body: req.Body}
+	if req.Title != nil {
+		patch.Title = *req.Title
+	}
+	iss, err := cli.UpdateIssue(ctx, repo.InstallationID, repo.Owner, repo.Name,
+		req.Number, patch)
+	if err != nil {
+		httpx.Error(c, http.StatusBadGateway, "github_error", truncate(err.Error(), 300))
+		return
+	}
+	s.invalidateDevPanel(p.ID)
+	labels := make([]gin.H, 0, len(iss.Labels))
+	for _, l := range iss.Labels {
+		labels = append(labels, gin.H{"name": l.Name, "color": l.Color})
+	}
+	assignees := make([]gin.H, 0, len(iss.Assignees))
+	for _, a := range iss.Assignees {
+		assignees = append(assignees, gin.H{
+			"login": a.Login, "avatar_url": a.AvatarURL,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"title": iss.Title, "body": iss.Body,
+		"labels": labels, "assignees": assignees,
+	})
+}
+
 // handleIssueComment posts a comment on a GitHub issue or pull request —
 // both ride the issues comments API upstream.
 func (s *Service) handleIssueComment(c *gin.Context) {
@@ -1134,7 +1452,8 @@ func (s *Service) invalidateDevPanel(projectID pgtype.UUID) {
 // that group rather than blanking the whole view.
 func (s *Service) handleWorkspacePulls(c *gin.Context) {
 	wsID, _ := httpx.PathUUID(c, "id")
-	key := "wspulls:" + wsID.String()
+	state := c.DefaultQuery("state", "open")
+	key := "wspulls:" + wsID.String() + ":" + state
 	if v, ok := s.cache.Load(key); ok {
 		if e := v.(cacheEntry); time.Now().Before(e.expiry) {
 			c.JSON(http.StatusOK, e.data)
@@ -1169,7 +1488,10 @@ func (s *Service) handleWorkspacePulls(c *gin.Context) {
 			for i := range jobs {
 				r := repos[i]
 				ctx, cancel := context.WithTimeout(c.Request.Context(), 12*time.Second)
-				prs, err := cli.ListPRs(ctx, r.InstallationID, r.Owner, r.Name)
+				prs, err := cli.ListPRsWithState(ctx, r.InstallationID, r.Owner, r.Name, state)
+				// Comment counts ride the issues endpoint — best-effort, a
+				// failure here degrades the field, not the whole group.
+				counts, _ := cli.ListPRCommentCounts(ctx, r.InstallationID, r.Owner, r.Name, state)
 				cancel()
 				if err != nil {
 					s.log.Warn("workspace pulls", zap.String("repo", r.Owner+"/"+r.Name), zap.Error(err))
@@ -1178,14 +1500,34 @@ func (s *Service) handleWorkspacePulls(c *gin.Context) {
 				}
 				out := make([]gin.H, 0, len(prs))
 				for _, pr := range prs {
-					labels := make([]string, 0, len(pr.Labels))
+					labels := make([]gin.H, 0, len(pr.Labels))
 					for _, l := range pr.Labels {
-						labels = append(labels, l.Name)
+						labels = append(labels, gin.H{"name": l.Name, "color": l.Color})
+					}
+					assignees := make([]gin.H, 0, len(pr.Assignees))
+					for _, a := range pr.Assignees {
+						assignees = append(assignees, gin.H{
+							"login": a.Login, "avatar_url": a.AvatarURL,
+						})
+					}
+					reviewers := make([]gin.H, 0, len(pr.RequestedReviewers))
+					for _, a := range pr.RequestedReviewers {
+						reviewers = append(reviewers, gin.H{
+							"login": a.Login, "avatar_url": a.AvatarURL,
+						})
+					}
+					teams := make([]gin.H, 0, len(pr.RequestedTeams))
+					for _, t := range pr.RequestedTeams {
+						teams = append(teams, gin.H{"slug": t.Slug, "name": t.Name})
 					}
 					out = append(out, gin.H{
 						"number": pr.Number, "title": pr.Title, "state": pr.State,
 						"draft": pr.Draft, "url": pr.HTMLURL, "author": pr.User.Login,
-						"head": pr.Head.Ref, "base": pr.Base.Ref, "labels": labels,
+						"avatar_url": pr.User.AvatarURL, "author_type": pr.User.Type,
+						"merged_at": pr.MergedAt,
+						"head":      pr.Head.Ref, "base": pr.Base.Ref, "labels": labels,
+						"assignees": assignees, "reviewers": reviewers, "teams": teams,
+						"comments":   counts[pr.Number],
 						"created_at": pr.CreatedAt, "updated_at": pr.UpdatedAt,
 					})
 				}
@@ -1204,9 +1546,11 @@ func (s *Service) handleWorkspacePulls(c *gin.Context) {
 		pulls[res.idx] = res.pulls
 	}
 	groups := make([]gin.H, 0, len(repos))
+	var failed []string
 	for i, r := range repos {
 		if pulls[i] == nil {
-			continue // repo call failed
+			failed = append(failed, r.Owner+"/"+r.Name) // repo call failed
+			continue
 		}
 		groups = append(groups, gin.H{
 			"project_id":   r.ProjectID.String(),
@@ -1219,7 +1563,123 @@ func (s *Service) handleWorkspacePulls(c *gin.Context) {
 			"pulls": pulls[i],
 		})
 	}
-	payload := gin.H{"groups": groups, "fetched_at": time.Now()}
+	payload := gin.H{"groups": groups, "failed": failed, "fetched_at": time.Now()}
+	s.cache.Store(key, cacheEntry{data: payload, expiry: time.Now().Add(60 * time.Second)})
+	c.JSON(http.StatusOK, payload)
+}
+
+// handleWorkspaceIssues aggregates open issues across every linked repo in
+// the workspace — sibling of handleWorkspacePulls. issue_id links the row to
+// its mirrored Relay issue when one exists, so rows can deep-link in-app.
+func (s *Service) handleWorkspaceIssues(c *gin.Context) {
+	wsID, _ := httpx.PathUUID(c, "id")
+	state := c.DefaultQuery("state", "open")
+	key := "wsissues:" + wsID.String() + ":" + state
+	if v, ok := s.cache.Load(key); ok {
+		if e := v.(cacheEntry); time.Now().Before(e.expiry) {
+			c.JSON(http.StatusOK, e.data)
+			return
+		}
+	}
+	repos, err := s.q.ListWorkspaceRepoProjects(c.Request.Context(), wsID)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, "internal", "internal error")
+		return
+	}
+	cli, err := s.githubClient(c.Request.Context())
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "not_registered", "GitHub is not connected")
+		return
+	}
+	type result struct {
+		idx    int
+		issues []gin.H
+	}
+	jobs := make(chan int, len(repos))
+	results := make(chan result, len(repos))
+	workers := 4
+	if len(repos) < workers {
+		workers = len(repos)
+	}
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range jobs {
+				r := repos[i]
+				ctx, cancel := context.WithTimeout(c.Request.Context(), 12*time.Second)
+				list, err := cli.ListIssuesWithState(ctx, r.InstallationID, r.Owner, r.Name, state)
+				if err != nil {
+					cancel()
+					s.log.Warn("workspace issues", zap.String("repo", r.Owner+"/"+r.Name), zap.Error(err))
+					results <- result{i, nil}
+					continue
+				}
+				out := make([]gin.H, 0, len(list))
+				for _, iss := range list {
+					labels := make([]gin.H, 0, len(iss.Labels))
+					for _, l := range iss.Labels {
+						labels = append(labels, gin.H{"name": l.Name, "color": l.Color})
+					}
+					assignees := make([]gin.H, 0, len(iss.Assignees))
+					for _, a := range iss.Assignees {
+						assignees = append(assignees, gin.H{
+							"login": a.Login, "avatar_url": a.AvatarURL,
+						})
+					}
+					entry := gin.H{
+						"number": iss.Number, "title": iss.Title, "state": iss.State,
+						"url": iss.HTMLURL, "author": iss.User.Login,
+						"avatar_url": iss.User.AvatarURL, "author_type": iss.User.Type,
+						"labels":    labels,
+						"assignees": assignees, "comments": iss.Comments,
+						"created_at": iss.CreatedAt, "updated_at": iss.UpdatedAt,
+					}
+					if iss.Milestone != nil {
+						entry["milestone"] = iss.Milestone.Title
+					}
+					if mirrored, err := s.q.FindIssueByGitHub(ctx, db.FindIssueByGitHubParams{
+						RepoID: r.ID, Number: pgtype.Int4{Int32: int32(iss.Number), Valid: true},
+					}); err == nil {
+						entry["issue_id"] = mirrored.ID.String()
+					}
+					out = append(out, entry)
+				}
+				cancel()
+				results <- result{i, out}
+			}
+		}()
+	}
+	for i := range repos {
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
+	close(results)
+	issues := make([][]gin.H, len(repos))
+	for res := range results {
+		issues[res.idx] = res.issues
+	}
+	groups := make([]gin.H, 0, len(repos))
+	var failed []string
+	for i, r := range repos {
+		if issues[i] == nil {
+			failed = append(failed, r.Owner+"/"+r.Name) // repo call failed
+			continue
+		}
+		groups = append(groups, gin.H{
+			"project_id":   r.ProjectID.String(),
+			"project_name": r.ProjectName,
+			"project_key":  r.ProjectKey,
+			"repo": repoJSON(db.Repository{
+				ID: r.ID, Owner: r.Owner, Name: r.Name,
+				DefaultBranch: r.DefaultBranch, InstallationID: r.InstallationID,
+			}),
+			"issues": issues[i],
+		})
+	}
+	payload := gin.H{"groups": groups, "failed": failed, "fetched_at": time.Now()}
 	s.cache.Store(key, cacheEntry{data: payload, expiry: time.Now().Add(60 * time.Second)})
 	c.JSON(http.StatusOK, payload)
 }
@@ -1409,6 +1869,10 @@ type webhookPayload struct {
 		State   string `json:"state"`
 		NodeID  string `json:"node_id"`
 		HTMLURL string `json:"html_url"`
+		User    struct {
+			Login     string `json:"login"`
+			AvatarURL string `json:"avatar_url"`
+		} `json:"user"`
 	} `json:"issue"`
 	PullRequest *struct {
 		Number  int    `json:"number"`
@@ -1420,7 +1884,8 @@ type webhookPayload struct {
 		NodeID  string `json:"node_id"`
 		HTMLURL string `json:"html_url"`
 		User    struct {
-			Login string `json:"login"`
+			Login     string `json:"login"`
+			AvatarURL string `json:"avatar_url"`
 		} `json:"user"`
 	} `json:"pull_request"`
 }
@@ -1569,6 +2034,7 @@ func (s *Service) onIssue(ctx context.Context, p webhookPayload) {
 		url:    p.Issue.HTMLURL,
 		nodeID: p.Issue.NodeID,
 		status: issueStatus(p.Issue.State),
+		author: p.Issue.User.Login, avatarURL: p.Issue.User.AvatarURL,
 	}
 	_, created, _, err := s.upsertGitHub(ctx, repo, item)
 	if err != nil {
@@ -1600,15 +2066,17 @@ func (s *Service) publishIssue(projectID pgtype.UUID, issueID pgtype.UUID, creat
 
 // importItem is one GitHub object normalized for upsertGitHub.
 type importItem struct {
-	kind    string // 'issue' | 'pr'
-	number  int
-	title   string
-	body    string
-	state   string // raw GitHub state: open|closed|merged
-	url     string
-	nodeID  string
-	status  string      // mapped Relay status
-	issueID pgtype.UUID // filled by upsertGitHub
+	kind      string // 'issue' | 'pr'
+	number    int
+	title     string
+	body      string
+	state     string // raw GitHub state: open|closed|merged
+	url       string
+	nodeID    string
+	status    string      // mapped Relay status
+	author    string      // GitHub login of whoever filed it
+	avatarURL string      // their avatar — hotlinked, never stored
+	issueID   pgtype.UUID // filled by upsertGitHub
 }
 
 // issueStatus maps a GitHub issue state onto a Relay status.
@@ -1653,9 +2121,11 @@ func (s *Service) upsertGitHub(ctx context.Context, repo db.Repository, in impor
 			Status: in.status,
 			NodeID: pgtype.Text{String: in.nodeID, Valid: in.nodeID != ""},
 			RepoID: repo.ID, GhNumber: pgtype.Int4{Int32: int32(in.number), Valid: true},
-			Kind:    in.kind,
-			GhState: pgtype.Text{String: in.state, Valid: in.state != ""},
-			GhUrl:   pgtype.Text{String: in.url, Valid: in.url != ""},
+			Kind:        in.kind,
+			GhState:     pgtype.Text{String: in.state, Valid: in.state != ""},
+			GhUrl:       pgtype.Text{String: in.url, Valid: in.url != ""},
+			GhAuthor:    pgtype.Text{String: in.author, Valid: in.author != ""},
+			GhAvatarUrl: pgtype.Text{String: in.avatarURL, Valid: in.avatarURL != ""},
 		})
 		if err != nil {
 			return pgtype.UUID{}, false, false, err
@@ -1667,9 +2137,14 @@ func (s *Service) upsertGitHub(ctx context.Context, repo db.Repository, in impor
 		return pgtype.UUID{}, false, false, err
 	}
 	desc := truncate(in.body, 40000)
+	// Webhook payloads lack avatar_url — treat empty incoming fields as
+	// "no data" rather than a change to blank.
+	authorMoved := in.author != "" && existing.GithubAuthor.String != in.author
+	avatarMoved := in.avatarURL != "" && existing.GithubAvatarUrl.String != in.avatarURL
 	if existing.Status == in.status && existing.Title == in.title &&
 		existing.Description == desc &&
-		existing.GithubState.String == in.state && existing.GithubUrl.String == in.url {
+		existing.GithubState.String == in.state && existing.GithubUrl.String == in.url &&
+		!authorMoved && !avatarMoved {
 		return existing.ID, false, false, nil
 	}
 	if existing.Status != in.status {
@@ -1683,6 +2158,8 @@ func (s *Service) upsertGitHub(ctx context.Context, repo db.Repository, in impor
 		Status:      pgtype.Text{String: in.status, Valid: true},
 		GhState:     pgtype.Text{String: in.state, Valid: in.state != ""},
 		GhUrl:       pgtype.Text{String: in.url, Valid: in.url != ""},
+		GhAuthor:    pgtype.Text{String: in.author, Valid: in.author != ""},
+		GhAvatarUrl: pgtype.Text{String: in.avatarURL, Valid: in.avatarURL != ""},
 	})
 	return row.ID, false, true, err
 }
@@ -1695,6 +2172,7 @@ func (s *Service) MirrorIssue(ctx context.Context, repo db.Repository, i GHIssue
 		kind: "issue", number: i.Number, title: i.Title, body: i.Body,
 		state: i.State, url: i.HTMLURL, nodeID: i.NodeID,
 		status: issueStatus(i.State),
+		author: i.User.Login, avatarURL: i.User.AvatarURL,
 	})
 	return id, err
 }
@@ -1705,6 +2183,7 @@ func (s *Service) MirrorPR(ctx context.Context, repo db.Repository, p PR) (pgtyp
 		kind: "pr", number: p.Number, title: p.Title, body: p.Body,
 		state: p.State, url: p.HTMLURL, nodeID: p.NodeID,
 		status: prStatus(p.State, p.Merged, p.Draft),
+		author: p.User.Login, avatarURL: p.User.AvatarURL,
 	})
 	return id, err
 }
@@ -1744,6 +2223,7 @@ func (s *Service) onPullRequest(ctx context.Context, p webhookPayload) {
 		url:    pr.HTMLURL,
 		nodeID: pr.NodeID,
 		status: prStatus(pr.State, pr.Merged, pr.Draft),
+		author: pr.User.Login, avatarURL: pr.User.AvatarURL,
 	}
 	_, created, _, err := s.upsertGitHub(ctx, repo, item)
 	if err != nil {
@@ -1843,6 +2323,7 @@ func (s *Service) importRepo(ctx context.Context, cli *Client, repo db.Repositor
 			kind: "issue", number: gi.Number, title: gi.Title, body: gi.Body,
 			state: gi.State, url: gi.HTMLURL, nodeID: gi.NodeID,
 			status: issueStatus(gi.State),
+			author: gi.User.Login, avatarURL: gi.User.AvatarURL,
 		}
 		id, created, _, err := s.upsertGitHub(ctx, repo, item)
 		if err != nil {
@@ -1861,6 +2342,7 @@ func (s *Service) importRepo(ctx context.Context, cli *Client, repo db.Repositor
 			kind: "pr", number: pr.Number, title: pr.Title, body: pr.Body,
 			state: state, url: pr.HTMLURL, nodeID: pr.NodeID,
 			status: prStatus(pr.State, pr.MergedAt != nil, pr.Draft),
+			author: pr.User.Login, avatarURL: pr.User.AvatarURL,
 		}
 		_, created, _, err := s.upsertGitHub(ctx, repo, item)
 		if err != nil {
@@ -1952,6 +2434,7 @@ func (s *Service) reconcileRepo(ctx context.Context, cli *Client, repo db.Reposi
 			kind: "issue", number: gi.Number, title: gi.Title, body: gi.Body,
 			state: gi.State, url: gi.HTMLURL, nodeID: gi.NodeID,
 			status: issueStatus(gi.State),
+			author: gi.User.Login, avatarURL: gi.User.AvatarURL,
 		})
 	}
 	prs, err := cli.ListPRsRecently(ctx, repo.InstallationID, repo.Owner, repo.Name)
@@ -1967,6 +2450,7 @@ func (s *Service) reconcileRepo(ctx context.Context, cli *Client, repo db.Reposi
 			kind: "pr", number: pr.Number, title: pr.Title, body: pr.Body,
 			state: state, url: pr.HTMLURL, nodeID: pr.NodeID,
 			status: prStatus(pr.State, pr.MergedAt != nil, pr.Draft),
+			author: pr.User.Login, avatarURL: pr.User.AvatarURL,
 		})
 	}
 }

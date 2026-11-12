@@ -439,7 +439,7 @@ const createIssueForAgent = `-- name: CreateIssueForAgent :one
 insert into issues (project_id, number, title, description, status, priority, assignee_id, created_by, agent_id)
 values ($1, $2, $3, $4,
         'todo', $5, null, null, $6)
-returning id, project_id, number, title, description, status, priority, assignee_id, agent_id, created_by, created_at, updated_at, github_node_id, github_repo_id, github_number, origin, github_kind, github_state, github_url
+returning id, project_id, number, title, description, status, priority, assignee_id, agent_id, created_by, created_at, updated_at, github_node_id, github_repo_id, github_number, origin, github_kind, github_state, github_url, github_author, github_avatar_url
 `
 
 type CreateIssueForAgentParams struct {
@@ -481,6 +481,8 @@ func (q *Queries) CreateIssueForAgent(ctx context.Context, arg CreateIssueForAge
 		&i.GithubKind,
 		&i.GithubState,
 		&i.GithubUrl,
+		&i.GithubAuthor,
+		&i.GithubAvatarUrl,
 	)
 	return i, err
 }
@@ -508,34 +510,36 @@ func (q *Queries) GetAttachmentByID(ctx context.Context, id pgtype.UUID) (Attach
 }
 
 const getIssueForAgent = `-- name: GetIssueForAgent :one
-select i.id, i.project_id, i.number, i.title, i.description, i.status, i.priority, i.assignee_id, i.agent_id, i.created_by, i.created_at, i.updated_at, i.github_node_id, i.github_repo_id, i.github_number, i.origin, i.github_kind, i.github_state, i.github_url, u.name as assignee_name, u.avatar_key as assignee_avatar
+select i.id, i.project_id, i.number, i.title, i.description, i.status, i.priority, i.assignee_id, i.agent_id, i.created_by, i.created_at, i.updated_at, i.github_node_id, i.github_repo_id, i.github_number, i.origin, i.github_kind, i.github_state, i.github_url, i.github_author, i.github_avatar_url, u.name as assignee_name, u.avatar_key as assignee_avatar
 from issues i
 left join users u on u.id = i.assignee_id
 where i.id = $1
 `
 
 type GetIssueForAgentRow struct {
-	ID             pgtype.UUID        `json:"id"`
-	ProjectID      pgtype.UUID        `json:"project_id"`
-	Number         int32              `json:"number"`
-	Title          string             `json:"title"`
-	Description    string             `json:"description"`
-	Status         string             `json:"status"`
-	Priority       string             `json:"priority"`
-	AssigneeID     pgtype.UUID        `json:"assignee_id"`
-	AgentID        pgtype.UUID        `json:"agent_id"`
-	CreatedBy      pgtype.UUID        `json:"created_by"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-	GithubNodeID   pgtype.Text        `json:"github_node_id"`
-	GithubRepoID   pgtype.UUID        `json:"github_repo_id"`
-	GithubNumber   pgtype.Int4        `json:"github_number"`
-	Origin         string             `json:"origin"`
-	GithubKind     string             `json:"github_kind"`
-	GithubState    pgtype.Text        `json:"github_state"`
-	GithubUrl      pgtype.Text        `json:"github_url"`
-	AssigneeName   pgtype.Text        `json:"assignee_name"`
-	AssigneeAvatar pgtype.Text        `json:"assignee_avatar"`
+	ID              pgtype.UUID        `json:"id"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	Number          int32              `json:"number"`
+	Title           string             `json:"title"`
+	Description     string             `json:"description"`
+	Status          string             `json:"status"`
+	Priority        string             `json:"priority"`
+	AssigneeID      pgtype.UUID        `json:"assignee_id"`
+	AgentID         pgtype.UUID        `json:"agent_id"`
+	CreatedBy       pgtype.UUID        `json:"created_by"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	GithubNodeID    pgtype.Text        `json:"github_node_id"`
+	GithubRepoID    pgtype.UUID        `json:"github_repo_id"`
+	GithubNumber    pgtype.Int4        `json:"github_number"`
+	Origin          string             `json:"origin"`
+	GithubKind      string             `json:"github_kind"`
+	GithubState     pgtype.Text        `json:"github_state"`
+	GithubUrl       pgtype.Text        `json:"github_url"`
+	GithubAuthor    pgtype.Text        `json:"github_author"`
+	GithubAvatarUrl pgtype.Text        `json:"github_avatar_url"`
+	AssigneeName    pgtype.Text        `json:"assignee_name"`
+	AssigneeAvatar  pgtype.Text        `json:"assignee_avatar"`
 }
 
 func (q *Queries) GetIssueForAgent(ctx context.Context, id pgtype.UUID) (GetIssueForAgentRow, error) {
@@ -561,6 +565,8 @@ func (q *Queries) GetIssueForAgent(ctx context.Context, id pgtype.UUID) (GetIssu
 		&i.GithubKind,
 		&i.GithubState,
 		&i.GithubUrl,
+		&i.GithubAuthor,
+		&i.GithubAvatarUrl,
 		&i.AssigneeName,
 		&i.AssigneeAvatar,
 	)
@@ -754,7 +760,7 @@ func (q *Queries) ListProjectConversations(ctx context.Context, projectID pgtype
 }
 
 const listProjectIssuesForAgent = `-- name: ListProjectIssuesForAgent :many
-select i.id, i.project_id, i.number, i.title, i.description, i.status, i.priority, i.assignee_id, i.agent_id, i.created_by, i.created_at, i.updated_at, i.github_node_id, i.github_repo_id, i.github_number, i.origin, i.github_kind, i.github_state, i.github_url, u.name as assignee_name, u.avatar_key as assignee_avatar
+select i.id, i.project_id, i.number, i.title, i.description, i.status, i.priority, i.assignee_id, i.agent_id, i.created_by, i.created_at, i.updated_at, i.github_node_id, i.github_repo_id, i.github_number, i.origin, i.github_kind, i.github_state, i.github_url, i.github_author, i.github_avatar_url, u.name as assignee_name, u.avatar_key as assignee_avatar
 from issues i
 left join users u on u.id = i.assignee_id
 where i.project_id = $1
@@ -770,27 +776,29 @@ type ListProjectIssuesForAgentParams struct {
 }
 
 type ListProjectIssuesForAgentRow struct {
-	ID             pgtype.UUID        `json:"id"`
-	ProjectID      pgtype.UUID        `json:"project_id"`
-	Number         int32              `json:"number"`
-	Title          string             `json:"title"`
-	Description    string             `json:"description"`
-	Status         string             `json:"status"`
-	Priority       string             `json:"priority"`
-	AssigneeID     pgtype.UUID        `json:"assignee_id"`
-	AgentID        pgtype.UUID        `json:"agent_id"`
-	CreatedBy      pgtype.UUID        `json:"created_by"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-	GithubNodeID   pgtype.Text        `json:"github_node_id"`
-	GithubRepoID   pgtype.UUID        `json:"github_repo_id"`
-	GithubNumber   pgtype.Int4        `json:"github_number"`
-	Origin         string             `json:"origin"`
-	GithubKind     string             `json:"github_kind"`
-	GithubState    pgtype.Text        `json:"github_state"`
-	GithubUrl      pgtype.Text        `json:"github_url"`
-	AssigneeName   pgtype.Text        `json:"assignee_name"`
-	AssigneeAvatar pgtype.Text        `json:"assignee_avatar"`
+	ID              pgtype.UUID        `json:"id"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	Number          int32              `json:"number"`
+	Title           string             `json:"title"`
+	Description     string             `json:"description"`
+	Status          string             `json:"status"`
+	Priority        string             `json:"priority"`
+	AssigneeID      pgtype.UUID        `json:"assignee_id"`
+	AgentID         pgtype.UUID        `json:"agent_id"`
+	CreatedBy       pgtype.UUID        `json:"created_by"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	GithubNodeID    pgtype.Text        `json:"github_node_id"`
+	GithubRepoID    pgtype.UUID        `json:"github_repo_id"`
+	GithubNumber    pgtype.Int4        `json:"github_number"`
+	Origin          string             `json:"origin"`
+	GithubKind      string             `json:"github_kind"`
+	GithubState     pgtype.Text        `json:"github_state"`
+	GithubUrl       pgtype.Text        `json:"github_url"`
+	GithubAuthor    pgtype.Text        `json:"github_author"`
+	GithubAvatarUrl pgtype.Text        `json:"github_avatar_url"`
+	AssigneeName    pgtype.Text        `json:"assignee_name"`
+	AssigneeAvatar  pgtype.Text        `json:"assignee_avatar"`
 }
 
 func (q *Queries) ListProjectIssuesForAgent(ctx context.Context, arg ListProjectIssuesForAgentParams) ([]ListProjectIssuesForAgentRow, error) {
@@ -822,6 +830,8 @@ func (q *Queries) ListProjectIssuesForAgent(ctx context.Context, arg ListProject
 			&i.GithubKind,
 			&i.GithubState,
 			&i.GithubUrl,
+			&i.GithubAuthor,
+			&i.GithubAvatarUrl,
 			&i.AssigneeName,
 			&i.AssigneeAvatar,
 		); err != nil {

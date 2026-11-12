@@ -32,7 +32,7 @@ const createIssue = `-- name: CreateIssue :one
 insert into issues (project_id, number, title, description, status, priority, assignee_id, created_by)
 values ($1, $2, $3, $4,
         $5, $6, $7, $8)
-returning id, project_id, number, title, description, status, priority, assignee_id, agent_id, created_by, created_at, updated_at, github_node_id, github_repo_id, github_number, origin, github_kind, github_state, github_url
+returning id, project_id, number, title, description, status, priority, assignee_id, agent_id, created_by, created_at, updated_at, github_node_id, github_repo_id, github_number, origin, github_kind, github_state, github_url, github_author, github_avatar_url
 `
 
 type CreateIssueParams struct {
@@ -78,6 +78,8 @@ func (q *Queries) CreateIssue(ctx context.Context, arg CreateIssueParams) (Issue
 		&i.GithubKind,
 		&i.GithubState,
 		&i.GithubUrl,
+		&i.GithubAuthor,
+		&i.GithubAvatarUrl,
 	)
 	return i, err
 }
@@ -142,7 +144,7 @@ func (q *Queries) CreateLabel(ctx context.Context, arg CreateLabelParams) (Issue
 }
 
 const getIssueByID = `-- name: GetIssueByID :one
-select i.id, i.project_id, i.number, i.title, i.description, i.status, i.priority, i.assignee_id, i.agent_id, i.created_by, i.created_at, i.updated_at, i.github_node_id, i.github_repo_id, i.github_number, i.origin, i.github_kind, i.github_state, i.github_url, u.name as assignee_name, u.avatar_key as assignee_avatar,
+select i.id, i.project_id, i.number, i.title, i.description, i.status, i.priority, i.assignee_id, i.agent_id, i.created_by, i.created_at, i.updated_at, i.github_node_id, i.github_repo_id, i.github_number, i.origin, i.github_kind, i.github_state, i.github_url, i.github_author, i.github_avatar_url, u.name as assignee_name, u.avatar_key as assignee_avatar,
        gr.owner as github_repo_owner, gr.name as github_repo_name
 from issues i
 left join users u on u.id = i.assignee_id
@@ -170,6 +172,8 @@ type GetIssueByIDRow struct {
 	GithubKind      string             `json:"github_kind"`
 	GithubState     pgtype.Text        `json:"github_state"`
 	GithubUrl       pgtype.Text        `json:"github_url"`
+	GithubAuthor    pgtype.Text        `json:"github_author"`
+	GithubAvatarUrl pgtype.Text        `json:"github_avatar_url"`
 	AssigneeName    pgtype.Text        `json:"assignee_name"`
 	AssigneeAvatar  pgtype.Text        `json:"assignee_avatar"`
 	GithubRepoOwner pgtype.Text        `json:"github_repo_owner"`
@@ -199,6 +203,8 @@ func (q *Queries) GetIssueByID(ctx context.Context, id pgtype.UUID) (GetIssueByI
 		&i.GithubKind,
 		&i.GithubState,
 		&i.GithubUrl,
+		&i.GithubAuthor,
+		&i.GithubAvatarUrl,
 		&i.AssigneeName,
 		&i.AssigneeAvatar,
 		&i.GithubRepoOwner,
@@ -235,7 +241,7 @@ func (q *Queries) GetIssueConversation(ctx context.Context, issueID pgtype.UUID)
 }
 
 const getIssueForUser = `-- name: GetIssueForUser :one
-select i.id, i.project_id, i.number, i.title, i.description, i.status, i.priority, i.assignee_id, i.agent_id, i.created_by, i.created_at, i.updated_at, i.github_node_id, i.github_repo_id, i.github_number, i.origin, i.github_kind, i.github_state, i.github_url, u.name as assignee_name, u.avatar_key as assignee_avatar,
+select i.id, i.project_id, i.number, i.title, i.description, i.status, i.priority, i.assignee_id, i.agent_id, i.created_by, i.created_at, i.updated_at, i.github_node_id, i.github_repo_id, i.github_number, i.origin, i.github_kind, i.github_state, i.github_url, i.github_author, i.github_avatar_url, u.name as assignee_name, u.avatar_key as assignee_avatar,
        gr.owner as github_repo_owner, gr.name as github_repo_name,
        gr.installation_id as github_installation_id
 from issues i
@@ -271,6 +277,8 @@ type GetIssueForUserRow struct {
 	GithubKind           string             `json:"github_kind"`
 	GithubState          pgtype.Text        `json:"github_state"`
 	GithubUrl            pgtype.Text        `json:"github_url"`
+	GithubAuthor         pgtype.Text        `json:"github_author"`
+	GithubAvatarUrl      pgtype.Text        `json:"github_avatar_url"`
 	AssigneeName         pgtype.Text        `json:"assignee_name"`
 	AssigneeAvatar       pgtype.Text        `json:"assignee_avatar"`
 	GithubRepoOwner      pgtype.Text        `json:"github_repo_owner"`
@@ -301,6 +309,8 @@ func (q *Queries) GetIssueForUser(ctx context.Context, arg GetIssueForUserParams
 		&i.GithubKind,
 		&i.GithubState,
 		&i.GithubUrl,
+		&i.GithubAuthor,
+		&i.GithubAvatarUrl,
 		&i.AssigneeName,
 		&i.AssigneeAvatar,
 		&i.GithubRepoOwner,
@@ -480,7 +490,7 @@ func (q *Queries) ListIssueLabels(ctx context.Context, issueID pgtype.UUID) ([]I
 }
 
 const listIssuesForUser = `-- name: ListIssuesForUser :many
-select i.id, i.project_id, i.number, i.title, i.description, i.status, i.priority, i.assignee_id, i.agent_id, i.created_by, i.created_at, i.updated_at, i.github_node_id, i.github_repo_id, i.github_number, i.origin, i.github_kind, i.github_state, i.github_url, u.name as assignee_name, u.avatar_key as assignee_avatar,
+select i.id, i.project_id, i.number, i.title, i.description, i.status, i.priority, i.assignee_id, i.agent_id, i.created_by, i.created_at, i.updated_at, i.github_node_id, i.github_repo_id, i.github_number, i.origin, i.github_kind, i.github_state, i.github_url, i.github_author, i.github_avatar_url, u.name as assignee_name, u.avatar_key as assignee_avatar,
        gr.owner as github_repo_owner, gr.name as github_repo_name
 from issues i
 join projects p on p.id = i.project_id
@@ -526,6 +536,8 @@ type ListIssuesForUserRow struct {
 	GithubKind      string             `json:"github_kind"`
 	GithubState     pgtype.Text        `json:"github_state"`
 	GithubUrl       pgtype.Text        `json:"github_url"`
+	GithubAuthor    pgtype.Text        `json:"github_author"`
+	GithubAvatarUrl pgtype.Text        `json:"github_avatar_url"`
 	AssigneeName    pgtype.Text        `json:"assignee_name"`
 	AssigneeAvatar  pgtype.Text        `json:"assignee_avatar"`
 	GithubRepoOwner pgtype.Text        `json:"github_repo_owner"`
@@ -568,6 +580,8 @@ func (q *Queries) ListIssuesForUser(ctx context.Context, arg ListIssuesForUserPa
 			&i.GithubKind,
 			&i.GithubState,
 			&i.GithubUrl,
+			&i.GithubAuthor,
+			&i.GithubAvatarUrl,
 			&i.AssigneeName,
 			&i.AssigneeAvatar,
 			&i.GithubRepoOwner,
@@ -825,7 +839,7 @@ update issues set
     priority = coalesce($4, priority),
     updated_at = now()
 where id = $5
-returning id, project_id, number, title, description, status, priority, assignee_id, agent_id, created_by, created_at, updated_at, github_node_id, github_repo_id, github_number, origin, github_kind, github_state, github_url
+returning id, project_id, number, title, description, status, priority, assignee_id, agent_id, created_by, created_at, updated_at, github_node_id, github_repo_id, github_number, origin, github_kind, github_state, github_url, github_author, github_avatar_url
 `
 
 type UpdateIssueFieldsParams struct {
@@ -865,6 +879,8 @@ func (q *Queries) UpdateIssueFields(ctx context.Context, arg UpdateIssueFieldsPa
 		&i.GithubKind,
 		&i.GithubState,
 		&i.GithubUrl,
+		&i.GithubAuthor,
+		&i.GithubAvatarUrl,
 	)
 	return i, err
 }

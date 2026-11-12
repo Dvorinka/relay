@@ -52,6 +52,7 @@ import {
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  CircleDotIcon,
   GitPullRequestIcon,
   GripIcon,
   BookmarkIcon,
@@ -757,6 +758,7 @@ export function Rail() {
     if (e.type === "review.created" || e.type === "review.responded") {
       void refreshUnread();
     }
+    if (e.type.startsWith("issue.")) refetchGh();
   });
   onCleanup(unsub);
   createEffect(() => {
@@ -768,6 +770,22 @@ export function Rail() {
     onCleanup(() => window.removeEventListener("keydown", onKey));
   });
   const active = activeWorkspace(session.workspaces);
+  // Open-issue/PR counts for the nav badges. Both endpoints cache 60s
+  // server-side; a missing GitHub app yields null and the badges hide.
+  const [ghCounts, { refetch: refetchGh }] = createResource(
+    () => active()?.id,
+    async (ws) => {
+      const [pulls, issues] = await Promise.all([
+        api.workspacePulls(ws).catch(() => null),
+        api.workspaceIssues(ws).catch(() => null),
+      ]);
+      return {
+        pulls: pulls?.groups.reduce((n, g) => n + g.pulls.length, 0) ?? null,
+        issues:
+          issues?.groups.reduce((n, g) => n + g.issues.length, 0) ?? null,
+      };
+    },
+  );
   // The rail shows one workspace at a time — workspaces are separate
   // namespaces, so switching swaps the whole project list.
   const list = () =>
@@ -925,6 +943,20 @@ export function Rail() {
         <NavItem href="/app/pulls">
           <GitPullRequestIcon class="h-3.5 w-3.5" />
           Pull requests
+          <Show when={(ghCounts()?.pulls ?? 0) > 0}>
+            <span class="ml-auto rounded-full bg-hover px-1.5 py-px font-mono text-[10px] leading-4 text-muted">
+              {ghCounts()?.pulls}
+            </span>
+          </Show>
+        </NavItem>
+        <NavItem href="/app/issues">
+          <CircleDotIcon class="h-3.5 w-3.5" />
+          Issues
+          <Show when={(ghCounts()?.issues ?? 0) > 0}>
+            <span class="ml-auto rounded-full bg-hover px-1.5 py-px font-mono text-[10px] leading-4 text-muted">
+              {ghCounts()?.issues}
+            </span>
+          </Show>
         </NavItem>
       </nav>
 
