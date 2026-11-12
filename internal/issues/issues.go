@@ -783,6 +783,12 @@ func issueJSON(i db.Issue, assigneeName, assigneeAvatar pgtype.Text, labels []gi
 			"state":  state,
 			"url":    url,
 		}
+		if i.GithubAuthor.Valid && i.GithubAuthor.String != "" {
+			out["github"].(gin.H)["author"] = i.GithubAuthor.String
+		}
+		if i.GithubAvatarUrl.Valid && i.GithubAvatarUrl.String != "" {
+			out["github"].(gin.H)["avatar_url"] = i.GithubAvatarUrl.String
+		}
 	}
 	return out
 }
@@ -803,6 +809,7 @@ func listRowToIssue(r db.ListIssuesForUserRow) db.Issue {
 		GithubNodeID: r.GithubNodeID, GithubRepoID: r.GithubRepoID,
 		GithubNumber: r.GithubNumber, Origin: r.Origin,
 		GithubKind: r.GithubKind, GithubState: r.GithubState, GithubUrl: r.GithubUrl,
+		GithubAuthor: r.GithubAuthor, GithubAvatarUrl: r.GithubAvatarUrl,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
 }
@@ -815,6 +822,7 @@ func forUserRowToIssue(r db.GetIssueForUserRow) db.Issue {
 		GithubNodeID: r.GithubNodeID, GithubRepoID: r.GithubRepoID,
 		GithubNumber: r.GithubNumber, Origin: r.Origin,
 		GithubKind: r.GithubKind, GithubState: r.GithubState, GithubUrl: r.GithubUrl,
+		GithubAuthor: r.GithubAuthor, GithubAvatarUrl: r.GithubAvatarUrl,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
 }
@@ -827,6 +835,7 @@ func byIDRowToIssue(r db.GetIssueByIDRow) db.Issue {
 		GithubNodeID: r.GithubNodeID, GithubRepoID: r.GithubRepoID,
 		GithubNumber: r.GithubNumber, Origin: r.Origin,
 		GithubKind: r.GithubKind, GithubState: r.GithubState, GithubUrl: r.GithubUrl,
+		GithubAuthor: r.GithubAuthor, GithubAvatarUrl: r.GithubAvatarUrl,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
 }

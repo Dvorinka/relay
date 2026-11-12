@@ -5,6 +5,7 @@ import type {
   WorkflowRun,
 } from "@relay/api-client";
 import { A, useNavigate } from "@solidjs/router";
+import { Avatar } from "@ark-ui/solid";
 import type { JSX } from "solid-js";
 import {
   createMemo,
@@ -17,19 +18,339 @@ import {
   Switch,
 } from "solid-js";
 import { Spinner } from "../../components/ui";
+import { ThreadIcon } from "../../components/icons";
 import { api } from "../../lib/api";
 import { subscribe } from "../../lib/events";
 import { confirmDestructive } from "../../components/Confirm";
 import { Markdown } from "../../lib/markdown";
 import { timeAgo } from "../../lib/time";
+import { initials } from "../../lib/text";
 import { openCommit } from "./CommitModal";
 import { openCreateIssue, openCreatePull } from "./CreateModals";
+import { openGhIssue } from "./GitHubIssueModal";
 
 export function markGitHub(path: string, cls = "h-4 w-4") {
   return (
     <svg viewBox="0 0 16 16" fill="currentColor" class={cls} aria-hidden="true">
       <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
     </svg>
+  );
+}
+
+// GhAvatar shows a GitHub user's avatar with initials fallback. avatar_url
+// hotlinks straight to avatars.githubusercontent.com — img-src https: already
+// covers it, no proxy needed.
+export function GhAvatar(props: {
+  author: string;
+  url?: string;
+  class?: string;
+}) {
+  return (
+    <Avatar.Root
+      class={`flex shrink-0 items-center justify-center overflow-hidden rounded-full border border-border bg-surface ${props.class ?? "h-5 w-5"}`}
+    >
+      <Avatar.Fallback class="text-[8px] font-semibold text-muted">
+        {initials(props.author)}
+      </Avatar.Fallback>
+      <Avatar.Image
+        src={props.url}
+        alt=""
+        class="h-full w-full rounded-full object-cover"
+      />
+    </Avatar.Root>
+  );
+}
+
+// GhLabelChip renders one GitHub label in its own color — the API returns
+// bare hex (no #), absent for labels created outside GitHub's palette.
+export function GhLabelChip(props: {
+  label: { name: string; color?: string };
+}) {
+  const c = () => (props.label.color ? `#${props.label.color}` : undefined);
+  return (
+    <span
+      class={`rounded-full border px-1.5 text-[10px] ${c() ? "" : "border-border"}`}
+      style={
+        c()
+          ? {
+              "border-color": `${c()}66`,
+              color: c(),
+              "background-color": `${c()}1a`,
+            }
+          : undefined
+      }
+    >
+      {props.label.name}
+    </span>
+  );
+}
+
+// isGhBot spots GitHub App/bot authors — the API's `type` field says "Bot"
+// reliably; the [bot] suffix stays as the fallback for older payloads.
+export function isGhBot(login: string, type?: string): boolean {
+  return type === "Bot" || login.endsWith("[bot]");
+}
+
+// GhAuthor renders a GitHub login with avatar — the highlighted filer on
+// every issue/PR row. Bots get a small badge instead of pretending human.
+export function GhAuthor(props: {
+  author: string;
+  url?: string;
+  type?: string;
+  avatarClass?: string;
+}) {
+  return (
+    <span class="flex items-center gap-1.5 text-fg">
+      <GhAvatar
+        author={props.author}
+        url={props.url}
+        class={props.avatarClass ?? "h-4.5 w-4.5"}
+      />
+      <span class="font-medium">{props.author}</span>
+      <Show when={isGhBot(props.author, props.type)}>
+        <span class="rounded border border-border px-1 text-[9.5px] uppercase tracking-wide text-muted">
+          bot
+        </span>
+      </Show>
+    </span>
+  );
+}
+
+// GhIssueMeta renders labels + assignees with an inline editor — the
+// catalogs lazy-load on first expand and the PATCH replaces each set
+// wholesale. Shared by the issue modal and the PR detail.
+export function GhIssueMeta(props: {
+  projectId: string;
+  repo: string;
+  number: number;
+  labels: { name: string; color?: string }[];
+  assignees: { login: string; avatar_url?: string }[];
+  onApplied: (r: {
+    labels: { name: string; color?: string }[];
+    assignees: { login: string; avatar_url?: string }[];
+  }) => void;
+}) {
+  const [editing, setEditing] = createSignal(false);
+  const [busy, setBusy] = createSignal(false);
+  const [err, setErr] = createSignal("");
+  // Draft selections seed from the live values each time editing opens.
+  const [draftLabels, setDraftLabels] = createSignal<string[]>([]);
+  const [draftAssignees, setDraftAssignees] = createSignal<string[]>([]);
+  const [catalogs, { mutate: mutateCatalogs }] = createResource(
+    () => (editing() ? `${props.repo}` : null),
+    () =>
+      Promise.all([
+        api.repoLabels(props.projectId, props.repo),
+        api.repoAssignees(props.projectId, props.repo),
+      ]),
+  );
+
+  // Inline label creation — POSTs to the repo's label list, then the new
+  // label lands in the catalog pre-checked.
+  const [creatingLabel, setCreatingLabel] = createSignal(false);
+  const [labelName, setLabelName] = createSignal("");
+  const [labelColor, setLabelColor] = createSignal("#888888");
+  const [labelBusy, setLabelBusy] = createSignal(false);
+  const createLabel = async () => {
+    const name = labelName().trim();
+    if (!name || labelBusy()) return;
+    setLabelBusy(true);
+    setErr("");
+    try {
+      const l = await api.createRepoLabel(props.projectId, props.repo, {
+        name,
+        color: labelColor().replace("#", ""),
+      });
+      mutateCatalogs((c) =>
+        c ? [{ labels: [...c[0].labels, { name: l.name, color: l.color ?? "", description: l.description ?? "" }] }, c[1]] : c,
+      );
+      setDraftLabels((d) => (d.includes(l.name) ? d : [...d, l.name]));
+      setLabelName("");
+      setCreatingLabel(false);
+    } catch {
+      setErr("Could not create the label");
+    } finally {
+      setLabelBusy(false);
+    }
+  };
+
+  const toggle = (list: () => string[], set: (v: string[]) => void, v: string) =>
+    set(list().includes(v) ? list().filter((x) => x !== v) : [...list(), v]);
+
+  const open = () => {
+    setDraftLabels(props.labels.map((l) => l.name));
+    setDraftAssignees(props.assignees.map((a) => a.login));
+    setErr("");
+    setEditing(true);
+  };
+
+  const apply = async () => {
+    setBusy(true);
+    setErr("");
+    try {
+      const r = await api.updateGitHubIssue(props.projectId, props.repo, {
+        number: props.number,
+        labels: draftLabels(),
+        assignees: draftAssignees(),
+      });
+      props.onApplied(r);
+      setEditing(false);
+    } catch {
+      setErr("Could not update — check permissions");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <span class="block w-full">
+      <span class="flex flex-wrap items-center gap-2">
+        <For each={props.labels}>{(l) => <GhLabelChip label={l} />}</For>
+        <Show when={props.assignees.length > 0}>
+          <span
+            class="flex items-center -space-x-1.5"
+            title={`Assigned: ${props.assignees.map((a) => a.login).join(", ")}`}
+          >
+            <For each={props.assignees.slice(0, 4)}>
+              {(a) => (
+                <GhAvatar author={a.login} url={a.avatar_url} class="h-4.5 w-4.5" />
+              )}
+            </For>
+          </span>
+        </Show>
+        <button
+          type="button"
+          onClick={() => (editing() ? setEditing(false) : open())}
+          class="rounded border border-border px-1.5 py-0.5 text-[10.5px] text-muted transition-colors hover:bg-hover hover:text-fg"
+        >
+          {editing() ? "cancel" : "edit labels & assignees"}
+        </button>
+      </span>
+      <Show when={editing()}>
+        <div class="mt-2 grid gap-3 rounded-lg border border-border p-3 sm:grid-cols-2">
+          <div>
+            <p class="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
+              Labels
+            </p>
+            <Show
+              when={catalogs.latest}
+              fallback={<Spinner class="h-3.5 w-3.5" />}
+            >
+              <div class="max-h-36 space-y-1 overflow-y-auto">
+                <For each={catalogs.latest![0].labels}>
+                  {(l) => (
+                    <label class="flex cursor-pointer items-center gap-2 text-[12px]">
+                      <input
+                        type="checkbox"
+                        checked={draftLabels().includes(l.name)}
+                        onChange={() =>
+                          toggle(draftLabels, setDraftLabels, l.name)
+                        }
+                        class="accent-accent"
+                      />
+                      <span
+                        class="h-2.5 w-2.5 rounded-full"
+                        style={{ "background-color": `#${l.color}` }}
+                        title={l.description}
+                      />
+                      {l.name}
+                    </label>
+                  )}
+                </For>
+              </div>
+              <div class="mt-1.5 border-t border-border/60 pt-1.5">
+                <Show
+                  when={!creatingLabel()}
+                  fallback={
+                    <div class="flex items-center gap-1.5">
+                      <input
+                        type="color"
+                        value={labelColor()}
+                        onInput={(e) => setLabelColor(e.currentTarget.value)}
+                        class="h-5 w-6 cursor-pointer rounded border border-border bg-transparent p-0"
+                        title="Label color"
+                      />
+                      <input
+                        value={labelName()}
+                        onInput={(e) => setLabelName(e.currentTarget.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            void createLabel();
+                          }
+                        }}
+                        class="min-w-0 flex-1 rounded border border-border bg-transparent px-1.5 py-0.5 text-[11.5px] text-fg outline-none focus:border-accent"
+                        placeholder="label name"
+                      />
+                      <button
+                        type="button"
+                        disabled={labelBusy() || !labelName().trim()}
+                        onClick={() => void createLabel()}
+                        class="rounded border border-border px-1.5 py-0.5 text-[10.5px] text-fg hover:bg-hover disabled:opacity-50"
+                      >
+                        {labelBusy() ? "…" : "Create"}
+                      </button>
+                    </div>
+                  }
+                >
+                  <button
+                    type="button"
+                    onClick={() => setCreatingLabel(true)}
+                    class="text-[10.5px] text-muted hover:text-fg"
+                  >
+                    + new label
+                  </button>
+                </Show>
+              </div>
+            </Show>
+          </div>
+          <div>
+            <p class="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
+              Assignees
+            </p>
+            <Show
+              when={catalogs.latest}
+              fallback={<Spinner class="h-3.5 w-3.5" />}
+            >
+              <div class="max-h-36 space-y-1 overflow-y-auto">
+                <For each={catalogs.latest![1].users}>
+                  {(u) => (
+                    <label class="flex cursor-pointer items-center gap-2 text-[12px]">
+                      <input
+                        type="checkbox"
+                        checked={draftAssignees().includes(u.login)}
+                        onChange={() =>
+                          toggle(draftAssignees, setDraftAssignees, u.login)
+                        }
+                        class="accent-accent"
+                      />
+                      <GhAvatar author={u.login} url={u.avatar_url} class="h-4 w-4" />
+                      {u.login}
+                      <Show when={u.type === "Bot"}>
+                        <span class="text-[10px] text-muted">bot</span>
+                      </Show>
+                    </label>
+                  )}
+                </For>
+              </div>
+            </Show>
+          </div>
+          <div class="flex items-center gap-2 sm:col-span-2">
+            <button
+              type="button"
+              disabled={busy()}
+              onClick={() => void apply()}
+              class="rounded-md bg-accent px-3 py-1 text-[12px] font-medium text-accent-fg disabled:opacity-50"
+            >
+              {busy() ? "Applying…" : "Apply"}
+            </button>
+            <Show when={err()}>
+              <span class="text-[12px] text-red-500">{err()}</span>
+            </Show>
+          </div>
+        </div>
+      </Show>
+    </span>
   );
 }
 
@@ -195,27 +516,35 @@ function RepoLinker(props: {
   );
 }
 
-function IssueRow(props: {
-  number: number;
-  title: string;
-  url: string;
-  author: string;
-  updated_at: string;
-}) {
+function IssueRow(
+  props: DevRepoPanel["issues"][number] & { projectId: string; repo: string },
+) {
   return (
     <li class="flex items-center gap-2.5 px-3 py-1.5">
-      <span class="h-2 w-2 shrink-0 rounded-full border-2 border-emerald-500" />
-      <a
-        href={props.url}
-        target="_blank"
-        rel="noreferrer"
-        class="min-w-0 flex-1 truncate text-[13px] hover:underline"
+      <span
+        class={`h-2 w-2 shrink-0 rounded-full border-2 ${
+          props.state === "closed" ? "border-violet-400" : "border-emerald-500"
+        }`}
+      />
+      <button
+        type="button"
+        onClick={() => openGhIssue(props.projectId, props.repo, props.number)}
+        class="min-w-0 flex-1 truncate text-left text-[13px] hover:underline"
       >
         {props.title}
-      </a>
+      </button>
       <span class="shrink-0 font-mono text-[11px] text-muted">
         #{props.number}
       </span>
+      <span class="shrink-0 text-[11px]">
+        <GhAuthor author={props.author} url={props.avatar_url} type={props.author_type} />
+      </span>
+      <Show when={(props.comments ?? 0) > 0}>
+        <span class="flex shrink-0 items-center gap-1 text-[11px] text-muted">
+          <ThreadIcon class="h-3 w-3" />
+          {props.comments}
+        </span>
+      </Show>
       <span class="w-20 shrink-0 text-right text-[11px] text-muted">
         {timeAgo(props.updated_at)}
       </span>
@@ -253,6 +582,9 @@ function PrRow(props: DevRepoPanel["prs"][number] & { projectId: string; repo: s
       </Show>
       <span class="shrink-0 font-mono text-[11px] text-muted">
         {props.head} → {props.base}
+      </span>
+      <span class="shrink-0 text-[11px]">
+        <GhAuthor author={props.author} url={props.avatar_url} type={props.author_type} />
       </span>
     </li>
   );
@@ -704,7 +1036,13 @@ export function DevelopmentPanel(props: {
                             </li>
                           }
                         >
-                          {(i) => <IssueRow {...i} />}
+                          {(i) => (
+                            <IssueRow
+                              {...i}
+                              projectId={props.projectId}
+                              repo={rp.repo.full_name}
+                            />
+                          )}
                         </For>
                       </Section>
                       <Section

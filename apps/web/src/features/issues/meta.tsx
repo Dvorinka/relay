@@ -7,6 +7,7 @@ import type {
 } from "@relay/api-client";
 import { Show } from "solid-js";
 import { Tip } from "../../components/ui";
+import { GhAvatar } from "../github/GitHub";
 
 // Built-in lanes — mirrors internal/statuses.Defaults(). Custom project
 // lanes arrive on Project.statuses.
@@ -157,9 +158,10 @@ export function GitHubBadge(props: { issue: Issue }) {
       {(g) => (
         <Tip
           text={
-            g().kind === "pr"
+            (g().kind === "pr"
               ? `${g().repo}#${g().number} — pull request`
-              : `${g().repo}#${g().number} — GitHub issue`
+              : `${g().repo}#${g().number} — GitHub issue`) +
+            (g().author ? ` by ${g().author}` : "")
           }
           hint={
             g().kind === "pr"
@@ -189,6 +191,13 @@ export function GitHubBadge(props: { issue: Issue }) {
             </svg>
           </Show>
           #{g().number} {g().state}
+          <Show when={g().author}>
+            <GhAvatar
+              author={g().author!}
+              url={g().avatar_url ?? undefined}
+              class="h-3.5 w-3.5"
+            />
+          </Show>
           </a>
         </Tip>
       )}

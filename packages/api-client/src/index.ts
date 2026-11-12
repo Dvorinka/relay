@@ -155,13 +155,19 @@ export interface PullDetail {
     body: string;
     url: string;
     author: string;
+    avatar_url?: string;
+    author_type?: string;
     head: string;
     base: string;
     additions: number;
     deletions: number;
     changed_files: number;
     commit_count: number;
-    labels: string[];
+    labels: { name: string; color?: string }[];
+    assignees: { login: string; avatar_url?: string }[];
+    reviewers: { login: string; avatar_url?: string }[];
+    teams?: { slug: string; name: string }[];
+    merged_by?: { login: string; avatar_url?: string } | null;
     created_at: string;
     updated_at: string;
     repo: LinkedRepo;
@@ -179,6 +185,14 @@ export interface PullDetail {
     conclusion: string;
     url: string;
   }[];
+  // Latest submitted review state per reviewer + the reduced decision.
+  reviews: {
+    login: string;
+    avatar_url?: string;
+    state: string; // APPROVED | CHANGES_REQUESTED | COMMENTED | …
+    submitted_at: string;
+  }[];
+  review_decision: string; // "approved" | "changes_requested" | "pending" | ""
 }
 
 // WorkflowRun is one row of a repo's GitHub Actions list.
@@ -213,13 +227,84 @@ export interface WorkspacePulls {
       draft: boolean;
       url: string;
       author: string;
+      avatar_url?: string;
+      merged_at?: string | null;
       head: string;
       base: string;
-      labels: string[];
+      labels: { name: string; color?: string }[];
+      assignees: { login: string; avatar_url?: string }[];
+      reviewers: { login: string; avatar_url?: string }[];
+      teams?: { slug: string; name: string }[];
+      comments?: number;
+      author_type?: string; // "User" | "Bot"
       created_at: string;
       updated_at: string;
     }[];
   }[];
+  // Repos whose GitHub call failed — their groups are omitted, this is how
+  // the page can still say so.
+  failed?: string[];
+  fetched_at?: string;
+}
+
+// WorkspaceIssues groups every linked repo's open GitHub issues by project —
+// sibling of WorkspacePulls. issue_id links the mirrored Relay issue when
+// one exists, so rows can deep-link in-app.
+export interface WorkspaceIssues {
+  groups: {
+    project_id: string;
+    project_name: string;
+    project_key: string;
+    repo: LinkedRepo;
+    issues: {
+      number: number;
+      title: string;
+      state: string;
+      url: string;
+      author: string;
+      avatar_url?: string;
+      labels: { name: string; color?: string }[];
+      assignees: { login: string; avatar_url?: string }[];
+      comments: number;
+      author_type?: string; // "User" | "Bot"
+      milestone?: string;
+      issue_id?: string;
+      created_at: string;
+      updated_at: string;
+    }[];
+  }[];
+  failed?: string[]; // repos whose GitHub call failed
+  fetched_at: string;
+}
+
+// IssueDetail is the in-app GitHub issue view: the issue plus its comment
+// thread — sibling of PullDetail.
+export interface IssueDetail {
+  issue: {
+    number: number;
+    title: string;
+    state: string;
+    body: string;
+    url: string;
+    author: string;
+    avatar_url?: string;
+    author_type?: string;
+    labels: { name: string; color?: string }[];
+    assignees: { login: string; avatar_url?: string }[];
+    comment_count: number;
+    milestone?: string;
+    created_at: string;
+    updated_at: string;
+  };
+  comments: {
+    body: string;
+    url: string;
+    author: string;
+    avatar_url?: string;
+    author_type?: string;
+    created_at: string;
+  }[];
+  repo: LinkedRepo;
 }
 
 export interface RepoCommit {
@@ -279,6 +364,9 @@ export interface DevRepoPanel {
     state: string;
     url: string;
     author: string;
+    avatar_url?: string;
+    author_type?: string;
+    comments?: number;
     updated_at: string;
   }[];
   prs: {
@@ -288,6 +376,8 @@ export interface DevRepoPanel {
     draft: boolean;
     url: string;
     author: string;
+    avatar_url?: string;
+    author_type?: string;
     head: string;
     base: string;
     updated_at?: string;
@@ -502,7 +592,7 @@ export function createClient(
         current_password: currentPassword,
         new_password: newPassword,
       }),
-    updateMe: (input: { name_color: string }) =>
+    updateMe: (input: { name_color?: string; github_login?: string }) =>
       patch<{ user: User }>("/api/auth/me", input),
     // Browser sign-in for the desktop shell: start, approve (signed-in),
     // poll until approved. The approve call rides the existing session.
@@ -875,6 +965,20 @@ export function createClient(
       request<PullDetail>(
         `/api/projects/${projectId}/github/pull?repo=${encodeURIComponent(repo)}&number=${number}`,
       ),
+    issueDetail: (projectId: string, repo: string, number: number) =>
+      request<IssueDetail>(
+        `/api/projects/${projectId}/github/issue?repo=${encodeURIComponent(repo)}&number=${number}`,
+      ),
+    setIssueState: (
+      projectId: string,
+      repo: string,
+      number: number,
+      state: "open" | "closed",
+    ) =>
+      post<{ state: string }>(
+        `/api/projects/${projectId}/github/issues/state?repo=${encodeURIComponent(repo)}`,
+        { number, state },
+      ),
     createPullRequest: (
       projectId: string,
       repo: string,
@@ -895,6 +999,43 @@ export function createClient(
     createGitHubIssue: (projectId: string, repo: string, input: { title: string; body?: string }) =>
       post<{ issue: { id: string; number: number; url: string; state: string } }>(
         `/api/projects/${projectId}/github/issues?repo=${encodeURIComponent(repo)}`,
+        input,
+      ),
+    createRepoLabel: (
+      projectId: string,
+      repo: string,
+      input: { name: string; color?: string; description?: string },
+    ) =>
+      post<{ name: string; color?: string; description?: string }>(
+        `/api/projects/${projectId}/github/labels?repo=${encodeURIComponent(repo)}`,
+        input,
+      ),
+    repoLabels: (projectId: string, repo: string) =>
+      request<{ labels: { name: string; color: string; description: string }[] }>(
+        `/api/projects/${projectId}/github/labels?repo=${encodeURIComponent(repo)}`,
+      ),
+    repoAssignees: (projectId: string, repo: string) =>
+      request<{ users: { login: string; avatar_url?: string; type?: string }[] }>(
+        `/api/projects/${projectId}/github/assignees?repo=${encodeURIComponent(repo)}`,
+      ),
+    updateGitHubIssue: (
+      projectId: string,
+      repo: string,
+      input: {
+        number: number;
+        labels?: string[];
+        assignees?: string[];
+        title?: string;
+        body?: string;
+      },
+    ) =>
+      post<{
+        title: string;
+        body: string;
+        labels: { name: string; color?: string }[];
+        assignees: { login: string; avatar_url?: string }[];
+      }>(
+        `/api/projects/${projectId}/github/issues/update?repo=${encodeURIComponent(repo)}`,
         input,
       ),
     commentOnIssue: (projectId: string, repo: string, number: number, body: string) =>
@@ -942,8 +1083,10 @@ export function createClient(
         `/api/projects/${projectId}/github/actions/rerun?repo=${encodeURIComponent(repo)}`,
         { run_id: runId },
       ),
-    workspacePulls: (workspaceId: string) =>
-      request<WorkspacePulls>(`/api/workspaces/${workspaceId}/github/pulls`),
+    workspacePulls: (workspaceId: string, state = "open") =>
+      request<WorkspacePulls>(`/api/workspaces/${workspaceId}/github/pulls?state=${state}`),
+    workspaceIssues: (workspaceId: string, state = "open") =>
+      request<WorkspaceIssues>(`/api/workspaces/${workspaceId}/github/issues?state=${state}`),
     repoCommits: (projectId: string, repo: string, branch?: string) =>
       request<{ commits: RepoCommit[]; branch: string }>(
         `/api/projects/${projectId}/github/commits?repo=${encodeURIComponent(repo)}${branch ? `&branch=${encodeURIComponent(branch)}` : ""}`,

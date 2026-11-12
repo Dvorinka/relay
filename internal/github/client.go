@@ -155,34 +155,64 @@ type GHIssue struct {
 	Body    string `json:"body"`
 	NodeID  string `json:"node_id"`
 	User    struct {
-		Login string `json:"login"`
+		Login     string `json:"login"`
+		AvatarURL string `json:"avatar_url"`
+		Type      string `json:"type"` // User | Bot
 	} `json:"user"`
 	PullRequest *struct{} `json:"pull_request"` // non-nil means it's a PR
 	Labels      []struct {
 		Name  string `json:"name"`
 		Color string `json:"color"`
 	} `json:"labels"`
+	Assignees []struct {
+		Login     string `json:"login"`
+		AvatarURL string `json:"avatar_url"`
+	} `json:"assignees"`
+	Milestone *struct {
+		Title string `json:"title"`
+	} `json:"milestone"`
+	Comments  int       `json:"comments"`
+	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// GHIssueComment is one comment on an issue or pull request — GitHub serves
+// both through the issues comments API.
+type GHIssueComment struct {
+	HTMLURL string `json:"html_url"`
+	Body    string `json:"body"`
+	User    struct {
+		Login     string `json:"login"`
+		AvatarURL string `json:"avatar_url"`
+		Type      string `json:"type"`
+	} `json:"user"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type PR struct {
-	Number         int        `json:"number"`
-	Title          string     `json:"title"`
-	State          string     `json:"state"`
-	Draft          bool       `json:"draft"`
-	Body           string     `json:"body"`
-	NodeID         string     `json:"node_id"`
-	Merged         bool       `json:"merged"`
-	MergedAt       *time.Time `json:"merged_at"`
-	Mergeable      *bool      `json:"mergeable"`
-	MergeableState string     `json:"mergeable_state"`
-	Additions      int        `json:"additions"`
-	Deletions      int        `json:"deletions"`
-	ChangedFiles   int        `json:"changed_files"`
-	Commits        int        `json:"commits"`
-	HTMLURL        string     `json:"html_url"`
+	Number   int        `json:"number"`
+	Title    string     `json:"title"`
+	State    string     `json:"state"`
+	Draft    bool       `json:"draft"`
+	Body     string     `json:"body"`
+	NodeID   string     `json:"node_id"`
+	Merged   bool       `json:"merged"`
+	MergedAt *time.Time `json:"merged_at"`
+	MergedBy *struct {
+		Login     string `json:"login"`
+		AvatarURL string `json:"avatar_url"`
+	} `json:"merged_by"`
+	Mergeable      *bool  `json:"mergeable"`
+	MergeableState string `json:"mergeable_state"`
+	Additions      int    `json:"additions"`
+	Deletions      int    `json:"deletions"`
+	ChangedFiles   int    `json:"changed_files"`
+	Commits        int    `json:"commits"`
+	HTMLURL        string `json:"html_url"`
 	User           struct {
-		Login string `json:"login"`
+		Login     string `json:"login"`
+		AvatarURL string `json:"avatar_url"`
+		Type      string `json:"type"` // User | Bot
 	} `json:"user"`
 	Head struct {
 		Ref string `json:"ref"`
@@ -192,8 +222,21 @@ type PR struct {
 		Ref string `json:"ref"`
 	} `json:"base"`
 	Labels []struct {
-		Name string `json:"name"`
+		Name  string `json:"name"`
+		Color string `json:"color"`
 	} `json:"labels"`
+	Assignees []struct {
+		Login     string `json:"login"`
+		AvatarURL string `json:"avatar_url"`
+	} `json:"assignees"`
+	RequestedReviewers []struct {
+		Login     string `json:"login"`
+		AvatarURL string `json:"avatar_url"`
+	} `json:"requested_reviewers"`
+	RequestedTeams []struct {
+		Slug string `json:"slug"`
+		Name string `json:"name"`
+	} `json:"requested_teams"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -781,6 +824,153 @@ func (c *Client) CreateIssueComment(ctx context.Context, installID int64, owner,
 	return c.do(ctx, "POST",
 		fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments", apiBase, owner, repo, number),
 		tok, bytes.NewReader(payload), nil)
+}
+
+// IssuePatch carries the fields PATCH issues/{n} accepts — labels and
+// assignees both REPLACE the whole set when non-nil, so callers send the
+// full desired list, not a delta.
+type IssuePatch struct {
+	Labels    *[]string `json:"labels,omitempty"`
+	Assignees *[]string `json:"assignees,omitempty"`
+	Title     string    `json:"title,omitempty"`
+	Body      *string   `json:"body,omitempty"`
+}
+
+// UpdateIssue edits a GitHub issue — works on PRs too, they share the
+// issues endpoint upstream (labels/assignees on a PR go through here).
+func (c *Client) UpdateIssue(ctx context.Context, installID int64, owner, repo string, number int, patch IssuePatch) (*GHIssue, error) {
+	tok, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return nil, err
+	}
+	payload, _ := json.Marshal(patch)
+	var out GHIssue
+	err = c.do(ctx, "PATCH",
+		fmt.Sprintf("%s/repos/%s/%s/issues/%d", apiBase, owner, repo, number),
+		tok, bytes.NewReader(payload), &out)
+	return &out, err
+}
+
+// RepoLabel is one label defined on the repository.
+type RepoLabel struct {
+	Name        string `json:"name"`
+	Color       string `json:"color"`
+	Description string `json:"description"`
+}
+
+// ListRepoLabels returns the repo's label catalog — the picker options for
+// label editing. First page (100) covers almost every repo.
+func (c *Client) ListRepoLabels(ctx context.Context, installID int64, owner, repo string) ([]RepoLabel, error) {
+	tok, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return nil, err
+	}
+	var out []RepoLabel
+	err = c.do(ctx, "GET",
+		fmt.Sprintf("%s/repos/%s/%s/labels?per_page=100", apiBase, owner, repo),
+		tok, nil, &out)
+	return out, err
+}
+
+// CreateRepoLabel defines a new label on the repository. color is a 6-char
+// hex string without '#'; empty lets GitHub pick.
+func (c *Client) CreateRepoLabel(ctx context.Context, installID int64, owner, repo, name, color, description string) (*RepoLabel, error) {
+	tok, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return nil, err
+	}
+	payload, _ := json.Marshal(map[string]string{
+		"name": name, "color": color, "description": description,
+	})
+	var out RepoLabel
+	err = c.do(ctx, "POST",
+		fmt.Sprintf("%s/repos/%s/%s/labels", apiBase, owner, repo),
+		tok, bytes.NewReader(payload), &out)
+	return &out, err
+}
+
+// GHUser is GitHub's compact user object — login/avatar/type.
+type GHUser struct {
+	Login     string `json:"login"`
+	AvatarURL string `json:"avatar_url"`
+	Type      string `json:"type"` // User | Bot
+}
+
+// ListRepoAssignees returns users issues may be assigned to — collaborators
+// and org members. First page (100).
+func (c *Client) ListRepoAssignees(ctx context.Context, installID int64, owner, repo string) ([]GHUser, error) {
+	tok, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return nil, err
+	}
+	var out []GHUser
+	err = c.do(ctx, "GET",
+		fmt.Sprintf("%s/repos/%s/%s/assignees?per_page=100", apiBase, owner, repo),
+		tok, nil, &out)
+	return out, err
+}
+
+// PRReview is one submitted review on a pull request.
+type PRReview struct {
+	User struct {
+		Login     string `json:"login"`
+		AvatarURL string `json:"avatar_url"`
+		Type      string `json:"type"`
+	} `json:"user"`
+	State       string    `json:"state"` // APPROVED | CHANGES_REQUESTED | COMMENTED | DISMISSED | PENDING
+	SubmittedAt time.Time `json:"submitted_at"`
+}
+
+// ListPRReviews returns submitted reviews on a PR — the REST stand-in for
+// GraphQL's reviewDecision. Caller reduces to latest-per-reviewer.
+func (c *Client) ListPRReviews(ctx context.Context, installID int64, owner, repo string, number int) ([]PRReview, error) {
+	tok, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return nil, err
+	}
+	var out []PRReview
+	err = c.do(ctx, "GET",
+		fmt.Sprintf("%s/repos/%s/%s/pulls/%d/reviews?per_page=100", apiBase, owner, repo, number),
+		tok, nil, &out)
+	return out, err
+}
+
+// ListPRCommentCounts returns issue-thread comment counts keyed by PR
+// number. The pulls endpoint omits the count; the issues endpoint carries
+// it on PR entries, which the issue listers fold out — so this walks the
+// issues endpoint raw and keeps only PR rows.
+func (c *Client) ListPRCommentCounts(ctx context.Context, installID int64, owner, repo, state string) (map[int]int, error) {
+	tok, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return nil, err
+	}
+	out := map[int]int{}
+	u := fmt.Sprintf("%s/repos/%s/%s/issues?state=%s", apiBase, owner, repo, url.QueryEscape(state))
+	err = c.listPaged(ctx, tok, u, func(dec *json.Decoder) error {
+		var i GHIssue
+		if err := dec.Decode(&i); err != nil {
+			return err
+		}
+		if i.PullRequest != nil {
+			out[i.Number] = i.Comments
+		}
+		return nil
+	})
+	return out, err
+}
+
+// ListIssueComments returns the comment thread on an issue or PR — both
+// ride the issues comments API. First page, oldest first.
+func (c *Client) ListIssueComments(ctx context.Context, installID int64, owner, repo string, number int) ([]GHIssueComment, error) {
+	tok, err := c.installationToken(ctx, installID)
+	if err != nil {
+		return nil, err
+	}
+	var out []GHIssueComment
+	err = c.do(ctx, "GET",
+		fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments?per_page=100", apiBase, owner, repo, number),
+		tok, nil, &out)
+	return out, err
 }
 
 // CreatePR opens a pull request on GitHub.

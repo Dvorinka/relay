@@ -829,6 +829,56 @@ function NameColorRow() {
   );
 }
 
+// GitHub login: binds the Relay user to their GitHub account so the
+// workspace Issues/Pulls pages can offer "mine" / "assigned to me" filters.
+// Free-text bind, not OAuth — the GitHub App is server-scoped, not per-user.
+function GitHubLoginRow() {
+  const session = useSession();
+  const [value, setValue] = createSignal(session.user()?.github_login ?? "");
+  const [busy, setBusy] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.updateMe({ github_login: value().trim() });
+      await session.refresh();
+    } catch (err) {
+      setError(errorMessage(err, "Could not save GitHub username"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div class="mt-4 flex items-center gap-2">
+      <span class="w-20 text-[12px] text-muted">GitHub</span>
+      <input
+        value={value()}
+        onInput={(e) => setValue(e.currentTarget.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") void save();
+        }}
+        disabled={busy()}
+        placeholder="github username"
+        class={`${inputClass} w-44`}
+      />
+      <button
+        type="button"
+        disabled={
+          busy() || value().trim() === (session.user()?.github_login ?? "")
+        }
+        onClick={() => void save()}
+        class="text-[12px] text-accent underline-offset-2 hover:underline disabled:opacity-50"
+      >
+        Save
+      </button>
+      <FormError message={error()} />
+    </div>
+  );
+}
+
 // Connection card: which backend this app talks to. Local mode stores
 // everything on this device; one connect form handles both auth styles —
 // email+password in-app or approval in the system browser — and the
@@ -1403,6 +1453,7 @@ export default function Settings() {
         <FormError message={avatarError()} />
         <Show when={!net.isLocal()}>
           <NameColorRow />
+          <GitHubLoginRow />
         </Show>
         <Show when={!net.isLocal()}>
           <ChangePasswordForm />

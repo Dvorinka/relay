@@ -227,6 +227,24 @@ export function IssueIcon(props: IconProps): JSX.Element {
   );
 }
 
+export function CircleDotIcon(props: IconProps): JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      class={props.class}
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="8" cy="8" r="6" />
+      <circle cx="8" cy="8" r="1.5" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 export function GitPullRequestIcon(props: IconProps): JSX.Element {
   return (
     <svg

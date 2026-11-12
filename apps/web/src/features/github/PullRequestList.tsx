@@ -12,7 +12,7 @@ import { api } from "../../lib/api";
 import { subscribe } from "../../lib/events";
 import { Spinner, Tip } from "../../components/ui";
 import { GitPullRequestIcon } from "../../components/icons";
-import { markGitHub } from "./GitHub";
+import { GhAvatar, markGitHub } from "./GitHub";
 import { PullRequestDetail } from "./PullRequestDetail";
 import { openCreatePull } from "./CreateModals";
 import type { Issue } from "@relay/api-client";
@@ -125,6 +125,18 @@ export function PullRequestList(props: { projectId: string }) {
           <p class="mt-0.5 flex items-center gap-2 truncate text-[12px] text-muted">
             {markGitHub("", "h-3 w-3")}
             <span class="font-mono">{i.github?.repo}</span>
+            <Show when={i.github?.author}>
+              {(a) => (
+                <span class="flex items-center gap-1 text-fg">
+                  <GhAvatar
+                    author={a()}
+                    url={i.github?.avatar_url ?? undefined}
+                    class="h-4 w-4"
+                  />
+                  <span class="font-medium">{a()}</span>
+                </span>
+              )}
+            </Show>
             <span
               class={`rounded-full px-1.5 py-px text-[10px] font-medium capitalize ${
                 i.github?.state === "merged"

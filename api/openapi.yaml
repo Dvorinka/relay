@@ -127,7 +127,7 @@ paths:
     patch:
       operationId: updateMe
       tags: [auth]
-      summary: Update profile fields (chat name color)
+      summary: Update profile fields (chat name color, GitHub login)
       requestBody:
         required: true
         content:
@@ -138,6 +138,9 @@ paths:
                 name_color:
                   type: string
                   description: "#rrggbb, or empty string to clear"
+                github_login:
+                  type: string
+                  description: GitHub username bound for "mine" filters, or empty to clear
       responses:
         "200":
           description: Updated user
@@ -2690,7 +2693,7 @@ paths:
                 properties:
                   pull:
                     type: object
-                    description: "number, title, state, draft, merged, mergeable, body, url, author, head, base, additions, deletions, changed_files, commit_count, labels, created_at, updated_at, repo"
+                    description: "number, title, state, draft, merged, mergeable, body, url, author, head, base, additions, deletions, changed_files, commit_count, labels, assignees, reviewers, teams, merged_by, created_at, updated_at, repo"
                   files:
                     type: array
                     items: { type: object }
@@ -2700,6 +2703,42 @@ paths:
                   checks:
                     type: array
                     items: { type: object }
+                  reviews:
+                    type: array
+                    description: latest submitted review state per reviewer
+                    items: { type: object }
+                  review_decision:
+                    type: string
+                    description: approved | changes_requested | pending | ""
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "502": { description: "GitHub upstream error" }
+
+  /api/projects/{projectId}/github/issue:
+    get:
+      operationId: issueDetail
+      summary: In-app GitHub issue detail — issue plus comment thread
+      tags: [github]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - { name: repo, in: query, schema: { type: string }, description: "owner/name or repo id; optional when only one repo is linked" }
+        - { name: number, in: query, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: Issue detail bundle
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  issue:
+                    type: object
+                    description: "number, title, state, body, url, author, avatar_url, author_type, labels, assignees, comment_count, milestone, created_at, updated_at"
+                  comments:
+                    type: array
+                    items: { type: object }
+                  repo:
+                    type: object
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
         "502": { description: "GitHub upstream error" }
@@ -2858,6 +2897,159 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "502": { description: "GitHub upstream error" }
 
+  /api/projects/{projectId}/github/labels:
+    get:
+      operationId: repoLabels
+      summary: Label catalog of a linked repository
+      tags: [github]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - { name: repo, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Labels
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  labels:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        color: { type: string }
+                        description: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "502": { description: "GitHub upstream error" }
+    post:
+      operationId: createRepoLabel
+      summary: Create a label on a linked repository
+      tags: [github]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - { name: repo, in: query, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                color:
+                  type: string
+                  description: 6-char hex, with or without '#'
+                description: { type: string }
+      responses:
+        "201":
+          description: Created label
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name: { type: string }
+                  color: { type: string }
+                  description: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "502": { description: "GitHub upstream error" }
+
+  /api/projects/{projectId}/github/assignees:
+    get:
+      operationId: repoAssignees
+      summary: Assignable users of a linked repository
+      tags: [github]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - { name: repo, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Assignable users
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  users:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        login: { type: string }
+                        avatar_url: { type: string }
+                        type: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "502": { description: "GitHub upstream error" }
+
+  /api/projects/{projectId}/github/issues/update:
+    post:
+      operationId: updateGitHubIssue
+      summary: Update a GitHub issue's title, body, labels, or assignees
+      description: Each provided set replaces the whole list on GitHub. Works on PR numbers too — they share the issues endpoint upstream.
+      tags: [github]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - { name: repo, in: query, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [number]
+              properties:
+                number: { type: integer }
+                title: { type: string }
+                body: { type: string }
+                labels: { type: array, items: { type: string } }
+                assignees: { type: array, items: { type: string } }
+      responses:
+        "200":
+          description: Updated issue fields
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  title: { type: string }
+                  body: { type: string }
+                  labels: { type: array, items: { type: object } }
+                  assignees: { type: array, items: { type: object } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "502": { description: "GitHub upstream error" }
+
+  /api/projects/{projectId}/github/issues/state:
+    post:
+      operationId: setIssueState
+      summary: Close or reopen a GitHub issue
+      tags: [github]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - { name: repo, in: query, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [number, state]
+              properties:
+                number: { type: integer }
+                state: { type: string, enum: [open, closed] }
+      responses:
+        "200":
+          description: New issue state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { state: { type: string } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "502": { description: "GitHub upstream error" }
+
   /api/projects/{projectId}/github/pull/state:
     post:
       operationId: setPullState
@@ -2975,13 +3167,36 @@ paths:
   /api/workspaces/{workspaceId}/github/pulls:
     get:
       operationId: workspacePulls
-      summary: Open pull requests across every linked repo in the workspace
+      summary: Pull requests across every linked repo in the workspace
       tags: [github]
       parameters:
         - { name: workspaceId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: state, in: query, schema: { type: string, enum: [open, closed, all], default: open } }
       responses:
         "200":
           description: PR groups keyed by project+repo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  groups:
+                    type: array
+                    items: { type: object }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/workspaces/{workspaceId}/github/issues:
+    get:
+      operationId: workspaceIssues
+      summary: Issues across every linked repo in the workspace
+      tags: [github]
+      parameters:
+        - { name: workspaceId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: state, in: query, schema: { type: string, enum: [open, closed, all], default: open } }
+      responses:
+        "200":
+          description: Issue groups keyed by project+repo; issue_id links mirrored Relay issues
           content:
             application/json:
               schema:
@@ -4393,6 +4608,9 @@ components:
         name_color:
           type: ["string", "null"]
           description: Chat name color as #rrggbb; null = palette default.
+        github_login:
+          type: string
+          description: Bound GitHub username; empty = not linked.
         avatar_url: { type: ["string", "null"] }
         created_at: { type: string, format: date-time }
 
@@ -4915,6 +5133,8 @@ components:
             kind: { type: string, enum: [issue, pr] }
             state: { type: string, enum: [open, closed, merged], description: "GitHub's raw state" }
             url: { type: string }
+            author: { type: string, description: "GitHub login of the issue/PR author" }
+            avatar_url: { type: string, description: "GitHub avatar URL of the author" }
 
     IssueActivity:
       type: object

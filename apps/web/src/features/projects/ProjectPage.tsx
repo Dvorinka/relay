@@ -69,6 +69,7 @@ import { isClosed, statusDefs, StatusDot } from "../issues/meta";
 import { Reviews } from "../reviews/Reviews";
 import { WebhooksSection } from "../webhooks/Webhooks";
 import { openCommit } from "../github/CommitModal";
+import { openGhIssue } from "../github/GitHubIssueModal";
 
 type View =
   | "issues"
@@ -1694,6 +1695,20 @@ export default function ProjectPage() {
   createEffect(() => {
     if (searchParams.briefs) {
       setSearchParams({ briefs: undefined, view: "reviews" });
+    }
+  });
+
+  // ?gh=owner/name:number deep link — opens the GitHub issue modal once,
+  // then drops the param (mirrors ?pr= on the pulls view).
+  createEffect(() => {
+    const raw = searchParams.gh;
+    const gh = Array.isArray(raw) ? raw[0] : raw;
+    if (!gh) return;
+    const sep = gh.lastIndexOf(":");
+    const num = Number(gh.slice(sep + 1));
+    if (sep > 0 && Number.isInteger(num) && num > 0) {
+      openGhIssue(params.projectId, gh.slice(0, sep), num);
+      setSearchParams({ gh: undefined });
     }
   });
 

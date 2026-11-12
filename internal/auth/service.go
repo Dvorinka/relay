@@ -112,7 +112,7 @@ func (s *Service) Login(ctx context.Context, email, password, ip, ua string) (Cr
 	if err != nil {
 		return creds, "", err
 	}
-	creds.User = db.GetUserByIDRow{ID: row.ID, Email: row.Email, Name: row.Name, AvatarKey: row.AvatarKey}
+	creds.User = db.GetUserByIDRow{ID: row.ID, Email: row.Email, Name: row.Name, AvatarKey: row.AvatarKey, NameColor: row.NameColor, GithubLogin: row.GithubLogin}
 	creds.Workspaces, _ = s.q.ListWorkspacesForUser(ctx, row.ID)
 	return creds, token, nil
 }
