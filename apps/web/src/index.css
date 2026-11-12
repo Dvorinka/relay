@@ -329,3 +329,22 @@ html {
   }
 }
 
+/* Phones in light mode were a sheet of near-white. Keep the type dark and
+   pull the canvas and rail down so chat, nav and composer separate.
+   Desktop light mode is unchanged. */
+@media (max-width: 767.98px) {
+  :root:not(.dark) {
+    --bg: #d5d0c6;
+    --rail: #c8c2b6;
+    --surface: #f3f0e8;
+    --surface-2: #e6e1d6;
+    --fg: #14161a;
+    --muted: #3c4350;
+    --faint: #5e6672;
+    --border: #b5aea2;
+    --border-hi: #9e978b;
+    --hover: rgb(16 19 24 / 0.08);
+    --code-bg: #e4dfd4;
+  }
+}
+

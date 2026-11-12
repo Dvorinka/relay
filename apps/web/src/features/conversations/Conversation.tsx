@@ -72,6 +72,8 @@ import { loadNameColors, nameColorFor } from "../../lib/namecolors";
 import { attachmentMarker, stripMarkerText } from "../../lib/markers";
 import { tagChip } from "../../lib/tagcolor";
 import { mediaURL, net } from "../../lib/net";
+import { horizontalSwipe } from "../../lib/swipe";
+import { useNarrow } from "../../stores/nav";
 import {
   isQueuedError,
   queuedMessages,
@@ -1903,9 +1905,8 @@ function MessageRow(props: {
   // Touch devices have no hover: tapping the row toggles the toolbar.
   const [tapped, setTapped] = createSignal(false);
 
-  // Swipe-right on a message replies to it (Discord mobile parity). The
-  // gesture only engages once horizontal intent is clear, so vertical
-  // scrolling is untouched; past 56px on release fires the reply.
+  // Swipe right replies. Swipe left opens the thread, or the create
+  // dialog when the message has none. Vertical scrolling stays a scroll.
   const [swipeX, setSwipeX] = createSignal(0);
   let touchStart: { x: number; y: number } | null = null;
   let swipeActive = false;
@@ -1922,16 +1923,27 @@ function MessageRow(props: {
     const dx = t.clientX - touchStart.x;
     const dy = t.clientY - touchStart.y;
     if (!swipeActive) {
-      if (dx > 10 && Math.abs(dy) < dx * 0.6) swipeActive = true;
-      else if (Math.abs(dy) > 10) touchStart = null;
+      if (Math.abs(dx) > 10 && Math.abs(dy) < Math.abs(dx) * 0.6) {
+        swipeActive = true;
+      } else if (Math.abs(dy) > 10) touchStart = null;
       else return;
     }
-    if (swipeActive) setSwipeX(Math.min(dx, 72));
+    if (swipeActive) setSwipeX(Math.max(-72, Math.min(dx, 72)));
   };
   const onTouchEnd = () => {
-    if (swipeActive && swipeX() > 56) {
-      props.onReply(m());
-      didSwipe = true;
+    if (touchStart) {
+      const dx = swipeX();
+      const intent = horizontalSwipe(dx, 0);
+      if (swipeActive && intent === "right") {
+        props.onReply(m());
+        didSwipe = true;
+      } else if (swipeActive && intent === "left") {
+        const thread = m().thread;
+        if (thread && props.onOpenThread) props.onOpenThread(thread);
+        else setThreadOpen(true);
+        didSwipe = true;
+        navigator.vibrate?.(8);
+      }
     }
     setSwipeX(0);
     touchStart = null;
@@ -1968,19 +1980,38 @@ function MessageRow(props: {
   }
 
   return (
+    <div class="relative">
+      <div
+        aria-hidden="true"
+        class="pointer-events-none absolute inset-y-0 left-3 z-0 flex items-center text-accent-ink"
+        style={{ opacity: swipeX() > 12 ? "1" : "0" }}
+      >
+        <ReplyIcon class="h-4 w-4" />
+      </div>
+      <div
+        aria-hidden="true"
+        class="pointer-events-none absolute inset-y-0 right-3 z-0 flex items-center text-accent-ink"
+        style={{ opacity: swipeX() < -12 ? "1" : "0" }}
+      >
+        <ThreadIcon class="h-4 w-4" />
+      </div>
     <div
       id={`msg-${m().id}`}
       class={
         (bubbles()
-          ? `group relative flex px-4 ${
+          ? `group relative flex bg-bg px-4 ${
               mine() ? "justify-end" : "justify-start"
             } ${props.grouped ? "py-[1px]" : "mt-2 py-[1px]"}`
-          : `group relative flex gap-3 px-4 hover:bg-hover/60 ${
+          : `group relative flex gap-3 bg-bg px-4 hover:bg-hover/60 ${
               props.grouped ? "py-[2px]" : "mt-3 py-1"
             }`) +
         (props.highlighted ? " rounded-xl bg-hover transition-colors" : " transition-colors")
       }
-      style={swipeX() > 0 ? { transform: `translateX(${swipeX()}px)` } : undefined}
+      style={
+        swipeX() !== 0
+          ? { transform: `translateX(${swipeX()}px)` }
+          : undefined
+      }
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
@@ -2533,6 +2564,7 @@ function MessageRow(props: {
           </Portal>
         )}
       </Show>
+    </div>
     </div>
   );
 }
@@ -4806,6 +4838,9 @@ function ConversationThread(props: {
             </button>
           </div>
         </div>
+        <p class="mt-1.5 px-1 text-[11px] text-faint sm:hidden">
+          Swipe right to reply · swipe left for the thread
+        </p>
         <input
           ref={(el) => {
             fileEl = el;
@@ -4987,6 +5022,7 @@ function ThreadPanel(props: {
   thread: ThreadSummary;
   onClose: () => void;
 }) {
+  const narrow = useNarrow();
   const [width, setWidth] = createSignal(threadWidth());
   const [full, setFull] = createSignal(false);
   const [idCopied, setIdCopied] = createSignal(false);
@@ -4994,8 +5030,21 @@ function ThreadPanel(props: {
   const [expiresAt, setExpiresAt] = createSignal<string | null | undefined>(
     undefined,
   );
+  // reply_count arrives as a snapshot in ThreadSummary; the panel is open
+  // while replies land, so it tracks thread.updated frames itself.
+  const [replyCount, setReplyCount] = createSignal(props.thread.reply_count);
   let expiryWrapEl: HTMLDivElement | undefined;
   let dragging = false;
+
+  onMount(() =>
+    onCleanup(
+      subscribe((e) => {
+        if (e.type !== "thread.updated" && e.type !== "thread.created") return;
+        const t = e.data?.thread as Thread | undefined;
+        if (t?.id === props.thread.id) setReplyCount(t.reply_count);
+      }),
+    ),
+  );
 
   createEffect(() => {
     if (!expiryOpen()) return;
@@ -5063,14 +5112,42 @@ function ThreadPanel(props: {
   onMount(() => window.addEventListener("keydown", onKey));
   onCleanup(() => window.removeEventListener("keydown", onKey));
 
+  // Swipe right closes the thread. The gesture ignores fields so a
+  // composer drag does not dismiss the panel.
+  let swipeStart: { x: number; y: number } | null = null;
+  const onSwipeStart = (e: TouchEvent) => {
+    const t = e.touches[0];
+    const el = e.target as HTMLElement | null;
+    if (!t || el?.closest("textarea, input, button, a")) {
+      swipeStart = null;
+      return;
+    }
+    swipeStart = { x: t.clientX, y: t.clientY };
+  };
+  const onSwipeEnd = (e: TouchEvent) => {
+    const start = swipeStart;
+    swipeStart = null;
+    const t = e.changedTouches[0];
+    if (!start || !t) return;
+    if (horizontalSwipe(t.clientX - start.x, t.clientY - start.y, 72) === "right") {
+      props.onClose();
+    }
+  };
+
+  // Cover the conversation column, never the app rail or the top bar.
+  // Fullscreen and phones overlay the chat; sm+ sits beside it.
+  const overlay = () => full() || narrow();
+
   return (
     <div
       class={
-        full()
-          ? "fixed inset-0 z-50 flex flex-col bg-surface"
-          : "thread-rail fixed inset-0 z-40 flex flex-col bg-surface sm:relative sm:z-auto sm:shrink-0 sm:border-l sm:border-border"
+        overlay()
+          ? "absolute inset-0 z-20 flex flex-col bg-surface"
+          : "thread-rail relative z-auto shrink-0 border-l border-border bg-surface"
       }
       style={{ "--thread-w": `${width()}px` }}
+      onTouchStart={onSwipeStart}
+      onTouchEnd={onSwipeEnd}
     >
       <div
         role="separator"
@@ -5091,8 +5168,7 @@ function ThreadPanel(props: {
             {props.thread.title || "Thread"}
           </p>
           <p class="text-[10.5px] text-faint">
-            {props.thread.reply_count}{" "}
-            {props.thread.reply_count === 1 ? "reply" : "replies"}
+            {replyCount()} {replyCount() === 1 ? "reply" : "replies"}
           </p>
         </div>
         <div class="relative" ref={(el) => (expiryWrapEl = el)}>
@@ -5245,7 +5321,7 @@ export function Conversation(props: {
       }
     >
       {(c) => (
-        <div class="flex min-h-0 min-w-0 flex-1">
+        <div class="relative flex min-h-0 min-w-0 flex-1">
           <ConversationThread
             conversationId={c.id}
             projectId={props.projectId}
