@@ -105,7 +105,12 @@ export function ProjectsProvider(props: ParentProps) {
     sorted,
     create: async (input) => {
       const project = await api.createProject(input);
-      mutate((list) => [...(list ?? []), project]);
+      // Local mode's list is the same array createProject just pushed
+      // onto. Appending again paints the new project twice.
+      mutate((list) => [
+        ...(list ?? []).filter((p) => p.id !== project.id),
+        project,
+      ]);
       return project;
     },
     refresh: async () => {

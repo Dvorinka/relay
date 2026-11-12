@@ -180,15 +180,17 @@ export default function Home() {
                   </span>
                 </Show>
                 <span>
-                  <b class="font-medium text-fg">{totals().issues}</b> open issues
+                  <b class="font-medium text-fg">{totals().issues}</b> open{" "}
+                  {totals().issues === 1 ? "issue" : "issues"}
                 </span>
                 <span>
-                  <b class="font-medium text-fg">{totals().prs}</b> open PRs
+                  <b class="font-medium text-fg">{totals().prs}</b> open{" "}
+                  {totals().prs === 1 ? "PR" : "PRs"}
                 </span>
                 <Show when={totals().reviews > 0}>
                   <span>
                     <b class="font-medium text-amber-500">{totals().reviews}</b>{" "}
-                    reviews pending
+                    {totals().reviews === 1 ? "review" : "reviews"} pending
                   </span>
                 </Show>
               </div>

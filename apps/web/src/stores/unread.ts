@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal } from "solid-js";
+import { createEffect, createMemo, createRoot, createSignal } from "solid-js";
 import type { UnreadConversation } from "@relay/api-client";
 import { api } from "../lib/api";
 import { desktopSetUnread } from "../lib/desktop";
@@ -21,14 +21,18 @@ export function useUnreadConversations() {
   return { unreadConversations };
 }
 
-// issue_id -> unread count, for marking issue rows.
-const unreadByIssueMap = createMemo(() => {
-  const m = new Map<string, number>();
-  for (const c of unreadConversations()) {
-    if (c.kind === "issue" && c.issue_id) m.set(c.issue_id, c.unread);
-  }
-  return m;
-});
+// issue_id -> unread count, for marking issue rows. Module-scope memos and
+// effects need an owner or Solid warns they can never be disposed — this
+// store is app-lifetime by design, so a detached root is correct.
+const unreadByIssueMap = createRoot(() =>
+  createMemo(() => {
+    const m = new Map<string, number>();
+    for (const c of unreadConversations()) {
+      if (c.kind === "issue" && c.issue_id) m.set(c.issue_id, c.unread);
+    }
+    return m;
+  }),
+);
 
 export function useUnreadByIssue() {
   return unreadByIssueMap;
@@ -36,10 +40,12 @@ export function useUnreadByIssue() {
 
 // Total unread across conversations — bridged to the desktop shell's
 // window title and tray badge. The effect is a no-op in a plain browser.
-const unreadTotal = createMemo(() =>
-  unreadConversations().reduce((sum, c) => sum + c.unread, 0),
+const unreadTotal = createRoot(() =>
+  createMemo(() =>
+    unreadConversations().reduce((sum, c) => sum + c.unread, 0),
+  ),
 );
-createEffect(() => desktopSetUnread(unreadTotal()));
+createRoot(() => createEffect(() => desktopSetUnread(unreadTotal())));
 
 export function usePendingReviews() {
   return { pendingReviews };
